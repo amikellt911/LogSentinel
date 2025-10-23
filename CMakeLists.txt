@@ -9,7 +9,9 @@ set(CORE_SRCS
 )
 
 set(HTTP_SRCS
-
+  http/HttpRequest.cpp
+  http/HttpResponse.cpp
+  #src/http/HttpServer.cpp
 )
 
 set(PERSISTENCE_SRCS
@@ -28,7 +30,7 @@ include(FetchContent)
 FetchContent_Declare(
   MiniMuduo
   GIT_REPOSITORY https://github.com/amikellt911/MiniMuduo.git
-  GIT_TAG        v1.0.0
+  GIT_TAG        v1.0.1
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/MiniMuduo
 )
 
