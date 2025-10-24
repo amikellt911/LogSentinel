@@ -37,5 +37,5 @@ class HttpContext
         bool parseRequestLine(const char* start,const char* end);
         bool parseHeaders(const char* start,const char* end);
         const char* findCRLF(const char* start,const char* end);
-
+        const char* findCRLFCRLF(const char* start,const char* end);
 };

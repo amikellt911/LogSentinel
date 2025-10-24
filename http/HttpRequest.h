@@ -20,4 +20,9 @@ struct HttpRequest{
         std::unordered_map<std::string,std::string> headers_;
         //第三部分：请求体
         std::string body_;
+
+        const std::string getHeader(std::string key) const
+        {
+            return headers_.at(key);
+        }
 };
