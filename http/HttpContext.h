@@ -36,6 +36,7 @@ class HttpContext
         //左闭右开，cpp标准
         bool parseRequestLine(const char* start,const char* end);
         bool parseHeaders(const char* start,const char* end);
+        bool parseOneHeaderLine(const char* start,const char* end);
         const char* findCRLF(const char* start,const char* end);
         const char* findCRLFCRLF(const char* start,const char* end);
 };

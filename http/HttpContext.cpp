@@ -2,74 +2,64 @@
 #include <algorithm>
 HttpContext::ParseResult HttpContext::parseRequest(MiniMuduo::net::Buffer *buf)
 {
-    //没有想到的是，可以直接请求行结束，然后下面是\r\n\r\n
-    while (true)
+    bool hasMore = true;
+    // 没有想到的是，可以直接请求行结束，然后下面是\r\n\r\n
+    while (hasMore)
     {
         if (state_ == State::kExpectRequestLine)
         {
-            //有可能出现
+            // 有可能出现
             const char *crlf = buf->findCRLF();
-            if (crlf)
+            if (!crlf)
             {
-                bool ans = parseRequestLine(buf->peek(), crlf);
-                if (ans)
-                {
-                    state_ = State::kExpectHeaders;
-                    buf->retrieve(crlf - buf->peek() + 2);
-                    if(*buf->peek()=='\r'&&*(buf->peek()+1)=='\n')
-                    {
-                        buf->retrieve(2);
-                        if(request().method_ == "POST")
-                        {
-                            return ParseResult::kError;
-                        }
-                        else
-                        {
-                            state_ = State::kGotAll;
-                            return ParseResult::kSuccess; 
-                        }
-                    }
-                }
-                else
-                {
-                    state_ = State::KError;
-                    return ParseResult::kError;
-                }
+                hasMore = false;
+                break;
             }
-            else
+            if (!parseRequestLine(buf->peek(), crlf))
             {
-                return ParseResult::kNeedMoreData;
+                state_ = State::KError;
+                return ParseResult::kError;
             }
+            buf->retrieve(crlf - buf->peek() + 2);
+            state_ = State::kExpectHeaders;
         }
         else if (state_ == State::kExpectHeaders)
         {
-            const char *crlf = buf->findCRLFCRLF();
-            if (crlf)
+            const char *crlf = buf->findCRLF();
+            if (!crlf)
             {
-                bool ans = parseHeaders(buf->peek(), crlf);
-                if (ans)
-                {
+                hasMore = false;
+                break;
+            }
+            const char *start = buf->peek();
 
-                    buf->retrieve(crlf - buf->peek() + 4);
-                    if (request_.method_ != "POST")
-                    {
-                        state_ = State::kGotAll;
-                        return ParseResult::kSuccess;
-                    }
-                    else
-                    {
-                        state_ = State::kExpectBody;
-                    }
+            // 关键判断：遇到空行，说明 Header 部分结束
+            if (start == crlf)
+            {
+                buf->retrieve(2); // 消费掉这个空的 \r\n
+
+                // Header 结束，决定下一步去哪
+                if (request_.method_ == "POST")
+                { // 简化判断
+                    state_ = State::kExpectBody;
                 }
                 else
                 {
-                    state_ = State::KError;
-                    return ParseResult::kError;
+                    state_ = State::kGotAll;
+                    hasMore = false; // 请求已完整，退出循环
+                    return ParseResult::kSuccess;
                 }
             }
             else
             {
-                return ParseResult::kNeedMoreData;
+                // 不是空行，说明这是一个普通的 Header 行
+                if (!parseOneHeaderLine(start, crlf))
+                {
+                    state_ = State::KError;
+                    return ParseResult::kError;
+                }
+                buf->retrieve(crlf - buf->peek() + 2);
+                // 状态不变，继续循环，处理下一行 Header
             }
         }
         else if (state_ == State::kExpectBody)
@@ -128,6 +118,35 @@ bool HttpContext::parseRequestLine(const char *start, const char *end)
         request_.version_.assign(start, end - start);
     else
         return false;
+    return true;
+}
+
+bool HttpContext::parseOneHeaderLine(const char *start, const char *end)
+{
+    const char *pos1 = strchr(start, ':');
+    if (!pos1 || pos1 > end) { // 冒号必须在行内
+        return false;
+    }
+    const char *key_start = start;
+    while (key_start < pos1 && *key_start == ' ')
+        key_start++;
+
+    const char *key_end = pos1 - 1;
+    while (key_end > key_start && *key_end == ' ')
+        key_end--;
+    if (key_end < key_start)
+        return false;
+    const char *value_start = pos1 + 1;
+    while (value_start < end && *value_start == ' ')
+        value_start++;
+    const char *value_end = end - 1;
+    while (value_end > value_start && *value_end == ' ')
+        value_end--;
+    if (value_end < value_start)
+        return false;
+    std::string key = std::string(key_start, key_end + 1 - key_start);
+    std::string value = std::string(value_start, value_end + 1 - value_start);
+    request_.headers_[key] = value;
     return true;
 }
 
