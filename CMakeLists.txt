@@ -11,7 +11,7 @@ include(FetchContent)
 FetchContent_Declare(
   MiniMuduo
   GIT_REPOSITORY https://github.com/amikellt911/MiniMuduo.git
-  GIT_TAG        v1.0.2
+  GIT_TAG        v1.0.3
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/MiniMuduo
 )
 
@@ -29,7 +29,7 @@ add_library(http_module STATIC
     http/HttpRequest.cpp
     http/HttpResponse.cpp
     http/HttpContext.cpp
-    #http/HttpServer.cpp
+    http/HttpServer.cpp
 )
 
 # add_library(core_module STATIC
