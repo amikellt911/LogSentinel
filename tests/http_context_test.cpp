@@ -153,16 +153,21 @@ C. 网络行为模拟 (Network Simulation)
             buffer_.append("GET /path HTTP/1.1\r\n\r\n");
             buffer_.append("POST /api/v1 HTTP/1.1\r\nContent-Length: 4\r\n\r\nbody");
             ASSERT_EQ(context_->parseRequest(&buffer_), HttpContext::ParseResult::kSuccess);
+            {
             const auto& req = context_->request();
             EXPECT_EQ(req.method_, "GET");
             EXPECT_EQ(req.path_, "/path");
             EXPECT_EQ(req.version_, "1.1");
+            }
             context_->reset();
             ASSERT_EQ(context_->parseRequest(&buffer_), HttpContext::ParseResult::kSuccess);
+            {
+            const auto& req = context_->request();
             EXPECT_EQ(req.method_, "POST");
             EXPECT_EQ(req.path_, "/api/v1");
             EXPECT_EQ(req.version_, "1.1");
             EXPECT_EQ(req.getHeader("Content-Length"), "4");
             EXPECT_EQ(req.body_, "body");
+            }
             EXPECT_EQ(buffer_.readableBytes(), 0);
        }
