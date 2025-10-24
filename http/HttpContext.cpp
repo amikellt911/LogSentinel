@@ -9,7 +9,7 @@ HttpContext::ParseResult HttpContext::parseRequest(MiniMuduo::net::Buffer *buf)
             const char *crlf = buf->findCRLF();
             if (crlf)
             {
-                bool ans = parseRequestLine(buf->peek(), crlf-1);
+                bool ans = parseRequestLine(buf->peek(), crlf);
                 if (ans)
                 {
                     state_ = State::kExpectHeaders;
@@ -31,7 +31,7 @@ HttpContext::ParseResult HttpContext::parseRequest(MiniMuduo::net::Buffer *buf)
             const char *crlf = buf->findCRLFCRLF();
             if (crlf)
             {
-                bool ans = parseHeaders(buf->peek(), crlf-1);
+                bool ans = parseHeaders(buf->peek(), crlf);
                 if (ans)
                 {
 
@@ -85,17 +85,28 @@ HttpContext::ParseResult HttpContext::parseRequest(MiniMuduo::net::Buffer *buf)
 
 bool HttpContext::parseRequestLine(const char *start, const char *end)
 {
-    const char *pos = strchr(start, ' ');
+    const char *pos = start;
+    while(*pos ==' ')//有可能不标准，有多余的空格
+        pos++;
+    start = pos;
+    pos = strchr(start, ' ');
     if (pos == nullptr)
         return false;
     request_.method_.assign(start, pos - start);
-    start = pos + 1;
+    while(*pos ==' ')//有可能不标准，有多余的空格
+        pos++;
+    start = pos;
     pos = strchr(start, ' ');
     if (pos == nullptr)
         return false;
     request_.path_.assign(start, pos - start);
-    while(pos ==" ")//有可能不标准，有多余的空格
+    while(*pos ==' ')//有可能不标准，有多余的空格
         pos++;
+    start = pos;
+    const char *http_prefix = "HTTP/";
+    if (std::strncmp(start, http_prefix, 5) != 0) {
+        return false; // 不以 HTTP/ 开头
+    }
     start = pos + 5; // 过滤掉"Http/"
     if (end - start > 0)
         request_.version_.assign(start, end - start);
@@ -112,15 +123,18 @@ bool HttpContext::parseHeaders(const char *start, const char *end)
         if (pos1 == nullptr)
             return false;
         const char *pos2 = findCRLF(pos1, end);
+        const char *value_start = pos1 + 1;
+        while (value_start < pos2 && *value_start == ' ')
+            value_start++;
         if (pos2 == nullptr)
         {
             std::string key = std::string(start, pos1 - start);
-            std::string value = std::string(pos1 + 1, end - pos1 - 1);
+            std::string value = std::string(value_start, end - value_start);
             request_.headers_[key] = value;
             return true;
         }
         std::string key = std::string(start, pos1 - start);
-        std::string value = std::string(pos1 + 1, pos2 - pos1 - 1);
+        std::string value = std::string(value_start, pos2 - value_start);
         request_.headers_[key] = value;
         start = pos2 + 2;
     }
