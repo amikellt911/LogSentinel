@@ -17,8 +17,7 @@ void HttpServer::onConnection(const MiniMuduo::net::TcpConnectionPtr &conn)
 {
     if (conn->connected())
     {
-        HttpContext context_;
-        conn->setContext(context_);
+        conn->setContext(HttpContext());
     }
 }
 void HttpServer::onMessage(const MiniMuduo::net::TcpConnectionPtr &conn,
@@ -29,6 +28,16 @@ void HttpServer::onMessage(const MiniMuduo::net::TcpConnectionPtr &conn,
     while(context->parseRequest(buf)==HttpContext::ParseResult::kSuccess){
         HttpResponse resp;
         httpCallback_(context->request(),&resp);
+        MiniMuduo::net::Buffer outbuf;
+        resp.appendToBuffer(&outbuf);
+        conn->send(std::move(outbuf));
+        if(resp.closeConnection_)
+            conn->shutdown();
         context->reset();
+    }
+    if(context->states()==HttpContext::State::KError)
+    {
+        conn->send("HTTP/1.1 400 Bad Request\r\n\r\n");
+        conn->shutdown();
     }
 }

@@ -30,6 +30,10 @@ class HttpContext
         {
             return request_;
         }
+        const State& states() const
+        {
+            return state_;
+        }
     private:
         State state_=State::kExpectRequestLine;
         HttpRequest request_;
