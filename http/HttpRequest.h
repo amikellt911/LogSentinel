@@ -1,14 +1,18 @@
+#pragma once
 #include<string>
 #include<unordered_map>
 struct HttpRequest{
         void reset()
         {
-            method_="";
-            path_="";
-            version_="";
+            method_.clear();
+            path_.clear();
+            version_.clear();
             headers_.clear();
-            body_="";
+            body_.clear();
+            trace_id.clear();
         }
+        //追踪id
+        std::string trace_id;
         //第一部分：请求行
         //get/post 等方法
         std::string method_;
@@ -24,5 +28,12 @@ struct HttpRequest{
         const std::string getHeader(std::string key) const
         {
             return headers_.at(key);
+        }
+
+        void setTraceId(std::string id){
+            trace_id=std::move(id);
+        }
+        const std::string& getTraceId() const{
+            return trace_id;
         }
 };

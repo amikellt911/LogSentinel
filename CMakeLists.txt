@@ -32,6 +32,10 @@ add_library(http_module STATIC
     http/HttpServer.cpp
 )
 
+add_library(util_module STATIC
+    util/TraceIdGenerator.cpp
+)
+
 # add_library(core_module STATIC
 
 # )
@@ -48,6 +52,9 @@ add_library(http_module STATIC
 target_include_directories(http_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
+target_include_directories(util_module PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
 # target_include_directories(core_module PUBLIC
 #   ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -61,11 +68,13 @@ target_include_directories(http_module PUBLIC
 #   ${CMAKE_CURRENT_SOURCE_DIR}
 # )
 
-target_link_libraries(http_module PUBLIC MiniMuduo)
+target_link_libraries(http_module PUBLIC MiniMuduo util_module)
 
 #-----------测试模块---------------
 enable_testing()
+
 include(GoogleTest)
+
 add_executable(test_http_context 
   tests/http_context_test.cpp
 )
@@ -77,7 +86,9 @@ target_link_libraries(test_http_context PRIVATE
 GTest::gtest_main
 http_module
 )
-gtest_add_tests(TARGET test_http_context)
+#给vscode的C++扩展的CTest.
+add_test(NAME test_http_context COMMAND test_http_context)
+gtest_discover_tests(test_http_context)
 
 
 

@@ -1,3 +1,4 @@
+#pragma once
 #include"http/HttpRequest.h"
 #include<MiniMuduo/net/Buffer.h>
 #include<cstring>

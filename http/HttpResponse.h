@@ -1,3 +1,4 @@
+#pragma once
 #include<string>
 #include<unordered_map>
 #include<MiniMuduo/net/Buffer.h>

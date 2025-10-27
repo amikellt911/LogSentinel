@@ -1,3 +1,4 @@
+#pragma once
 #include<MiniMuduo/net/TcpServer.h>
 #include<MiniMuduo/net/InetAddress.h>
 #include"http/HttpRequest.h"
