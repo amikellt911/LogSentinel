@@ -6,7 +6,7 @@ class HttpResponse;
 class HttpServer
 {
     public:
-        using HttpCallback = std::function<void(const HttpRequest&,HttpResponse*)>;
+        using HttpCallback = std::function<void(const HttpRequest&,HttpResponse*,std::string)>;
         void start();
         HttpServer(MiniMuduo::net::EventLoop *loop,const MiniMuduo::net::InetAddress& listenAddr,const std::string& nameArg,MiniMuduo::net::TcpServer::Option option=MiniMuduo::net::TcpServer::kNoReusePort);
         void setHttpCallback(const HttpCallback& cb){httpCallback_=std::move(cb);}
