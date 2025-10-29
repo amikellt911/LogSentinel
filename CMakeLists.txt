@@ -79,6 +79,10 @@ add_executable(test_http_context
   tests/http_context_test.cpp
 )
 
+add_executable(test_util_traceidgenerate
+  tests/util_traceidgenerate_test.cpp
+)
+
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -86,10 +90,16 @@ target_link_libraries(test_http_context PRIVATE
 GTest::gtest_main
 http_module
 )
+target_link_libraries(test_util_traceidgenerate PRIVATE 
+GTest::gtest_main
+util_module
+)
 #给vscode的C++扩展的CTest.
 add_test(NAME test_http_context COMMAND test_http_context)
-gtest_discover_tests(test_http_context)
+add_test(NAME test_util_traceidgenerate COMMAND test_util_traceidgenerate)
 
+gtest_discover_tests(test_http_context)
+gtest_discover_tests(test_util_traceidgenerate)
 
 
 #-----------主程序---------------
