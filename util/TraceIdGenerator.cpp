@@ -24,6 +24,14 @@
 //     ss<<",host_id: "<<std::to_string(host_id)<<",pthread_id: "<<std::to_string(p_id)<<t_id;
 //     return ss.str();
 // }
+static uint32_t getHostId() {
+    char host[256];
+    if(gethostname(host,sizeof(host))==0)
+    {
+        return std::hash<std::string>{}(host);
+    }
+    return 0;
+}
 
 std::string generateTraceId() {
     // ---- 不变的部分，只在首次调用时初始化一次 ----
@@ -57,11 +65,3 @@ std::string generateTraceId() {
     return ss.str();
 }
 
-static uint32_t getHostId() {
-    char host[256];
-    if(gethostname(host,sizeof(host))==0)
-    {
-        return std::hash<std::string>{}(host);
-    }
-    return 0;
-}
