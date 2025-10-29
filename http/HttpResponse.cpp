@@ -54,3 +54,18 @@ void HttpResponse::setStatusCode(HttpStatusCode code)
             statusMessage_="Internal Server Error";
     }
 }
+
+void HttpResponse::setStatusMessage(std::string message)
+{
+    statusMessage_=std::move(message);
+}
+
+void HttpResponse::setBody(std::string body)
+{
+    body_=std::move(body);
+}
+
+void HttpResponse::setHeader(std::string key,std::string value)
+{
+    headers_[std::move(key)]=std::move(value);
+}

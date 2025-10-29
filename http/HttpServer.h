@@ -7,9 +7,12 @@ class HttpServer
 {
     public:
         using HttpCallback = std::function<void(const HttpRequest&,HttpResponse*)>;
-        void start();
+        void start(){
+            server_.start();
+        }
         HttpServer(MiniMuduo::net::EventLoop *loop,const MiniMuduo::net::InetAddress& listenAddr,const std::string& nameArg,MiniMuduo::net::TcpServer::Option option=MiniMuduo::net::TcpServer::kNoReusePort);
         void setHttpCallback(const HttpCallback& cb){httpCallback_=std::move(cb);}
+        void setThreadNum(int num){server_.setThreadNum(num);}
     private:
         void onConnection(const MiniMuduo::net::TcpConnectionPtr& conn);
         void onMessage(const MiniMuduo::net::TcpConnectionPtr& conn,MiniMuduo::net::Buffer *buf,MiniMuduo::base::Timestamp time);
