@@ -36,4 +36,16 @@ struct HttpRequest{
         const std::string& getTraceId() const{
             return trace_id;
         }
+
+        const std::string path() const{
+            return path_;
+        }
+
+        const std::string method() const{
+            return method_;
+        }
+
+        const std::string version() const{
+            return version_;
+        }
 };
