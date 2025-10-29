@@ -2,7 +2,8 @@
 #include "http/HttpContext.h"
 #include "http/HttpResponse.h"
 #include <MiniMuduo/net/TcpConnection.h>
-#include<MiniMuduo/base/Logger.h>
+#include <MiniMuduo/base/Logger.h>
+#include "util/TraceIdGenerator.h"
 HttpServer::HttpServer(MiniMuduo::net::EventLoop *loop,
                        const MiniMuduo::net::InetAddress &listenAddr,
                        const std::string &nameArg,
@@ -26,10 +27,11 @@ void HttpServer::onMessage(const MiniMuduo::net::TcpConnectionPtr &conn,
 {
     HttpContext* context=std::any_cast<HttpContext> (conn->getMutableContext());
     while(context->parseRequest(buf)==HttpContext::ParseResult::kSuccess){
+        std::string trace_id_=generateTraceId();
         LOG_INFO(std::string("HttpServer::onMessage: from ")+conn->peerAddress().toIpPort()+" Parse Success");
         HttpResponse resp;
         if(httpCallback_)
-            httpCallback_(context->request(),&resp);
+            httpCallback_(context->request(),&resp,std::move(trace_id_));
         MiniMuduo::net::Buffer outbuf;
         resp.appendToBuffer(&outbuf);
         conn->send(std::move(outbuf));
