@@ -32,7 +32,6 @@ public:
     {
         setHttpCallback(onRequest);
         setThreadNum(4);
-        setTimeOut(5.0);
         setCancelThreshold(2.0);
     }
 };

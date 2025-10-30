@@ -29,14 +29,14 @@ void HttpServer::onMessage(const MiniMuduo::net::TcpConnectionPtr &conn,
     while(context->parseRequest(buf)==HttpContext::ParseResult::kSuccess){
         std::string trace_id_=generateTraceId();
         context->requestRef().setTraceId(trace_id_);
-        LOG_STREAM_INFO<< "[trace: " << trace_id_ << "] New request for " << context->request().path()<<" from : "<<conn->peerAddress().toIpPort();
+        //LOG_STREAM_INFO<< "[trace: " << trace_id_ << "] New request for " << context->request().path()<<" from : "<<conn->peerAddress().toIpPort();
         HttpResponse resp;
         if(httpCallback_)
             httpCallback_(context->request(),&resp);
         MiniMuduo::net::Buffer outbuf;
         resp.appendToBuffer(&outbuf);
         conn->send(std::move(outbuf));
-        LOG_STREAM_INFO<< "[trace: " << trace_id_ << "] Response for " << context->request().path()<<" to : "<<conn->peerAddress().toIpPort()<<" with answer : "<<resp.body_;
+        //LOG_STREAM_INFO<< "[trace: " << trace_id_ << "] Response for " << context->request().path()<<" to : "<<conn->peerAddress().toIpPort()<<" with answer : "<<resp.body_;
         if(resp.closeConnection_)
             conn->shutdown();
         context->reset();
