@@ -11,7 +11,7 @@ include(FetchContent)
 FetchContent_Declare(
   MiniMuduo
   GIT_REPOSITORY https://github.com/amikellt911/MiniMuduo.git
-  GIT_TAG        v1.0.5
+  GIT_TAG        v1.1.0
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/MiniMuduo
 )
 

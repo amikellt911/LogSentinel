@@ -24,4 +24,7 @@ struct HttpResponse
 
     void appendToBuffer(MiniMuduo::net::Buffer *output) const;
     void setStatusCode(HttpStatusCode code);
+    void setStatusMessage(std::string message);
+    void setHeader(std::string key,std::string value);
+    void setBody(std::string body);
 };
