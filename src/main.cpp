@@ -5,21 +5,21 @@
 void onRequest(const HttpRequest& req, HttpResponse* resp)
 {
     std::string method=req.method();
-    if(method=="GET")
+    if(method=="GET"&&req.path()=="/log")
     {
         resp->setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
         resp->setHeader("User-Agent","llt");
         resp->setBody(std::move("hello world"));
     }
-    else if(method=="POST")
+    else if(method=="POST"&&req.path()=="/log")
     {
         resp->setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
         resp->setHeader("User-Agent","llt");
         resp->setBody(std::move("received log"));
     }else{
-        resp->setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k404NotFound);
         resp->setHeader("User-Agent","llt");
-        resp->setBody(std::move("Unknown method"));
+        resp->setBody(std::move("Unknown method or resource"));
     }
 }
 
@@ -32,6 +32,8 @@ public:
     {
         setHttpCallback(onRequest);
         setThreadNum(4);
+        setTimeOut(5.0);
+        setCancelThreshold(2.0);
     }
 };
 
