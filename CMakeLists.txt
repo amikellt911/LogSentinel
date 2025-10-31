@@ -11,7 +11,7 @@ include(FetchContent)
 FetchContent_Declare(
   MiniMuduo
   GIT_REPOSITORY https://github.com/amikellt911/MiniMuduo.git
-  GIT_TAG        v1.1.0
+  GIT_TAG        v1.1.1
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/MiniMuduo
 )
 
@@ -42,9 +42,9 @@ add_library(util_module STATIC
 # add_library(persistence_module STATIC
 
 # )
-# add_library(threadpool_module STATIC
-
-# )
+add_library(threadpool_module STATIC
+  threadpool/ThreadPool.cpp
+)
 # add_library(ai_module STATIC
 
 # )
@@ -61,14 +61,15 @@ target_include_directories(util_module PUBLIC
 # target_include_directories(persistence_module PUBLIC
 #   ${CMAKE_CURRENT_SOURCE_DIR}
 # )
-# target_include_directories(threadpool_module PUBLIC
-#   ${CMAKE_CURRENT_SOURCE_DIR}
-# )
+target_include_directories(threadpool_module PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
 # target_include_directories(ai_module PUBLIC
 #   ${CMAKE_CURRENT_SOURCE_DIR}
 # )
 
 target_link_libraries(http_module PUBLIC MiniMuduo util_module)
+target_link_libraries(threadpool_module PUBLIC MiniMuduo)
 
 #-----------测试模块---------------
 enable_testing()
@@ -83,6 +84,10 @@ add_executable(test_util_traceidgenerate
   tests/util_traceidgenerate_test.cpp
 )
 
+add_executable(test_threadpool
+  tests/threadpool_test.cpp
+)
+
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -94,12 +99,18 @@ target_link_libraries(test_util_traceidgenerate PRIVATE
 GTest::gtest_main
 util_module
 )
+target_link_libraries(test_threadpool PRIVATE 
+GTest::gtest_main
+threadpool_module
+)
 #给vscode的C++扩展的CTest.
 add_test(NAME test_http_context COMMAND test_http_context)
 add_test(NAME test_util_traceidgenerate COMMAND test_util_traceidgenerate)
+add_test(NAME test_threadpool COMMAND test_threadpool)
 
 gtest_discover_tests(test_http_context)
 gtest_discover_tests(test_util_traceidgenerate)
+gtest_discover_tests(test_threadpool)
 #-----------不同模块测试用例---------------
 #http层测试用例
 add_executable(testserver
@@ -130,7 +141,7 @@ target_link_libraries(LogSentinel PRIVATE
 http_module
 # core_module
 # persistence_module
-# threadpool_module
+threadpool_module
 # ai_module
 sqlite3
 )
