@@ -42,7 +42,7 @@ add_library(util_module STATIC
 # add_library(persistence_module STATIC
 
 # )
-# add_library(worker_module STATIC
+# add_library(threadpool_module STATIC
 
 # )
 # add_library(ai_module STATIC
@@ -61,7 +61,7 @@ target_include_directories(util_module PUBLIC
 # target_include_directories(persistence_module PUBLIC
 #   ${CMAKE_CURRENT_SOURCE_DIR}
 # )
-# target_include_directories(worker_module PUBLIC
+# target_include_directories(threadpool_module PUBLIC
 #   ${CMAKE_CURRENT_SOURCE_DIR}
 # )
 # target_include_directories(ai_module PUBLIC
@@ -114,7 +114,7 @@ target_link_libraries(testserver PRIVATE
 http_module
 # core_module
 # persistence_module
-# worker_module
+# threadpool_module
 # ai_module
 )
 #-----------主程序---------------
@@ -130,7 +130,7 @@ target_link_libraries(LogSentinel PRIVATE
 http_module
 # core_module
 # persistence_module
-# worker_module
+# threadpool_module
 # ai_module
 sqlite3
 )
