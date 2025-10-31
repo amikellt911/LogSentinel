@@ -100,8 +100,23 @@ add_test(NAME test_util_traceidgenerate COMMAND test_util_traceidgenerate)
 
 gtest_discover_tests(test_http_context)
 gtest_discover_tests(test_util_traceidgenerate)
+#-----------不同模块测试用例---------------
+#http层测试用例
+add_executable(testserver
+    src/testserver.cpp   
+)
 
-
+# 因为module会继承过来
+# target_include_directories(LogSentinel PRIVATE
+# ${CMAKE_CURRENT_SOURCE_DIR}
+# )
+target_link_libraries(testserver PRIVATE 
+http_module
+# core_module
+# persistence_module
+# worker_module
+# ai_module
+)
 #-----------主程序---------------
 add_executable(LogSentinel
     src/main.cpp   
