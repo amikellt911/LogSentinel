@@ -33,6 +33,7 @@ public:
         setHttpCallback(onRequest);
         setThreadNum(4);
         setCancelThreshold(2.0);
+        setTimeOut(60.0);
     }
 };
 
