@@ -32,7 +32,7 @@ void HttpServer::onMessage(const MiniMuduo::net::TcpConnectionPtr &conn,
         //LOG_STREAM_INFO<< "[trace: " << trace_id_ << "] New request for " << context->request().path()<<" from : "<<conn->peerAddress().toIpPort();
         HttpResponse resp;
         if(httpCallback_)
-            httpCallback_(context->request(),&resp);
+            httpCallback_(context->requestRef(),&resp);
         MiniMuduo::net::Buffer outbuf;
         resp.appendToBuffer(&outbuf);
         conn->send(std::move(outbuf));

@@ -10,10 +10,12 @@ struct HttpResponse
     {
         kUnknown,
         k200Ok = 200,
+        k202Acceptd=202,
         k301MovedPermanently = 301,
         k400BadRequest = 400,
         k404NotFound = 404,
         k500InternalServerError = 500,
+        k503ServiceUnavailable=503,
     };
     
     HttpStatusCode statusCode_=HttpStatusCode::kUnknown;

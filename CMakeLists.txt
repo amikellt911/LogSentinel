@@ -36,9 +36,9 @@ add_library(util_module STATIC
     util/TraceIdGenerator.cpp
 )
 
-# add_library(core_module STATIC
-
-# )
+add_library(core_module STATIC
+    core/AnalysisTask.cpp
+)
 # add_library(persistence_module STATIC
 
 # )
@@ -55,9 +55,9 @@ target_include_directories(http_module PUBLIC
 target_include_directories(util_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
-# target_include_directories(core_module PUBLIC
-#   ${CMAKE_CURRENT_SOURCE_DIR}
-# )
+target_include_directories(core_module PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
 # target_include_directories(persistence_module PUBLIC
 #   ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -116,7 +116,10 @@ gtest_discover_tests(test_threadpool)
 add_executable(testserver
     src/testserver.cpp   
 )
-
+#http层结合线程池测试用例
+add_executable(testserverpool
+  src/testserverpool.cpp
+)
 # 因为module会继承过来
 # target_include_directories(LogSentinel PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
@@ -127,6 +130,11 @@ http_module
 # persistence_module
 # threadpool_module
 # ai_module
+)
+target_link_libraries(testserverpool PRIVATE
+http_module
+threadpool_module
+core_module
 )
 #-----------主程序---------------
 add_executable(LogSentinel
@@ -139,7 +147,7 @@ add_executable(LogSentinel
 # )
 target_link_libraries(LogSentinel PRIVATE 
 http_module
-# core_module
+core_module
 # persistence_module
 threadpool_module
 # ai_module
