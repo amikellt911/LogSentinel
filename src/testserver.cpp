@@ -1,9 +1,10 @@
 #include "http/HttpServer.h"
 #include "MiniMuduo/net/EventLoop.h"
 #include "http/HttpResponse.h"
-
+#include <thread>
 void onRequest(const HttpRequest& req, HttpResponse* resp)
 {
+    std::this_thread::sleep_for(std::chrono::microseconds(10));
     std::string method=req.method();
     if(method=="GET"&&req.path()=="/log")
     {
@@ -32,8 +33,8 @@ public:
     {
         setHttpCallback(onRequest);
         setThreadNum(4);
-        setCancelThreshold(2.0);
-        setTimeOut(60.0);
+        // setCancelThreshold(2.0);
+        // setTimeOut(60.0);
     }
 };
 
