@@ -15,6 +15,7 @@ public:
 private:
     sqlite3* db_=nullptr;
     std::mutex mutex_;
+    friend class SqlitePersistence_test;
 };
 
 
