@@ -1,0 +1,3 @@
+Mvp后优化点
+1.“received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP”改为时间戳Unix的int，因为高负载下，网络接收到任务和任务执行的时间差可能会很长，到时候要onmessage或httpcallback的时候要获取当前时间戳。
+2.和线程池优化结合，每一个work线程池都有一个各自的thread_local的sqlite3句柄，这样可以优化，通过NOMUTEX代替FULLMUTEX（flags，sqlite3_open_v2的选项）

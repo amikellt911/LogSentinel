@@ -23,6 +23,7 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(MiniMuduo googletest)
+find_package(SQLite3 REQUIRED)
 
 #--------------模块管理------------------
 add_library(http_module STATIC
@@ -39,9 +40,9 @@ add_library(util_module STATIC
 add_library(core_module STATIC
     core/AnalysisTask.cpp
 )
-# add_library(persistence_module STATIC
-
-# )
+add_library(persistence_module STATIC
+    persistence/SqlitePersistence.cpp
+)
 add_library(threadpool_module STATIC
   threadpool/ThreadPool.cpp
 )
@@ -58,9 +59,9 @@ target_include_directories(util_module PUBLIC
 target_include_directories(core_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
-# target_include_directories(persistence_module PUBLIC
-#   ${CMAKE_CURRENT_SOURCE_DIR}
-# )
+target_include_directories(persistence_module PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
 target_include_directories(threadpool_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -70,7 +71,7 @@ target_include_directories(threadpool_module PUBLIC
 
 target_link_libraries(http_module PUBLIC MiniMuduo util_module)
 target_link_libraries(threadpool_module PUBLIC MiniMuduo)
-
+target_link_libraries(persistence_module PRIVATE SQLite::SQLite3)
 #-----------测试模块---------------
 enable_testing()
 
@@ -151,5 +152,4 @@ core_module
 # persistence_module
 threadpool_module
 # ai_module
-sqlite3
 )
