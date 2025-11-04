@@ -10,7 +10,7 @@ SqlitePersistence::SqlitePersistence(const std::string &db_path)
         std::filesystem::create_directories(data_path);
     }
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
-    int rc = sqlite3_open_v2(db_path.c_str(), &db_, flags, nullptr);
+    int rc = sqlite3_open_v2((data_path+db_path).c_str(), &db_, flags, nullptr);
     if (rc != SQLITE_OK)
     {
         std::cerr << "Cannot open datebase " << sqlite3_errmsg(db_) << std::endl;

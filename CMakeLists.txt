@@ -89,6 +89,10 @@ add_executable(test_threadpool
   tests/threadpool_test.cpp
 )
 
+add_executable(test_sqlite
+  tests/SqlitePersistence_test.cpp
+)
+
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -104,14 +108,20 @@ target_link_libraries(test_threadpool PRIVATE
 GTest::gtest_main
 threadpool_module
 )
+target_link_libraries(test_sqlite PRIVATE 
+GTest::gtest_main
+persistence_module
+)
 #给vscode的C++扩展的CTest.
 add_test(NAME test_http_context COMMAND test_http_context)
 add_test(NAME test_util_traceidgenerate COMMAND test_util_traceidgenerate)
 add_test(NAME test_threadpool COMMAND test_threadpool)
+add_test(NAME test_sqlite COMMAND test_sqlite)
 
 gtest_discover_tests(test_http_context)
 gtest_discover_tests(test_util_traceidgenerate)
 gtest_discover_tests(test_threadpool)
+gtest_discover_tests(test_sqlite)
 #-----------不同模块测试用例---------------
 #http层测试用例
 add_executable(testserver
@@ -120,6 +130,10 @@ add_executable(testserver
 #http层结合线程池测试用例
 add_executable(testserverpool
   src/testserverpool.cpp
+)
+#http层结合线程池和sqlite数据库测试用例
+add_executable(testServerPoolSqlite
+  src/testServerPoolSqlite.cpp  
 )
 # 因为module会继承过来
 # target_include_directories(LogSentinel PRIVATE
@@ -136,6 +150,12 @@ target_link_libraries(testserverpool PRIVATE
 http_module
 threadpool_module
 core_module
+)
+target_link_libraries(testServerPoolSqlite PRIVATE
+http_module
+threadpool_module
+core_module
+persistence_module
 )
 #-----------主程序---------------
 add_executable(LogSentinel

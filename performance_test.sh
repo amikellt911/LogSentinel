@@ -5,7 +5,7 @@ TARGET_URL="http://127.0.0.1:8080/log"
 THREADS=4
 DURATION="30s"
 LUA_SCRIPT="post.lua"
-LOG_FILE="base_performance_results_without_log_between_threadpool.log"
+LOG_FILE="testServerPoolSqlite_performance_results.log"
 
 # --- 清理并准备日志文件 ---
 echo "Performance Test Results - $(date)" > ${LOG_FILE}
