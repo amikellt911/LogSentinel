@@ -23,7 +23,7 @@ struct HttpResponse
     std::unordered_map<std::string,std::string> headers_;
     std::string body_;
     bool closeConnection_=false;
-
+    bool isHandledAsync = false;
     void appendToBuffer(MiniMuduo::net::Buffer *output) const;
     void setStatusCode(HttpStatusCode code);
     void setStatusMessage(std::string message);

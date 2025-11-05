@@ -31,7 +31,7 @@ int main()
     MiniMuduo::net::InetAddress addr(8080);
     testServer server(&loop, addr, num_io_threads);
     ThreadPool tpool(num_worker_threads);
-    auto onRequest = [&tpool](HttpRequest &req, HttpResponse *resp)
+    auto onRequest = [&tpool](HttpRequest &req, HttpResponse *resp,MiniMuduo::net::TcpConnectionPtr)
     {
         AnalysisTask task;
         task.trace_id = std::move(req.trace_id);

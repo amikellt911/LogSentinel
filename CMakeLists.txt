@@ -46,9 +46,9 @@ add_library(persistence_module STATIC
 add_library(threadpool_module STATIC
   threadpool/ThreadPool.cpp
 )
-# add_library(ai_module STATIC
-
-# )
+add_library(ai_module STATIC
+  ai/MockAI.cpp
+)
 
 target_include_directories(http_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
@@ -65,9 +65,9 @@ target_include_directories(persistence_module PUBLIC
 target_include_directories(threadpool_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
-# target_include_directories(ai_module PUBLIC
-#   ${CMAKE_CURRENT_SOURCE_DIR}
-# )
+target_include_directories(ai_module PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
 target_link_libraries(http_module PUBLIC MiniMuduo util_module)
 target_link_libraries(threadpool_module PUBLIC MiniMuduo)
@@ -135,6 +135,10 @@ add_executable(testserverpool
 add_executable(testServerPoolSqlite
   src/testServerPoolSqlite.cpp  
 )
+#上面与mockai测试用例
+add_executable(testServerPoolSqliteMockAI
+  src/testserverPoolSqliteMock.cpp
+)
 # 因为module会继承过来
 # target_include_directories(LogSentinel PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
@@ -156,6 +160,13 @@ http_module
 threadpool_module
 core_module
 persistence_module
+)
+target_link_libraries(testServerPoolSqliteMockAI PRIVATE
+http_module
+threadpool_module
+core_module
+persistence_module
+ai_module
 )
 #-----------主程序---------------
 add_executable(LogSentinel
