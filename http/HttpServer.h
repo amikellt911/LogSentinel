@@ -6,7 +6,7 @@ class HttpResponse;
 class HttpServer
 {
     public:
-        using HttpCallback = std::function<void(HttpRequest&,HttpResponse*)>;
+        using HttpCallback = std::function<void(HttpRequest&,HttpResponse*,const MiniMuduo::net::TcpConnectionPtr&)>;
         void start(){
             server_.start();
         }

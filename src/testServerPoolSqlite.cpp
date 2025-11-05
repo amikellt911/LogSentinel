@@ -43,7 +43,7 @@ int main()
     testServer server(&loop, addr, num_io_threads);
     ThreadPool tpool(num_worker_threads);
     //使用值捕获persistence，增加引用计数防止意外发生
-    auto onRequest = [&tpool,persistence](HttpRequest &req, HttpResponse *resp)
+    auto onRequest = [&tpool,persistence](HttpRequest &req, HttpResponse *resp,MiniMuduo::net::TcpConnectionPtr)
     {
         AnalysisTask task;
         task.trace_id = std::move(req.trace_id);

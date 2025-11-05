@@ -2,7 +2,7 @@
 #include "MiniMuduo/net/EventLoop.h"
 #include "http/HttpResponse.h"
 #include <thread>
-void onRequest(const HttpRequest& req, HttpResponse* resp)
+void onRequest(const HttpRequest& req, HttpResponse* resp,MiniMuduo::net::TcpConnectionPtr)
 {
     std::this_thread::sleep_for(std::chrono::microseconds(10));
     std::string method=req.method();
