@@ -1,0 +1,80 @@
+Performance Test Results - Mon Nov  3 11:08:35 AM CST 2025
+=======================================
+
+
+### Test with Connections: 200, Threads: 4, Duration: 30s ###
+Running 30s test @ http://127.0.0.1:8080/log
+  4 threads and 200 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     3.91ms  834.09us  25.25ms   93.01%
+    Req/Sec    12.82k     1.16k   18.51k    62.83%
+  1531185 requests in 30.06s, 210.67MB read
+Requests/sec:  50945.28
+Transfer/sec:      7.01MB
+
+
+### Test with Connections: 400, Threads: 4, Duration: 30s ###
+Running 30s test @ http://127.0.0.1:8080/log
+  4 threads and 400 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     7.62ms    1.60ms  55.43ms   92.88%
+    Req/Sec    13.16k     1.30k   28.18k    76.08%
+  1573206 requests in 30.08s, 217.55MB read
+Requests/sec:  52300.13
+Transfer/sec:      7.23MB
+
+
+### Test with Connections: 600, Threads: 4, Duration: 30s ###
+Running 30s test @ http://127.0.0.1:8080/log
+  4 threads and 600 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    11.49ms    2.02ms  57.44ms   91.11%
+    Req/Sec    13.07k     1.44k   31.80k    77.86%
+  1558051 requests in 30.07s, 215.45MB read
+Requests/sec:  51821.20
+Transfer/sec:      7.17MB
+
+
+### Test with Connections: 800, Threads: 4, Duration: 30s ###
+Running 30s test @ http://127.0.0.1:8080/log
+  4 threads and 800 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    15.76ms    1.93ms  35.38ms   83.80%
+    Req/Sec    12.70k     1.24k   28.80k    67.42%
+  1513496 requests in 30.06s, 209.29MB read
+Requests/sec:  50348.45
+Transfer/sec:      6.96MB
+
+
+### Test with Connections: 1000, Threads: 4, Duration: 30s ###
+Running 30s test @ http://127.0.0.1:8080/log
+  4 threads and 1000 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    20.37ms    2.33ms  40.32ms   78.49%
+    Req/Sec    12.29k     1.22k   17.16k    69.50%
+  1468285 requests in 30.09s, 203.04MB read
+Requests/sec:  48791.42
+Transfer/sec:      6.75MB
+
+
+### Test with Connections: 1500, Threads: 4, Duration: 30s ###
+Running 30s test @ http://127.0.0.1:8080/log
+  4 threads and 1500 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    32.57ms    5.47ms  92.99ms   91.84%
+    Req/Sec    11.54k     1.70k   17.98k    76.84%
+  1376474 requests in 30.09s, 190.34MB read
+Requests/sec:  45742.22
+Transfer/sec:      6.33MB
+
+
+### Test with Connections: 2000, Threads: 4, Duration: 30s ###
+Running 30s test @ http://127.0.0.1:8080/log
+  4 threads and 2000 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    51.54ms    6.49ms 128.42ms   90.58%
+    Req/Sec     9.72k     1.21k   13.71k    76.76%
+  1158581 requests in 30.08s, 160.21MB read
+Requests/sec:  38511.01
+Transfer/sec:      5.33MB
+=======================================

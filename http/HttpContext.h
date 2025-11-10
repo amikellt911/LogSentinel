@@ -31,6 +31,10 @@ class HttpContext
         {
             return request_;
         }
+        HttpRequest& requestRef()
+        {
+            return request_;
+        }
         const State& states() const
         {
             return state_;

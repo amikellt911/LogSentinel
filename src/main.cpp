@@ -1,3 +1,4 @@
-#include <MiniMuduo/base/Logger.h>
-
-int main(){ return 0; }
+int main()
+{
+    return 0;
+}
