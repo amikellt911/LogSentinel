@@ -1,0 +1,49 @@
+MVP1 Performance Test Results - Mon Nov 10 01:13:34 PM CST 2025
+=======================================
+Target URL: http://127.0.0.1:8080/logs
+
+
+
+### Test with Connections: 200 ###
+Running 30s test @ http://127.0.0.1:8080/logs
+  4 threads and 200 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     3.74ms  214.01us   9.20ms   84.45%
+    Req/Sec    13.39k   368.99    16.43k    73.58%
+  1598796 requests in 30.03s, 220.02MB read
+Requests/sec:  53242.87
+Transfer/sec:      7.33MB
+
+
+### Test with Connections: 400 ###
+Running 30s test @ http://127.0.0.1:8080/logs
+  4 threads and 400 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     7.77ms  485.99us  22.73ms   84.29%
+    Req/Sec    12.92k   565.33    14.73k    70.75%
+  1542931 requests in 30.06s, 213.36MB read
+Requests/sec:  51332.41
+Transfer/sec:      7.10MB
+
+
+### Test with Connections: 600 ###
+Running 30s test @ http://127.0.0.1:8080/logs
+  4 threads and 600 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    11.98ms  672.82us  24.17ms   89.04%
+    Req/Sec    12.56k   761.19    18.00k    68.67%
+  1501315 requests in 30.10s, 207.61MB read
+Requests/sec:  49878.40
+Transfer/sec:      6.90MB
+
+
+### Test with Connections: 800 ###
+Running 30s test @ http://127.0.0.1:8080/logs
+  4 threads and 800 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    17.59ms    0.93ms  31.12ms   79.81%
+    Req/Sec    11.42k   707.97    14.14k    78.08%
+  1364414 requests in 30.09s, 188.67MB read
+Requests/sec:  45347.18
+Transfer/sec:      6.27MB
+=======================================

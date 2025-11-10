@@ -2,7 +2,7 @@ Mvp后优化点
 1.“received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP”改为时间戳Unix的int，因为高负载下，网络接收到任务和任务执行的时间差可能会很长，到时候要onmessage或httpcallback的时候要获取当前时间戳。
 2.和线程池优化结合，每一个work线程池都有一个各自的thread_local的sqlite3句柄，这样可以优化，通过NOMUTEX代替FULLMUTEX（flags，sqlite3_open_v2的选项）
 3.如果SaveLog失败，抛出异常，异常处理的时候，可以加入重试或写入死信队列等机制。
-
+4.如果出现SQLITE_BUSY，要进行处理，否则会直接抛异常，因为sqlite设计无法无限阻塞，
 遇到的Bug：
 1.测试时：“ASSERT_THROW((SqlitePersistence(invalid_path)), std::runtime_error);”如果少加一个括号用“ASSERT_THROW(SqlitePersistence(invalid_path), std::runtime_error);”，
 另一个表达式方法，也是C++11后推荐的,使用SqlitePersistence{invalid_path}花括号来初始化
