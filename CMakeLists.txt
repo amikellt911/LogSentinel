@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.14)
 project(LogSentinel LANGUAGES CXX)
 
+# === 【新增这一行】告诉 CMake 生成 clangd 需要的数据库文件 ===
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -12,17 +15,27 @@ FetchContent_Declare(
   MiniMuduo
   GIT_REPOSITORY https://github.com/amikellt911/MiniMuduo.git
   GIT_TAG        v1.1.1
-  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/MiniMuduo
 )
 
 FetchContent_Declare(
   googletest
   GIT_REPOSITORY https://github.com/google/googletest.git
   GIT_TAG        v1.17.0
-  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest
+)
+FetchContent_Declare(
+  cpr
+  GIT_REPOSITORY https://github.com/libcpr/cpr.git
+  GIT_TAG 1.12.0
+)
+set(CPR_USE_SYSTEM_CURL ON)
+
+FetchContent_Declare(
+  nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG v3.11.3
 )
 
-FetchContent_MakeAvailable(MiniMuduo googletest)
+FetchContent_MakeAvailable(MiniMuduo googletest cpr nlohmann_json)
 find_package(SQLite3 REQUIRED)
 
 #--------------模块管理------------------
@@ -48,6 +61,7 @@ add_library(threadpool_module STATIC
 )
 add_library(ai_module STATIC
   ai/MockAI.cpp
+  ai/GeminiApiAi.cpp
 )
 
 target_include_directories(http_module PUBLIC
@@ -72,6 +86,13 @@ target_include_directories(ai_module PUBLIC
 target_link_libraries(http_module PUBLIC MiniMuduo util_module)
 target_link_libraries(threadpool_module PUBLIC MiniMuduo)
 target_link_libraries(persistence_module PRIVATE SQLite::SQLite3)
+
+# 为 ai_module 链接 cpr 和 nlohmann_json
+target_link_libraries(ai_module PUBLIC
+  cpr::cpr
+  nlohmann_json::nlohmann_json
+)
+
 #-----------测试模块---------------
 enable_testing()
 

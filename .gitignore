@@ -2,3 +2,4 @@
 /third_party
 /.vscode
 /persistence/data
+/ai/.env
