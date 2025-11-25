@@ -202,6 +202,7 @@ threadpool_module
 core_module
 persistence_module
 ai_module
+notification_module
 )
 target_link_libraries(testServerGeminiApi PRIVATE
 http_module
@@ -209,6 +210,7 @@ threadpool_module
 core_module
 persistence_module
 ai_module
+notification_module
 )
 #-----------主程序---------------
 add_executable(LogSentinel

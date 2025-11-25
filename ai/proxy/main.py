@@ -5,19 +5,37 @@ from dotenv import load_dotenv
 from typing import List, Dict, Any
 from pydantic import BaseModel
 from pathlib import Path
+import uvicorn
+import sys
+# ==========================================
+# 1. 路径与环境配置 (最先执行)
+# ==========================================
 
-# 导入我们的Provider实现和基类
-from .providers.base import AIProvider
-from .providers.gemini import GeminiProvider
+# 获取当前文件 (main.py) 的绝对路径
+# e.g., /home/llt/.../LogSentinel/ai/proxy/main.py
+current_file = Path(__file__).resolve()
 
-# --- 智能地加载.env文件 ---
-# 获取此文件(main.py)所在的目录
-current_dir = Path(__file__).parent
-# .env文件位于上一级目录 (ai/)
-dotenv_path = current_dir.parent / '.env'
-# 从指定的路径加载环境变量
+# 获取项目根目录 (LogSentinel/)
+# main.py -> proxy -> ai -> LogSentinel
+project_root = current_file.parent.parent.parent
+
+# 将项目根目录加入 Python 搜索路径，解决 "ImportError"
+sys.path.append(str(project_root))
+
+# 加载 .env 文件
+# 假设 .env 在 ai/ 目录下 (main.py -> proxy -> ai)
+dotenv_path = current_file.parent.parent / '.env'
+print(f"Attempting to load .env file from: {dotenv_path}")
 load_dotenv(dotenv_path=dotenv_path)
-print(f"Attempting to load .env file from: {dotenv_path.resolve()}")
+
+# ==========================================
+# 2. 导入模块 (必须在 sys.path 设置之后)
+# ==========================================
+# 现在可以使用绝对导入了
+from ai.proxy.providers.base import AIProvider
+from ai.proxy.providers.gemini import GeminiProvider
+from ai.proxy.providers.mock import MockProvider
+
 
 
 # --- 应用设置 ---
@@ -45,7 +63,7 @@ else:
         print("GEMINI_API_KEY not found in environment variables. Gemini provider is disabled.")
     else:
         print("Found placeholder GEMINI_API_KEY. Please replace 'YOUR_API_KEY' in ai/.env. Gemini provider is disabled.")
-
+providers["mock"] = MockProvider(delay=0.5)
 # 未来可以在这里添加并注册OpenAI, Claude等其他Provider
 # openai_api_key = os.getenv("OPENAI_API_KEY")
 # if openai_api_key:
@@ -114,3 +132,10 @@ async def chat_with_logs(provider_name: str, chat_request: ChatRequest):
         return {"provider": provider_name, "response": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred during chat: {e}")
+    
+
+if __name__ == "__main__":
+    # host="0.0.0.0" 允许局域网访问，"127.0.0.1" 仅限本机
+    # workers=1 单进程模式，适合调试
+    print(f"🚀 Starting LogSentinel AI Proxy on port 8001...")
+    uvicorn.run(app, host="127.0.0.1", port=8001)
