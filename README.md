@@ -3,6 +3,46 @@
 LogSentinel 是一个基于 C++ 实现的高性能日志分析服务。
 
 项目采用 Reactor 模式处理网络I/O，并通过独立的线程池执行业务逻辑，以实现高并发和低延迟。
+## 项目简介 (Introduction)
+
+**LogSentinel** 是一个高性能、低延迟的日志分析引擎。它旨在解决传统日志系统“只存储、不理解”的痛点。
+
+通过结合 **C++ 高并发网络架构**（Reactor 模式 + 线程池）与 **大语言模型（LLM）** 的推理能力，LogSentinel 能够实时接收海量日志，异步进行根因分析（Root Cause Analysis），并提供结构化的修复建议与实时 Webhook 告警。
+
+## 系统演示 (Demo)
+
+### 1. Web 监控面板
+![Alt text](%E6%97%A0%E6%A0%87%E9%A2%98.png)
+
+### 2. 系统架构
+![Alt text](%E6%97%A0%E6%A0%87%E9%A2%98-1.png)
+
+![Alt text](%E6%97%A0%E6%A0%87%E9%A2%98-2.png)
+
+## 🛠️ 技术栈 (Tech Stack)
+
+*   **Core Server**: C++17, CMake
+*   **Network**: MiniMuduo (Epoll, Non-blocking I/O)
+*   **Concurrency**: Thread Pool
+*   **Persistence**: SQLite3 (WAL Mode)
+*   **Network Client**: cpr 
+*   **JSON Processing**: nlohmann/json
+*   **AI Service**: Python 3.10, FastAPI, Google GenAI SDK
+*   **Frontend**: HTML5, CSS3, JavaScript (Fetch API)
+
+## 🔌 API 文档 (API Reference)
+
+### 提交日志
+*   **URL**: `POST /logs`
+*   **Content-Type**: `application/json`
+*   **Body**: `{"msg": "Error content..."}`
+*   **Response**: `202 Accepted`, `{"trace_id": "..."}`
+
+### 查询结果
+*   **URL**: `GET /results/{trace_id}`
+*   **Response**:
+    *   `200 OK`: `{"result": {...}, "trace_id": "..."}`
+    *   `404 Not Found`: 处理中或不存在
 
 ## 待优化项汇总 (Optimization Roadmap)
 
