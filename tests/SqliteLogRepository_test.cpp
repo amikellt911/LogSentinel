@@ -1,12 +1,12 @@
 #include <gtest/gtest.h>
-#include <persistence/SqlitePersistence.h>
+#include <persistence/SqliteLogRepository.h>
 
-class SqlitePersistence_test : public ::testing::Test
+class SqliteLogRepository_test : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        persistence_ = std::make_unique<SqlitePersistence>(":memory:");
+        persistence_ = std::make_unique<SqliteLogRepository>(":memory:");
     }
 
     void TearDown() override
@@ -43,18 +43,18 @@ protected:
         return reinterpret_cast<const char*>(sqlite3_column_text(stmt,0));
     }
 
-    std::unique_ptr<SqlitePersistence> persistence_;
+    std::unique_ptr<SqliteLogRepository> persistence_;
 };
 
 
 //测试构造函数，是否成功构造了一个内存数据库
-TEST_F(SqlitePersistence_test, test_constructor)
+TEST_F(SqliteLogRepository_test, test_constructor)
 {
     EXPECT_NE(persistence_,nullptr);
 }
 
 //测试保存日志功能
-TEST_F(SqlitePersistence_test, test_save_log)
+TEST_F(SqliteLogRepository_test, test_save_log)
 {
     std::string trace_id="test_trace_id";
     std::string log_content="test log content";
@@ -64,7 +64,7 @@ TEST_F(SqlitePersistence_test, test_save_log)
 }
 
 //测试保存日志功能，保存多个日志
-TEST_F(SqlitePersistence_test, test_save_multiple_logs)
+TEST_F(SqliteLogRepository_test, test_save_multiple_logs)
 {
     std::string trace_id1="test_trace_id1";
     std::string log_content1="test log content1";
@@ -84,7 +84,7 @@ TEST_F(SqlitePersistence_test, test_save_multiple_logs)
 }
 
 //测试插入重复trace_id导致抛出runtime_error
-TEST_F(SqlitePersistence_test, test_save_duplicate_trace_id)
+TEST_F(SqliteLogRepository_test, test_save_duplicate_trace_id)
 {
     std::string trace_id="test_trace_id";
     std::string log_content1="test log content1";
@@ -97,14 +97,14 @@ TEST_F(SqlitePersistence_test, test_save_duplicate_trace_id)
 }
 
 // 测试构造函数失败路径：尝试在一个没有权限的目录创建数据库
-TEST(SqlitePersistenceConstructorTest, ThrowsOnInvalidPath) {
+TEST(SqliteLogRepositoryConstructorTest, ThrowsOnInvalidPath) {
     // 注意：这个测试不能用 Test Fixture，因为它测试的就是构造函数本身
     // 这个测试在 Docker 或 CI 环境中可能需要特殊设置才能运行
     #ifdef __linux__
     const std::string invalid_path = "/root/no_permission/test.db";
     //一个非常劣性的bug
     //必须加一个括号来解决
-    //ASSERT_THROW((SqlitePersistence(invalid_path)), std::runtime_error);
-    ASSERT_THROW(SqlitePersistence{invalid_path}, std::runtime_error);
+    //ASSERT_THROW((SqliteLogRepository(invalid_path)), std::runtime_error);
+    ASSERT_THROW(SqliteLogRepository{invalid_path}, std::runtime_error);
     #endif
 }

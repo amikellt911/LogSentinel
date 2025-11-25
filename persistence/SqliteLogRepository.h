@@ -3,11 +3,11 @@
 #include<string>
 #include<mutex>
 #include<optional>
-class SqlitePersistence
+class SqliteLogRepository
 {
 public:
-    SqlitePersistence(const std::string& db_path);
-    ~SqlitePersistence();
+    SqliteLogRepository(const std::string& db_path);
+    ~SqliteLogRepository();
     void SaveRawLog(const std::string& trace_id,const std::string& raw_log);
     // 未来要用的方法，可以先写个空实现
     void saveAnalysisResult(const std::string& trace_id, const std::string& result,const std::string& status);
@@ -16,7 +16,7 @@ public:
 private:
     sqlite3* db_=nullptr;
     std::mutex mutex_;
-    friend class SqlitePersistence_test;
+    friend class SqliteLogRepository_test;
 };
 
 
