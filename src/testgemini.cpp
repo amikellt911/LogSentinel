@@ -3,7 +3,7 @@
 #include "http/HttpResponse.h"
 #include "threadpool/ThreadPool.h"
 #include "core/AnalysisTask.h"
-#include "persistence/SqlitePersistence.h"
+#include "persistence/SqliteLogRepository.h"
 #include "ai/AiProvider.h" // 引入AI抽象接口
 #include "ai/GeminiApiAi.h" // 引入Gemini AI实现
 #include <MiniMuduo/net/TcpConnection.h>
@@ -25,10 +25,10 @@ private:
 
 int main()
 {
-    std::shared_ptr<SqlitePersistence> persistence;
+    std::shared_ptr<SqliteLogRepository> persistence;
     try
     {
-        persistence = std::make_shared<SqlitePersistence>("test.db");
+        persistence = std::make_shared<SqliteLogRepository>("test.db");
     }
     catch (const std::exception &e)
     {

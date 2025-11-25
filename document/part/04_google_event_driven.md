@@ -44,7 +44,7 @@
 
 ### 4.1 涉及功能
 1.  **消息队列 (Message Queue)**：目前是内存队列，未来可能升级为外部 MQ。
-2.  **幂等性设计 (Idempotency)**：在 `SqlitePersistence` 中通过 `trace_id` 唯一索引来实现。
+2.  **幂等性设计 (Idempotency)**：在 `SqliteLogRepository` 中通过 `trace_id` 唯一索引来实现。
 
 ### 4.2 优先级 (MVP 规划)
 *   **MVP 2 (健壮性)**：

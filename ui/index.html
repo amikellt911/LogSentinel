@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LogSentinel 实时监控</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-main: #1e293b;
+            --danger: #ef4444;
+            --success: #22c55e;
+            --warning: #f59e0b;
+        }
+
+        body {
+            font-family: 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        h1 { text-align: center; color: var(--primary-color); }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+            margin-bottom: 24px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+            padding: 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            font-family: monospace;
+            resize: vertical;
+            margin-bottom: 16px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.9; }
+        button:disabled { background-color: #94a3b8; cursor: not-allowed; }
+
+        #status { margin-left: 10px; font-size: 0.9em; color: #64748b; }
+
+        /* 结果展示区域 */
+        .result-box { display: none; border-left: 5px solid #ccc; padding-left: 15px; }
+        .result-box.high { border-color: var(--danger); }
+        .result-box.medium { border-color: var(--warning); }
+        .result-box.low { border-color: var(--success); }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            color: white;
+            font-size: 0.8em;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .bg-high { background-color: var(--danger); }
+        .bg-medium { background-color: var(--warning); }
+        .bg-low { background-color: var(--success); }
+        
+        pre {
+            background: #f1f5f9;
+            padding: 10px;
+            border-radius: 6px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🛡️ LogSentinel Dashboard</h1>
+
+    <!-- 输入区域 -->
+    <div class="card">
+        <h3>提交日志进行分析</h3>
+        <textarea id="logInput" placeholder="在此粘贴系统日志... 例如: Critical Error: DB connection failed..."></textarea>
+        <div>
+            <button id="btnSubmit" onclick="submitLog()">🚀 开始分析</button>
+            <span id="status"></span>
+        </div>
+    </div>
+
+    <!-- 结果区域 -->
+    <div id="resultArea" class="card result-box">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3>分析报告</h3>
+            <span id="riskBadge" class="badge">Pending</span>
+        </div>
+        <p><strong>Trace ID:</strong> <code id="traceIdDisplay"></code></p>
+        
+        <h4>摘要 (Summary)</h4>
+        <p id="summaryText">...</p>
+
+        <h4>根因 (Root Cause)</h4>
+        <p id="rootCauseText">...</p>
+
+        <h4>解决方案 (Solution)</h4>
+        <pre id="solutionText">...</pre>
+    </div>
+
+    <script>
+        const SERVER_URL = "http://127.0.0.1:8080";
+        let pollInterval = null;
+
+        async function submitLog() {
+            const logContent = document.getElementById('logInput').value;
+            if (!logContent.trim()) return alert("日志不能为空");
+
+            setLoading(true);
+            resetResult();
+
+            try {
+                // 1. 发送 POST 请求
+                const response = await fetch(`${SERVER_URL}/logs`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ msg: logContent }) // 注意：C++端要解析这个 json key，或者直接发 raw string
+                });
+
+                if (!response.ok) throw new Error("提交失败");
+
+                const data = await response.json();
+                const traceId = data.trace_id;
+                
+                document.getElementById('status').innerText = `已提交，TraceID: ${traceId}，分析中...`;
+                document.getElementById('traceIdDisplay').innerText = traceId;
+                document.getElementById('resultArea').style.display = 'block';
+
+                // 2. 开始轮询 GET 结果
+                startPolling(traceId);
+
+            } catch (e) {
+                alert("错误: " + e.message);
+                setLoading(false);
+            }
+        }
+
+        function startPolling(traceId) {
+            let attempts = 0;
+            if (pollInterval) clearInterval(pollInterval);
+
+            pollInterval = setInterval(async () => {
+                attempts++;
+                try {
+                    const res = await fetch(`${SERVER_URL}/results/${traceId}`);
+                    
+                    if (res.status === 200) {
+                        // 成功拿到结果
+                        const data = await res.json();
+                        renderResult(data.result); // data.result 是 AI 返回的 JSON 对象
+                        clearInterval(pollInterval);
+                        setLoading(false);
+                        document.getElementById('status').innerText = "✅ 分析完成";
+                    } else if (res.status === 404) {
+                        // 还在处理中
+                        document.getElementById('status').innerText = `分析中... (${attempts}s)`;
+                    } else {
+                        throw new Error("服务器错误");
+                    }
+                } catch (e) {
+                    console.error("Polling error", e);
+                }
+
+                // 30秒超时停止
+                if (attempts > 30) {
+                    clearInterval(pollInterval);
+                    setLoading(false);
+                    document.getElementById('status').innerText = "⚠️ 分析超时";
+                }
+            }, 1000); // 每秒查一次
+        }
+
+        function renderResult(aiJson) {
+            // 根据 risk_level 设置颜色
+            const box = document.getElementById('resultArea');
+            const badge = document.getElementById('riskBadge');
+            
+            // 清除旧类
+            box.classList.remove('high', 'medium', 'low');
+            badge.classList.remove('bg-high', 'bg-medium', 'bg-low');
+
+            // 这里的字段名要和你 C++ 返回的 JSON 字段一致
+            const risk = (aiJson.risk_level || 'low').toLowerCase();
+            box.classList.add(risk);
+            badge.classList.add('bg-' + risk);
+            badge.innerText = risk.toUpperCase();
+
+            document.getElementById('summaryText').innerText = aiJson.summary || "无摘要";
+            document.getElementById('rootCauseText').innerText = aiJson.root_cause || "未识别";
+            document.getElementById('solutionText').innerText = aiJson.solution || "无建议";
+        }
+
+        function setLoading(isLoading) {
+            document.getElementById('btnSubmit').disabled = isLoading;
+            document.getElementById('btnSubmit').innerText = isLoading ? "⏳ 处理中..." : "🚀 开始分析";
+        }
+
+        function resetResult() {
+            document.getElementById('resultArea').style.display = 'none';
+            document.getElementById('summaryText').innerText = "";
+        }
+    </script>
+</body>
+</html>

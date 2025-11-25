@@ -41,7 +41,7 @@
 ### 3. 持久化层 (`persistence/`)
 - **功能**：数据的落地存储。
 - **当前实现**：
-  - `SqlitePersistence`: 封装 SQLite 操作，管理 `raw_logs` (原始日志) 和 `analysis_results` (分析结果) 两张表。
+  - `SqliteLogRepository`: 封装 SQLite 操作，管理 `raw_logs` (原始日志) 和 `analysis_results` (分析结果) 两张表。
   - **MVP 特性**：选用 SQLite 便于部署，实现了基础的 CRUD 操作。
 
 ### 4. AI 集成层 (`ai/`)
@@ -75,7 +75,7 @@
 1. **接收**：用户发送 POST 请求到 `/log`。
 2. **封装**：服务器生成 `trace_id`，将请求封装为 `AnalysisTask`。
 3. **调度**：任务被提交到线程池。
-4. **存储**：工作线程调用 `SqlitePersistence` 将原始日志写入 `raw_logs` 表。
+4. **存储**：工作线程调用 `SqliteLogRepository` 将原始日志写入 `raw_logs` 表。
 5. **响应**：服务器立即返回 HTTP 202 Accepted 及 `trace_id`，实现异步处理。
 
 ## 未来迭代计划

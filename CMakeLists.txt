@@ -14,7 +14,7 @@ include(FetchContent)
 FetchContent_Declare(
   MiniMuduo
   GIT_REPOSITORY https://github.com/amikellt911/MiniMuduo.git
-  GIT_TAG        v1.1.1
+  GIT_TAG        v1.1.2
 )
 
 FetchContent_Declare(
@@ -54,7 +54,8 @@ add_library(core_module STATIC
     core/AnalysisTask.cpp
 )
 add_library(persistence_module STATIC
-    persistence/SqlitePersistence.cpp
+    persistence/SqliteLogRepository.cpp
+    persistence/SqliteConfigRepository.cpp
 )
 add_library(threadpool_module STATIC
   threadpool/ThreadPool.cpp
@@ -62,8 +63,11 @@ add_library(threadpool_module STATIC
 add_library(ai_module STATIC
   ai/MockAI.cpp
   ai/GeminiApiAi.cpp
+  ai/AiTypes.h 
 )
-
+add_library(notification_module STATIC
+  notification/WebhookNotifier.cpp
+)
 target_include_directories(http_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -82,6 +86,9 @@ target_include_directories(threadpool_module PUBLIC
 target_include_directories(ai_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
+target_link_directories(notification_module PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
 target_link_libraries(http_module PUBLIC MiniMuduo util_module)
 target_link_libraries(threadpool_module PUBLIC MiniMuduo)
@@ -89,6 +96,10 @@ target_link_libraries(persistence_module PRIVATE SQLite::SQLite3)
 
 # 为 ai_module 链接 cpr 和 nlohmann_json
 target_link_libraries(ai_module PUBLIC
+  cpr::cpr
+  nlohmann_json::nlohmann_json
+)
+target_link_libraries(notification_module PUBLIC
   cpr::cpr
   nlohmann_json::nlohmann_json
 )
@@ -111,7 +122,7 @@ add_executable(test_threadpool
 )
 
 add_executable(test_sqlite
-  tests/SqlitePersistence_test.cpp
+  tests/SqliteLogRepository_test.cpp
 )
 
 # target_include_directories(test_http_context PRIVATE
@@ -160,6 +171,9 @@ add_executable(testServerPoolSqlite
 add_executable(testServerPoolSqliteMockAI
   src/testserverPoolSqliteMock.cpp
 )
+add_executable(testServerGeminiApi
+  src/testgemini.cpp
+)
 # 因为module会继承过来
 # target_include_directories(LogSentinel PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
@@ -189,6 +203,13 @@ core_module
 persistence_module
 ai_module
 )
+target_link_libraries(testServerGeminiApi PRIVATE
+http_module
+threadpool_module
+core_module
+persistence_module
+ai_module
+)
 #-----------主程序---------------
 add_executable(LogSentinel
     src/main.cpp   
@@ -201,7 +222,8 @@ add_executable(LogSentinel
 target_link_libraries(LogSentinel PRIVATE 
 http_module
 core_module
-# persistence_module
+persistence_module
 threadpool_module
-# ai_module
+ai_module
+notification_module
 )

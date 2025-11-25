@@ -70,8 +70,18 @@ async def analyze_log(provider_name: str, request: Request):
 
     try:
         log_text = (await request.body()).decode('utf-8')
-        # 这里的Prompt可以进一步通过配置或请求参数来动态指定
-        default_prompt = "You are a professional software engineer. Analyze the following log entry, identify the root cause of the error, and provide a concise summary and a suggested solution."
+        # 优化的 Prompt：明确分析要求和风险等级判断标准
+        default_prompt = """You are a professional software engineer and log analysis expert. Analyze the following log entry and provide:
+
+1. A concise summary of the error or issue
+2. Risk level assessment:
+   - 'high': System crashes, data loss, security vulnerabilities, critical service failures
+   - 'medium': Performance degradation, non-critical errors, warnings that may escalate
+   - 'low': Informational messages, minor warnings, expected errors
+3. Root cause analysis based on the log content
+4. Actionable solution or remediation steps
+
+Provide your analysis in a structured format."""
         
         result = provider.analyze(log_text=log_text, prompt=default_prompt)
         

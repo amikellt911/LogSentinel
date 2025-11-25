@@ -19,7 +19,7 @@
 
 ### 2.1 项目开发参考
 *   **Benchmark 对标**：虽然 LogSentinel 是 C++ 项目，但我们在撰写论文或进行性能测试时，可以参考 `go-logger` 的测试方法（高并发写入延迟、内存分配）。如果我们未来提供 Go SDK，它是一个强劲的竞争对手/参考对象。
-*   **日志轮转 (Log Rotation)**：`go-logger` 提供了非常全面的日志轮转策略（按大小、按时间、混合模式）。LogSentinel 的 `SqlitePersistence` 目前主要关注存储，但对于本地日志文件（如果有的话），应该参考这种成熟的轮转设计。
+*   **日志轮转 (Log Rotation)**：`go-logger` 提供了非常全面的日志轮转策略（按大小、按时间、混合模式）。LogSentinel 的 `SqliteLogRepository` 目前主要关注存储，但对于本地日志文件（如果有的话），应该参考这种成熟的轮转设计。
 
 ### 2.2 论文写作素材
 *   **Related Work**: 在介绍“高性能日志库”时，可以将其作为 Go 语言生态中的代表（State-of-the-art in Go），与 C++ 的 NanoLog/spdlog 进行横向对比。

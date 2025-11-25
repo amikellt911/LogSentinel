@@ -10,7 +10,7 @@
 目前的 AI 返回的是纯文本分析，无法被程序自动处理（如判断风险等级）。我们需要通过 Prompt Engineering 让 AI 返回 JSON。
 
 - [ ] **优化 Python Proxy Prompt (`ai/proxy/main.py`)**
-    - [ ] 修改 `default_prompt`，强制要求返回 JSON 格式。
+    - [x] 修改 `default_prompt`，强制要求返回 JSON 格式。
     - [ ] **目标格式**：
         ```json
         {
@@ -24,7 +24,7 @@
 
 - [ ] **增强 C++ 客户端解析 (`ai/GeminiApiAi.cpp`)**
     - [ ] 在 `analyze` 方法中，获取到 Proxy 返回的 `analysis` 字符串后，尝试将其解析为 `nlohmann::json` 对象。
-    - [ ] **接口调整**：虽然 `IAnalyzer` 返回 `string`，但我们可以约定返回的是 JSON string。或者，我们可以扩展接口返回一个结构体 `AnalysisResult`。
+    - [x] **接口调整**：虽然 `IAnalyzer` 返回 `string`，但我们可以约定返回的是 JSON string。或者，我们可以扩展接口返回一个结构体 `AnalysisResult`。
         - *决策*：为了保持接口简单，暂时仍返回 JSON string，但在业务层进行二次解析。
 
 ## 2. 实现 Webhook 告警 (Webhook Alerting)
@@ -60,7 +60,7 @@
                 notifier->notify("High Risk Log Detected", json["summary"]);
             }
             ```
-        4. 将结构化结果存入 SQLite (可能需要更新 `SqlitePersistence` 以存储 JSON 字段，或者直接存为文本)。
+        4. 将结构化结果存入 SQLite (可能需要更新 `SqliteLogRepository` 以存储 JSON 字段，或者直接存为文本)。
 
 ## 4. 健壮性优化 (Resilience)
 - [ ] **GeminiApiAi 重试机制**

@@ -3,7 +3,7 @@
 
 #include <string>
 #include <vector>
-
+#include "AiTypes.h"
 // 为了与Python端的JSON结构保持一致，我们可以定义一个简单的消息结构体
 // 不过，为了降低接口的依赖复杂度，一个更简单的初步方案是直接传递JSON字符串
 /*

@@ -1,8 +1,8 @@
-#include "persistence/SqlitePersistence.h"
+#include "persistence/SqliteLogRepository.h"
 #include <filesystem>
 #include <iostream>
-#include "SqlitePersistence.h"
-SqlitePersistence::SqlitePersistence(const std::string &db_path)
+#include "SqliteLogRepository.h"
+SqliteLogRepository::SqliteLogRepository(const std::string &db_path)
 {
     std::string data_path = "../persistence/data/";
     if (!std::filesystem::exists(data_path))
@@ -75,12 +75,12 @@ CREATE TABLE IF NOT EXISTS raw_logs (
     }
 }
 
-SqlitePersistence::~SqlitePersistence()
+SqliteLogRepository::~SqliteLogRepository()
 {
     if (db_)
         sqlite3_close_v2(db_);
 }
-void SqlitePersistence::SaveRawLog(const std::string &trace_id, const std::string &raw_log)
+void SqliteLogRepository::SaveRawLog(const std::string &trace_id, const std::string &raw_log)
 {
     std::lock_guard<std::mutex> lock_(mutex_);
     const char *sql_insert_template = "insert into raw_logs(trace_id,log_content) values(?,?);";
@@ -108,7 +108,7 @@ void SqlitePersistence::SaveRawLog(const std::string &trace_id, const std::strin
     sqlite3_finalize(stmt);
 }
 
-void SqlitePersistence::saveAnalysisResult(const std::string &trace_id, const std::string &result, const std::string &status)
+void SqliteLogRepository::saveAnalysisResult(const std::string &trace_id, const std::string &result, const std::string &status)
 {
     std::lock_guard<std::mutex> lock_(mutex_);
     const char *sql_insert_template = "insert into analysis_results(trace_id,analysis_content,status) values(?,?,?);";
@@ -132,7 +132,7 @@ void SqlitePersistence::saveAnalysisResult(const std::string &trace_id, const st
     sqlite3_finalize(stmt);
 }
 
-std::optional<std::string> SqlitePersistence::queryResultByTraceId(const std::string &trace_id)
+std::optional<std::string> SqliteLogRepository::queryResultByTraceId(const std::string &trace_id)
 {
     std::lock_guard<std::mutex> lock_(mutex_);
     const char *sql_select_template = "select analysis_content from analysis_results where trace_id=?;";

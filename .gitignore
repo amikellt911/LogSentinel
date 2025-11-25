@@ -3,3 +3,6 @@
 /.vscode
 /persistence/data
 /ai/.env
+/ai/proxy/__pycache__
+/venv
+/ai/proxy/providers/__pycache__

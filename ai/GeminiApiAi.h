@@ -4,11 +4,13 @@
 #include "ai/AiProvider.h"
 #include <string>
 #include <memory>
+#include <nlohmann/json.hpp>
 
 // 前向声明，避免在头文件中引入完整的cpr头文件，加快编译速度
 namespace cpr {
     class Session;
 }
+
 
 class GeminiApiAi : public AiProvider {
 public:
@@ -21,8 +23,6 @@ public:
     std::string chat(const std::string& history_json, const std::string& new_message) override;
 
 private:
-    // 使用智能指针管理cpr::Session的生命周期
-    std::unique_ptr<cpr::Session> session_;
     std::string analyze_url_;
     std::string chat_url_;
 };

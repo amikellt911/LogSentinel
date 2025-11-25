@@ -53,7 +53,7 @@
     - [ ] **性能剖析**：使用 `gprof` 或 `perf` 分析高负载下的 CPU 热点。
     - [ ] **批量处理 (Batching)**：
         - [ ] **Worker 改造**：一次从队列取出 N 个任务（如 100 个）。
-        - [ ] **数据库优化**：改造 `SqlitePersistence::SaveRawLog` 支持 `vector<Task>`，使用 SQLite 事务 (Transaction) 进行批量插入。
+        - [ ] **数据库优化**：改造 `SqliteLogRepository::SaveRawLog` 支持 `vector<Task>`，使用 SQLite 事务 (Transaction) 进行批量插入。
 
 ---
 *注：建议按优先级顺序执行。完成第一优先级后系统功能基本完整；完成第二优先级后系统具备生产级稳定性；第三优先级则是毕业设计论文中“系统优化”章节的核心素材。*

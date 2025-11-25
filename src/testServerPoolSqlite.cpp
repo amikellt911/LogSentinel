@@ -3,7 +3,7 @@
 #include "http/HttpResponse.h"
 #include "threadpool/ThreadPool.h"
 #include "core/AnalysisTask.h"
-#include "persistence/SqlitePersistence.h"
+#include "persistence/SqliteLogRepository.h"
 class testServer : public HttpServer
 {
 public:
@@ -20,10 +20,10 @@ private:
 
 int main()
 {
-    std::shared_ptr<SqlitePersistence> persistence;
+    std::shared_ptr<SqliteLogRepository> persistence;
     try
     {
-        persistence=std::make_shared<SqlitePersistence>("test.db");
+        persistence=std::make_shared<SqliteLogRepository>("test.db");
     }
     catch(const std::exception& e)
     {
