@@ -44,6 +44,7 @@ add_library(http_module STATIC
     http/HttpResponse.cpp
     http/HttpContext.cpp
     http/HttpServer.cpp
+    http/Router.cpp
 )
 
 add_library(util_module STATIC
@@ -68,6 +69,10 @@ add_library(ai_module STATIC
 add_library(notification_module STATIC
   notification/WebhookNotifier.cpp
 )
+add_library(handler_module STATIC
+  handlers/LogHandler.cpp
+  handlers/DashboardHandler.cpp
+)
 target_include_directories(http_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -89,21 +94,33 @@ target_include_directories(ai_module PUBLIC
 target_link_directories(notification_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
-
+target_link_directories(handler_module PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
 target_link_libraries(http_module PUBLIC MiniMuduo util_module)
 target_link_libraries(threadpool_module PUBLIC MiniMuduo)
-target_link_libraries(persistence_module PRIVATE SQLite::SQLite3)
+
 
 # 为 ai_module 链接 cpr 和 nlohmann_json
 target_link_libraries(ai_module PUBLIC
   cpr::cpr
   nlohmann_json::nlohmann_json
 )
+
+target_link_libraries(persistence_module PUBLIC SQLite::SQLite3 ai_module)
 target_link_libraries(notification_module PUBLIC
   cpr::cpr
   nlohmann_json::nlohmann_json
 )
-
+target_link_libraries(handler_module PUBLIC
+  http_module
+  threadpool_module
+  core_module
+  persistence_module
+  ai_module
+  util_module
+  notification_module
+)
 #-----------测试模块---------------
 enable_testing()
 
@@ -155,62 +172,87 @@ gtest_discover_tests(test_util_traceidgenerate)
 gtest_discover_tests(test_threadpool)
 gtest_discover_tests(test_sqlite)
 #-----------不同模块测试用例---------------
-#http层测试用例
-add_executable(testserver
-    src/testserver.cpp   
+#这些测试用例版本变动，用不了了
+# #http层测试用例
+# add_executable(testserver
+#     src/testserver.cpp   
+# )
+# #http层结合线程池测试用例
+# add_executable(testserverpool
+#   src/testserverpool.cpp
+# )
+# #http层结合线程池和sqlite数据库测试用例
+# add_executable(testServerPoolSqlite
+#   src/testServerPoolSqlite.cpp  
+# )
+# #上面与mockai测试用例
+# add_executable(testServerPoolSqliteMockAI
+#   src/testserverPoolSqliteMock.cpp
+# )
+# add_executable(testServerGeminiApi
+#   src/testgemini.cpp
+# )
+add_executable(testServerRouter
+  src/testWithRouter.cpp
 )
-#http层结合线程池测试用例
-add_executable(testserverpool
-  src/testserverpool.cpp
-)
-#http层结合线程池和sqlite数据库测试用例
-add_executable(testServerPoolSqlite
-  src/testServerPoolSqlite.cpp  
-)
-#上面与mockai测试用例
-add_executable(testServerPoolSqliteMockAI
-  src/testserverPoolSqliteMock.cpp
-)
-add_executable(testServerGeminiApi
-  src/testgemini.cpp
+add_executable(testServerDashboard
+  src/testWithDashboard.cpp
 )
 # 因为module会继承过来
 # target_include_directories(LogSentinel PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
 # )
-target_link_libraries(testserver PRIVATE 
-http_module
+# target_link_libraries(testserver PRIVATE 
+# http_module
 # core_module
 # persistence_module
 # threadpool_module
 # ai_module
-)
-target_link_libraries(testserverpool PRIVATE
-http_module
-threadpool_module
-core_module
-)
-target_link_libraries(testServerPoolSqlite PRIVATE
-http_module
-threadpool_module
-core_module
-persistence_module
-)
-target_link_libraries(testServerPoolSqliteMockAI PRIVATE
+#)
+# target_link_libraries(testserverpool PRIVATE
+# http_module
+# threadpool_module
+# core_module
+# )
+# target_link_libraries(testServerPoolSqlite PRIVATE
+# http_module
+# threadpool_module
+# core_module
+# persistence_module
+# )
+# target_link_libraries(testServerPoolSqliteMockAI PRIVATE
+# http_module
+# threadpool_module
+# core_module
+# persistence_module
+# ai_module
+# notification_module
+# )
+# target_link_libraries(testServerGeminiApi PRIVATE
+# http_module
+# threadpool_module
+# core_module
+# persistence_module
+# ai_module
+# notification_module
+# )
+target_link_libraries(testServerRouter PRIVATE
 http_module
 threadpool_module
 core_module
 persistence_module
 ai_module
 notification_module
+handler_module
 )
-target_link_libraries(testServerGeminiApi PRIVATE
+target_link_libraries(testServerDashboard PRIVATE
 http_module
 threadpool_module
 core_module
 persistence_module
 ai_module
 notification_module
+handler_module
 )
 #-----------主程序---------------
 add_executable(LogSentinel
@@ -228,4 +270,5 @@ persistence_module
 threadpool_module
 ai_module
 notification_module
+handler_module
 )

@@ -18,7 +18,7 @@ public:
     ~GeminiApiAi() override;
 
     // 使用 override 关键字明确表示我们正在重写基类的虚函数
-    std::string analyze(const std::string& log_text) override;
+    LogAnalysisResult analyze(const std::string& log_text) override;
 
     std::string chat(const std::string& history_json, const std::string& new_message) override;
 

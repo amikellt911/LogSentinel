@@ -29,4 +29,5 @@ struct HttpResponse
     void setStatusMessage(std::string message);
     void setHeader(std::string key,std::string value);
     void setBody(std::string body);
+    void addCorsHeaders();
 };

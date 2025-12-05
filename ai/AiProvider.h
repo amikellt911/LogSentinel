@@ -22,7 +22,7 @@ public:
      * @param log_text 需要分析的日志
      * @return AI的分析结果
      */
-    virtual std::string analyze(const std::string& log_text) = 0;
+    virtual LogAnalysisResult analyze(const std::string& log_text) = 0;
 
     /**
      * @brief 进行一次多轮对话

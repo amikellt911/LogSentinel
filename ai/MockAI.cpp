@@ -19,7 +19,7 @@ MockAI::MockAI()
 // 析构函数，默认即可，unique_ptr会自动管理内存
 MockAI::~MockAI() = default;
 
-std::string MockAI::analyze(const std::string &log_text)
+LogAnalysisResult MockAI::analyze(const std::string &log_text)
 {
     cpr::Session session_;
     session_.SetHeader(cpr::Header{{"Content-Type", "text/plain"}});
@@ -76,7 +76,7 @@ std::string MockAI::analyze(const std::string &log_text)
 
     // 这里做一次 get<T> 再 dump 是为了清洗数据，丢弃 AI 可能返回的多余字段
     LogAnalysisResult result = analysis_json.get<LogAnalysisResult>();
-    return nlohmann::json(result).dump();
+    return result;
 }
 
 std::string MockAI::chat(const std::string& history_json, const std::string& new_message) {
