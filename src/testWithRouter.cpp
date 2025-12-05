@@ -12,7 +12,6 @@
 #include "persistence/SqliteConfigRepository.h"
 #include "http/Router.h"
 #include "handlers/LogHandler.h"
-#include "handlers/DashboardHandler.h"
 class testServer : public HttpServer
 {
 public:
@@ -69,16 +68,14 @@ int main()
     router->add("GET", "/results/*", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         handler->handleGetResult(req, resp, conn);
     });
-    auto dashboard_handler = std::make_shared<DashboardHandler>(persistence,&tpool);
-    router->add("GET", "/dashboard", [dashboard_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
-        dashboard_handler->handleGetStats(req, resp, conn);
-    });
     auto onRequest=[router](const HttpRequest& req, HttpResponse* resp,const MiniMuduo::net::TcpConnectionPtr& conn){
         bool isSuccess=router->dispatch(req,resp,conn);
         if(!isSuccess)
         {
             resp->setStatusCode(HttpResponse::HttpStatusCode::k404NotFound);
-            resp->addCorsHeaders();
+            resp->setHeader("Access-Control-Allow-Origin", "*");
+            resp->setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+            resp->setHeader("Access-Control-Allow-Headers", "Content-Type");
             resp->body_ = "{\"error\": \"404 Not Found\", \"path\": \"" + req.path() + "\"}";
         }
     };
