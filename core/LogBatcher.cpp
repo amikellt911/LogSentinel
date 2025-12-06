@@ -11,7 +11,11 @@ LogBatcher::~LogBatcher()
 }
 
 bool LogBatcher::addLog(AnalysisTask task) {
-    // 占位实现
+    std::lock_guard<std::mutex> lock(mutex_);
+    buffer_.push_back(std::move(task));
+    if(buffer_.size() >= buffer_size_){
+        flush();
+    }
     return true;
 }
 

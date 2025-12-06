@@ -23,6 +23,10 @@ class ThreadPool{
         using Task=std::function<void()>;
         bool submit(Task t);
         void shutdown();
+        size_t pendingTasks(){
+            std::lock_guard<std::mutex> lock(taskMutex_);
+            return tasks_.size();
+        }
     private:
         void working();
         std::vector<std::thread> works_;
