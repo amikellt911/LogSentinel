@@ -53,6 +53,7 @@ add_library(util_module STATIC
 
 add_library(core_module STATIC
     core/AnalysisTask.cpp
+    core/LogBatcher.cpp
 )
 add_library(persistence_module STATIC
     persistence/SqliteLogRepository.cpp
