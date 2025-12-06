@@ -1,28 +1,20 @@
 #include"core/LogBatcher.h"
+#include "LogBatcher.h"
 
 LogBatcher::LogBatcher(ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai,std::shared_ptr<INotifier> notifier)
 :thread_pool_(thread_pool),repo_(repo),ai_(ai),notifier_(notifier)
 {
-    buffer_.reserve(150);
+    ring_buffer_.reserve(capacity_);
 }
 
-LogBatcher::~LogBatcher()
+bool LogBatcher::push(AnalysisTask &&task)
+{
+    return false;
+}
+void LogBatcher::tryDispatch()
 {
 }
-
-bool LogBatcher::addLog(AnalysisTask task) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    buffer_.push_back(std::move(task));
-    if(buffer_.size() >= buffer_size_){
-        flush();
-    }
-    return true;
-}
-
-void LogBatcher::flush() {
-    // 占位实现
-}
-
-void LogBatcher::processBatch(std::vector<AnalysisTask> batch) {
+void LogBatcher::processBatch(std::vector<AnalysisTask> batch)
+{
     // 占位实现
 }
