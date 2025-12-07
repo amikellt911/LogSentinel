@@ -13,7 +13,7 @@ class INotifier;
 class LogBatcher
 {
 public:
-    LogBatcher(ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai,std::shared_ptr<INotifier> notifier);
+    LogBatcher(ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai_client_,std::shared_ptr<INotifier> notifier);
     ~LogBatcher();
     bool push(AnalysisTask&& task);
 private:
@@ -22,7 +22,7 @@ private:
 private:
     ThreadPool* thread_pool_;
     std::shared_ptr<SqliteLogRepository> repo_;
-    std::shared_ptr<AiProvider> ai_;
+    std::shared_ptr<AiProvider> ai_client_;
     std::shared_ptr<INotifier> notifier_;
     // --- 核心：Ring Buffer 实现 ---
     std::vector<AnalysisTask> ring_buffer_; 

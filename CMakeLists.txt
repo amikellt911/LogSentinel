@@ -122,6 +122,12 @@ target_link_libraries(handler_module PUBLIC
   util_module
   notification_module
 )
+target_link_libraries(core_module PUBLIC
+  threadpool_module
+  persistence_module
+  ai_module
+  notification_module
+)
 #-----------测试模块---------------
 enable_testing()
 
