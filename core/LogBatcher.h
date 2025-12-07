@@ -4,7 +4,7 @@
 #include<memory>
 #include<mutex>
 #include"core/AnalysisTask.h"
-
+namespace MiniMuduo{namespace net{class EventLoop;}};
 class ThreadPool;
 class SqliteLogRepository;
 class AiProvider;
@@ -14,12 +14,15 @@ class LogBatcher
 {
 public:
     LogBatcher(ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai_client_,std::shared_ptr<INotifier> notifier);
+    LogBatcher(MiniMuduo::net::EventLoop* loop,ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai_client_,std::shared_ptr<INotifier> notifier);
     ~LogBatcher();
     bool push(AnalysisTask&& task);
 private:
-    void tryDispatch();
+    void tryDispatch(size_t limit);
+    void onTimeout();
     void processBatch(std::vector<AnalysisTask> batch);
 private:
+    MiniMuduo::net::EventLoop* loop_;
     ThreadPool* thread_pool_;
     std::shared_ptr<SqliteLogRepository> repo_;
     std::shared_ptr<AiProvider> ai_client_;
