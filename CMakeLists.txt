@@ -112,6 +112,7 @@ target_link_libraries(persistence_module PUBLIC SQLite::SQLite3 ai_module)
 target_link_libraries(notification_module PUBLIC
   cpr::cpr
   nlohmann_json::nlohmann_json
+  persistence_module
 )
 target_link_libraries(handler_module PUBLIC
   http_module

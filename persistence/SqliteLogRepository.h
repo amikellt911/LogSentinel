@@ -20,6 +20,12 @@ struct DashboardStats{
     std::vector<AlertInfo> recent_alerts;
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, high_risk, medium_risk, low_risk, avg_response_time, recent_alerts);
 };
+struct AnalysisResultItem{
+    std::string trace_id;
+    LogAnalysisResult result;
+    int response_time_ms;
+    std::string status;
+};
 class SqliteLogRepository
 {
 public:
@@ -34,6 +40,12 @@ public:
     std::optional<std::string> queryResultByTraceId(const std::string& trace_id);
     std::optional<LogAnalysisResult> queryStructResultByTraceId(const std::string& trace_id);
     DashboardStats getDashboardStats();
+
+    // 批量保存原始日志 (BEGIN TRANSACTION ... COMMIT)
+    void saveRawLogBatch(const std::vector<std::pair<std::string, std::string>>& logs);
+
+    // 批量保存分析结果
+    void saveAnalysisResultBatch(const std::vector<AnalysisResultItem>& items);
 private:
     sqlite3* db_=nullptr;
     std::mutex mutex_;

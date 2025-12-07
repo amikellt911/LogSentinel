@@ -19,17 +19,9 @@ bool LogBatcher::push(AnalysisTask &&task)
     ring_buffer_[tail_]=std::move(task);
     tail_=(tail_+1)%capacity_;
     count_++;
-    if(count_>=batch_size_&&thread_pool_->pendingTasks()<pool_threshold_)
+    if(count_>=batch_size_)
     {
-        try
-        {
             tryDispatch();
-        }
-        catch(const std::exception& e)
-        {
-            std::cerr << e.what() << '\n';
-            return false;
-        }
     }
     return true;
 }
@@ -37,7 +29,8 @@ void LogBatcher::tryDispatch()
 {
     //好像不需要锁，因为外面push的时候已经锁了
     //std::lock_guard<std::mutex> lock(mutex_);
-    int ct=0;
+    if(thread_pool_->pendingTasks()>=pool_threshold_)
+        return;
     std::vector<AnalysisTask> batch(batch_size_);
     batch.reserve(batch_size_);
     for(size_t i = 0; i < batch_size_; i++)
