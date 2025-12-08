@@ -24,3 +24,14 @@ class AIProvider(ABC):
         此方法接收的是已经处理好的、可以直接发给API的history。
         """
         pass
+
+    @abstractmethod
+    def analyze_batch(self, batch_logs: List[Dict[str, str]], prompt: str) -> List[Dict[str, Any]]:
+        """
+        批量分析接口。
+            
+        :param batch_logs: 日志列表。
+        :param prompt:  【新增】传递给 AI 的提示词（Prompt），用于控制分析逻辑（比如强调要无状态分析）。
+        :return: 结果列表。
+        """
+        pass

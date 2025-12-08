@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from typing import List, Dict, Any
 from pydantic import BaseModel
 from pathlib import Path
+from .schemas import BatchRequest,ChatRequest,BATCH_PROMPT_TEMPLATE
 import uvicorn
 import sys
 # ==========================================
@@ -107,10 +108,18 @@ Provide your analysis in a structured format."""
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred during analysis: {e}")
 
-
-class ChatRequest(BaseModel):
-    history: List[Dict[str, Any]]
-    new_message: str
+@app.post("analyze/batch/{provider_name}")
+async def analyze_log_batch(provider_name: str, request: BatchRequest):
+    provider=providers.get(provider_name)
+    if not provider:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found or not configured.")
+    try:
+        logs_list=[item.model_dump() for item in request.batch]
+        results=provider.analyze_batch(logs_list,BATCH_PROMPT_TEMPLATE)
+        return {"provider": provider_name, "results": results}
+    except Exception as e:
+        print(f"[Error] Batch analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/chat/{provider_name}")
 async def chat_with_logs(provider_name: str, chat_request: ChatRequest):
