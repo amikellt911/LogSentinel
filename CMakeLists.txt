@@ -200,12 +200,12 @@ gtest_discover_tests(test_sqlite)
 # add_executable(testServerGeminiApi
 #   src/testgemini.cpp
 # )
-add_executable(testServerRouter
-  src/testWithRouter.cpp
-)
-add_executable(testServerDashboard
-  src/testWithDashboard.cpp
-)
+# add_executable(testServerRouter
+#   src/testWithRouter.cpp
+# )
+# add_executable(testServerDashboard
+#   src/testWithDashboard.cpp
+# )
 # 因为module会继承过来
 # target_include_directories(LogSentinel PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
@@ -244,24 +244,24 @@ add_executable(testServerDashboard
 # ai_module
 # notification_module
 # )
-target_link_libraries(testServerRouter PRIVATE
-http_module
-threadpool_module
-core_module
-persistence_module
-ai_module
-notification_module
-handler_module
-)
-target_link_libraries(testServerDashboard PRIVATE
-http_module
-threadpool_module
-core_module
-persistence_module
-ai_module
-notification_module
-handler_module
-)
+# target_link_libraries(testServerRouter PRIVATE
+# http_module
+# threadpool_module
+# core_module
+# persistence_module
+# ai_module
+# notification_module
+# handler_module
+# )
+# target_link_libraries(testServerDashboard PRIVATE
+# http_module
+# threadpool_module
+# core_module
+# persistence_module
+# ai_module
+# notification_module
+# handler_module
+# )
 #-----------主程序---------------
 add_executable(LogSentinel
     src/main.cpp   

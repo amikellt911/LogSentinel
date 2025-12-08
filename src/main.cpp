@@ -13,6 +13,7 @@
 #include "http/Router.h"
 #include "handlers/LogHandler.h"
 #include "handlers/DashboardHandler.h"
+#include "core/LogBatcher.h"
 class testServer : public HttpServer
 {
 public:
@@ -59,10 +60,11 @@ int main()
     std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(urls);
     
     std::shared_ptr<Router> router = std::make_shared<Router>();
+    std::shared_ptr<LogBatcher> batcher=std::make_shared<LogBatcher>(&loop,&tpool,persistence,ai_client,notifier);
     //lambda默认值拷贝是const,但是handlePost是非const成员函数，会导致const值变化
     //所以需要加上mutable或shared_ptr,因为他是指针，在const中，让他不会改变指向，但是可以改变值
     //LogHandler handler(&tpool,persistence,ai_client, notifier);
-    auto handler = std::make_shared<LogHandler>(&tpool, persistence, ai_client, notifier);
+    auto handler = std::make_shared<LogHandler>(&tpool,persistence,batcher);
     router->add("POST", "/logs", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         handler->handlePost(req, resp, conn);
     });

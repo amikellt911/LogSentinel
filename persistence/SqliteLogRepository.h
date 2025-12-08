@@ -45,7 +45,7 @@ public:
     void saveRawLogBatch(const std::vector<std::pair<std::string, std::string>>& logs);
 
     // 批量保存分析结果
-    void saveAnalysisResultBatch(const std::vector<AnalysisResultItem>& items);
+    void saveAnalysisResultBatch(const std::vector<AnalysisResultItem>& items,const std::string& global_summary);
 private:
     sqlite3* db_=nullptr;
     std::mutex mutex_;

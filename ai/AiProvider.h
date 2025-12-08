@@ -35,7 +35,7 @@ public:
     virtual std::string chat(const std::string& history_json, const std::string& new_message) = 0;
 
     //Map
-    virtual std::map<std::string,LogAnalysisResult> analyzeBatch(const std::vector<std::pair<std::string,std::string>>& logs)=0;
+    virtual std::unordered_map<std::string,LogAnalysisResult> analyzeBatch(const std::vector<std::pair<std::string,std::string>>& logs)=0;
     //Reduce
     virtual std::string summarize(const std::vector<LogAnalysisResult>& results)=0;
 };

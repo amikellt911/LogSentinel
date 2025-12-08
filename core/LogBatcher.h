@@ -18,9 +18,9 @@ public:
     ~LogBatcher();
     bool push(AnalysisTask&& task);
 private:
-    void tryDispatch(size_t limit);
+    void tryDispatchLocked(size_t limit);
     void onTimeout();
-    void processBatch(std::vector<AnalysisTask> batch);
+    void processBatch(std::vector<AnalysisTask>&& batch);
 private:
     MiniMuduo::net::EventLoop* loop_;
     ThreadPool* thread_pool_;
