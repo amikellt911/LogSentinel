@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 from typing import List, Dict, Any
 from pydantic import BaseModel
 from pathlib import Path
-from .schemas import BatchRequest,ChatRequest,SummarizeRequest,BATCH_PROMPT_TEMPLATE,SUMMARIZE_PROMPT_TEMPLATE
 import uvicorn
 import sys
 # ==========================================
@@ -36,7 +35,7 @@ load_dotenv(dotenv_path=dotenv_path)
 from ai.proxy.providers.base import AIProvider
 from ai.proxy.providers.gemini import GeminiProvider
 from ai.proxy.providers.mock import MockProvider
-
+from ai.proxy.schemas import BatchRequest,ChatRequest,SummarizeRequest,BATCH_PROMPT_TEMPLATE,SUMMARIZE_PROMPT_TEMPLATE
 
 
 # --- 应用设置 ---

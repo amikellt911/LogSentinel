@@ -242,7 +242,7 @@ std::optional<std::string> SqliteLogRepository::queryResultByTraceId(const std::
 std::optional<LogAnalysisResult> SqliteLogRepository::queryStructResultByTraceId(const std::string &trace_id)
 {
     std::lock_guard<std::mutex> lock_(mutex_);
-    const char *sql_select_template = "select risk_level,root_cause,solution,summary from analysis_result where trace_id = ?";
+    const char *sql_select_template = "select risk_level,root_cause,solution,summary from analysis_results where trace_id = ?";
     sqlite3_stmt *stmt = nullptr;
     int rc = sqlite3_prepare_v2(db_, sql_select_template, -1, &stmt, 0);
     if (rc == SQLITE_OK)

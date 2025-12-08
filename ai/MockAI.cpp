@@ -218,7 +218,7 @@ std::string MockAI::summarize(const std::vector<LogAnalysisResult> &results)
         batch_array.push_back(item);
     }
 
-    request_json["batch"] = batch_array;
+    request_json["results"] = batch_array;
     session_.SetBody(request_json.dump());
 
     auto r = session_.Post();

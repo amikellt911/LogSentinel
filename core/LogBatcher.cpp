@@ -60,7 +60,7 @@ void LogBatcher::tryDispatchLocked(size_t limit)
         return;
     std::vector<AnalysisTask> batch;
     batch.reserve(limit);
-    for (size_t i = 0; i < batch_size_; i++)
+    for (size_t i = 0; i < limit; i++)
     {
         // emplace_back是直接用参数构造到vector的空间，不需要构造临时对象后再拷贝到vector的空间。
         batch.push_back(std::move(ring_buffer_[head_]));
@@ -82,6 +82,12 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch) // 注意：这
         logs.reserve(batch.size());
         for (const auto &task : batch)
         {
+            // 【新增防御】如果 trace_id 为空，直接丢弃！
+            if (task.trace_id.empty())
+            {
+                std::cerr << "[Warning] Skipping empty trace_id in batch!" << std::endl;
+                continue;
+            }
             logs.emplace_back(task.trace_id, task.raw_request_body);
         }
 
