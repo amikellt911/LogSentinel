@@ -147,11 +147,12 @@ std::unordered_map<std::string, LogAnalysisResult> MockAI::analyzeBatch(const st
     for (const auto &[trace_id, log_text] : logs)
     {
         nlohmann::json item;
-        item["id"] = trace_id;
-        item["text"] = log_text;
-        batch_array.push_back(std::move(item));
+        item["id"] = trace_id;                  // 直接从原始 vector 的内存里读取，拷贝进 JSON
+        item["text"] = log_text;                // 同上
+        batch_array.push_back(std::move(item)); // 这里 move 是对的，因为 item 是局部变量
     }
     // 为什么还要嵌套，而不是直接通过batch_array发送，还是他array无法dump成string吗？
+    // 可以不嵌套，但是业界习惯，也是为了方便加其他字段
     request_json["batch"] = batch_array;
     session_.SetBody(request_json.dump());
     auto r = session_.Post();
@@ -195,12 +196,56 @@ std::unordered_map<std::string, LogAnalysisResult> MockAI::analyzeBatch(const st
 
         // 这里做一次 get<T> 再 dump 是为了清洗数据，丢弃 AI 可能返回的多余字段
         LogAnalysisResult result = result_json.get<LogAnalysisResult>();
-        resultMap[tid]=result;
+        resultMap[tid] = result;
     }
     return resultMap;
 }
 
 std::string MockAI::summarize(const std::vector<LogAnalysisResult> &results)
 {
-    return std::string();
+    cpr::Session session_;
+    // 【修正1】类型要是 json，Python 那边才好自动解析
+    session_.SetHeader(cpr::Header{{"Content-Type", "application/json"}});
+    session_.SetTimeout(std::chrono::seconds(10));
+    session_.SetUrl(cpr::Url{summarize_url_});
+
+    nlohmann::json request_json;
+    nlohmann::json batch_array = nlohmann::json::array();
+
+    // 【优化】直接传引用，让 json 库去序列化，省去中间层拷贝
+    for (const auto &item : results)
+    {
+        batch_array.push_back(item);
+    }
+
+    request_json["batch"] = batch_array;
+    session_.SetBody(request_json.dump());
+
+    auto r = session_.Post();
+
+    if (r.status_code != 200)
+    {
+        throw std::runtime_error("MockSummarize Proxy Error: HTTP " + std::to_string(r.status_code) +
+                                 ", Body: " + r.text);
+    }
+
+    nlohmann::json response_json;
+    try
+    {
+        response_json = nlohmann::json::parse(r.text);
+    }
+    catch (const nlohmann::json::parse_error &e)
+    {
+        throw std::runtime_error("Protocol Error: Invalid JSON from proxy. " + std::string(e.what()));
+    }
+
+    // 【安全检查】防止 Python 端没回 summary 字段导致崩溃
+    if (!response_json.contains("summary"))
+    {
+        // 可以返回默认值，或者抛异常，看你策略
+        return "Summary not available (Missing field).";
+    }
+
+    // 【修正2】使用 get<string> 获取原始文本，而不是 dump 带引号的 JSON 串
+    return response_json["summary"].get<std::string>();
 }

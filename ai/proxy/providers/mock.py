@@ -96,3 +96,17 @@ class MockProvider(AIProvider):
             })
             
         return results
+    
+    def summarize(self, summary_logs: List[Dict[str, Any]], prompt: str) -> str:
+        """
+        Mock Reduce 阶段。
+        """
+        time.sleep(self.delay) # 模拟思考时间
+
+        count = len(summary_logs)
+        high_risk_count = sum(1 for log in summary_logs if log.get('risk_level') == 'high')
+            
+        if high_risk_count > 0:
+            return f"[Mock Summary] Critical Alert: Detected {high_risk_count} high-risk events among {count} logs. System stability at risk."
+        else:
+            return f"[Mock Summary] System Healthy: Processed {count} logs, no critical anomalies detected."

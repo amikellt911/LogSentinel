@@ -35,3 +35,15 @@ class AIProvider(ABC):
         :return: 结果列表。
         """
         pass
+
+    @abstractmethod
+    def summarize(self, summary_logs: List[Dict[str, Any]], prompt: str) -> str:
+        """
+        Reduce 阶段：对一批分析结果进行汇总。
+        
+        :param summary_logs: 上一阶段的分析结果列表。
+                             使用 Any 是为了兼容未来可能出现的非字符串字段（如分数、时间戳）。
+        :param prompt: 总结用的提示词。
+        :return: 全局总结文本。
+        """
+        pass
