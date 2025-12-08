@@ -13,6 +13,7 @@ class WebhookNotifier:public INotifier
         //不如都转成string初始化，解耦
         //explicit WebhookNotifier(SqliteConfigRepository& config_repository);
         explicit WebhookNotifier(std::vector<std::string> webhook_urls);
+        void notifyReport(const std::string& global_summary,std::vector<AnalysisResultItem>& items) override;
     private:
         std::vector<std::string> urls_;
         //std::unique_ptr<cpr::Session> session_;

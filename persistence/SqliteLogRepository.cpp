@@ -3,6 +3,7 @@
 #include <iostream>
 #include "persistence/SqliteLogRepository.h"
 #include "persistence/SqliteHelper.h"
+#include "SqliteLogRepository.h"
 using namespace persistence;
 SqliteLogRepository::SqliteLogRepository(const std::string &db_path)
 {
@@ -447,4 +448,7 @@ void SqliteLogRepository::saveRawLogBatch(const std::vector<std::pair<std::strin
         // 3. 继续抛出让上层处理
         throw;
     }
+}
+void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResultItem> &items, const std::string &global_summary)
+{
 }

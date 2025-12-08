@@ -45,3 +45,7 @@ WebhookNotifier::WebhookNotifier(std::vector<std::string> webhook_urls)
     //  session_->SetHeader(cpr::Header({"Content-Type","application/json"}));
     //  session_->SetTimeout(std::chrono::seconds());
 }
+
+void WebhookNotifier::notifyReport(const std::string &global_summary, std::vector<AnalysisResultItem> &items)
+{
+}
