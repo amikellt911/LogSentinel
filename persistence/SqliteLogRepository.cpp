@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS raw_logs (
         
         -- 新增：响应耗时 (用于计算平均值,微秒)
         response_time_ms INTEGER DEFAULT 0,
-        
+        -- 新增：批次的总结内容
+        global_summary TEXT,
         processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (trace_id) REFERENCES raw_logs(trace_id)
     )
@@ -398,18 +399,19 @@ DashboardStats SqliteLogRepository::getDashboardStats()
 void SqliteLogRepository::saveRawLogBatch(const std::vector<std::pair<std::string, std::string>> &logs)
 {
     std::lock_guard<std::mutex> lock_(mutex_);
-    
+
     // 1. 开启事务 (利用 helper 函数检查错误)
     int rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
     checkSqliteError(db_, rc, "Failed to begin transaction");
 
     // 2. 准备语句
     const char *sql = "INSERT INTO raw_logs(trace_id, log_content) VALUES(?, ?);";
-    sqlite3_stmt* raw_stmt = nullptr;
+    sqlite3_stmt *raw_stmt = nullptr;
     rc = sqlite3_prepare_v2(db_, sql, -1, &raw_stmt, nullptr);
-    
+
     // 如果 prepare 失败，先回滚再抛异常
-    if (rc != SQLITE_OK) {
+    if (rc != SQLITE_OK)
+    {
         sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
         checkSqliteError(db_, rc, "Failed to prepare statement");
     }
@@ -417,17 +419,19 @@ void SqliteLogRepository::saveRawLogBatch(const std::vector<std::pair<std::strin
     // 【接管】让智能指针接管，从此以后不用写 finalize
     StmtPtr stmt(raw_stmt);
 
-    try {
+    try
+    {
         for (const auto &[trace_id, raw_log] : logs)
         {
             // 绑定参数
-            //SQLITE_TRANSIENT会拷贝一份
-            //SQLITE_STATIC确定logs生命周期更长，不会拷贝，减少开销
+            // SQLITE_TRANSIENT会拷贝一份
+            // SQLITE_STATIC确定logs生命周期更长，不会拷贝，减少开销
             sqlite3_bind_text(stmt.get(), 1, trace_id.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(stmt.get(), 2, raw_log.c_str(), -1, SQLITE_STATIC);
 
             // 执行
-            if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+            if (sqlite3_step(stmt.get()) != SQLITE_DONE)
+            {
                 // 主动抛出异常，让 catch 块去回滚
                 checkSqliteError(db_, SQLITE_ERROR, "Step execution failed");
             }
@@ -435,12 +439,13 @@ void SqliteLogRepository::saveRawLogBatch(const std::vector<std::pair<std::strin
             // 重置
             sqlite3_reset(stmt.get());
         }
-        
+
         // 3. 提交事务
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
         checkSqliteError(db_, rc, "Failed to commit");
     }
-    catch (...) {
+    catch (...)
+    {
         // 异常发生时：
         // 1. 回滚事务
         sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
@@ -451,4 +456,66 @@ void SqliteLogRepository::saveRawLogBatch(const std::vector<std::pair<std::strin
 }
 void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResultItem> &items, const std::string &global_summary)
 {
+    std::lock_guard<std::mutex> lock_(mutex_);
+
+    // 1. 开启事务 (利用 helper 函数检查错误)
+    int rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
+    checkSqliteError(db_, rc, "Failed to begin transaction");
+
+    // 2. 准备语句
+    const char *sql = R"(
+        INSERT INTO analysis_results 
+        (trace_id, status, risk_level, summary, root_cause, solution, response_time_ms,global_summary) 
+        VALUES (?, ?, ?, ?, ?, ?, ?,?);
+    )";
+    sqlite3_stmt *raw_stmt = nullptr;
+    rc = sqlite3_prepare_v2(db_, sql, -1, &raw_stmt, nullptr);
+
+    // 如果 prepare 失败，先回滚再抛异常
+    if (rc != SQLITE_OK)
+    {
+        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+        checkSqliteError(db_, rc, "Failed to prepare statement");
+    }
+
+    // 【接管】让智能指针接管，从此以后不用写 finalize
+    StmtPtr stmt(raw_stmt);
+
+    try
+    {
+        for (const auto &item : items)
+        {
+
+            sqlite3_bind_text(stmt.get(), 1, item.trace_id.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt.get(), 2, item.status.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt.get(), 3, item.result.risk_level.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt.get(), 4, item.result.summary.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt.get(), 5, item.result.root_cause.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt.get(), 6, item.result.solution.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_int(stmt.get(), 7, item.response_time_ms);
+            sqlite3_bind_text(stmt.get(), 8, global_summary.c_str(), -1, SQLITE_STATIC);
+            // 执行
+            if (sqlite3_step(stmt.get()) != SQLITE_DONE)
+            {
+                // 主动抛出异常，让 catch 块去回滚
+                checkSqliteError(db_, SQLITE_ERROR, "Step execution failed");
+            }
+
+            // 重置
+            sqlite3_reset(stmt.get());
+        }
+
+        // 3. 提交事务
+        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+        checkSqliteError(db_, rc, "Failed to commit");
+    }
+    catch (...)
+    {
+        // 异常发生时：
+        // 1. 回滚事务
+        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+        // 2. stmt 自动析构 (finalize)
+        // 3. 继续抛出让上层处理
+        throw;
+    }
 }
