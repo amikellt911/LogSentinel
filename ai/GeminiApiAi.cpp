@@ -3,6 +3,7 @@
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp> // 我们需要一个JSON库来解析单次分析的响应和构建聊天请求
 #include <vector>            // 用于字段验证
+#include "GeminiApiAi.h"
 
 // 构造函数：初始化会话和URL
 GeminiApiAi::GeminiApiAi()
@@ -125,4 +126,13 @@ std::string GeminiApiAi::chat(const std::string& history_json, const std::string
     // 7. 成功返回 (确保它是个字符串)
     // .get<std::string>() 会自动处理类型转换，如果不是 string 会抛出 type_error，这也符合我们的异常预期
     return response_json["response"].get<std::string>();
+}
+std::unordered_map<std::string, LogAnalysisResult> GeminiApiAi::analyzeBatch(const std::vector<std::pair<std::string, std::string>> &logs)
+{
+    return std::unordered_map<std::string, LogAnalysisResult>();
+}
+
+std::string GeminiApiAi::summarize(const std::vector<LogAnalysisResult> &results)
+{
+    return std::string();
 }

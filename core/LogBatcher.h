@@ -1,0 +1,52 @@
+#pragma once 
+#include<vector>
+#include<string>
+#include<memory>
+#include<mutex>
+#include"core/AnalysisTask.h"
+namespace MiniMuduo{namespace net{class EventLoop;}};
+class ThreadPool;
+class SqliteLogRepository;
+class AiProvider;
+class INotifier;
+
+class LogBatcher
+{
+public:
+    LogBatcher(ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai_client_,std::shared_ptr<INotifier> notifier);
+    LogBatcher(MiniMuduo::net::EventLoop* loop,ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai_client_,std::shared_ptr<INotifier> notifier);
+    ~LogBatcher();
+    bool push(AnalysisTask&& task);
+    // 【测试专用】
+    void setBatchSizeForTest(size_t size) { 
+        std::lock_guard<std::mutex> lock(mutex_);
+        batch_size_ = size; 
+    }
+    void setCapacityForTest(size_t cap) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        capacity_ = cap;
+        ring_buffer_.resize(capacity_); // 记得 resize!
+    }
+private:
+    void tryDispatchLocked(size_t limit);
+    void onTimeout();
+    void processBatch(std::vector<AnalysisTask>&& batch);
+private:
+    MiniMuduo::net::EventLoop* loop_;
+    ThreadPool* thread_pool_;
+    std::shared_ptr<SqliteLogRepository> repo_;
+    std::shared_ptr<AiProvider> ai_client_;
+    std::shared_ptr<INotifier> notifier_;
+    // --- 核心：Ring Buffer 实现 ---
+    std::vector<AnalysisTask> ring_buffer_; 
+    size_t capacity_ = 10000; // 也是硬上限
+    size_t head_ = 0;
+    size_t tail_ = 0;
+    size_t count_ = 0;        // 当前积压数量
+
+    std::mutex mutex_;
+    // 流控参数
+    size_t batch_size_ = 100;    // 攒够多少发车
+    size_t pool_threshold_ = 90; // 下游堵了就不发
+};
+

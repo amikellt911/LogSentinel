@@ -61,3 +61,52 @@ class MockProvider(AIProvider):
         """
         time.sleep(self.delay) # 同样模拟延迟
         return f"[Mock AI]: I received your message: '{new_message}'. This is a simulated response."
+    
+    def analyze_batch(self, batch_logs: List[Dict[str, str]], prompt: str) -> List[Dict[str, Any]]:
+        """
+        模拟批量分析，接收 prompt 参数。
+        """
+        # 简单模拟耗时
+        time.sleep(self.delay + 0.2) 
+
+        results = []
+        for item in batch_logs:
+            trace_id = item.get("id")
+            log_text = item.get("text")
+            
+            # 这里虽然是 Mock，但我们假装“收到”了 prompt
+            # 实际逻辑还是简单的关键词匹配
+            risk = "low"
+            if "error" in log_text.lower():
+                risk = "medium"
+            if "critical" in log_text.lower():
+                risk = "high"
+
+            # 构造单条结果
+            analysis_result = {
+                "summary": f"[Mock] Processed with prompt len={len(prompt)}: {log_text[:20]}...",
+                "risk_level": risk,
+                "root_cause": "Mocked batch analysis root cause",
+                "solution": "Mocked batch analysis solution"
+            }
+
+            results.append({
+                "id": trace_id,
+                "analysis": analysis_result
+            })
+            
+        return results
+    
+    def summarize(self, summary_logs: List[Dict[str, Any]], prompt: str) -> str:
+        """
+        Mock Reduce 阶段。
+        """
+        time.sleep(self.delay) # 模拟思考时间
+
+        count = len(summary_logs)
+        high_risk_count = sum(1 for log in summary_logs if log.get('risk_level') == 'high')
+            
+        if high_risk_count > 0:
+            return f"[Mock Summary] Critical Alert: Detected {high_risk_count} high-risk events among {count} logs. System stability at risk."
+        else:
+            return f"[Mock Summary] System Healthy: Processed {count} logs, no critical anomalies detected."

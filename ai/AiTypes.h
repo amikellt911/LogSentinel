@@ -10,3 +10,8 @@ struct LogAnalysisResult{
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(LogAnalysisResult,summary,risk_level,root_cause,solution);
 };
+
+struct BatchAnalysisResult{
+    std::string global_summary;
+    std::map<std::string,LogAnalysisResult> trace_id_to_result;
+};

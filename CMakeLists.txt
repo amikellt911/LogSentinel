@@ -53,6 +53,7 @@ add_library(util_module STATIC
 
 add_library(core_module STATIC
     core/AnalysisTask.cpp
+    core/LogBatcher.cpp
 )
 add_library(persistence_module STATIC
     persistence/SqliteLogRepository.cpp
@@ -111,6 +112,7 @@ target_link_libraries(persistence_module PUBLIC SQLite::SQLite3 ai_module)
 target_link_libraries(notification_module PUBLIC
   cpr::cpr
   nlohmann_json::nlohmann_json
+  persistence_module
 )
 target_link_libraries(handler_module PUBLIC
   http_module
@@ -119,6 +121,12 @@ target_link_libraries(handler_module PUBLIC
   persistence_module
   ai_module
   util_module
+  notification_module
+)
+target_link_libraries(core_module PUBLIC
+  threadpool_module
+  persistence_module
+  ai_module
   notification_module
 )
 #-----------测试模块---------------
@@ -141,6 +149,9 @@ add_executable(test_threadpool
 add_executable(test_sqlite
   tests/SqliteLogRepository_test.cpp
 )
+add_executable(test_logbatcher 
+  tests/LogBatcher_test.cpp
+)
 
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
@@ -161,16 +172,21 @@ target_link_libraries(test_sqlite PRIVATE
 GTest::gtest_main
 persistence_module
 )
+target_link_libraries(test_logbatcher PRIVATE 
+GTest::gtest_main
+core_module
+)
 #给vscode的C++扩展的CTest.
 add_test(NAME test_http_context COMMAND test_http_context)
 add_test(NAME test_util_traceidgenerate COMMAND test_util_traceidgenerate)
 add_test(NAME test_threadpool COMMAND test_threadpool)
 add_test(NAME test_sqlite COMMAND test_sqlite)
-
+add_test(NAME test_logbatcher COMMAND test_logbatcher)
 gtest_discover_tests(test_http_context)
 gtest_discover_tests(test_util_traceidgenerate)
 gtest_discover_tests(test_threadpool)
 gtest_discover_tests(test_sqlite)
+gtest_discover_tests(test_logbatcher)
 #-----------不同模块测试用例---------------
 #这些测试用例版本变动，用不了了
 # #http层测试用例
@@ -192,12 +208,12 @@ gtest_discover_tests(test_sqlite)
 # add_executable(testServerGeminiApi
 #   src/testgemini.cpp
 # )
-add_executable(testServerRouter
-  src/testWithRouter.cpp
-)
-add_executable(testServerDashboard
-  src/testWithDashboard.cpp
-)
+# add_executable(testServerRouter
+#   src/testWithRouter.cpp
+# )
+# add_executable(testServerDashboard
+#   src/testWithDashboard.cpp
+# )
 # 因为module会继承过来
 # target_include_directories(LogSentinel PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
@@ -236,24 +252,24 @@ add_executable(testServerDashboard
 # ai_module
 # notification_module
 # )
-target_link_libraries(testServerRouter PRIVATE
-http_module
-threadpool_module
-core_module
-persistence_module
-ai_module
-notification_module
-handler_module
-)
-target_link_libraries(testServerDashboard PRIVATE
-http_module
-threadpool_module
-core_module
-persistence_module
-ai_module
-notification_module
-handler_module
-)
+# target_link_libraries(testServerRouter PRIVATE
+# http_module
+# threadpool_module
+# core_module
+# persistence_module
+# ai_module
+# notification_module
+# handler_module
+# )
+# target_link_libraries(testServerDashboard PRIVATE
+# http_module
+# threadpool_module
+# core_module
+# persistence_module
+# ai_module
+# notification_module
+# handler_module
+# )
 #-----------主程序---------------
 add_executable(LogSentinel
     src/main.cpp   

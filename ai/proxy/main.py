@@ -35,7 +35,7 @@ load_dotenv(dotenv_path=dotenv_path)
 from ai.proxy.providers.base import AIProvider
 from ai.proxy.providers.gemini import GeminiProvider
 from ai.proxy.providers.mock import MockProvider
-
+from ai.proxy.schemas import BatchRequest,ChatRequest,SummarizeRequest,BATCH_PROMPT_TEMPLATE,SUMMARIZE_PROMPT_TEMPLATE
 
 
 # --- 应用设置 ---
@@ -107,10 +107,40 @@ Provide your analysis in a structured format."""
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred during analysis: {e}")
 
+@app.post("/analyze/batch/{provider_name}")
+async def analyze_log_batch(provider_name: str, request: BatchRequest):
+    provider=providers.get(provider_name)
+    if not provider:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found or not configured.")
+    try:
+        logs_list=[item.model_dump() for item in request.batch]
+        results=provider.analyze_batch(logs_list,BATCH_PROMPT_TEMPLATE)
+        return {"provider": provider_name, "results": results}
+    except Exception as e:
+        print(f"[Error] Batch analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-class ChatRequest(BaseModel):
-    history: List[Dict[str, Any]]
-    new_message: str
+@app.post("/summarize/{provider_name}")
+async def summarize_logs(provider_name: str, request_data: SummarizeRequest):
+    """
+    Reduce 阶段：接收一批 LogAnalysisResult，生成全局总结。
+    """
+    provider = providers.get(provider_name)
+    if not provider:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found")
+    try:
+        # 将 Pydantic 对象列表转为 Dict 列表
+        results_list = [item.model_dump() for item in request_data.results]
+        # 调用 Provider 的 summarize 接口
+        summary_text = provider.summarize(results_list, prompt=SUMMARIZE_PROMPT_TEMPLATE)
+        # 返回格式要匹配 C++ 端的 expectations
+        # C++ MockAI::summarize 里解析的是 response_json["summary"]
+        return {"provider": provider_name, "summary": summary_text}
+    except Exception as e:
+        print(f"[Error] Summarize failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/chat/{provider_name}")
 async def chat_with_logs(provider_name: str, chat_request: ChatRequest):

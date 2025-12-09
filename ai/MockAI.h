@@ -22,7 +22,18 @@ public:
 
     std::string chat(const std::string& history_json, const std::string& new_message) override;
 
+    // 【新增】Map 阶段接口
+    std::unordered_map<std::string, LogAnalysisResult> analyzeBatch(
+        const std::vector<std::pair<std::string, std::string>>& logs
+    ) override;
+
+    // 【新增】Reduce 阶段接口
+    std::string summarize(
+        const std::vector<LogAnalysisResult>& results
+    ) override;
 private:
     std::string analyze_url_;
     std::string chat_url_;
+    std::string analyze_batch_url_;
+    std::string summarize_url_;
 };

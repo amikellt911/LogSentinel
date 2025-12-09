@@ -9,22 +9,19 @@ class ThreadPool;
 class SqliteLogRepository;
 class AiProvider;
 class INotifier;
-
+class LogBatcher;
 class LogHandler {
 public:
     // 构造函数：一次性注入所有依赖
-    LogHandler(ThreadPool* tpool, 
+    explicit LogHandler(ThreadPool* tpool, 
                std::shared_ptr<SqliteLogRepository> repo,
-               std::shared_ptr<AiProvider> ai,
-               std::shared_ptr<INotifier> notifier);
-
+               std::shared_ptr<LogBatcher> batcher);
     // 具体的业务处理函数
     void handlePost(const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn);
     void handleGetResult(const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn);
 
-public:
+private:
     ThreadPool* tpool_;
+    std::shared_ptr<LogBatcher> batcher_;
     std::shared_ptr<SqliteLogRepository> repo_;
-    std::shared_ptr<AiProvider> ai_client_;
-    std::shared_ptr<INotifier> notifier_;
 };

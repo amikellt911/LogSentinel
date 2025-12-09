@@ -6,6 +6,7 @@
 #include "core/AnalysisTask.h"
 #include <nlohmann/json.hpp>
 #include "LogHandler.h"
+#include "core/LogBatcher.h"
 #include "MiniMuduo/net/EventLoop.h"
 
 // // 辅助函数：统一设置 CORS 头
@@ -15,11 +16,12 @@
 //     resp->setHeader("Access-Control-Allow-Headers", "Content-Type");
 // }
 
-LogHandler::LogHandler(ThreadPool *tpool,
-                       std::shared_ptr<SqliteLogRepository> repo,
-                       std::shared_ptr<AiProvider> ai,
-                       std::shared_ptr<INotifier> notifier)
-    : tpool_(tpool), repo_(repo), ai_client_(ai), notifier_(notifier) {}
+LogHandler::LogHandler(ThreadPool *tpool, std::shared_ptr<SqliteLogRepository> repo, std::shared_ptr<LogBatcher> batcher)
+    :tpool_(tpool),
+    repo_(repo),
+    batcher_(batcher)
+{
+}
 
 void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
 {
@@ -30,40 +32,13 @@ void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const Mi
     task.trace_id = req.trace_id;
     task.raw_request_body = req.body_;
     task.start_time = std::chrono::steady_clock::now();
-    auto work = [task, repo = repo_, ai_client = ai_client_, notifier = notifier_]
-    {
-        try
-        {
-            // Step 1: 保存原始日志
-            repo->SaveRawLog(task.trace_id, task.raw_request_body);
-
-            // Step 2: 调用 AI
-            LogAnalysisResult ai_result = ai_client->analyze(task.raw_request_body);
-            auto end_time = std::chrono::steady_clock::now();
-            auto micro_ms=std::chrono::duration_cast<std::chrono::microseconds>(end_time-task.start_time).count();
-
-            // Step 3: 保存结果
-            // 只要 analyze 没抛异常，我们就认为拿到了合法的 JSON (在 GeminiApiAi 内部做过校验)
-            repo->saveAnalysisResult(task.trace_id, ai_result, (int)micro_ms,"SUCCESS");
-
-            // Step 4: Webhook 通知
-            // 这里再 parse 一次虽有开销，但解耦了逻辑，MVP 可以接受
-            notifier->notify(task.trace_id, ai_result);
-        }
-        catch (const std::exception &e)
-        {
-            std::cerr << "[Worker Error] TraceID: " << task.trace_id << " | " << e.what() << '\n';
-            // 记录失败状态
-            repo->saveAnalysisResultError(task.trace_id, std::string("Error: ") + e.what());
-        }
-    };
-    if (tpool_->submit(std::move(work)))
+    if (batcher_->push(std::move(task)))
     {
         resp->setStatusCode(HttpResponse::HttpStatusCode::k202Acceptd);
         resp->setHeader("Content-Type", "application/json");
         resp->addCorsHeaders();
         nlohmann::json j;
-        j["trace_id"] = task.trace_id;
+        j["trace_id"] = req.trace_id;
         resp->body_ = j.dump();
     }
     else
@@ -72,6 +47,55 @@ void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const Mi
         resp->addCorsHeaders();
         resp->body_ = "{\"error\": \"Server is overloaded\"}";
     }
+    // AnalysisTask task;
+    // // 没用，因为const(为了通用性)，会降级为拷贝
+    // //  task.trace_id = std::move(req.trace_id);
+    // //  task.raw_request_body = std::move(req.body_);
+    // task.trace_id = req.trace_id;
+    // task.raw_request_body = req.body_;
+    // task.start_time = std::chrono::steady_clock::now();
+    // auto work = [task, repo = repo_, ai_client = ai_client_, notifier = notifier_]
+    // {
+    //     try
+    //     {
+    //         // Step 1: 保存原始日志
+    //         repo->SaveRawLog(task.trace_id, task.raw_request_body);
+
+    //         // Step 2: 调用 AI
+    //         LogAnalysisResult ai_result = ai_client->analyze(task.raw_request_body);
+    //         auto end_time = std::chrono::steady_clock::now();
+    //         auto micro_ms=std::chrono::duration_cast<std::chrono::microseconds>(end_time-task.start_time).count();
+
+    //         // Step 3: 保存结果
+    //         // 只要 analyze 没抛异常，我们就认为拿到了合法的 JSON (在 GeminiApiAi 内部做过校验)
+    //         repo->saveAnalysisResult(task.trace_id, ai_result, (int)micro_ms,"SUCCESS");
+
+    //         // Step 4: Webhook 通知
+    //         // 这里再 parse 一次虽有开销，但解耦了逻辑，MVP 可以接受
+    //         notifier->notify(task.trace_id, ai_result);
+    //     }
+    //     catch (const std::exception &e)
+    //     {
+    //         std::cerr << "[Worker Error] TraceID: " << task.trace_id << " | " << e.what() << '\n';
+    //         // 记录失败状态
+    //         repo->saveAnalysisResultError(task.trace_id, std::string("Error: ") + e.what());
+    //     }
+    // };
+    // if (tpool_->submit(std::move(work)))
+    // {
+    //     resp->setStatusCode(HttpResponse::HttpStatusCode::k202Acceptd);
+    //     resp->setHeader("Content-Type", "application/json");
+    //     resp->addCorsHeaders();
+    //     nlohmann::json j;
+    //     j["trace_id"] = task.trace_id;
+    //     resp->body_ = j.dump();
+    // }
+    // else
+    // {
+    //     resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
+    //     resp->addCorsHeaders();
+    //     resp->body_ = "{\"error\": \"Server is overloaded\"}";
+    // }
 }
 void LogHandler::handleGetResult(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
 {
@@ -143,7 +167,7 @@ void LogHandler::handleGetResult(const HttpRequest &req, HttpResponse *resp, con
         // 只有在这种同步失败的情况下，才需要在这里发送响应
         // MiniMuduo::net::Buffer buf;
         // resp->appendToBuffer(&buf);
-        //isHandledAsync = false会自动发送
-        //conn->send(std::move(buf));
+        // isHandledAsync = false会自动发送
+        // conn->send(std::move(buf));
     }
 }
