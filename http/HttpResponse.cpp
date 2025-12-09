@@ -1,4 +1,5 @@
 #include "http/HttpResponse.h"
+#include "HttpResponse.h"
 
 void HttpResponse::appendToBuffer(MiniMuduo::net::Buffer *output) const
 {
@@ -73,6 +74,13 @@ void HttpResponse::setBody(std::string body)
     body_ = std::move(body);
 }
 
+void HttpResponse::addCorsHeaders()
+{
+    headers_["Access-Control-Allow-Origin"] = "*";
+    headers_["Access-Control-Allow-Methods"] = "POST, GET, PUT, DELETE, OPTIONS";
+    headers_["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With";
+    headers_["Access-Control-Max-Age"] = "86400"; // 预检请求缓存 1 天
+}
 void HttpResponse::setHeader(std::string key, std::string value)
 {
     headers_[std::move(key)] = std::move(value);

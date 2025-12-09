@@ -3,19 +3,7 @@ from typing import List, Dict, Any
 from google import genai
 from pydantic import BaseModel, Field
 from enum import Enum
-
-# 定义风险等级枚举
-class RiskLevel(str, Enum):
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-# 定义结构化输出的 Schema
-class LogAnalysisResult(BaseModel):
-    summary: str = Field(description="A concise summary of the log error.")
-    risk_level: RiskLevel = Field(description="The risk level of the error. Must be one of: 'high', 'medium', 'low'.")
-    root_cause: str = Field(description="The root cause of the error.")
-    solution: str = Field(description="Suggested solution or fix.")
+from ..schemas import LogAnalysisResult
 
 class GeminiProvider(AIProvider):
     """

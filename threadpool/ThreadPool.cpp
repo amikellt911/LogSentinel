@@ -7,8 +7,10 @@ bool ThreadPool::submit(Task t)
         std::unique_lock<std::mutex> mutex_(taskMutex_);
         if (stop_)
             return false;
-
-        tasks_.push(std::move(t));
+        if(tasks_.size() < max_queue_size_)
+            tasks_.push(std::move(t));
+        else 
+            return false;
     }
     workCv_.notify_one();
     return true;

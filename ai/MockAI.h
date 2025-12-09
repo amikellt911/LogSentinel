@@ -1,18 +1,39 @@
+// ai/GeminiApiAi.h
 #pragma once
-#include <string>
-#include <thread>
-#include <chrono>
 
-inline std::string mock_ai_analysis(const std::string &raw_log)
-{
-    // 模拟ai处理延时
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    if (raw_log.find("error") != std::string::npos)
-    {
-        return R"({"severity": "high", "suggestion": "Check application logs for stack trace."})";
-    }
-    else
-    {
-        return R"({"severity": "info", "suggestion": "No immediate action required."})";
-    }
+#include "ai/AiProvider.h"
+#include <string>
+#include <memory>
+#include <nlohmann/json.hpp>
+
+// 前向声明，避免在头文件中引入完整的cpr头文件，加快编译速度
+namespace cpr {
+    class Session;
 }
+
+
+class MockAI : public AiProvider {
+public:
+    MockAI();
+    ~MockAI() override;
+
+    // 使用 override 关键字明确表示我们正在重写基类的虚函数
+    LogAnalysisResult analyze(const std::string& log_text) override;
+
+    std::string chat(const std::string& history_json, const std::string& new_message) override;
+
+    // 【新增】Map 阶段接口
+    std::unordered_map<std::string, LogAnalysisResult> analyzeBatch(
+        const std::vector<std::pair<std::string, std::string>>& logs
+    ) override;
+
+    // 【新增】Reduce 阶段接口
+    std::string summarize(
+        const std::vector<LogAnalysisResult>& results
+    ) override;
+private:
+    std::string analyze_url_;
+    std::string chat_url_;
+    std::string analyze_batch_url_;
+    std::string summarize_url_;
+};

@@ -3,6 +3,7 @@
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp> // 我们需要一个JSON库来解析单次分析的响应和构建聊天请求
 #include <vector>            // 用于字段验证
+#include "GeminiApiAi.h"
 
 // 构造函数：初始化会话和URL
 GeminiApiAi::GeminiApiAi()
@@ -19,7 +20,7 @@ GeminiApiAi::GeminiApiAi()
 // 析构函数，默认即可，unique_ptr会自动管理内存
 GeminiApiAi::~GeminiApiAi() = default;
 
-std::string GeminiApiAi::analyze(const std::string &log_text)
+LogAnalysisResult GeminiApiAi::analyze(const std::string &log_text)
 {
     cpr::Session session_;
     session_.SetHeader(cpr::Header{{"Content-Type", "text/plain"}});
@@ -76,7 +77,7 @@ std::string GeminiApiAi::analyze(const std::string &log_text)
 
     // 这里做一次 get<T> 再 dump 是为了清洗数据，丢弃 AI 可能返回的多余字段
     LogAnalysisResult result = analysis_json.get<LogAnalysisResult>();
-    return nlohmann::json(result).dump();
+    return result;
 }
 
 std::string GeminiApiAi::chat(const std::string& history_json, const std::string& new_message) {
@@ -125,4 +126,13 @@ std::string GeminiApiAi::chat(const std::string& history_json, const std::string
     // 7. 成功返回 (确保它是个字符串)
     // .get<std::string>() 会自动处理类型转换，如果不是 string 会抛出 type_error，这也符合我们的异常预期
     return response_json["response"].get<std::string>();
+}
+std::unordered_map<std::string, LogAnalysisResult> GeminiApiAi::analyzeBatch(const std::vector<std::pair<std::string, std::string>> &logs)
+{
+    return std::unordered_map<std::string, LogAnalysisResult>();
+}
+
+std::string GeminiApiAi::summarize(const std::vector<LogAnalysisResult> &results)
+{
+    return std::string();
 }
