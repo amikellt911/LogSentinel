@@ -17,6 +17,11 @@ LogBatcher::LogBatcher(MiniMuduo::net::EventLoop *loop, ThreadPool *thread_pool,
     ring_buffer_.resize(capacity_);
     loop_->runEvery(0.5, [this]()
                     { this->onTimeout(); });
+    // if (!ai_client_) {
+    //     std::cerr << "FATAL: AiProvider is null!" << std::endl;
+    // } else {
+    //     std::cerr << "LogBatcher initialized with AiProvider." << std::endl;
+    // }
 }
 LogBatcher::~LogBatcher()
 {

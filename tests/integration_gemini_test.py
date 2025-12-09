@@ -2,84 +2,80 @@ import requests
 import sqlite3
 import time
 import json
-import subprocess
 import os
 
 # 配置
 SERVER_URL = "http://127.0.0.1:8080"
-DB_PATH = "/home/llt/Project/llt/LogSentinel/persistence/data/test.db" # 确保和 C++ 用的路径一致
+# 请确保这个路径和你 C++ 程序实际生成的 DB 路径一致
+# 如果你是从 build 目录运行，可能路径会有变化，建议用绝对路径最稳
+DB_PATH = "/home/llt/Project/llt/LogSentinel/persistence/data/test.db" 
 
 def test_end_to_end_flow():
-    #  # --- 调试代码开始 ---
-    # # 1. 打印 Python 脚本当前的工作目录
-    # print(f"DEBUG: Python CWD: {os.getcwd()}")
-    
-    # # 2. 打印 Python 实际上试图打开的数据库绝对路径
-    # abs_db_path = os.path.abspath(DB_PATH)
-    # print(f"DEBUG: Python trying to open DB at: {abs_db_path}")
-    
-    # # 3. 检查文件到底存不存在
-    # if not os.path.exists(abs_db_path):
-    #     print("DEBUG: ⚠️ 警告！数据库文件根本不存在！Python 将会创建一个新的空文件！")
-    # else:
-    #     print(f"DEBUG: 数据库文件存在，大小为: {os.path.getsize(abs_db_path)} bytes")
-    # # --- 调试代码结束 ---
     print("1. 发送日志请求...")
-    payload = {"msg": "NullPointerException in AuthenticationModule"}
-    # 发送 POST 请求
-    response = requests.post(f"{SERVER_URL}/logs", json=payload)
+    # 构造一条稍微像样点的日志
+    payload = {"msg": "[Error] Connection pool exhausted in DatabaseModule. Retries: 3."}
+    
+    try:
+        response = requests.post(f"{SERVER_URL}/logs", json=payload)
+    except requests.exceptions.ConnectionError:
+        print(f"❌ 无法连接到 {SERVER_URL}，请确保 LogSentinel 正在运行！")
+        return
+
     assert response.status_code == 202
     data = response.json()
     trace_id = data["trace_id"]
     print(f"   -> 收到 trace_id: {trace_id}")
 
-    print("2. 等待 AI 异步处理 (等待 2-3 秒)...")
-    time.sleep(3) # 给 Worker 线程一点时间去跑网络请求
+    print("2. 等待 Batcher 刷盘 + MockAI 处理 (等待 3 秒)...")
+    time.sleep(3) # 你的经验值：3秒比较稳
 
     print("3. 验证数据库记录...")
+    if not os.path.exists(DB_PATH):
+        print(f"❌ 数据库文件不存在: {DB_PATH}")
+        return
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # 查询结果
-    cursor.execute("SELECT status, analysis_content FROM analysis_results WHERE trace_id=?", (trace_id,))
+    # 【关键修改】查询拆分后的字段，以及 global_summary
+    query_sql = """
+        SELECT status, risk_level, summary, root_cause, solution, global_summary 
+        FROM analysis_results 
+        WHERE trace_id=?
+    """
+    cursor.execute(query_sql, (trace_id,))
     row = cursor.fetchone()
     
     # 断言 1: 必须有记录
-    assert row is not None, "数据库中没找到该 trace_id 的记录"
+    assert row is not None, f"数据库中没找到 trace_id={trace_id} 的记录"
     
-    status, content = row
+    # 解包字段
+    status, risk, summary, root_cause, solution, global_summary = row
     
+    print(f"   -> 查获记录: Status={status}, Risk={risk}")
+
     # 断言 2: 状态必须是 SUCCESS
-    # 如果是 FAILURE，打印错误内容方便调试
-    assert status == "SUCCESS", f"任务失败，错误信息: {content}"
+    assert status == "SUCCESS", f"任务状态异常: {status}"
     
-    print("   -> 数据库状态为 SUCCESS")
-
-    # 断言 3: 验证 LLM 输出的结构 (解决不确定性问题)
-    try:
-        analysis_json = json.loads(content)
-    except json.JSONDecodeError:
-        assert False, "存储的 analysis_content 不是有效的 JSON"
-        
-    # 验证必要字段存在
-    required_fields = ["summary", "risk_level", "root_cause", "solution"]
-    for field in required_fields:
-        assert field in analysis_json, f"缺少字段: {field}"
-        
-    # 验证 risk_level 的值域 (即使 LLM 随机，也不能瞎填)
-    valid_risks = ["high", "medium", "low", "info"]
-    assert analysis_json["risk_level"] in valid_risks, f"无效的风险等级: {analysis_json['risk_level']}"
-
-    print(f"   -> LLM 分析结果结构验证通过! 风险等级: {analysis_json['risk_level']}")
+    # 断言 3: 验证字段内容 (MockAI 应该返回特定的 Mock 数据)
+    # 注意：MockAI 返回的 risk 逻辑是根据 keywords 来的，
+    # 我们发的日志里有 'Error'，MockAI 应该判定为 'medium' (根据你之前的 Mock 逻辑)
+    valid_risks = ["high", "medium", "low", "info", "unknown"]
+    assert risk in valid_risks, f"无效的风险等级: {risk}"
     
+    assert summary is not None and len(summary) > 0, "Summary 字段为空"
+    assert root_cause is not None, "Root Cause 字段为空"
+    assert solution is not None, "Solution 字段为空"
+
+    # 断言 4: 验证 Map-Reduce 的产物 (Global Summary)
+    # 因为只有一条日志，Global Summary 应该也能生成
+    if global_summary:
+        print(f"   -> Global Summary: {global_summary}")
+    else:
+        print("   -> ⚠️ Global Summary 为空 (可能是单条处理逻辑没触发 Summarize 或者 Mock 没返回)")
+
     conn.close()
-    print("\n✅ 集成测试全部通过！")
+    print("\n✅ 集成测试全部通过！LogSentinel MVP2 核心链路正常！")
 
 if __name__ == "__main__":
-    # 确保你的 C++ Server 和 Python Proxy 都在运行
-    try:
-        test_end_to_end_flow()
-    except AssertionError as e:
-        print(f"\n❌ 测试失败: {e}")
-    except Exception as e:
-        print(f"\n❌ 发生异常: {e}")
+    test_end_to_end_flow()

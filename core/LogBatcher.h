@@ -17,6 +17,16 @@ public:
     LogBatcher(MiniMuduo::net::EventLoop* loop,ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai_client_,std::shared_ptr<INotifier> notifier);
     ~LogBatcher();
     bool push(AnalysisTask&& task);
+    // 【测试专用】
+    void setBatchSizeForTest(size_t size) { 
+        std::lock_guard<std::mutex> lock(mutex_);
+        batch_size_ = size; 
+    }
+    void setCapacityForTest(size_t cap) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        capacity_ = cap;
+        ring_buffer_.resize(capacity_); // 记得 resize!
+    }
 private:
     void tryDispatchLocked(size_t limit);
     void onTimeout();
@@ -37,6 +47,6 @@ private:
     std::mutex mutex_;
     // 流控参数
     size_t batch_size_ = 100;    // 攒够多少发车
-    size_t pool_threshold_ = 50; // 下游堵了就不发
+    size_t pool_threshold_ = 90; // 下游堵了就不发
 };
 

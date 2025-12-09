@@ -149,6 +149,9 @@ add_executable(test_threadpool
 add_executable(test_sqlite
   tests/SqliteLogRepository_test.cpp
 )
+add_executable(test_logbatcher 
+  tests/LogBatcher_test.cpp
+)
 
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
@@ -169,16 +172,21 @@ target_link_libraries(test_sqlite PRIVATE
 GTest::gtest_main
 persistence_module
 )
+target_link_libraries(test_logbatcher PRIVATE 
+GTest::gtest_main
+core_module
+)
 #给vscode的C++扩展的CTest.
 add_test(NAME test_http_context COMMAND test_http_context)
 add_test(NAME test_util_traceidgenerate COMMAND test_util_traceidgenerate)
 add_test(NAME test_threadpool COMMAND test_threadpool)
 add_test(NAME test_sqlite COMMAND test_sqlite)
-
+add_test(NAME test_logbatcher COMMAND test_logbatcher)
 gtest_discover_tests(test_http_context)
 gtest_discover_tests(test_util_traceidgenerate)
 gtest_discover_tests(test_threadpool)
 gtest_discover_tests(test_sqlite)
+gtest_discover_tests(test_logbatcher)
 #-----------不同模块测试用例---------------
 #这些测试用例版本变动，用不了了
 # #http层测试用例
