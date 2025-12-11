@@ -5,7 +5,7 @@
 #include "core/AnalysisTask.h"
 #include "persistence/SqliteLogRepository.h"
 #include "ai/AiProvider.h"  // 引入AI抽象接口
-#include "ai/MockAI.h"
+#include "ai/GeminiApiAi.h"
 #include <MiniMuduo/net/TcpConnection.h>
 #include <memory> // For std::unique_ptr
 #include "notification/WebhookNotifier.h"
@@ -42,7 +42,7 @@ int main()
     }
 
     // 创建AI客户端实例
-    std::shared_ptr<AiProvider> ai_client = std::make_shared<MockAI>();
+    std::shared_ptr<AiProvider> ai_client = std::make_shared<GeminiApiAi>();
 
     const int num_cpu_cores = std::thread::hardware_concurrency();
     const int num_io_threads = 1; // 明确 I/O 线程数量
