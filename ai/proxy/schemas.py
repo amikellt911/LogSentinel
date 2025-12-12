@@ -20,10 +20,11 @@ class RiskLevel(str, Enum):
     MEDIUM = "medium"
     LOW = "low"
     INFO = "info" # 建议加上 info，对应 C++ 里的未知情况
+    UNKNOWN = "unknown"
 # 定义结构化输出的 Schema
 class LogAnalysisResult(BaseModel):
     summary: str = Field(description="A concise summary of the log error.")
-    risk_level: RiskLevel = Field(description="The risk level of the error. Must be one of: 'high', 'medium', 'low','info'.")
+    risk_level: RiskLevel = Field(description="The risk level of the error. Must be one of: 'high', 'medium', 'low','info','unknown'.")
     root_cause: str = Field(description="The root cause of the error.")
     solution: str = Field(description="Suggested solution or fix.")
 
@@ -49,7 +50,7 @@ Analyze each log entry INDEPENDENTLY. Do not assume any correlation between thes
 
 For EACH log entry, you must provide:
 1. A concise summary.
-2. Risk assessment ('high', 'medium', 'low', 'info').
+2. Risk assessment ('high', 'medium', 'low', 'info','unknown').
 3. The root cause based strictly on that specific log's content.
 4. An actionable solution.
 

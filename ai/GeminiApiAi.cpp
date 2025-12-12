@@ -70,7 +70,7 @@ LogAnalysisResult GeminiApiAi::analyze(const std::string &log_text)
         }
     }
     std::string risk = analysis_json["risk_level"];
-    if (risk != "high" && risk != "medium" && risk != "low" && risk != "info")
+    if (risk != "high" && risk != "medium" && risk != "low" && risk != "info"&&risk!="unknown")
     {
         // 这里可以选择抛异常，或者自动修正为 unknown，看业务宽容度
         throw std::runtime_error("Validation Error: Invalid risk_level '" + risk + "'");
@@ -178,7 +178,7 @@ std::unordered_map<std::string, LogAnalysisResult> GeminiApiAi::analyzeBatch(con
             }
         }
         std::string risk = result_json["risk_level"];
-        if (risk != "high" && risk != "medium" && risk != "low" && risk != "info")
+        if (risk != "high" && risk != "medium" && risk != "low" && risk != "info"&&risk!="unknown")
         {
             // 这里可以选择抛异常，或者自动修正为 unknown，看业务宽容度
             throw std::runtime_error("Validation Error: Invalid risk_level '" + risk + "'");

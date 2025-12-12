@@ -2,18 +2,23 @@
 #include <filesystem>
 #include <iostream>
 #include "persistence/SqliteLogRepository.h"
-#include "persistence/SqliteHelper.h"
 #include "SqliteLogRepository.h"
 using namespace persistence;
 SqliteLogRepository::SqliteLogRepository(const std::string &db_path)
 {
-    std::string data_path = "../persistence/data/";
-    if (!std::filesystem::exists(data_path))
-    {
-        std::filesystem::create_directories(data_path);
+    std::string final_path;
+    if (db_path.find('/') != std::string::npos || db_path.find('\\') != std::string::npos) {
+        final_path = db_path;
+    } else {
+        // 只有纯文件名才加上默认目录
+        std::string data_path = "../persistence/data/";
+        if (!std::filesystem::exists(data_path)) {
+            std::filesystem::create_directories(data_path);
+        }
+        final_path = data_path + db_path;
     }
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
-    int rc = sqlite3_open_v2((data_path + db_path).c_str(), &db_, flags, nullptr);
+    int rc = sqlite3_open_v2(final_path.c_str(), &db_, flags, nullptr);
     if (rc != SQLITE_OK)
     {
         std::cerr << "Cannot open datebase " << sqlite3_errmsg(db_) << std::endl;
@@ -87,6 +92,16 @@ CREATE TABLE IF NOT EXISTS raw_logs (
         sqlite3_close_v2(db_);
         db_ = nullptr;
         throw std::runtime_error("Failed to create analysis_results table");
+    }
+    //权衡：虽然我们读写比大约会：1:100，写肯定更多，但是为了读历史日志是我们的核心功能，所以还是加上了。
+    const char *sql_create_index = "CREATE INDEX IF NOT EXISTS idx_analysis_results_processed_at ON analysis_results(processed_at);";
+    errmsg = nullptr;
+    rc = sqlite3_exec(db_, sql_create_index, nullptr, nullptr, &errmsg);
+    if (rc != SQLITE_OK)
+    {
+        std::cerr << "Cannot create index on processed_at: " << errmsg << std::endl;
+        sqlite3_free(errmsg);
+        // 索引创建失败通常不是致命错误，可以记录日志但让程序继续运行
     }
 }
 
@@ -255,14 +270,13 @@ std::optional<LogAnalysisResult> SqliteLogRepository::queryStructResultByTraceId
             auto get_col = [&](int col)
             {
                 const char *txt = (const char *)sqlite3_column_text(stmt, col);
-                return txt ? std::string(txt) : "unKnown";
+                return txt ? std::string(txt) : "unknown";
             };
 
-            result.summary = get_col(0);
-            result.risk_level = get_col(1);
-            result.root_cause = get_col(2);
-            result.solution = get_col(3);
-
+            result.risk_level = get_col(0);
+            result.root_cause = get_col(1);
+            result.solution = get_col(2);
+            result.summary = get_col(3);
             sqlite3_finalize(stmt);
             return std::make_optional(result);
         }
@@ -350,6 +364,16 @@ DashboardStats SqliteLogRepository::getDashboardStats()
             {
                 stats.low_risk = count;
             }
+            else if (std::string(risk) == "info") {
+                stats.info_risk = count;
+            }
+            else {
+                // 其他所有未识别的字符串（如 "unknown", "", null）都算作 Unknown
+                stats.unknown_risk += count;
+            }
+        }else {
+            // risk 字段本身是 NULL
+            stats.unknown_risk += count;
         }
     }
     if (rc != SQLITE_DONE)
@@ -516,6 +540,100 @@ void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResu
         sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
         // 2. stmt 自动析构 (finalize)
         // 3. 继续抛出让上层处理
+        throw;
+    }
+}
+
+HistoryPage SqliteLogRepository::getHistoricalLogs(int page, int pageSize)
+{
+    // 1. 锁保护：确保线程安全
+    std::lock_guard<std::mutex> lock_(mutex_);
+    HistoryPage res;
+
+    // --- (1) 总数查询：获取总记录数 (Total Count)，用于计算总共页数 ---
+    {
+        const char *sql_count = "SELECT COUNT(*) FROM analysis_results;";
+        sqlite3_stmt *raw_stmt_count = nullptr;
+
+        int rc = sqlite3_prepare_v2(db_, sql_count, -1, &raw_stmt_count, nullptr);
+        if (rc != SQLITE_OK)
+        {
+            checkSqliteError(db_, rc, "Failed to prepare COUNT statement");
+        }
+        StmtPtr stmt_count(raw_stmt_count);
+
+        rc = sqlite3_step(stmt_count.get());
+        if (rc == SQLITE_ROW)
+        {
+            res.total_count = sqlite3_column_int(stmt_count.get(), 0);
+        }
+        else
+        {
+            // 即使查询失败，也应设置 total_count=0，并记录错误日志，而不是抛出致命异常。
+            // 保持健壮性：这里我们简单地抛出异常，因为查询总数是核心功能。
+            checkSqliteError(db_, rc, "Failed to execute COUNT statement");
+        }
+    }
+
+    // --- (2) 分页查询：获取当前页的日志记录 ---
+    const int offset = std::max(0, (page - 1) * pageSize);
+
+    // 【关键修正】：添加 ORDER BY processed_at DESC
+    // 必须要排序，数据库内部不会自动排序
+    // processed_at 要不要加个索引啊？
+    const char *sql_page = R"(
+        SELECT trace_id, risk_level, summary, processed_at 
+        FROM analysis_results 
+        ORDER BY processed_at DESC  --必须要写，因为厂商和文档没有承诺，所以可能会朝令夕改，导致无序
+        LIMIT ? OFFSET ?;
+    )";
+
+    sqlite3_stmt *raw_stmt_page = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql_page, -1, &raw_stmt_page, nullptr);
+
+    if (rc != SQLITE_OK)
+    {
+        checkSqliteError(db_, rc, "Failed to prepare SELECT/LIMIT/OFFSET statement");
+    }
+
+    StmtPtr stmt_page(raw_stmt_page);
+    try
+    {
+        // 绑定 LIMIT = pageSize (参数1)
+        sqlite3_bind_int(stmt_page.get(), 1, pageSize);
+        // 绑定 OFFSET = offset (参数2)
+        sqlite3_bind_int(stmt_page.get(), 2, offset);
+
+        // 辅助函数：简化列提取
+        auto get_col = [&](int col) -> std::string
+        {
+            const char *txt = (const char *)sqlite3_column_text(stmt_page.get(), col);
+            return txt ? std::string(txt) : "unKnown";
+        };
+
+        // 迭代获取结果
+        while ((rc = sqlite3_step(stmt_page.get())) == SQLITE_ROW)
+        {
+            // 顺序：trace_id(0), risk_level(1), summary(2), processed_at(3)
+            res.logs.emplace_back(HistoricalLogItem{
+                get_col(0),
+                get_col(1),
+                get_col(2),
+                get_col(3)});
+            // 【修正】：删除了 res.total_count++
+        }
+
+        // 检查最终状态：必须是 SQLITE_DONE
+        if (rc != SQLITE_DONE)
+        {
+            checkSqliteError(db_, rc, "Step execution failed during pagination");
+        }
+
+        return res;
+    }
+    catch (...)
+    {
+        // 智能指针 (StmtPtr) 自动处理 finalize
         throw;
     }
 }

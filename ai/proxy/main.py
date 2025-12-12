@@ -96,6 +96,8 @@ async def analyze_log(provider_name: str, request: Request):
    - 'high': System crashes, data loss, security vulnerabilities, critical service failures
    - 'medium': Performance degradation, non-critical errors, warnings that may escalate
    - 'low': Informational messages, minor warnings, expected errors
+   - 'info': Normal operational logs, state changes, heartbeats
+   - 'unknown': Unintelligible logs, binary data, or insufficient context to determine risk
 3. Root cause analysis based on the log content
 4. Actionable solution or remediation steps
 
