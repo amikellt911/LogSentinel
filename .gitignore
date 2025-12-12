@@ -14,3 +14,8 @@ todolist_Mvp2_1.md
 changes.txt
 tests/persistence
 tests/build
+# 屏蔽所有目录下的 __pycache__ 文件夹
+**/__pycache__/
+
+# 屏蔽所有 .pyc 编译文件
+*.pyc
