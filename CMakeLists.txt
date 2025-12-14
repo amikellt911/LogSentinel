@@ -73,6 +73,7 @@ add_library(notification_module STATIC
 add_library(handler_module STATIC
   handlers/LogHandler.cpp
   handlers/DashboardHandler.cpp
+  handlers/HistoryHandler.cpp
 )
 target_include_directories(http_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}

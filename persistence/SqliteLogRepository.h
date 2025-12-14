@@ -4,7 +4,7 @@
 #include<mutex>
 #include<optional>
 #include "ai/AiTypes.h"
-
+#include "persistence/SqliteHelper.h"
 struct AlertInfo{
     std::string trace_id;
     std::string summary;
@@ -16,9 +16,11 @@ struct DashboardStats{
     int high_risk=0;
     int medium_risk=0;
     int low_risk=0;
+    int info_risk=0;
+    int unknown_risk=0;
     double avg_response_time=0.0;
     std::vector<AlertInfo> recent_alerts;
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, high_risk, medium_risk, low_risk, avg_response_time, recent_alerts);
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, high_risk, medium_risk, low_risk,info_risk,unknown_risk, avg_response_time, recent_alerts);
 };
 struct AnalysisResultItem{
     std::string trace_id;
@@ -46,6 +48,8 @@ public:
 
     // 批量保存分析结果
     void saveAnalysisResultBatch(const std::vector<AnalysisResultItem>& items,const std::string& global_summary);
+
+    HistoryPage getHistoricalLogs(int page, int pageSize);
 private:
     sqlite3* db_=nullptr;
     std::mutex mutex_;

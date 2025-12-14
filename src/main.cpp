@@ -5,6 +5,7 @@
 #include "core/AnalysisTask.h"
 #include "persistence/SqliteLogRepository.h"
 #include "ai/AiProvider.h"  // 引入AI抽象接口
+#include "ai/GeminiApiAi.h"
 #include "ai/MockAI.h"
 #include <MiniMuduo/net/TcpConnection.h>
 #include <memory> // For std::unique_ptr
@@ -13,6 +14,7 @@
 #include "http/Router.h"
 #include "handlers/LogHandler.h"
 #include "handlers/DashboardHandler.h"
+#include "handlers/HistoryHandler.h"
 #include "core/LogBatcher.h"
 class testServer : public HttpServer
 {
@@ -28,12 +30,24 @@ public:
 private:
 };
 
-int main()
+int main(int argc, char* argv[])
 {
+    std::string db_path = "LogSentinel.db"; // 生产环境默认名
+    int port = 8080;
+    //简单的命令行参数解析
+    // 支持格式: ./LogSentinel --db <path> --port <port>
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--db" && i + 1 < argc) {
+            db_path = argv[++i];
+        } else if (arg == "--port" && i + 1 < argc) {
+            port = std::stoi(argv[++i]);
+        }
+    }
     std::shared_ptr<SqliteLogRepository> persistence;
     try
     {
-        persistence = std::make_shared<SqliteLogRepository>("test.db");
+        persistence = std::make_shared<SqliteLogRepository>(db_path);
     }
     catch (const std::exception &e)
     {
@@ -52,15 +66,16 @@ int main()
     std::cout << "Thread Model: " << num_io_threads << " I/O threads, "
               << num_worker_threads << " worker threads." << std::endl;
     MiniMuduo::net::EventLoop loop;
-    MiniMuduo::net::InetAddress addr(8080);
+    MiniMuduo::net::InetAddress addr(port);
     testServer server(&loop, addr, num_io_threads);
     ThreadPool tpool(num_worker_threads);
-    SqliteConfigRepository config_repo = SqliteConfigRepository("test.db");
+    SqliteConfigRepository config_repo = SqliteConfigRepository(db_path);
     std::vector<std::string> urls = config_repo.getActiveWebhookUrls();
     std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(urls);
     
     std::shared_ptr<Router> router = std::make_shared<Router>();
     std::shared_ptr<LogBatcher> batcher=std::make_shared<LogBatcher>(&loop,&tpool,persistence,ai_client,notifier);
+    std::shared_ptr<HistoryHandler> history_handler=std::make_shared<HistoryHandler>(persistence,&tpool);
     //lambda默认值拷贝是const,但是handlePost是非const成员函数，会导致const值变化
     //所以需要加上mutable或shared_ptr,因为他是指针，在const中，让他不会改变指向，但是可以改变值
     //LogHandler handler(&tpool,persistence,ai_client, notifier);
@@ -74,6 +89,9 @@ int main()
     auto dashboard_handler = std::make_shared<DashboardHandler>(persistence,&tpool);
     router->add("GET", "/dashboard", [dashboard_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         dashboard_handler->handleGetStats(req, resp, conn);
+    });
+    router->add("GET","/history*",[history_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn){
+        history_handler->handleGetHistory(req,resp,conn);
     });
     auto onRequest=[router](const HttpRequest& req, HttpResponse* resp,const MiniMuduo::net::TcpConnectionPtr& conn){
         bool isSuccess=router->dispatch(req,resp,conn);

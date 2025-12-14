@@ -6,113 +6,53 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LogSentinel 控制台</title>
 
-    <!-- 1. 样式库：Bootstrap 5 + Bootstrap Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
 
-    <!-- 2. 逻辑库：Vue 3 -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <!-- 3. 图表库：ECharts -->
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.0/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
     <style>
-        body {
-            height: 100vh;
-            overflow: hidden;
-            background-color: #f4f6f9;
-        }
+        body { height: 100vh; overflow: hidden; background-color: #f4f6f9; }
+        .sidebar { width: 250px; background-color: #343a40; color: #fff; display: flex; flex-direction: column; height: 100vh; position: fixed; }
+        .sidebar-header { padding: 20px; font-size: 1.5rem; font-weight: bold; border-bottom: 1px solid #4b545c; }
+        .nav-link { color: #c2c7d0; padding: 12px 20px; cursor: pointer; transition: all 0.3s; }
+        .nav-link:hover, .nav-link.active { background-color: #007bff; color: #fff; }
+        .nav-link i { margin-right: 10px; }
+        .main-content { margin-left: 250px; padding: 20px; height: 100vh; overflow-y: auto; }
+        .card { border: none; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); margin-bottom: 20px; }
+        .badge-high { background-color: #dc3545; }
+        .badge-medium { background-color: #ffc107; color: #000; }
+        .badge-low { background-color: #28a745; }
+        .badge-info { background-color: #0dcaf0; color: #000; }
+        .badge-unknown { background-color: #6c757d; }
+        
+        /* 详情弹窗样式 */
+        .modal-header { border-bottom: none; }
+        .detail-label { font-weight: bold; color: #6c757d; font-size: 0.9rem; }
+        .detail-content { background: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 15px; border: 1px solid #dee2e6; }
 
-        /* 侧边栏样式 */
-        .sidebar {
-            width: 250px;
-            background-color: #343a40;
-            color: #fff;
+        /* 聊天窗口样式 (恢复) */
+        .chat-box { height: 60vh; overflow-y: auto; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; }
+        .chat-msg { margin-bottom: 15px; padding: 10px 15px; border-radius: 15px; max-width: 80%; }
+        .msg-ai { background: #e9ecef; align-self: flex-start; }
+        .msg-user { background: #007bff; color: white; margin-left: auto; }
+        /* 新增：仪表盘概览卡片专用样式 */
+        .overview-card {
+            height: 160px; /* 1. 强制固定高度，确保所有卡片一样高 */
             display: flex;
             flex-direction: column;
-            height: 100vh;
-            position: fixed;
+            justify-content: center; /* 2. 内容垂直居中 */
+            align-items: center;
         }
 
-        .sidebar-header {
-            padding: 20px;
-            font-size: 1.5rem;
-            font-weight: bold;
-            border-bottom: 1px solid #4b545c;
-        }
-
-        .nav-link {
-            color: #c2c7d0;
-            padding: 12px 20px;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        .nav-link:hover,
-        .nav-link.active {
-            background-color: #007bff;
-            color: #fff;
-        }
-
-        .nav-link i {
-            margin-right: 10px;
-        }
-
-        /* 主内容区 */
-        .main-content {
-            margin-left: 250px;
-            padding: 20px;
-            height: 100vh;
-            overflow-y: auto;
-        }
-
-        /* 卡片通用 */
-        .card {
-            border: none;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-            margin-bottom: 20px;
-        }
-
-        /* 风险等级标签 */
-        .badge-high {
-            background-color: #dc3545;
-        }
-
-        .badge-medium {
-            background-color: #ffc107;
-            color: #000;
-        }
-
-        .badge-low {
-            background-color: #28a745;
-        }
-
-        /* 聊天窗口 */
-        .chat-box {
-            height: 60vh;
-            overflow-y: auto;
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #dee2e6;
-        }
-
-        .chat-msg {
-            margin-bottom: 15px;
-            padding: 10px 15px;
-            border-radius: 15px;
-            max-width: 80%;
-        }
-
-        .msg-ai {
-            background: #e9ecef;
-            align-self: flex-start;
-        }
-
-        .msg-user {
-            background: #007bff;
-            color: white;
-            margin-left: auto;
+        /* 防止标签文字换行 */
+        .overview-card .text-muted {
+            white-space: nowrap; /* 3. 强制文字不换行 */
+            overflow: hidden;
+            text-overflow: ellipsis; /* 万一太长显示省略号，不撑开布局 */
+            max-width: 100%;
         }
     </style>
 </head>
@@ -121,7 +61,6 @@
 
     <div id="app">
         <div class="d-flex">
-            <!-- 左侧菜单 -->
             <div class="sidebar">
                 <div class="sidebar-header">
                     <i class="bi bi-shield-check"></i> LogSentinel
@@ -142,43 +81,36 @@
                 </nav>
             </div>
 
-            <!-- 右侧内容 -->
             <div class="main-content w-100">
 
-                <!-- 页面 1: 仪表盘 -->
                 <div v-if="currentTab === 'dashboard'">
                     <h3 class="mb-4">系统概览 (Realtime)</h3>
                     <div class="row">
                         <div class="col-md-3">
-                            <div class="card p-3 text-center">
-                                <!-- 绑定总数 -->
+                            <div class="card p-3 text-center overview-card">
                                 <h1 class="text-primary display-4 fw-bold">{{ stats.total }}</h1>
                                 <span class="text-muted">今日分析总数</span>
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <div class="card p-3 text-center">
-                                <!-- 绑定高危数 -->
+                            <div class="card p-3 text-center overview-card">
                                 <h1 class="text-danger display-4 fw-bold">{{ stats.high }}</h1>
                                 <span class="text-muted">高危告警</span>
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <div class="card p-3 text-center">
-                                <!-- 绑定健康度 -->
+                            <div class="card p-3 text-center overview-card">
                                 <h1 class="text-success display-4 fw-bold">{{ stats.health }}</h1>
                                 <span class="text-muted">系统健康度</span>
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <div class="card p-3 text-center">
-                                <!-- 绑定平均耗时 -->
+                            <div class="card p-3 text-center overview-card">
                                 <h1 class="text-warning display-4 fw-bold">{{ stats.avg_time }}</h1>
                                 <span class="text-muted">平均响应时间</span>
                             </div>
                         </div>
                     </div>
-
                     <div class="row">
                         <div class="col-md-6">
                             <div class="card p-3">
@@ -190,18 +122,14 @@
                             <div class="card p-3">
                                 <h5>最近告警</h5>
                                 <ul class="list-group list-group-flush">
-                                    <!-- 绑定最近告警列表 -->
                                     <li class="list-group-item d-flex justify-content-between align-items-center"
                                         v-for="alert in recentAlerts" :key="alert.trace_id">
                                         <span class="text-truncate" style="max-width: 70%;">
                                             <span class="badge badge-high me-2">HIGH</span>
                                             {{ alert.summary }}
                                         </span>
-                                        <!-- 使用 formatTimeAgo 函数显示时间 -->
-                                        <span class="text-muted small" :title="alert.time">{{ formatTimeAgo(alert.time)
-                                            }}</span>
+                                        <span class="text-muted small" :title="alert.time">{{ formatTimeAgo(alert.time) }}</span>
                                     </li>
-                                    <!-- 如果没有告警，显示提示 -->
                                     <li v-if="recentAlerts.length === 0" class="list-group-item text-center text-muted">
                                         暂无高危告警，系统运行良好 🎉
                                     </li>
@@ -211,42 +139,74 @@
                     </div>
                 </div>
 
-                <!-- 页面 2: 历史记录 -->
                 <div v-if="currentTab === 'history'">
-                    <h3 class="mb-4">全量日志列表 (Mock Data)</h3>
+                    <h3 class="mb-4">历史日志查询</h3>
                     <div class="card">
                         <div class="card-body">
+                            <div class="d-flex justify-content-between mb-3">
+                                <span>共找到 <strong>{{ history.total }}</strong> 条记录</span>
+                                <button class="btn btn-sm btn-outline-secondary" @click="fetchHistory(history.page)">
+                                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                                </button>
+                            </div>
+
                             <table class="table table-hover align-middle">
                                 <thead>
                                     <tr>
-                                        <th>时间</th>
-                                        <th>Trace ID</th>
-                                        <th>风险等级</th>
+                                        <th style="width: 180px;">处理时间</th>
+                                        <th style="width: 100px;">风险等级</th>
                                         <th>摘要</th>
-                                        <th>操作</th>
+                                        <th style="width: 150px;">Trace ID</th>
+                                        <th style="width: 100px;">操作</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr v-for="log in mockLogs" :key="log.id">
-                                        <td>{{ log.time }}</td>
-                                        <td><code>{{ log.trace_id }}</code></td>
+                                    <tr v-if="history.loading">
+                                        <td colspan="5" class="text-center py-4">
+                                            <div class="spinner-border text-primary" role="status"></div>
+                                            <p class="mt-2 text-muted">正在加载日志...</p>
+                                        </td>
+                                    </tr>
+                                    <tr v-else-if="history.logs.length === 0">
+                                        <td colspan="5" class="text-center py-4 text-muted">暂无日志数据</td>
+                                    </tr>
+                                    <tr v-else v-for="log in history.logs" :key="log.trace_id">
+                                        <td>{{ log.processed_at }}</td>
                                         <td>
-                                            <span class="badge" :class="'badge-' + log.risk_level">
-                                                {{ log.risk_level.toUpperCase() }}
+                                            <span class="badge" :class="getBadgeClass(log.risk_level)">
+                                                {{ (log.risk_level || 'UNKNOWN').toUpperCase() }}
                                             </span>
                                         </td>
-                                        <td>{{ log.summary }}</td>
+                                        <td class="text-truncate" style="max-width: 300px;" :title="log.summary">
+                                            {{ log.summary }}
+                                        </td>
+                                        <td><code>{{ log.trace_id.substring(0, 8) }}...</code></td>
                                         <td>
-                                            <button class="btn btn-sm btn-outline-primary">详情</button>
+                                            <button class="btn btn-sm btn-outline-primary" @click="showDetails(log.trace_id)">
+                                                详情
+                                            </button>
                                         </td>
                                     </tr>
                                 </tbody>
                             </table>
+
+                            <nav v-if="history.total > 0">
+                                <ul class="pagination justify-content-center">
+                                    <li class="page-item" :class="{ disabled: history.page <= 1 }">
+                                        <a class="page-link" href="#" @click.prevent="changePage(history.page - 1)">上一页</a>
+                                    </li>
+                                    <li class="page-item disabled">
+                                        <span class="page-link">第 {{ history.page }} 页</span>
+                                    </li>
+                                    <li class="page-item" :class="{ disabled: history.logs.length < history.pageSize }">
+                                        <a class="page-link" href="#" @click.prevent="changePage(history.page + 1)">下一页</a>
+                                    </li>
+                                </ul>
+                            </nav>
                         </div>
                     </div>
                 </div>
 
-                <!-- 页面 3: 智能问答 (RAG Demo) -->
                 <div v-if="currentTab === 'chat'">
                     <h3 class="mb-4">AI 运维助手 (Mock Demo)</h3>
                     <div class="card">
@@ -267,7 +227,6 @@
                     </div>
                 </div>
 
-                <!-- 页面 4: 实时测试 (真实的 API 调用) -->
                 <div v-if="currentTab === 'submit'">
                     <h3 class="mb-4">实时日志分析测试</h3>
                     <div class="card">
@@ -281,7 +240,7 @@
                         </div>
                     </div>
 
-                    <div v-if="liveResult" class="card border-start border-5"
+                    <div v-if="liveResult" class="card border-start border-5 mt-3"
                         :class="getRiskBorderClass(liveResult.risk_level)">
                         <div class="card-body">
                             <h5>分析结果</h5>
@@ -295,6 +254,47 @@
 
             </div>
         </div>
+
+        <div class="modal fade" id="detailModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title text-truncate" style="font-family: monospace; max-width: 95%;" :title="selectedLog ? selectedLog.trace_id : ''">
+                            Trace ID: {{ selectedLog ? selectedLog.trace_id : '' }}
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+
+                    <div class="modal-body" v-if="selectedLog">
+                        <div class="mb-3">
+                            <div class="detail-label">根本原因 (Root Cause)</div>
+                            <div class="detail-content">{{ selectedLog.result.root_cause }}</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="detail-label">解决方案 (Solution)</div>
+                            <div class="detail-content">
+                                {{ selectedLog.result.solution }}
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="detail-label">摘要 (Summary)</div>
+                            <div class="detail-content">{{ selectedLog.result.summary }}</div>
+                        </div>
+                    </div>
+
+                    <div class="modal-body text-center" v-else>
+                        <div class="spinner-border text-primary" role="status"></div>
+                    </div>
+                    
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <script>
@@ -305,33 +305,30 @@
             data() {
                 return {
                     currentTab: 'dashboard',
-                    stats: { // 新增 stats 对象来存储后端返回的统计
+                    // 仪表盘数据
+                    stats: { total: 0, high: 0, medium: 0, low: 0,info:0,unknown:0, health: "100%", avg_time: "0ms" },
+                    recentAlerts: [],
+                    
+                    // 历史日志数据
+                    history: {
+                        logs: [],
+                        page: 1,
+                        pageSize: 10,
                         total: 0,
-                        high: 0,
-                        medium: 0,
-                        low: 0,
-                        health: "100%",
-                        avg_time: "0ms"
+                        loading: false
                     },
-                    recentAlerts: [], // 替代 mockAlerts
-                    // --- Mock 数据区域 (未来会被后端 API 替换) ---
-                    mockLogs: [
-                        { id: 1, time: "2025-11-25 10:00:01", trace_id: "req-001", risk_level: "high", summary: "数据库连接超时 (Connection Timeout)" },
-                        { id: 2, time: "2025-11-25 10:05:23", trace_id: "req-002", risk_level: "low", summary: "用户登录成功" },
-                        { id: 3, time: "2025-11-25 10:12:45", trace_id: "req-003", risk_level: "medium", summary: "API 响应延迟 > 2s" },
-                        { id: 4, time: "2025-11-25 11:00:00", trace_id: "req-004", risk_level: "high", summary: "支付服务空指针异常 (NPE)" },
-                        { id: 5, time: "2025-11-25 11:20:11", trace_id: "req-005", risk_level: "low", summary: "定时任务执行完成" },
-                    ],
-                    mockAlerts: [
-                        { summary: "Critical: DB Connection Lost", time: "10 mins ago" },
-                        { summary: "Error: Payment Gateway 502", time: "2 hours ago" }
-                    ],
+                    
+                    // 聊天数据 (恢复)
                     chatMessages: [
                         { role: "ai", content: "你好！我是 LogSentinel 智能助手。你可以问我任何关于系统日志的问题。" }
                     ],
                     chatInput: "",
 
-                    // --- 实时测试数据 ---
+                    // 详情弹窗数据
+                    selectedLog: null,
+                    detailModal: null, 
+
+                    // 实时测试数据
                     liveInput: "",
                     isProcessing: false,
                     liveTraceId: "",
@@ -342,86 +339,100 @@
             methods: {
                 switchTab(tab) {
                     this.currentTab = tab;
-                    // 如果切到仪表盘，需要重新渲染图表
                     if (tab === 'dashboard') {
-                        nextTick(() => {
-                            this.initChart();
-                        });
+                        nextTick(() => this.initChart());
+                    } else if (tab === 'history') {
+                        this.fetchHistory(1);
                     }
+                },
+                
+                // --- 历史日志相关 ---
+                async fetchHistory(page) {
+                    this.history.loading = true;
+                    this.history.page = page; 
+                    try {
+                        const res = await fetch(`${API_BASE}/history?page=${page}&pageSize=${this.history.pageSize}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.history.logs = data.logs || [];
+                            this.history.total = data.total_count || 0;
+                        } else {
+                            console.error("Fetch history failed");
+                        }
+                    } catch (e) {
+                        console.error("Network error:", e);
+                    } finally {
+                        this.history.loading = false;
+                    }
+                },
+                changePage(newPage) {
+                    if (newPage < 1) return;
+                    this.fetchHistory(newPage);
+                },
+                
+                // --- 详情相关 ---
+                async showDetails(traceId) {
+                    this.selectedLog = null;
+                    if (!this.detailModal) {
+                        this.detailModal = new bootstrap.Modal(document.getElementById('detailModal'));
+                    }
+                    this.detailModal.show();
+                    try {
+                        const res = await fetch(`${API_BASE}/results/${traceId}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.selectedLog = data;
+                        } else {
+                            alert("获取详情失败");
+                        }
+                    } catch (e) {
+                        console.error(e);
+                        alert("网络错误");
+                    }
+                },
+
+                // --- 聊天相关 (恢复) ---
+                sendChat() {
+                    if (!this.chatInput.trim()) return;
+                    this.chatMessages.push({ role: "user", content: this.chatInput });
+                    const question = this.chatInput;
+                    this.chatInput = "";
+                    setTimeout(() => {
+                        let reply = "这是一个模拟回复。未来我将连接后端 RAG 接口回答关于 '" + question + "' 的问题。";
+                        this.chatMessages.push({ role: "ai", content: reply });
+                    }, 1000);
+                },
+
+                // --- 辅助样式 ---
+                getBadgeClass(risk) {
+                    risk = (risk || '').toLowerCase();
+                    if (risk === 'high') return 'badge-high';
+                    if (risk === 'medium') return 'badge-medium';
+                    if (risk === 'low') return 'badge-low';
+                    if (risk === 'info') return 'badge-info';
+                    return 'badge-unknown';
+                },
+                getRiskBorderClass(risk) {
+                    if (risk === 'high') return 'border-danger';
+                    if (risk === 'medium') return 'border-warning';
+                    return 'border-success';
                 },
                 formatTimeAgo(timeString) {
                     if (!timeString) return '';
-                    // 方法：在字符串后面加个 'Z'，表示这是 UTC 时间
-                    // 例如: "2025-11-27 05:00:00" -> "2025-11-27T05:00:00Z"
                     let utcString = timeString.replace(' ', 'T');
-                    if (!utcString.endsWith('Z')) {
-                        utcString += 'Z';
-                    }
-
-                    const date = new Date(utcString); // 浏览器会自动转成本地时区
+                    if (!utcString.endsWith('Z')) utcString += 'Z';
+                    const date = new Date(utcString);
                     const now = new Date();
                     const diff = Math.floor((now - date) / 1000);
-                    if (isNaN(diff)) return timeString; // 解析失败直接显示原样
-
+                    if (isNaN(diff)) return timeString;
                     if (diff < 60) return '刚刚';
                     if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
                     if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
                     return Math.floor(diff / 86400) + ' 天前';
                 },
+
+                // --- 仪表盘相关 ---
                 initChart() {
-                    const chartDom = document.getElementById('riskChart');
-                    if (!chartDom) return;
-                    const myChart = echarts.init(chartDom);
-                    const option = {
-                        tooltip: { trigger: 'item' },
-                        legend: { top: '5%', left: 'center' },
-                        series: [
-                            {
-                                name: '风险等级',
-                                type: 'pie',
-                                radius: ['40%', '70%'],
-                                avoidLabelOverlap: false,
-                                itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
-                                label: { show: false, position: 'center' },
-                                emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
-                                data: [
-                                    { value: 15, name: 'High', itemStyle: { color: '#dc3545' } },
-                                    { value: 45, name: 'Medium', itemStyle: { color: '#ffc107' } },
-                                    { value: 120, name: 'Low', itemStyle: { color: '#198754' } }
-                                ]
-                            }
-                        ]
-                    };
-                    myChart.setOption(option);
-                },
-                async fetchDashboardData() {
-                    try {
-                        const res = await fetch(`${API_BASE}/dashboard`);
-                        if (res.status === 200) {
-                            const data = await res.json();
-                            this.stats.total = data.total_logs;
-                            this.stats.high = data.high_risk;
-                            this.stats.medium = data.medium_risk;
-                            this.stats.low = data.low_risk;
-                            // 简单的健康度计算逻辑
-                            const total = data.total_logs || 1;
-                            const health = 100 - ((this.stats.high / total) * 100);
-                            this.stats.health = health.toFixed(1) + "%";
-                            // 后端传来的是微秒 (us)，除以 1000 变成毫秒 (ms)
-                            // toFixed(1) 保留一位小数，例如 "245.5ms"
-                            let avgMs = data.avg_response_time / 1000;
-                            this.stats.avg_time = avgMs.toFixed(1) + "ms";
-
-                            this.recentAlerts = data.recent_alerts || [];
-                            this.updateChart();
-                        }
-                    } catch (e) {
-                        console.error("获取仪表盘失败", e);
-                    }
-
-                }
-                ,
-                updateChart() {
                     const chartDom = document.getElementById('riskChart');
                     if (!chartDom) return;
                     const myChart = echarts.getInstanceByDom(chartDom) || echarts.init(chartDom);
@@ -438,37 +449,46 @@
                                 label: { show: false, position: 'center' },
                                 emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
                                 data: [
-                                    { value: this.stats.high, name: 'High', itemStyle: { color: '#dc3545' } },
-                                    { value: this.stats.medium, name: 'Medium', itemStyle: { color: '#ffc107' } },
-                                    { value: this.stats.low, name: 'Low', itemStyle: { color: '#198754' } }
+                                { value: this.stats.high, name: 'High', itemStyle: { color: '#dc3545' } },
+                                { value: this.stats.medium, name: 'Medium', itemStyle: { color: '#ffc107' } },
+                                { value: this.stats.low, name: 'Low', itemStyle: { color: '#198754' } },
+                                { value: this.stats.info, name: 'Info', itemStyle: { color: '#0dcaf0' } },
+                                { value: this.stats.unknown, name: 'Unknown', itemStyle: { color: '#6c757d' } }
                                 ]
                             }
                         ]
                     };
                     myChart.setOption(option);
-
-                }
-                ,
-                sendChat() {
-                    if (!this.chatInput.trim()) return;
-                    // 1. 用户消息上屏
-                    this.chatMessages.push({ role: "user", content: this.chatInput });
-                    const question = this.chatInput;
-                    this.chatInput = "";
-
-                    // 2. 模拟 AI 回复 (Mock)
-                    setTimeout(() => {
-                        let reply = "这是一个模拟回复。未来我将连接后端 RAG 接口回答关于 '" + question + "' 的问题。";
-                        this.chatMessages.push({ role: "ai", content: reply });
-                    }, 1000);
+                },
+                async fetchDashboardData() {
+                    try {
+                        const res = await fetch(`${API_BASE}/dashboard`);
+                        if (res.status === 200) {
+                            const data = await res.json();
+                            this.stats = {
+                                total: data.total_logs,
+                                high: data.high_risk,
+                                medium: data.medium_risk,
+                                low: data.low_risk,
+                                info: data.info_risk || 0,
+                                unknown: data.unknown_risk || 0,
+                                health: (100 - ((data.high_risk / (data.total_logs || 1)) * 100)).toFixed(1) + "%",
+                                avg_time: (data.avg_response_time / 1000).toFixed(1) + "ms"
+                            };
+                            this.recentAlerts = data.recent_alerts || [];
+                            this.updateChart();
+                        }
+                    } catch (e) { console.error("仪表盘加载失败", e); }
+                },
+                updateChart() {
+                    this.initChart();
                 },
 
-                // --- 真实 API 调用逻辑 (复用之前的) ---
+                // --- 实时测试相关 ---
                 async submitRealLog() {
                     if (!this.liveInput.trim()) return;
                     this.isProcessing = true;
                     this.liveResult = null;
-
                     try {
                         const res = await fetch(`${API_BASE}/logs`, {
                             method: 'POST',
@@ -479,10 +499,7 @@
                         const data = await res.json();
                         this.liveTraceId = data.trace_id;
                         this.startPolling(data.trace_id);
-                    } catch (e) {
-                        alert(e.message);
-                        this.isProcessing = false;
-                    }
+                    } catch (e) { alert(e.message); this.isProcessing = false; }
                 },
                 startPolling(traceId) {
                     if (this.pollTimer) clearInterval(this.pollTimer);
@@ -493,38 +510,20 @@
                             const res = await fetch(`${API_BASE}/results/${traceId}`);
                             if (res.status === 200) {
                                 const data = await res.json();
-                                this.liveResult = data.result; // AI 结果
+                                this.liveResult = data.result;
                                 this.isProcessing = false;
                                 clearInterval(this.pollTimer);
-                            } else if (res.status === 404) {
-                                console.log("Waiting...");
-                            }
+                            } else if (res.status === 404) { console.log("Waiting..."); }
                         } catch (e) { console.error(e); }
-
-                        if (attempts > 30) {
-                            this.isProcessing = false;
-                            clearInterval(this.pollTimer);
-                            alert("Timeout");
-                        }
+                        if (attempts > 30) { this.isProcessing = false; clearInterval(this.pollTimer); alert("Timeout"); }
                     }, 1000);
-                },
-                getRiskBorderClass(risk) {
-                    if (risk === 'high') return 'border-danger';
-                    if (risk === 'medium') return 'border-warning';
-                    return 'border-success';
                 }
             },
             mounted() {
                 this.fetchDashboardData();
-
-                // 自动刷新
                 setInterval(() => {
-                    if (this.currentTab === 'dashboard') {
-                        this.fetchDashboardData();
-                    }
+                    if (this.currentTab === 'dashboard') this.fetchDashboardData();
                 }, 5000);
-
-                // 窗口大小改变时重绘图表
                 window.addEventListener('resize', () => {
                     const chartDom = document.getElementById('riskChart');
                     if (chartDom) echarts.getInstanceByDom(chartDom)?.resize();
@@ -534,5 +533,4 @@
     </script>
 
 </body>
-
 </html>

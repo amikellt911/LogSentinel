@@ -3,13 +3,18 @@
 #include <iostream>
 SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
 {
-    std::string data_path = "../persistence/data/";
-    if (!std::filesystem::exists(data_path))
-    {
-        std::filesystem::create_directories(data_path);
+    std::string final_path;
+    if (db_path.find('/') != std::string::npos || db_path.find('\\') != std::string::npos) {
+        final_path = db_path;
+    } else {
+        std::string data_path = "../persistence/data/";
+        if (!std::filesystem::exists(data_path)) {
+            std::filesystem::create_directories(data_path);
+        }
+        final_path = data_path + db_path;
     }
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
-    int rc = sqlite3_open_v2((data_path + db_path).c_str(), &db_, flags, nullptr);
+    int rc = sqlite3_open_v2(final_path.c_str(), &db_, flags, nullptr);
     if (rc != SQLITE_OK)
     {
         std::cerr << "Cannot open datebase " << sqlite3_errmsg(db_) << std::endl;

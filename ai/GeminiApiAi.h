@@ -34,4 +34,6 @@ public:
 private:
     std::string analyze_url_;
     std::string chat_url_;
+    std::string analyze_batch_url_;
+    std::string summarize_url_;
 };

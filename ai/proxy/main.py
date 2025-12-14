@@ -35,7 +35,7 @@ load_dotenv(dotenv_path=dotenv_path)
 from ai.proxy.providers.base import AIProvider
 from ai.proxy.providers.gemini import GeminiProvider
 from ai.proxy.providers.mock import MockProvider
-from ai.proxy.schemas import BatchRequest,ChatRequest,SummarizeRequest,BATCH_PROMPT_TEMPLATE,SUMMARIZE_PROMPT_TEMPLATE
+from ai.proxy.schemas import BatchRequestSchema,ChatRequest,SummarizeRequest,BATCH_PROMPT_TEMPLATE,SUMMARIZE_PROMPT_TEMPLATE
 
 
 # --- 应用设置 ---
@@ -96,6 +96,8 @@ async def analyze_log(provider_name: str, request: Request):
    - 'high': System crashes, data loss, security vulnerabilities, critical service failures
    - 'medium': Performance degradation, non-critical errors, warnings that may escalate
    - 'low': Informational messages, minor warnings, expected errors
+   - 'info': Normal operational logs, state changes, heartbeats
+   - 'unknown': Unintelligible logs, binary data, or insufficient context to determine risk
 3. Root cause analysis based on the log content
 4. Actionable solution or remediation steps
 
@@ -108,7 +110,7 @@ Provide your analysis in a structured format."""
         raise HTTPException(status_code=500, detail=f"An error occurred during analysis: {e}")
 
 @app.post("/analyze/batch/{provider_name}")
-async def analyze_log_batch(provider_name: str, request: BatchRequest):
+async def analyze_log_batch(provider_name: str, request: BatchRequestSchema):
     provider=providers.get(provider_name)
     if not provider:
         raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found or not configured.")
