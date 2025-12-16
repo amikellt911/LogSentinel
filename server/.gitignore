@@ -1,0 +1,14 @@
+/build
+/persistence/data
+/ai/.env
+/ai/proxy/__pycache__
+/venv
+/ai/proxy/providers/__pycache__
+tests/persistence
+tests/build
+/tests/wrk/*.log
+# 屏蔽所有目录下的 __pycache__ 文件夹
+**/__pycache__/
+
+# 屏蔽所有 .pyc 编译文件
+*.pyc

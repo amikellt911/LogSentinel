@@ -1,19 +1,9 @@
-/build
-/third_party
-/.vscode
-/persistence/data
-/ai/.env
-/ai/proxy/__pycache__
-/venv
-/ai/proxy/providers/__pycache__
 Gemini_SDK_Tutorial.md
 MVP_ROUND_1.md
 Proxy_Architecture_Refresher.md
 todolist_Mvp2_1_learn.md
 todolist_Mvp2_1.md
 changes.txt
-tests/persistence
-tests/build
 # 屏蔽所有目录下的 __pycache__ 文件夹
 **/__pycache__/
 
