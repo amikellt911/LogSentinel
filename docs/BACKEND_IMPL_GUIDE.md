@@ -14,9 +14,15 @@
 
 ## 2. 数据结构定义 (C++ Structs)
 
-建议在 `server/src/core/ConfigTypes.h` (新建) 中定义这些结构体。
+**重要决策:** 建议将这些结构体定义在 **`server/persistence/ConfigTypes.h`** (新建文件)，而不是 `core/` 下。
+
+*   **设计理由:**
+    *   `Core` 模块（如 `LogBatcher`）通常会依赖 `Persistence` 模块（如 `SqliteLogRepository`）。
+    *   如果我们将 `ConfigTypes.h` 放在 `Core` 中，而 `Persistence` 又需要引用它来读写数据库，就会形成 `Core <-> Persistence` 的双向循环依赖。
+    *   将类型定义下沉到 `Persistence` 模块（或者独立的 `Types` 模块），可以打破这个环，形成清晰的 `Core -> Persistence` 单向依赖。
 
 ```cpp
+// server/persistence/ConfigTypes.h
 #pragma once
 #include <string>
 #include <vector>
@@ -89,6 +95,8 @@ struct AllSettings {
 **实现伪代码 (`SqliteConfigRepository.cpp`):**
 
 ```cpp
+#include "persistence/ConfigTypes.h"
+
 AppConfig SqliteConfigRepository::getAppConfig() {
     // 1. 从数据库查出所有 KV 对
     std::map<std::string, std::string> kv_map = queryAllConfigs();
@@ -118,6 +126,8 @@ AppConfig SqliteConfigRepository::getAppConfig() {
 **Handler 伪代码 (`SettingsHandler.cpp`):**
 
 ```cpp
+#include "persistence/ConfigTypes.h"
+
 void handleUpdateConfig(const HttpRequest& req, HttpResponse* resp) {
     // 1. 解析请求 JSON 为 Struct
     // 前端可能只发了部分更新，所以我们用 map 接收可能更灵活？
@@ -165,5 +175,4 @@ void handleGetAll(const HttpRequest& req, HttpResponse* resp) {
 ## 5. 总结
 
 *   **优点:** 代码极其整洁，`ConfigTypes.h` 既是文档又是代码，添加新配置只需改这个头文件和数据库初始数据。
-*   **难点:** `app_config` 表(String) 转 `AppConfig` 结构体(Typed) 时的类型转换。
-    *   *建议:* 数据库里的 `config_value` 统一视为 String。在 `AppConfig` 结构体中，如果不想写转换逻辑，可以将 `kernel_worker_threads` 也定义为 `std::string`，在真正使用它的地方（比如 `ThreadPool` 初始化时）再 `std::stoi`。这样可以避免在 JSON 转换层处理类型异常。
+*   **架构优势:** 通过将 `ConfigTypes.h` 放置在 `persistence/` 目录，成功避免了 `Core` 与 `Persistence` 之间的循环依赖，保持了单向依赖流 (`Core -> Persistence`)。
