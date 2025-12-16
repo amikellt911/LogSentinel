@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, reactive } from 'vue'
 import dayjs from 'dayjs'
+import { ElMessage } from 'element-plus'
 
 export interface LogEntry {
   id: number | string
@@ -81,6 +82,7 @@ export interface HistoryPageResponse {
 export const useSystemStore = defineStore('system', () => {
   // --- State ---
   const isRunning = ref(false)
+  const isSimulationMode = ref(true) // Default to true (safe mode)
   const pollingInterval = ref<number | null>(null)
 
   // Metrics
@@ -328,52 +330,59 @@ Metrics:
     }
   }
 
+  // Throttle error messages to avoid spamming
+  let lastErrorTime = 0;
+  function showBackendError() {
+      const now = Date.now();
+      if (now - lastErrorTime > 3000) { // Only show every 3 seconds
+          ElMessage.error('Backend connection failed. System paused or unreachable.');
+          lastErrorTime = now;
+      }
+  }
+
   async function fetchDashboardStats() {
     try {
-        // Use relative path to leverage Vite proxy or Nginx in prod
-        const res = await fetch('/api/dashboard', { method: 'GET' });
-
+        const res = await fetch('/api/dashboard', { method: 'GET' }); 
+        
         if (!res.ok) throw new Error('Failed to fetch dashboard stats');
-
+        
         const data: DashboardStatsResponse = await res.json();
-
+        
         // Update State
         totalLogsProcessed.value = data.total_logs;
         netLatency.value = data.avg_response_time;
-
+        
         riskStats.Critical = data.high_risk;
         riskStats.Error = data.medium_risk;
         riskStats.Warning = data.low_risk;
         riskStats.Info = data.info_risk;
-        // Calculate Safe or use unknown if that's what we want
         riskStats.Safe = data.total_logs - (data.high_risk + data.medium_risk + data.low_risk + data.info_risk);
 
-        // Alerts
-        // Backend AlertInfo: { trace_id, summary, time }
-        // Frontend AlertEntry: { id, time, service, level, summary }
         recentAlerts.value = data.recent_alerts.map(a => ({
             id: a.trace_id,
             time: a.time,
-            service: 'LogSentinel', // Placeholder as backend doesn't provide service name
-            level: 'Error',         // Placeholder, backend alert doesn't provide level yet
+            service: 'LogSentinel',
+            level: 'Error',
             summary: a.summary
         }));
 
-        // --- Simulate missing data for visual completeness until backend supports it ---
-
-        // Simulate Chart Data (QPS) - TODO: Get from backend
+        // Simulate missing data for visual completeness until backend supports it
         const now = dayjs().format('HH:mm:ss')
         const qps = Math.floor(Math.random() * 100 + 50); // Mock QPS
         const aiRate = Math.floor(qps * 0.1);
         chartData.value.push({ time: now, qps, aiRate });
         if (chartData.value.length > 60) chartData.value.shift();
 
-        // Simulate Memory/Queue
         memoryPercent.value = 45 + Math.floor(Math.random() * 5); // Mock 45-50%
 
     } catch (e) {
-        console.warn("Dashboard fetch failed, falling back to mock data:", e);
-        updateMockData();
+        if (isSimulationMode.value) {
+            console.warn("Dashboard fetch failed, falling back to mock data:", e);
+            updateMockData();
+        } else {
+            console.error("Dashboard fetch failed:", e);
+            showBackendError();
+        }
     }
   }
 
@@ -383,14 +392,11 @@ Metrics:
           if (!res.ok) throw new Error('Failed to fetch logs');
           const data: HistoryPageResponse = await res.json();
 
-          // Frontend expects: { id, timestamp, level, message }
-          // Backend returns: { trace_id, processed_at, risk_level, summary }
           logs.value = data.logs.map(item => {
-              // Map backend risk string to frontend enum
               let level: 'INFO' | 'WARN' | 'RISK' = 'INFO';
               if (item.risk_level === 'Critical' || item.risk_level === 'High') level = 'RISK';
               else if (item.risk_level === 'Warning' || item.risk_level === 'Medium') level = 'WARN';
-
+              
               return {
                   id: item.trace_id,
                   timestamp: item.processed_at,
@@ -400,9 +406,14 @@ Metrics:
           });
 
       } catch (e) {
-          console.warn("Logs fetch failed, falling back to mock data:", e);
-          generateRandomLog();
-          generateRandomLog();
+          if (isSimulationMode.value) {
+              console.warn("Logs fetch failed, falling back to mock data:", e);
+              generateRandomLog();
+              generateRandomLog();
+          } else {
+             console.error("Logs fetch failed:", e);
+             // Error already shown by dashboard fetch usually, so maybe skip or show unique error
+          }
       }
   }
 
@@ -429,7 +440,7 @@ Metrics:
     pollingInterval.value = setInterval(() => {
         fetchDashboardStats();
         fetchLogs();
-    }, 1000)
+    }, 1000) 
   }
 
   function stopPolling() {
@@ -441,6 +452,7 @@ Metrics:
 
   return {
     isRunning,
+    isSimulationMode,
     settings,
     totalLogsProcessed,
     netLatency,

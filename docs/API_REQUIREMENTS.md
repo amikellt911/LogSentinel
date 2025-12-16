@@ -1,18 +1,18 @@
-# API Requirements and Contract
+# API 需求与接口文档
 
-This document outlines the API endpoints required by the frontend client and details the existing backend implementation.
+本文档概述了前端客户端所需的 API 接口，并详细说明了现有的后端实现。
 
-## Backend Base URL
-Assume `http://localhost:8080` (or configured via environment/proxy).
+## 后端基础 URL
+假设为 `http://localhost:8080`（或通过环境变量/代理配置）。
 
-## Endpoints
+## 接口列表
 
-### 1. Dashboard Stats
-**Endpoint:** `GET /dashboard`
+### 1. 仪表盘统计 (Dashboard Stats)
+**接口地址:** `GET /dashboard`
 
-**Description:** Returns aggregated statistics for the dashboard.
+**描述:** 返回仪表盘所需的聚合统计数据。
 
-**Backend Implementation (`DashboardStats`):**
+**后端实现 (`DashboardStats`):**
 ```json
 {
   "total_logs": 12345,
@@ -25,34 +25,34 @@ Assume `http://localhost:8080` (or configured via environment/proxy).
   "recent_alerts": [
     {
       "trace_id": "uuid-1",
-      "summary": "SQL Injection detected",
+      "summary": "Detected SQL Injection",
       "time": "2023-10-27 10:00:00"
     }
   ]
 }
 ```
 
-**Frontend Requirements (Mapping):**
+**前端需求 (映射关系):**
 - `totalLogsProcessed` -> `total_logs`
-- `netLatency` -> `avg_response_time` (partially maps, frontend expects ms)
+- `netLatency` -> `avg_response_time` (部分映射，前端期望单位为 ms，后端需确认单位)
 - `riskStats`:
     - `Critical` -> `high_risk`
     - `Error` -> `medium_risk`
     - `Warning` -> `low_risk`
     - `Info` -> `info_risk`
-    - `Safe` -> (Calculated: `total_logs` - sum(risks))
+    - `Safe` -> (计算得出: `total_logs` - 所有风险之和)
 - `recentAlerts` -> `recent_alerts`
 
-**Missing/Gaps:**
-- **System Metrics:** The frontend displays Server Memory Usage, Queue Depth/Backpressure status. These are currently not provided by the backend.
-- **AI Metrics:** `aiLatency`, `aiTriggerCount`. These are not in `DashboardStats`.
-- **Time-Series Chart:** The frontend displays a real-time chart of QPS (Ingest Rate) and AI Rate. The backend currently only returns a snapshot.
+**缺失/差距:**
+- **系统指标:** 前端显示服务器内存使用率 (Memory Usage)、队列深度/背压状态 (Queue/Backpressure)。目前后端未提供这些数据。
+- **AI 指标:** `aiLatency` (AI 延迟), `aiTriggerCount` (AI 触发次数)。这些不在目前的 `DashboardStats` 中。
+- **时间序列图表:** 前端显示 QPS (摄入率) 和 AI 处理率的实时图表。目前后端仅返回快照数据，未提供历史趋势数据。
 
-### 2. Historical Logs
-**Endpoint:** `GET /history`
-**Query Params:** `?page=1&pageSize=10`
+### 2. 历史日志 (Historical Logs)
+**接口地址:** `GET /history`
+**查询参数:** `?page=1&pageSize=10`
 
-**Backend Implementation (`HistoryPage`):**
+**后端实现 (`HistoryPage`):**
 ```json
 {
   "logs": [
@@ -67,9 +67,9 @@ Assume `http://localhost:8080` (or configured via environment/proxy).
 }
 ```
 
-**Frontend Requirements (Mapping):**
-- `logs` array in Store.
-- Frontend Item Structure:
+**前端需求 (映射关系):**
+- Store 中的 `logs` 数组。
+- 前端对象结构:
   ```ts
   interface LogEntry {
       id: number | string
@@ -78,16 +78,16 @@ Assume `http://localhost:8080` (or configured via environment/proxy).
       message: string
   }
   ```
-- Mapping:
+- 映射:
     - `id` -> `trace_id`
     - `timestamp` -> `processed_at`
-    - `level` -> `risk_level` (needs normalization, backend returns string like "Critical", frontend expects specific enum)
+    - `level` -> `risk_level` (需要标准化，后端返回字符串如 "Critical"，前端期望特定的枚举值)
     - `message` -> `summary`
 
-### 3. Log Submission
-**Endpoint:** `POST /logs`
+### 3. 日志提交 (Log Submission)
+**接口地址:** `POST /logs`
 
-**Request Body:**
+**请求体:**
 ```json
 {
     "trace_id": "optional-client-trace-id",
@@ -95,20 +95,20 @@ Assume `http://localhost:8080` (or configured via environment/proxy).
 }
 ```
 
-**Response:**
+**响应:**
 ```json
 {
     "trace_id": "uuid-generated-or-echoed"
 }
 ```
 
-### 4. Analysis Result
-**Endpoint:** `GET /results/:trace_id`
+### 4. 分析结果 (Analysis Result)
+**接口地址:** `GET /results/:trace_id`
 
-**Response:**
-Returns the detailed analysis result for a specific log.
+**响应:**
+返回特定日志的详细分析结果。
 
-## Action Items for Backend (Future)
-To fully support the frontend dashboard, the backend needs to provide:
-1.  **System Health Metrics:** Add memory usage, CPU usage, and queue status to `GET /dashboard`.
-2.  **Time Series Data:** Provide a way to fetch QPS history (e.g., last 60 seconds) for the main chart.
+## 后端待办事项 (未来规划)
+为了完全支持前端仪表盘，后端需要提供：
+1.  **系统健康指标:** 在 `GET /dashboard` 中添加内存使用率、CPU 使用率和队列状态。
+2.  **时间序列数据:** 提供查询 QPS 历史数据（例如过去 60 秒）的方法，用于绘制主图表。

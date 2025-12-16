@@ -50,6 +50,21 @@
           >
             {{ locale === 'en' ? 'EN' : '中文' }}
           </button>
+          
+          <!-- Simulation Mode Toggle -->
+          <div class="flex items-center gap-2 border-r border-gray-700 pr-4 mr-2">
+            <span class="text-xs font-mono uppercase tracking-widest text-gray-500">
+              SIM MODE
+            </span>
+            <el-switch
+              v-model="systemStore.isSimulationMode"
+              size="small"
+              inline-prompt
+              active-text="ON"
+              inactive-text="OFF"
+              style="--el-switch-on-color: #e6a23c;" 
+            />
+          </div>
 
           <span 
             class="text-xs font-mono uppercase tracking-widest transition-colors duration-300"
