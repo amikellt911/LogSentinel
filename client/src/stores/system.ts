@@ -3,7 +3,7 @@ import { ref, reactive } from 'vue'
 import dayjs from 'dayjs'
 
 export interface LogEntry {
-  id: number | string
+  id: number
   timestamp: string
   level: 'INFO' | 'WARN' | 'RISK'
   message: string
@@ -16,7 +16,7 @@ export interface MetricPoint {
 }
 
 export interface AlertEntry {
-  id: number | string
+  id: number
   time: string
   service: string
   level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe'
@@ -48,43 +48,13 @@ export interface AISettings {
     prompts: PromptConfig[]
 }
 
-// Interface for Backend API Responses
-export interface AlertInfoResponse {
-    trace_id: string
-    summary: string
-    time: string
-}
-
-export interface DashboardStatsResponse {
-    total_logs: number
-    high_risk: number
-    medium_risk: number
-    low_risk: number
-    info_risk: number
-    unknown_risk: number
-    avg_response_time: number
-    recent_alerts: AlertInfoResponse[]
-}
-
-export interface HistoricalLogItemResponse {
-    trace_id: string
-    risk_level: string // "Critical", "Error", etc.
-    summary: string
-    processed_at: string
-}
-
-export interface HistoryPageResponse {
-    logs: HistoricalLogItemResponse[]
-    total_count: number
-}
-
 export const useSystemStore = defineStore('system', () => {
   // --- State ---
   const isRunning = ref(false)
-  const pollingInterval = ref<number | null>(null)
+  const simulationInterval = ref<number | null>(null)
 
   // Metrics
-  const totalLogsProcessed = ref(1245890) // Default to previous mock value
+  const totalLogsProcessed = ref(1245890)
   const netLatency = ref(0.05) // ms
   const aiLatency = ref(800) // ms
   const aiTriggerCount = ref(8420)
@@ -228,7 +198,18 @@ Metrics:
     ]
   }
 
-  // --- Mock Actions ---
+  // --- Actions ---
+
+  function toggleSystem(value: boolean) {
+    isRunning.value = value
+    if (value) {
+      startSimulation()
+    } else {
+      stopSimulation()
+      // "Idle" state reset logic
+      backpressureStatus.value = 'Normal'
+    }
+  }
 
   function generateRandomLog() {
     const r = Math.random()
@@ -253,7 +234,7 @@ Metrics:
     }
   }
 
-  function updateMockData() {
+  function updateMetrics() {
     // 1. Total Logs
     const inc = Math.floor(Math.random() * 50) + 10
     totalLogsProcessed.value += inc
@@ -316,100 +297,10 @@ Metrics:
     if (chartData.value.length > 60) chartData.value.shift()
   }
 
-
-  // --- Actions ---
-
-  function toggleSystem(value: boolean) {
-    isRunning.value = value
-    if (value) {
-      startPolling()
-    } else {
-      stopPolling()
-    }
-  }
-
-  async function fetchDashboardStats() {
-    try {
-        // Use relative path to leverage Vite proxy or Nginx in prod
-        const res = await fetch('/api/dashboard', { method: 'GET' });
-
-        if (!res.ok) throw new Error('Failed to fetch dashboard stats');
-
-        const data: DashboardStatsResponse = await res.json();
-
-        // Update State
-        totalLogsProcessed.value = data.total_logs;
-        netLatency.value = data.avg_response_time;
-
-        riskStats.Critical = data.high_risk;
-        riskStats.Error = data.medium_risk;
-        riskStats.Warning = data.low_risk;
-        riskStats.Info = data.info_risk;
-        // Calculate Safe or use unknown if that's what we want
-        riskStats.Safe = data.total_logs - (data.high_risk + data.medium_risk + data.low_risk + data.info_risk);
-
-        // Alerts
-        // Backend AlertInfo: { trace_id, summary, time }
-        // Frontend AlertEntry: { id, time, service, level, summary }
-        recentAlerts.value = data.recent_alerts.map(a => ({
-            id: a.trace_id,
-            time: a.time,
-            service: 'LogSentinel', // Placeholder as backend doesn't provide service name
-            level: 'Error',         // Placeholder, backend alert doesn't provide level yet
-            summary: a.summary
-        }));
-
-        // --- Simulate missing data for visual completeness until backend supports it ---
-
-        // Simulate Chart Data (QPS) - TODO: Get from backend
-        const now = dayjs().format('HH:mm:ss')
-        const qps = Math.floor(Math.random() * 100 + 50); // Mock QPS
-        const aiRate = Math.floor(qps * 0.1);
-        chartData.value.push({ time: now, qps, aiRate });
-        if (chartData.value.length > 60) chartData.value.shift();
-
-        // Simulate Memory/Queue
-        memoryPercent.value = 45 + Math.floor(Math.random() * 5); // Mock 45-50%
-
-    } catch (e) {
-        console.warn("Dashboard fetch failed, falling back to mock data:", e);
-        updateMockData();
-    }
-  }
-
-  async function fetchLogs() {
-      try {
-          const res = await fetch('/api/history?page=1&pageSize=50');
-          if (!res.ok) throw new Error('Failed to fetch logs');
-          const data: HistoryPageResponse = await res.json();
-
-          // Frontend expects: { id, timestamp, level, message }
-          // Backend returns: { trace_id, processed_at, risk_level, summary }
-          logs.value = data.logs.map(item => {
-              // Map backend risk string to frontend enum
-              let level: 'INFO' | 'WARN' | 'RISK' = 'INFO';
-              if (item.risk_level === 'Critical' || item.risk_level === 'High') level = 'RISK';
-              else if (item.risk_level === 'Warning' || item.risk_level === 'Medium') level = 'WARN';
-
-              return {
-                  id: item.trace_id,
-                  timestamp: item.processed_at,
-                  level: level,
-                  message: item.summary
-              };
-          });
-
-      } catch (e) {
-          console.warn("Logs fetch failed, falling back to mock data:", e);
-          generateRandomLog();
-          generateRandomLog();
-      }
-  }
-
-  function startPolling() {
-    if (pollingInterval.value) return
+  function startSimulation() {
+    if (simulationInterval.value) return
     
-    // Initial data population if empty (for chart)
+    // Initial data population if empty
     if (chartData.value.length === 0) {
         for (let i = 0; i < 60; i++) {
              chartData.value.push({
@@ -420,22 +311,18 @@ Metrics:
         }
     }
 
-    // Initial fetch
-    fetchDashboardStats();
-    fetchLogs();
-
-    // Poll every 1s
     // @ts-ignore
-    pollingInterval.value = setInterval(() => {
-        fetchDashboardStats();
-        fetchLogs();
-    }, 1000)
+    simulationInterval.value = setInterval(() => {
+      generateRandomLog()
+      generateRandomLog() // Generate faster
+      updateMetrics()
+    }, 800) 
   }
 
-  function stopPolling() {
-    if (pollingInterval.value) {
-      clearInterval(pollingInterval.value)
-      pollingInterval.value = null
+  function stopSimulation() {
+    if (simulationInterval.value) {
+      clearInterval(simulationInterval.value)
+      simulationInterval.value = null
     }
   }
 
