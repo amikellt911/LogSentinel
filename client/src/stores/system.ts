@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import dayjs from 'dayjs'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import _ from 'lodash'
 
 export interface LogEntry {
   id: number | string
@@ -25,13 +26,14 @@ export interface AlertEntry {
 }
 
 export interface PromptConfig {
-  id: string
+  id: string | number // Changed to allow number ID from DB
   name: string
   content: string
+  is_active?: number // Added for DB compatibility
 }
 
 export interface WebhookConfig {
-  id: string
+  id: string | number // Changed to allow number ID from DB
   name: string
   vendor: 'DingTalk' | 'Lark' | 'Slack' | 'Custom'
   url: string
@@ -79,6 +81,26 @@ export interface HistoryPageResponse {
     total_count: number
 }
 
+// API Response Interfaces for Settings
+export interface SettingsResponse {
+  config: Record<string, string>
+  prompts: {
+    id: number
+    name: string
+    content: string
+    is_active: number
+  }[]
+  channels: {
+    id: number
+    name: string
+    provider: string
+    webhook_url: string
+    alert_threshold: string
+    msg_template: string
+    is_active: number
+  }[]
+}
+
 export const useSystemStore = defineStore('system', () => {
   // --- State ---
   const isRunning = ref(false)
@@ -114,7 +136,7 @@ export const useSystemStore = defineStore('system', () => {
   // Logs
   const logs = ref<LogEntry[]>([])
 
-  // Settings
+  // Settings State
   const settings = reactive({
     ai: {
       provider: 'Local-Mock',
@@ -179,11 +201,22 @@ Metrics:
     kernel: {
       workerThreads: 4,
       ioBufferSize: '256MB',
-      sqliteWalSync: true,
       adaptiveBatching: true,
       flushInterval: 200
     }
   })
+
+  // Synced State (Deep Copy)
+  // Initialize with a deep copy of the default settings
+  const syncedSettings = ref(_.cloneDeep(settings))
+
+  // Computed Property for Dirty Check
+  const isDirty = computed(() => {
+      return !_.isEqual(settings, syncedSettings.value)
+  })
+
+  // Cold Config Keys that require restart
+  // const REQUIRE_RESTART_KEYS = ['kernel_worker_threads', 'kernel_io_buffer'] // Unused for now as we hardcode the check
 
   // --- Constants for Mocking ---
   const LOG_MESSAGES = {
@@ -417,6 +450,176 @@ Metrics:
       }
   }
 
+  // --- Settings API Actions ---
+
+  async function fetchSettings() {
+    try {
+      const res = await fetch('/api/settings/all')
+      if (!res.ok) throw new Error('Failed to fetch settings')
+      const data: SettingsResponse = await res.json()
+
+      // Map Backend Data to Store State
+      const newSettings = {
+        ai: {
+          provider: (data.config['ai_provider'] || 'Local-Mock') as any,
+          modelName: data.config['ai_model'] || 'gpt-4-turbo',
+          apiKey: data.config['ai_api_key'] || '',
+          language: (data.config['ai_language'] || 'en') as any,
+          maxBatchSize: parseInt(data.config['kernel_max_batch'] || '50'),
+          prompts: data.prompts.map(p => ({
+            id: p.id,
+            name: p.name,
+            content: p.content
+          }))
+        },
+        integration: {
+          alertThreshold: 'High', // Placeholder
+          channels: data.channels.map(c => ({
+            id: c.id,
+            name: c.name,
+            vendor: (c.provider || 'Custom') as any,
+            url: c.webhook_url,
+            threshold: (c.alert_threshold || 'Error') as any,
+            template: c.msg_template,
+            enabled: !!c.is_active
+          }))
+        },
+        kernel: {
+          workerThreads: parseInt(data.config['kernel_worker_threads'] || '4'),
+          ioBufferSize: data.config['kernel_io_buffer'] || '256MB',
+          adaptiveBatching: data.config['kernel_adaptive_mode'] === '1',
+          flushInterval: parseInt(data.config['kernel_refresh_interval'] || '200')
+        }
+      }
+
+      // Update State and Synced Copy
+      Object.assign(settings, newSettings)
+      syncedSettings.value = _.cloneDeep(newSettings)
+
+    } catch (e) {
+      console.warn("Settings fetch failed (simulation mode maybe?):", e)
+      // In simulation mode, we just stick to default values
+    }
+  }
+
+  async function saveSettings() {
+    try {
+       // 1. Prepare Diff / Payload
+       // A. Config items
+       const configItems = [
+         { key: 'ai_provider', value: settings.ai.provider },
+         { key: 'ai_model', value: settings.ai.modelName },
+         { key: 'ai_api_key', value: settings.ai.apiKey },
+         { key: 'ai_language', value: settings.ai.language },
+         { key: 'kernel_adaptive_mode', value: settings.kernel.adaptiveBatching ? '1' : '0' },
+         { key: 'kernel_max_batch', value: settings.ai.maxBatchSize.toString() },
+         { key: 'kernel_refresh_interval', value: settings.kernel.flushInterval.toString() },
+         { key: 'kernel_worker_threads', value: settings.kernel.workerThreads.toString() },
+         { key: 'kernel_io_buffer', value: settings.kernel.ioBufferSize }
+       ]
+
+       // B. Prompts
+       // We iterate current prompts.
+       // Note: Deletions are not explicitly handled in this simple design as per requirements (only Update/Insert described)
+       // If you need deletion, we'd need to compare with syncedSettings to find removed IDs.
+       // Assuming simplistic update for now.
+       const promptPromises = settings.ai.prompts.map(p => {
+         return fetch('/api/settings/prompt', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({
+             id: typeof p.id === 'number' ? p.id : undefined, // If string 'p...', it's new (no ID for backend)
+             name: p.name,
+             content: p.content,
+             is_active: 1
+           })
+         })
+       })
+
+       // C. Channels
+       const channelPromises = settings.integration.channels.map(c => {
+         return fetch('/api/settings/channel', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({
+             id: typeof c.id === 'number' ? c.id : undefined,
+             name: c.name,
+             provider: c.vendor,
+             webhook_url: c.url,
+             alert_threshold: c.threshold,
+             msg_template: c.template,
+             is_active: c.enabled ? 1 : 0
+           })
+         })
+       })
+
+       // 2. Execute Requests
+       await fetch('/api/settings/config', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ items: configItems })
+       })
+
+       await Promise.all([...promptPromises, ...channelPromises])
+
+       // 3. Update Synced State
+       syncedSettings.value = _.cloneDeep(settings)
+
+       // 4. Check for Restart Requirement
+       // We compare against the PREVIOUS syncedSettings (snapshot before save would be better, but we can assume 'settings' is the new truth)
+       // Wait, we need to know if 'kernel_worker_threads' CHANGED.
+       // We can check this by comparing specific fields in 'settings' vs the OLD 'syncedSettings' (which we just overwrote... oops)
+       // Let's refactor step 3 slightly.
+
+       // ... Actually, isDirty is computed live. If we update syncedSettings, isDirty becomes false.
+       // We should check restart condition BEFORE updating syncedSettings.
+
+       return true // Success
+    } catch (e) {
+       console.error("Save failed", e)
+       throw e
+    }
+  }
+
+  // Wrapped Save Action with Logic
+  async function saveSettingsWithLogic() {
+      // Check for Restart Needed
+      let restartNeeded = false
+
+      // Compare specific keys
+      if (settings.kernel.workerThreads !== syncedSettings.value.kernel.workerThreads) restartNeeded = true
+      if (settings.kernel.ioBufferSize !== syncedSettings.value.kernel.ioBufferSize) restartNeeded = true
+
+      try {
+          await saveSettings()
+
+          ElMessage.success('Settings saved successfully')
+
+          if (restartNeeded) {
+              ElMessageBox.confirm(
+                'Core configuration changed. Restart required to apply changes.',
+                'Restart Required',
+                {
+                  confirmButtonText: 'Restart Now',
+                  cancelButtonText: 'Later',
+                  type: 'warning',
+                }
+              ).then(() => {
+                 fetch('/api/restart', { method: 'POST' }).then(() => {
+                     ElMessage.info('System is restarting...')
+                     setTimeout(() => window.location.reload(), 3000)
+                 })
+              }).catch(() => {
+                  ElMessage.info('Changes saved. Please restart manually later.')
+              })
+          }
+
+      } catch (e) {
+          ElMessage.error('Failed to save settings')
+      }
+  }
+
+
   function startPolling() {
     if (pollingInterval.value) return
     
@@ -454,6 +657,8 @@ Metrics:
     isRunning,
     isSimulationMode,
     settings,
+    syncedSettings, // Exposed for debugging if needed
+    isDirty,
     totalLogsProcessed,
     netLatency,
     aiLatency,
@@ -466,6 +671,8 @@ Metrics:
     riskStats,
     recentAlerts,
     logs,
-    toggleSystem
+    toggleSystem,
+    fetchSettings,
+    saveSettings: saveSettingsWithLogic
   }
 })

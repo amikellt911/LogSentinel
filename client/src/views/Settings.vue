@@ -267,16 +267,6 @@
                    <el-option label="1GB" value="1GB" />
                  </el-select>
                </el-form-item>
-
-               <el-form-item :label="$t('settings.kernel.wal')" class="col-span-1 md:col-span-2">
-                 <div class="flex items-center justify-between border border-gray-700 p-4 rounded bg-gray-800/50">
-                    <div>
-                      <span class="block text-sm font-bold text-gray-300">{{ $t('settings.kernel.walTitle') }}</span>
-                      <span class="text-xs text-gray-500">{{ $t('settings.kernel.walDesc') }}</span>
-                    </div>
-                    <el-switch v-model="systemStore.settings.kernel.sqliteWalSync" />
-                 </div>
-               </el-form-item>
             </div>
           </el-tab-pane>
         </el-tabs>
@@ -284,7 +274,12 @@
 
       <!-- Save Button Area -->
       <div class="flex justify-end pt-4 border-t border-gray-700">
-        <el-button type="primary" size="large" @click="handleSave">
+        <el-button
+           type="primary"
+           size="large"
+           @click="handleSave"
+           :disabled="!systemStore.isDirty"
+        >
           <el-icon class="mr-2"><Check /></el-icon> {{ $t('settings.save') }}
         </el-button>
       </div>
@@ -294,7 +289,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useSystemStore, type WebhookConfig } from '../stores/system'
 import { Cpu, Share, Operation, Check, Plus, Delete, Promotion } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -303,9 +298,19 @@ import { useI18n } from 'vue-i18n'
 const systemStore = useSystemStore()
 const { t } = useI18n()
 
+// Fetch settings on mount
+onMounted(() => {
+   systemStore.fetchSettings()
+})
+
 // --- AI Pipeline Logic ---
-const selectedPromptId = ref(systemStore.settings.ai.prompts[0]?.id)
+const selectedPromptId = ref<string | number | undefined>(undefined)
+
+// Initialize selection once prompts are loaded
 const selectedPrompt = computed(() => {
+   if (!selectedPromptId.value && systemStore.settings.ai.prompts.length > 0) {
+      selectedPromptId.value = systemStore.settings.ai.prompts[0].id
+   }
    return systemStore.settings.ai.prompts.find(p => p.id === selectedPromptId.value)
 })
 
@@ -328,8 +333,13 @@ function deletePrompt(index: number) {
 }
 
 // --- Integration Logic ---
-const selectedChannelId = ref(systemStore.settings.integration.channels[0]?.id)
+const selectedChannelId = ref<string | number | undefined>(undefined)
+
+// Initialize selection once channels are loaded
 const selectedChannel = computed(() => {
+   if (!selectedChannelId.value && systemStore.settings.integration.channels.length > 0) {
+      selectedChannelId.value = systemStore.settings.integration.channels[0].id
+   }
    return systemStore.settings.integration.channels.find(c => c.id === selectedChannelId.value)
 })
 
@@ -375,12 +385,15 @@ function sendTestMessage() {
 }
 
 // --- Save ---
-const handleSave = () => {
-  ElMessage.success({
-    message: t('settings.success'),
-    type: 'success',
-    grouping: true
-  })
+const handleSave = async () => {
+   try {
+      await systemStore.saveSettings()
+      // Success message is handled in store (optional, but store has better context for restart logic)
+      // If store doesn't handle success message for general save, we can add it here too,
+      // but the store implementation I wrote handles it.
+   } catch (e) {
+      // Error handled in store
+   }
 }
 </script>
 

@@ -9,3 +9,10 @@ changes.txt
 
 # 屏蔽所有 .pyc 编译文件
 *.pyc
+
+# Node
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
