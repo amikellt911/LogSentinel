@@ -234,7 +234,7 @@ AppConfig SqliteConfigRepository::getAppConfig()
         checkSqliteError(db_, rc, "Failed to prepare statement");
     }
     StmtPtr stmt(stmt_);
-    while ((rc = sqlite3_step(stmt_)) == SQLITE_ROW)
+    while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW)
     {
         const char *key_ptr = (const char *)sqlite3_column_text(stmt.get(), 0);
         const char *val_ptr = (const char *)sqlite3_column_text(stmt.get(), 1);
@@ -299,4 +299,36 @@ AppConfig SqliteConfigRepository::getAppConfig()
         checkSqliteError(db_, rc, "Step execution failed during pagination");
     }
     return config;
+}
+
+std::vector<PromptConfig> SqliteConfigRepository::getAllPrompts()
+{
+    std::lock_guard<std::mutex> lock_(mutex_);
+    std::vector<PromptConfig> prompts;
+    const char *sql = "select id,name,content,is_active from ai_prompts;";
+    sqlite3_stmt *stmt_ = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
+    if (rc != SQLITE_OK)
+    {
+        checkSqliteError(db_, rc, "Failed to prepare statement");
+    }
+    StmtPtr stmt(stmt_);
+    while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW)
+    {
+        int id = sqlite3_column_int(stmt.get(),0);
+        const char *name_ptr = (const char *)sqlite3_column_text(stmt.get(), 1);
+        const char *content_ptr = (const char *)sqlite3_column_text(stmt.get(), 2);
+        int is_active=sqlite3_column_int(stmt.get(),3);
+        bool active_flag = (is_active != 0);
+        if (!name_ptr || !content_ptr)
+            continue;
+        std::string name = name_ptr;
+        std::string content = content_ptr;
+        prompts.emplace_back(id,name,content,active_flag);
+    }
+    if (rc != SQLITE_DONE)
+    {
+        checkSqliteError(db_, rc, "Step execution failed during prompt loading");
+    }
+    return prompts;
 }
