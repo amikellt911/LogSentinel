@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, reactive } from 'vue'
 import dayjs from 'dayjs'
+import { ElMessage } from 'element-plus'
 
 export interface LogEntry {
-  id: number
+  id: number | string
   timestamp: string
   level: 'INFO' | 'WARN' | 'RISK'
   message: string
@@ -16,7 +17,7 @@ export interface MetricPoint {
 }
 
 export interface AlertEntry {
-  id: number
+  id: number | string
   time: string
   service: string
   level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe'
@@ -48,13 +49,44 @@ export interface AISettings {
     prompts: PromptConfig[]
 }
 
+// Interface for Backend API Responses
+export interface AlertInfoResponse {
+    trace_id: string
+    summary: string
+    time: string
+}
+
+export interface DashboardStatsResponse {
+    total_logs: number
+    high_risk: number
+    medium_risk: number
+    low_risk: number
+    info_risk: number
+    unknown_risk: number
+    avg_response_time: number
+    recent_alerts: AlertInfoResponse[]
+}
+
+export interface HistoricalLogItemResponse {
+    trace_id: string
+    risk_level: string // "Critical", "Error", etc.
+    summary: string
+    processed_at: string
+}
+
+export interface HistoryPageResponse {
+    logs: HistoricalLogItemResponse[]
+    total_count: number
+}
+
 export const useSystemStore = defineStore('system', () => {
   // --- State ---
   const isRunning = ref(false)
-  const simulationInterval = ref<number | null>(null)
+  const isSimulationMode = ref(true) // Default to true (safe mode)
+  const pollingInterval = ref<number | null>(null)
 
   // Metrics
-  const totalLogsProcessed = ref(1245890)
+  const totalLogsProcessed = ref(1245890) // Default to previous mock value
   const netLatency = ref(0.05) // ms
   const aiLatency = ref(800) // ms
   const aiTriggerCount = ref(8420)
@@ -198,18 +230,7 @@ Metrics:
     ]
   }
 
-  // --- Actions ---
-
-  function toggleSystem(value: boolean) {
-    isRunning.value = value
-    if (value) {
-      startSimulation()
-    } else {
-      stopSimulation()
-      // "Idle" state reset logic
-      backpressureStatus.value = 'Normal'
-    }
-  }
+  // --- Mock Actions ---
 
   function generateRandomLog() {
     const r = Math.random()
@@ -234,7 +255,7 @@ Metrics:
     }
   }
 
-  function updateMetrics() {
+  function updateMockData() {
     // 1. Total Logs
     const inc = Math.floor(Math.random() * 50) + 10
     totalLogsProcessed.value += inc
@@ -297,10 +318,109 @@ Metrics:
     if (chartData.value.length > 60) chartData.value.shift()
   }
 
-  function startSimulation() {
-    if (simulationInterval.value) return
+
+  // --- Actions ---
+
+  function toggleSystem(value: boolean) {
+    isRunning.value = value
+    if (value) {
+      startPolling()
+    } else {
+      stopPolling()
+    }
+  }
+
+  // Throttle error messages to avoid spamming
+  let lastErrorTime = 0;
+  function showBackendError() {
+      const now = Date.now();
+      if (now - lastErrorTime > 3000) { // Only show every 3 seconds
+          ElMessage.error('Backend connection failed. System paused or unreachable.');
+          lastErrorTime = now;
+      }
+  }
+
+  async function fetchDashboardStats() {
+    try {
+        const res = await fetch('/api/dashboard', { method: 'GET' });
+
+        if (!res.ok) throw new Error('Failed to fetch dashboard stats');
+
+        const data: DashboardStatsResponse = await res.json();
+
+        // Update State
+        totalLogsProcessed.value = data.total_logs;
+        netLatency.value = data.avg_response_time;
+
+        riskStats.Critical = data.high_risk;
+        riskStats.Error = data.medium_risk;
+        riskStats.Warning = data.low_risk;
+        riskStats.Info = data.info_risk;
+        riskStats.Safe = data.total_logs - (data.high_risk + data.medium_risk + data.low_risk + data.info_risk);
+
+        recentAlerts.value = data.recent_alerts.map(a => ({
+            id: a.trace_id,
+            time: a.time,
+            service: 'LogSentinel',
+            level: 'Error',
+            summary: a.summary
+        }));
+
+        // Simulate missing data for visual completeness until backend supports it
+        const now = dayjs().format('HH:mm:ss')
+        const qps = Math.floor(Math.random() * 100 + 50); // Mock QPS
+        const aiRate = Math.floor(qps * 0.1);
+        chartData.value.push({ time: now, qps, aiRate });
+        if (chartData.value.length > 60) chartData.value.shift();
+
+        memoryPercent.value = 45 + Math.floor(Math.random() * 5); // Mock 45-50%
+
+    } catch (e) {
+        if (isSimulationMode.value) {
+            console.warn("Dashboard fetch failed, falling back to mock data:", e);
+            updateMockData();
+        } else {
+            console.error("Dashboard fetch failed:", e);
+            showBackendError();
+        }
+    }
+  }
+
+  async function fetchLogs() {
+      try {
+          const res = await fetch('/api/history?page=1&pageSize=50');
+          if (!res.ok) throw new Error('Failed to fetch logs');
+          const data: HistoryPageResponse = await res.json();
+
+          logs.value = data.logs.map(item => {
+              let level: 'INFO' | 'WARN' | 'RISK' = 'INFO';
+              if (item.risk_level === 'Critical' || item.risk_level === 'High') level = 'RISK';
+              else if (item.risk_level === 'Warning' || item.risk_level === 'Medium') level = 'WARN';
+
+              return {
+                  id: item.trace_id,
+                  timestamp: item.processed_at,
+                  level: level,
+                  message: item.summary
+              };
+          });
+
+      } catch (e) {
+          if (isSimulationMode.value) {
+              console.warn("Logs fetch failed, falling back to mock data:", e);
+              generateRandomLog();
+              generateRandomLog();
+          } else {
+             console.error("Logs fetch failed:", e);
+             // Error already shown by dashboard fetch usually, so maybe skip or show unique error
+          }
+      }
+  }
+
+  function startPolling() {
+    if (pollingInterval.value) return
     
-    // Initial data population if empty
+    // Initial data population if empty (for chart)
     if (chartData.value.length === 0) {
         for (let i = 0; i < 60; i++) {
              chartData.value.push({
@@ -311,23 +431,28 @@ Metrics:
         }
     }
 
+    // Initial fetch
+    fetchDashboardStats();
+    fetchLogs();
+
+    // Poll every 1s
     // @ts-ignore
-    simulationInterval.value = setInterval(() => {
-      generateRandomLog()
-      generateRandomLog() // Generate faster
-      updateMetrics()
-    }, 800) 
+    pollingInterval.value = setInterval(() => {
+        fetchDashboardStats();
+        fetchLogs();
+    }, 1000)
   }
 
-  function stopSimulation() {
-    if (simulationInterval.value) {
-      clearInterval(simulationInterval.value)
-      simulationInterval.value = null
+  function stopPolling() {
+    if (pollingInterval.value) {
+      clearInterval(pollingInterval.value)
+      pollingInterval.value = null
     }
   }
 
   return {
     isRunning,
+    isSimulationMode,
     settings,
     totalLogsProcessed,
     netLatency,
