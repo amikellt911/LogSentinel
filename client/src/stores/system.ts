@@ -26,14 +26,14 @@ export interface AlertEntry {
 }
 
 export interface PromptConfig {
-  id: string | number // Changed to allow number ID from DB
+  id: string | number
   name: string
   content: string
-  is_active?: number // Added for DB compatibility
+  is_active?: number
 }
 
 export interface WebhookConfig {
-  id: string | number // Changed to allow number ID from DB
+  id: string | number
   name: string
   vendor: 'DingTalk' | 'Lark' | 'Slack' | 'Custom'
   url: string
@@ -504,8 +504,14 @@ Metrics:
 
   async function saveSettings() {
     try {
-       // 1. Prepare Diff / Payload
-       // A. Config items
+       const promises = []
+
+       // 1. Config Batch
+       // Check if config changed
+       // We only need to compare relevant fields to decide if we send 'config'
+       // But 'config' endpoint takes KV pairs. We can just check fields we map to KV.
+       // It's easier to just construct payload and send if any differs.
+
        const configItems = [
          { key: 'ai_provider', value: settings.ai.provider },
          { key: 'ai_model', value: settings.ai.modelName },
@@ -518,61 +524,68 @@ Metrics:
          { key: 'kernel_io_buffer', value: settings.kernel.ioBufferSize }
        ]
 
-       // B. Prompts
-       // We iterate current prompts.
-       // Note: Deletions are not explicitly handled in this simple design as per requirements (only Update/Insert described)
-       // If you need deletion, we'd need to compare with syncedSettings to find removed IDs.
-       // Assuming simplistic update for now.
-       const promptPromises = settings.ai.prompts.map(p => {
-         return fetch('/api/settings/prompt', {
-           method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({
-             id: typeof p.id === 'number' ? p.id : undefined, // If string 'p...', it's new (no ID for backend)
-             name: p.name,
-             content: p.content,
-             is_active: 1
-           })
-         })
-       })
+       // Only send if config changed (comparing with synced is hard because synced structure is nested object, not KV list)
+       // We can rely on basic dirty check: if ANY part of settings changed, we might as well send config if we are lazy.
+       // But let's try to be precise if we can.
+       // Actually, we can just always send config if isDirty is true, OR compare specific sub-trees.
+       // Given the request emphasizes batch and robustness, sending all changed sections is good.
+       // Let's compare `settings.ai` (minus prompts) and `settings.kernel` with `syncedSettings`.
 
-       // C. Channels
-       const channelPromises = settings.integration.channels.map(c => {
-         return fetch('/api/settings/channel', {
-           method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({
-             id: typeof c.id === 'number' ? c.id : undefined,
-             name: c.name,
-             provider: c.vendor,
-             webhook_url: c.url,
-             alert_threshold: c.threshold,
-             msg_template: c.template,
-             is_active: c.enabled ? 1 : 0
-           })
-         })
-       })
+       const isConfigDirty = !_.isEqual(_.omit(settings.ai, 'prompts'), _.omit(syncedSettings.value.ai, 'prompts')) ||
+                             !_.isEqual(settings.kernel, syncedSettings.value.kernel)
 
-       // 2. Execute Requests
-       await fetch('/api/settings/config', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ items: configItems })
-       })
+       if (isConfigDirty) {
+          promises.push(fetch('/api/settings/config', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ items: configItems })
+           }))
+       }
 
-       await Promise.all([...promptPromises, ...channelPromises])
+       // 2. Prompts Batch
+       if (!_.isEqual(settings.ai.prompts, syncedSettings.value.ai.prompts)) {
+           const promptsPayload = settings.ai.prompts.map(p => ({
+               id: typeof p.id === 'number' ? p.id : 0, // 0 for new
+               name: p.name,
+               content: p.content,
+               is_active: 1
+           }))
+           promises.push(fetch('/api/settings/prompts', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify(promptsPayload)
+           }))
+       }
 
-       // 3. Update Synced State
-       syncedSettings.value = _.cloneDeep(settings)
+       // 3. Channels Batch
+       if (!_.isEqual(settings.integration.channels, syncedSettings.value.integration.channels)) {
+           const channelsPayload = settings.integration.channels.map(c => ({
+               id: typeof c.id === 'number' ? c.id : 0, // 0 for new
+               name: c.name,
+               provider: c.vendor,
+               webhook_url: c.url,
+               alert_threshold: c.threshold,
+               msg_template: c.template,
+               is_active: c.enabled ? 1 : 0
+           }))
+           promises.push(fetch('/api/settings/channels', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify(channelsPayload)
+           }))
+       }
 
-       // 4. Check for Restart Requirement
-       // We compare against the PREVIOUS syncedSettings (snapshot before save would be better, but we can assume 'settings' is the new truth)
-       // Wait, we need to know if 'kernel_worker_threads' CHANGED.
-       // We can check this by comparing specific fields in 'settings' vs the OLD 'syncedSettings' (which we just overwrote... oops)
-       // Let's refactor step 3 slightly.
+       // Execute all needed requests
+       await Promise.all(promises)
 
-       // ... Actually, isDirty is computed live. If we update syncedSettings, isDirty becomes false.
-       // We should check restart condition BEFORE updating syncedSettings.
+       // 4. Update Synced State via Re-fetch (to get new IDs)
+       // We only re-fetch if we actually sent something.
+       if (promises.length > 0) {
+           await fetchSettings()
+       } else {
+           // Should not happen if isDirty is true, but just in case
+           syncedSettings.value = _.cloneDeep(settings)
+       }
 
        return true // Success
     } catch (e) {
