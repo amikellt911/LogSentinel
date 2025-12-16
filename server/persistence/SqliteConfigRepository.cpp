@@ -9,15 +9,20 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
     // 1. 路径处理
     std::string final_path;
     // 简单判断是否包含路径分隔符
-    if (db_path.find('/') != std::string::npos || db_path.find('\\') != std::string::npos) {
+    if (db_path.find('/') != std::string::npos || db_path.find('\\') != std::string::npos)
+    {
         final_path = db_path;
-    } else {
+    }
+    else
+    {
         // TODO: 生产环境请改为获取可执行文件所在路径，避免相对路径地雷
         std::string data_path = "../persistence/data/";
-        if (!std::filesystem::exists(data_path)) {
+        if (!std::filesystem::exists(data_path))
+        {
             std::error_code ec;
             std::filesystem::create_directories(data_path, ec);
-            if (ec) {
+            if (ec)
+            {
                 throw std::runtime_error("Failed to create directory: " + data_path);
             }
         }
@@ -27,7 +32,8 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
     // 2. 打开数据库
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
     int rc = sqlite3_open_v2(final_path.c_str(), &db_, flags, nullptr);
-    if (rc != SQLITE_OK) {
+    if (rc != SQLITE_OK)
+    {
         std::string err = sqlite3_errmsg(db_); // 必须在 close 前获取
         sqlite3_close_v2(db_);
         db_ = nullptr;
@@ -35,7 +41,8 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
     }
 
     // 使用 try-catch 块确保构造函数内的异常能正确关闭 db
-    try {
+    try
+    {
         char *errmsg = nullptr;
 
         // 3. 设置 WAL 模式 (必须在事务外)
@@ -46,7 +53,8 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
         // wal:redo，追加写，有一个wal文件，记录了你的每一次操作，你的每次操作不是在主页面进行，只有等你提交或页数满了之后，主页面才会加锁更新，这样就导致可以有多个读者来读wal和db
         const char *sql_wal = "PRAGMA journal_mode=WAL;";
         rc = sqlite3_exec(db_, sql_wal, nullptr, nullptr, &errmsg);
-        if (rc != SQLITE_OK) {
+        if (rc != SQLITE_OK)
+        {
             std::cerr << "[WARN] Cannot set WAL mode: " << (errmsg ? errmsg : "unknown") << std::endl;
             sqlite3_free(errmsg);
             // WAL 开启失败虽然不是致命错误，但严重影响高并发性能
@@ -55,9 +63,10 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
         // 4. 开启事务初始化表
         // 注意：这里手动管理事务，如果 checkSqliteError 会抛出异常，必须确保 db_ 能被释放
         // 但由于 db_ 是成员变量，构造函数抛出异常析构函数不执行，所以 catch 块很重要
-        
+
         rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
-        if (rc != SQLITE_OK) throw std::runtime_error("Failed to begin transaction");
+        if (rc != SQLITE_OK)
+            throw std::runtime_error("Failed to begin transaction");
 
         const char *init_sql = R"(
             -- 1. 通用配置表
@@ -104,16 +113,19 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
         )";
 
         rc = sqlite3_exec(db_, init_sql, nullptr, nullptr, &errmsg);
-        if (rc != SQLITE_OK) {
+        if (rc != SQLITE_OK)
+        {
             std::string err_str = errmsg ? errmsg : "Unknown error";
             sqlite3_free(errmsg);
             throw std::runtime_error("Failed to Create Tables: " + err_str);
         }
 
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
-        if (rc != SQLITE_OK) throw std::runtime_error("Failed to commit transaction");
-
-    } catch (const std::exception &e) {
+        if (rc != SQLITE_OK)
+            throw std::runtime_error("Failed to commit transaction");
+    }
+    catch (const std::exception &e)
+    {
         // 构造函数失败时的资源清理（非常重要！）
         sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
         sqlite3_close_v2(db_);
@@ -210,3 +222,81 @@ void SqliteConfigRepository::deleteWebhookUrl(const std::string &url)
     return;
 }
 
+AppConfig SqliteConfigRepository::getAppConfig()
+{
+    std::lock_guard<std::mutex> lock_(mutex_);
+    AppConfig config;
+    const char *sql = "select config_key,config_value from app_config;";
+    sqlite3_stmt *stmt_ = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
+    if (rc != SQLITE_OK)
+    {
+        checkSqliteError(db_, rc, "Failed to prepare statement");
+    }
+    StmtPtr stmt(stmt_);
+    while ((rc = sqlite3_step(stmt_)) == SQLITE_ROW)
+    {
+        const char *key_ptr = (const char *)sqlite3_column_text(stmt.get(), 0);
+        const char *val_ptr = (const char *)sqlite3_column_text(stmt.get(), 1);
+
+        if (!key_ptr || !val_ptr)
+            continue;
+
+        std::string key = key_ptr;
+        std::string val = val_ptr;
+        // 更加优雅的做法是map+lambda，但是if else更加实在，因为你的配置就几项，cpu速度计算更快
+        try
+        {
+            if (key == "ai_provider")
+            {
+                config.ai_provider = val;
+            }
+            else if (key == "ai_model")
+            {
+                config.ai_model = val;
+            }
+            else if (key == "ai_api_key")
+            {
+                config.ai_api_key = val;
+            }
+            else if (key == "ai_language")
+            {
+                config.ai_language = val;
+            }
+            else if (key == "kernel_io_buffer")
+            {
+                config.kernel_io_buffer = val;
+            }
+            // --- 数值类型 (带异常捕获，防止因为配错了导致崩溃) ---
+            else if (key == "kernel_worker_threads")
+            {
+                config.kernel_worker_threads = std::stoi(val);
+            }
+            else if (key == "kernel_max_batch")
+            {
+                config.kernel_max_batch = std::stoi(val);
+            }
+            else if (key == "kernel_refresh_interval")
+            {
+                config.kernel_refresh_interval = std::stoi(val);
+            }
+            // ---布尔类型 (兼容 1/0/true/false) ---
+            else if (key == "kernel_adaptive_mode")
+            {
+                // 只要是 "1" 或 "true" (忽略大小写建议自己写个工具函数，这里简单处理) 就为真
+                config.kernel_adaptive_mode = (val == "1" || val == "true" || val == "TRUE");
+            }
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "[Config] Error parsing key [" << key << "] with value [" << val << "]: " << e.what() << std::endl;
+            // 捕获异常后继续循环，不要中断后续配置的加载
+        }
+        //
+    }
+    if (rc != SQLITE_DONE)
+    {
+        checkSqliteError(db_, rc, "Step execution failed during pagination");
+    }
+    return config;
+}

@@ -20,7 +20,7 @@ public:
     std::vector<PromptConfig> getAllPrompts();
     std::vector<AlertChannel> getAllChannels();
     AllSettings handleGetAll();
-    void handleUpdateAppConfig(const std::unordered_map<std::string,std::string>& mp);
+    void handleUpdateAppConfig(const std::map<std::string,std::string>& mp);
     void handleUpdatePrompt(const std::vector<PromptConfig>& prompts);
     void handleUpdateChannel(const std::vector<AlertChannel>& alerts);
 };
