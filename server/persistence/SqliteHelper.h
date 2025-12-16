@@ -25,22 +25,3 @@ namespace persistence {
     }
 }//namespace persistence
 
-// 【新增历史日志结构体】
-struct HistoricalLogItem {
-    std::string trace_id;
-    std::string risk_level;
-    std::string summary;
-    std::string processed_at; // 日志分析完成的时间戳
-
-    // 必须有，用于 nlohmann::json 自动序列化给前端
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(HistoricalLogItem, trace_id, risk_level, summary, processed_at);
-};
-
-// 【新增历史日志分页结果的结构体】
-struct HistoryPage {
-    std::vector<HistoricalLogItem> logs;
-    int total_count = 0; // 总记录数，用于前端分页组件
-
-    // 必须有，用于 nlohmann::json 自动序列化给前端
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(HistoryPage, logs, total_count);
-};

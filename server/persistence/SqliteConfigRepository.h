@@ -3,6 +3,7 @@
 #include<string>
 #include<vector>
 #include<mutex>
+#include <persistence/ConfigTypes.h>
 class SqliteConfigRepository
 {
 private:
@@ -14,5 +15,13 @@ public:
     std::vector<std::string> getActiveWebhookUrls();
     void addWebhookUrl(const std::string& url) ;
     void deleteWebhookUrl(const std::string& url) ;
+
+    AppConfig getAppConfig();
+    std::vector<PromptConfig> getAllPrompts();
+    std::vector<AlertChannel> getAllChannels();
+    AllSettings handleGetAll();
+    void handleUpdateAppConfig(const std::unordered_map<std::string,std::string>& mp);
+    void handleUpdatePrompt(const std::vector<PromptConfig>& prompts);
+    void handleUpdateChannel(const std::vector<AlertChannel>& alerts);
 };
 

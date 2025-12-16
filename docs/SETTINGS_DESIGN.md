@@ -4,10 +4,10 @@
 
 ## 1. 核心设计理念
 
-采用 **"全量加载，增量更新 (Load All, Update Incremental)"** 的策略。
+采用 **"显式保存，批量提交 (Explicit Save, Batch Submit)"** 的策略。
 
-*   **读取:** 只有在 **系统启动 (Startup)** 或 **刷新页面** 时，前端才会发起一次 `GET` 请求，拉取所有设置（基础配置、Prompt、通知渠道）。
-*   **写入:** 当用户修改某一项配置时，前端会先更新本地状态 (Optimistic Update)，然后立即调用对应的特定 `POST` 接口持久化到数据库。
+*   **读取:** 只有在 **系统启动 (Startup)** 或 **刷新页面** 时，前端才会发起一次 `GET` 请求，拉取所有设置。
+*   **写入:** 用户必须点击“保存”按钮才能将修改提交到后端。
 
 ---
 
@@ -130,38 +130,34 @@ INSERT OR IGNORE INTO app_config (config_key, config_value, description) VALUES
 
 ## 4. 前端交互策略 (Frontend Logic)
 
-### 4.1 状态管理 (Pinia Store)
-在 `client/src/stores/system.ts` 中维护与后端完全一致的数据结构：
+### 4.1 状态管理与变更追踪
+前端 Pinia Store 需要维护两份数据：
+1.  **Synced State (已保存状态):** 与服务器数据库保持一致的数据副本。
+2.  **Draft State (草稿状态):** 用户当前在输入框中看到的值。
 
-```typescript
-state: () => ({
-    // 映射 app_config 表
-    config: {
-        ai_provider: '',
-        ai_api_key: '',
-        // ...
-    },
-    // 映射 ai_prompts 表
-    prompts: [] as Prompt[],
-    // 映射 alert_channels 表
-    channels: [] as Channel[]
-})
-```
+### 4.2 交互流程：显式保存 (Explicit Save)
 
-### 4.2 乐观更新 (Optimistic UI)
-为了让界面感觉“极快”，我们不在 UI 上显示 Loading 转圈等待保存结果。
+我们放弃“自动保存”，采用“手动保存按钮”方案，流程如下：
 
-**操作流程:**
-1.  **用户操作:** 用户在输入框修改 API Key，失去焦点 (Blur)。
-2.  **更新 Store:** 前端立即修改 Pinia 中的 `config.ai_api_key`。
-3.  **发送请求:** 后台异步发送 `POST /api/settings/config`。
-4.  **错误处理:** 
-    *   如果请求成功 (200 OK): 静默成功，可能弹出轻提示 "Saved"。
-    *   如果请求失败 (500/Network Error): 弹出错误提示，并**回滚** Pinia 中的值为修改前的值。
+1.  **用户输入:** 用户在配置页面的输入框中修改 `API Key` 或 `线程数`。
+2.  **变更检测 (Dirty Check):** 
+    *   前端实时比较 `Draft State` 和 `Synced State`。
+    *   一旦检测到任何差异，页面底部/顶部的 **“保存变更 (Save Changes)”** 按钮点亮（高亮/可点击）。
+3.  **用户提交:** 用户确认无误，点击“保存”按钮。
+4.  **发送请求:** 前端一次性将所有变更打包（或分批）发送 POST 请求给后端。
+5.  **处理响应:**
+    *   **成功:** 弹出“保存成功”提示，将 `Synced State` 更新为当前的 `Draft State`，按钮恢复置灰（不可点击）。
+    *   **失败:** 弹出错误提示，按钮保持高亮，允许用户重试。
 
-### 4.3 必须重启的提示
+### 4.3 为什么选择“显式保存”？ (Design Rationale)
+
+1.  **防止意外提交 (Safety):** 自动保存容易将用户未输完的、错误的配置同步到服务器。对于 API Key 这种敏感字段，手动保存给了用户一个“缓冲区”，允许撤销和纠错。
+2.  **原子性 (Atomicity):** 用户可能同时修改了多个关联配置（如 Endpoint 和 Model Name）。手动保存确保这组修改作为一个整体被提交，避免因为自动保存的时间差导致配置不一致。
+3.  **减少网络开销 (Performance):** 避免了用户每输入一个字符或每切换一次焦点就发送一次 HTTP 请求。
+
+### 4.4 必须重启的提示
 对于 `app_config` 中属于 **冷启动配置** 的项（如 `kernel_worker_threads`）：
-1.  前端 Store 中会标记哪些 Key 是需要重启的 (`REQUIRE_RESTART_KEYS = ['kernel_worker_threads', ...]`)。
-2.  当检测到这些 Key 的值发生变更并保存成功后，前端主动弹出全局提示：
+1.  前端 Store 维护一个列表：`REQUIRE_RESTART_KEYS = ['kernel_worker_threads', ...]`。
+2.  保存成功后，如果检测到提交的变更中包含这些 Key，前端主动弹出全局提示：
     > "配置已保存，但检测到核心参数变更。为了确保系统稳定，请**重启服务**以生效。"
 3.  提供一个 "立即重启" 按钮 (调用 `/api/restart`)。

@@ -5,6 +5,7 @@
 #include<optional>
 #include "ai/AiTypes.h"
 #include "persistence/SqliteHelper.h"
+#include <persistence/ConfigTypes.h>
 struct AlertInfo{
     std::string trace_id;
     std::string summary;

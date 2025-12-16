@@ -209,3 +209,4 @@ void SqliteConfigRepository::deleteWebhookUrl(const std::string &url)
     sqlite3_finalize(stmt);
     return;
 }
+
