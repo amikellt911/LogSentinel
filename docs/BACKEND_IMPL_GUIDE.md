@@ -67,9 +67,10 @@ struct AlertChannel {
     std::string provider; // "DingTalk", "Slack"
     std::string webhook_url;
     std::string alert_threshold; // "Critical", "Warning"
+    std::string msg_template; // 消息模板
     bool is_active = false;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AlertChannel, id, name, provider, webhook_url, alert_threshold, is_active)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AlertChannel, id, name, provider, webhook_url, alert_threshold, msg_template, is_active)
 };
 
 // 4. 聚合大对象 (用于 GET /settings/all)
