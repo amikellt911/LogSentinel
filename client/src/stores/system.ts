@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import dayjs from 'dayjs'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import _ from 'lodash'
 
 export interface LogEntry {
   id: number | string
@@ -25,13 +26,14 @@ export interface AlertEntry {
 }
 
 export interface PromptConfig {
-  id: string
+  id: string | number
   name: string
   content: string
+  is_active?: number
 }
 
 export interface WebhookConfig {
-  id: string
+  id: string | number
   name: string
   vendor: 'DingTalk' | 'Lark' | 'Slack' | 'Custom'
   url: string
@@ -79,6 +81,26 @@ export interface HistoryPageResponse {
     total_count: number
 }
 
+// API Response Interfaces for Settings
+export interface SettingsResponse {
+  config: Record<string, string>
+  prompts: {
+    id: number
+    name: string
+    content: string
+    is_active: number
+  }[]
+  channels: {
+    id: number
+    name: string
+    provider: string
+    webhook_url: string
+    alert_threshold: string
+    msg_template: string
+    is_active: number
+  }[]
+}
+
 export const useSystemStore = defineStore('system', () => {
   // --- State ---
   const isRunning = ref(false)
@@ -114,7 +136,7 @@ export const useSystemStore = defineStore('system', () => {
   // Logs
   const logs = ref<LogEntry[]>([])
 
-  // Settings
+  // Settings State
   const settings = reactive({
     ai: {
       provider: 'Local-Mock',
@@ -179,11 +201,22 @@ Metrics:
     kernel: {
       workerThreads: 4,
       ioBufferSize: '256MB',
-      sqliteWalSync: true,
       adaptiveBatching: true,
       flushInterval: 200
     }
   })
+
+  // Synced State (Deep Copy)
+  // Initialize with a deep copy of the default settings
+  const syncedSettings = ref(_.cloneDeep(settings))
+
+  // Computed Property for Dirty Check
+  const isDirty = computed(() => {
+      return !_.isEqual(settings, syncedSettings.value)
+  })
+
+  // Cold Config Keys that require restart
+  // const REQUIRE_RESTART_KEYS = ['kernel_worker_threads', 'kernel_io_buffer'] // Unused for now as we hardcode the check
 
   // --- Constants for Mocking ---
   const LOG_MESSAGES = {
@@ -417,6 +450,189 @@ Metrics:
       }
   }
 
+  // --- Settings API Actions ---
+
+  async function fetchSettings() {
+    try {
+      const res = await fetch('/api/settings/all')
+      if (!res.ok) throw new Error('Failed to fetch settings')
+      const data: SettingsResponse = await res.json()
+
+      // Map Backend Data to Store State
+      const newSettings = {
+        ai: {
+          provider: (data.config['ai_provider'] || 'Local-Mock') as any,
+          modelName: data.config['ai_model'] || 'gpt-4-turbo',
+          apiKey: data.config['ai_api_key'] || '',
+          language: (data.config['ai_language'] || 'en') as any,
+          maxBatchSize: parseInt(data.config['kernel_max_batch'] || '50'),
+          prompts: data.prompts.map(p => ({
+            id: p.id,
+            name: p.name,
+            content: p.content
+          }))
+        },
+        integration: {
+          alertThreshold: 'High', // Placeholder
+          channels: data.channels.map(c => ({
+            id: c.id,
+            name: c.name,
+            vendor: (c.provider || 'Custom') as any,
+            url: c.webhook_url,
+            threshold: (c.alert_threshold || 'Error') as any,
+            template: c.msg_template,
+            enabled: !!c.is_active
+          }))
+        },
+        kernel: {
+          workerThreads: parseInt(data.config['kernel_worker_threads'] || '4'),
+          ioBufferSize: data.config['kernel_io_buffer'] || '256MB',
+          adaptiveBatching: data.config['kernel_adaptive_mode'] === '1',
+          flushInterval: parseInt(data.config['kernel_refresh_interval'] || '200')
+        }
+      }
+
+      // Update State and Synced Copy
+      Object.assign(settings, newSettings)
+      syncedSettings.value = _.cloneDeep(newSettings)
+
+    } catch (e) {
+      console.warn("Settings fetch failed (simulation mode maybe?):", e)
+      // In simulation mode, we just stick to default values
+    }
+  }
+
+  async function saveSettings() {
+    try {
+       const promises = []
+
+       // 1. Config Batch
+       // Check if config changed
+       // We only need to compare relevant fields to decide if we send 'config'
+       // But 'config' endpoint takes KV pairs. We can just check fields we map to KV.
+       // It's easier to just construct payload and send if any differs.
+
+       const configItems = [
+         { key: 'ai_provider', value: settings.ai.provider },
+         { key: 'ai_model', value: settings.ai.modelName },
+         { key: 'ai_api_key', value: settings.ai.apiKey },
+         { key: 'ai_language', value: settings.ai.language },
+         { key: 'kernel_adaptive_mode', value: settings.kernel.adaptiveBatching ? '1' : '0' },
+         { key: 'kernel_max_batch', value: settings.ai.maxBatchSize.toString() },
+         { key: 'kernel_refresh_interval', value: settings.kernel.flushInterval.toString() },
+         { key: 'kernel_worker_threads', value: settings.kernel.workerThreads.toString() },
+         { key: 'kernel_io_buffer', value: settings.kernel.ioBufferSize }
+       ]
+
+       // Only send if config changed (comparing with synced is hard because synced structure is nested object, not KV list)
+       // We can rely on basic dirty check: if ANY part of settings changed, we might as well send config if we are lazy.
+       // But let's try to be precise if we can.
+       // Actually, we can just always send config if isDirty is true, OR compare specific sub-trees.
+       // Given the request emphasizes batch and robustness, sending all changed sections is good.
+       // Let's compare `settings.ai` (minus prompts) and `settings.kernel` with `syncedSettings`.
+
+       const isConfigDirty = !_.isEqual(_.omit(settings.ai, 'prompts'), _.omit(syncedSettings.value.ai, 'prompts')) ||
+                             !_.isEqual(settings.kernel, syncedSettings.value.kernel)
+
+       if (isConfigDirty) {
+          promises.push(fetch('/api/settings/config', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ items: configItems })
+           }))
+       }
+
+       // 2. Prompts Batch
+       if (!_.isEqual(settings.ai.prompts, syncedSettings.value.ai.prompts)) {
+           const promptsPayload = settings.ai.prompts.map(p => ({
+               id: typeof p.id === 'number' ? p.id : 0, // 0 for new
+               name: p.name,
+               content: p.content,
+               is_active: 1
+           }))
+           promises.push(fetch('/api/settings/prompts', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify(promptsPayload)
+           }))
+       }
+
+       // 3. Channels Batch
+       if (!_.isEqual(settings.integration.channels, syncedSettings.value.integration.channels)) {
+           const channelsPayload = settings.integration.channels.map(c => ({
+               id: typeof c.id === 'number' ? c.id : 0, // 0 for new
+               name: c.name,
+               provider: c.vendor,
+               webhook_url: c.url,
+               alert_threshold: c.threshold,
+               msg_template: c.template,
+               is_active: c.enabled ? 1 : 0
+           }))
+           promises.push(fetch('/api/settings/channels', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify(channelsPayload)
+           }))
+       }
+
+       // Execute all needed requests
+       await Promise.all(promises)
+
+       // 4. Update Synced State via Re-fetch (to get new IDs)
+       // We only re-fetch if we actually sent something.
+       if (promises.length > 0) {
+           await fetchSettings()
+       } else {
+           // Should not happen if isDirty is true, but just in case
+           syncedSettings.value = _.cloneDeep(settings)
+       }
+
+       return true // Success
+    } catch (e) {
+       console.error("Save failed", e)
+       throw e
+    }
+  }
+
+  // Wrapped Save Action with Logic
+  async function saveSettingsWithLogic() {
+      // Check for Restart Needed
+      let restartNeeded = false
+
+      // Compare specific keys
+      if (settings.kernel.workerThreads !== syncedSettings.value.kernel.workerThreads) restartNeeded = true
+      if (settings.kernel.ioBufferSize !== syncedSettings.value.kernel.ioBufferSize) restartNeeded = true
+
+      try {
+          await saveSettings()
+
+          ElMessage.success('Settings saved successfully')
+
+          if (restartNeeded) {
+              ElMessageBox.confirm(
+                'Core configuration changed. Restart required to apply changes.',
+                'Restart Required',
+                {
+                  confirmButtonText: 'Restart Now',
+                  cancelButtonText: 'Later',
+                  type: 'warning',
+                }
+              ).then(() => {
+                 fetch('/api/restart', { method: 'POST' }).then(() => {
+                     ElMessage.info('System is restarting...')
+                     setTimeout(() => window.location.reload(), 3000)
+                 })
+              }).catch(() => {
+                  ElMessage.info('Changes saved. Please restart manually later.')
+              })
+          }
+
+      } catch (e) {
+          ElMessage.error('Failed to save settings')
+      }
+  }
+
+
   function startPolling() {
     if (pollingInterval.value) return
     
@@ -454,6 +670,8 @@ Metrics:
     isRunning,
     isSimulationMode,
     settings,
+    syncedSettings, // Exposed for debugging if needed
+    isDirty,
     totalLogsProcessed,
     netLatency,
     aiLatency,
@@ -466,6 +684,8 @@ Metrics:
     riskStats,
     recentAlerts,
     logs,
-    toggleSystem
+    toggleSystem,
+    fetchSettings,
+    saveSettings: saveSettingsWithLogic
   }
 })
