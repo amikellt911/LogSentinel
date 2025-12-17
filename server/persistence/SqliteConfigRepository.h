@@ -27,7 +27,7 @@ private:
 
     //-------------------------
     sqlite3* db_=nullptr;
-    //std::mutex mutex_;
+    std::mutex mutex_;
 public:
     SqliteConfigRepository(const std::string & db_path);
     ~SqliteConfigRepository();

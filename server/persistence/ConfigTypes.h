@@ -51,6 +51,9 @@ struct PromptConfig {
     std::string name;
     std::string content;
     bool is_active = true;
+    PromptConfig() = default;
+    PromptConfig(int id, std::string name, std::string content, bool is_active)
+        : id(id), name(std::move(name)), content(std::move(content)), is_active(is_active) {}
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(PromptConfig, id, name, content, is_active)
 };
@@ -64,8 +67,11 @@ struct AlertChannel {
     std::string alert_threshold; // "Critical", "Warning"
     std::string msg_template;
     bool is_active = false;
+    AlertChannel() = default;
+    AlertChannel(int id, std::string name, std::string provider, std::string webhook_url, std::string alert_threshold, std::string msg_template, bool is_active)
+        : id(id), name(std::move(name)), provider(std::move(provider)), webhook_url(std::move(webhook_url)), alert_threshold(std::move(alert_threshold)), msg_template(std::move(msg_template)), is_active(is_active) {}
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AlertChannel, id, name, provider, webhook_url, alert_threshold, is_active)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AlertChannel, id, name, provider, webhook_url, alert_threshold, msg_template, is_active)
 };
 
 // 4. 聚合大对象 (用于 GET /settings/all)

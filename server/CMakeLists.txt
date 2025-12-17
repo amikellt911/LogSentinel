@@ -27,7 +27,10 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/libcpr/cpr.git
   GIT_TAG 1.12.0
 )
-set(CPR_USE_SYSTEM_CURL ON)
+set(CPR_USE_SYSTEM_CURL OFF)
+set(CPR_USE_SYSTEM_LIB_PSL OFF)
+set(CPR_ENABLE_CURL_HTTP_ONLY ON)
+set(CPR_ENABLE_SSL OFF)
 
 FetchContent_Declare(
   nlohmann_json
@@ -154,6 +157,10 @@ add_executable(test_logbatcher
   tests/LogBatcher_test.cpp
 )
 
+add_executable(test_config_repo
+  tests/SqliteConfigRepository_test.cpp
+)
+
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -177,17 +184,25 @@ target_link_libraries(test_logbatcher PRIVATE
 GTest::gtest_main
 core_module
 )
+target_link_libraries(test_config_repo PRIVATE
+GTest::gtest_main
+persistence_module
+)
+
 #给vscode的C++扩展的CTest.
 add_test(NAME test_http_context COMMAND test_http_context)
 add_test(NAME test_util_traceidgenerate COMMAND test_util_traceidgenerate)
 add_test(NAME test_threadpool COMMAND test_threadpool)
 add_test(NAME test_sqlite COMMAND test_sqlite)
 add_test(NAME test_logbatcher COMMAND test_logbatcher)
+add_test(NAME test_config_repo COMMAND test_config_repo)
+
 gtest_discover_tests(test_http_context)
 gtest_discover_tests(test_util_traceidgenerate)
 gtest_discover_tests(test_threadpool)
 gtest_discover_tests(test_sqlite)
 gtest_discover_tests(test_logbatcher)
+gtest_discover_tests(test_config_repo)
 #-----------不同模块测试用例---------------
 #这些测试用例版本变动，用不了了
 # #http层测试用例
