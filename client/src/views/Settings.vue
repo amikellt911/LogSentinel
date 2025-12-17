@@ -11,6 +11,24 @@
       <!-- Settings Form -->
       <el-form label-position="top" size="large" class="demo-tabs">
         <el-tabs type="border-card" class="custom-tabs">
+
+          <!-- Group 0: General Settings -->
+          <el-tab-pane :label="$t('settings.tabs.general')">
+            <template #label>
+              <span class="flex items-center gap-2">
+                <el-icon><Setting /></el-icon> {{ $t('settings.tabs.general') }}
+              </span>
+            </template>
+
+            <div class="p-6">
+               <el-form-item :label="$t('settings.general.language')">
+                  <el-select v-model="systemStore.settings.general.language" class="w-full md:w-1/2">
+                     <el-option label="English" value="en" />
+                     <el-option label="中文 (Chinese)" value="zh" />
+                  </el-select>
+               </el-form-item>
+            </div>
+          </el-tab-pane>
           
           <!-- Group A: AI Pipeline (T-Shape Layout) -->
           <el-tab-pane :label="$t('settings.tabs.ai')">
@@ -291,7 +309,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useSystemStore, type WebhookConfig } from '../stores/system'
-import { Cpu, Share, Operation, Check, Plus, Delete, Promotion } from '@element-plus/icons-vue'
+import { Cpu, Share, Operation, Check, Plus, Delete, Promotion, Setting } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 

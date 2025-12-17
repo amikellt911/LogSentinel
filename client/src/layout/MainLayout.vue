@@ -43,14 +43,6 @@
         </div>
         
         <div class="flex items-center gap-4">
-           <!-- Language Switcher -->
-           <button 
-            @click="toggleLanguage"
-            class="px-2 py-1 text-xs font-mono border border-gray-600 rounded text-gray-400 hover:text-white hover:border-gray-400 transition-colors"
-          >
-            {{ locale === 'en' ? 'EN' : '中文' }}
-          </button>
-          
           <!-- Simulation Mode Toggle -->
           <div class="flex items-center gap-2 border-r border-gray-700 pr-4 mr-2">
             <span class="text-xs font-mono uppercase tracking-widest text-gray-500">
@@ -108,7 +100,7 @@ import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const systemStore = useSystemStore()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const currentRouteName = computed(() => {
   switch (route.name) {
@@ -133,10 +125,6 @@ function handleToggle(val: string | number | boolean) {
   }
   
   systemStore.toggleSystem(val as boolean)
-}
-
-function toggleLanguage() {
-  locale.value = locale.value === 'en' ? 'zh' : 'en'
 }
 </script>
 

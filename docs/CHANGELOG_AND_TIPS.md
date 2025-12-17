@@ -1,93 +1,79 @@
-# 修改记录与开发心得 (Change Log & Dev Tips)
+# 项目更新文档 - 国际化配置持久化
 
-## 1. 修改概览 (Summary of Changes)
+## 1. 修改概述
+本次更新主要实现了界面语言（Language）配置的后端持久化，并调整了前端设置入口。现在用户选择的语言（中文/英文）会保存在数据库中，重启后依然生效。
 
-本次任务主要完成了 `SqliteConfigRepository` 的测试环境搭建与验证，并修复了构建过程中的依赖问题。
-
-1.  **添加测试用例 (`server/tests/SqliteConfigRepository_test.cpp`)**:
-    -   编写了基于 Google Test 的单元测试。
-    -   覆盖了 `InitAndDefaultValues` (初始化), `UpdateAppConfig` (应用配置), `UpdatePrompts` (Prompt增删改), `UpdateChannels` (报警渠道增删改)。
-    -   测试采用了独立的 SQLite 数据库文件 (`test_config_repo.db`)，保证不污染原有数据，并在测试前后自动清理。
-
-2.  **修复构建脚本 (`server/CMakeLists.txt`)**:
-    -   添加了 `test_config_repo` 测试目标。
-    -   **关键修复**: 调整了 `cpr` (C++ Requests) 库的依赖配置。
-        -   `CPR_USE_SYSTEM_CURL OFF`: 强制使用内置 Curl，避免系统环境缺失 Curl 开发库。
-        -   `CPR_USE_SYSTEM_LIB_PSL OFF`: 禁用系统 `libpsl`，避免因为缺失 `meson` 构建工具导致的配置失败。
-        -   `CPR_ENABLE_SSL OFF`: 暂时关闭 SSL 支持以快速通过编译（如果生产环境需要 HTTPS，需安装 OpenSSL 开发库并开启）。
-
-3.  **代码修复**:
-    -   **`server/persistence/SqliteConfigRepository.h`**: 取消了 `std::mutex mutex_;` 的注释。`.cpp` 文件中多处使用了 `lock_guard<std::mutex> lock_(mutex_);`，但头文件中该成员变量被注释掉了，导致编译错误。
-    -   **`server/persistence/ConfigTypes.h`**: 为 `PromptConfig` 和 `AlertChannel` 结构体添加了**默认构造函数**和**带参数的构造函数**。这是为了配合 `std::vector::emplace_back` 的使用（详见下文“踩坑点”）。
+### 主要变更点
+1.  **后端 (C++)**:
+    *   在 `AppConfig` 结构体中新增 `app_language` 字段。
+    *   数据库 `app_config` 表初始化时增加 `app_language` 默认值 (`en`)。
+    *   `SqliteConfigRepository` 支持对 `app_language` 的读写。
+2.  **前端 (Vue/TS)**:
+    *   移除顶部导航栏右上角的语言切换按钮。
+    *   在 **设置 (Settings)** 页面新增 **"General" (常规)** 选项卡。
+    *   Pinia `system` store 新增 `general.language` 状态，并监听变化自动切换 `i18n` 语言。
+    *   设置保存时会将语言偏好同步提交到后端。
 
 ---
 
-## 2. 新手指南 (Beginner's Guide)
+## 2. 详细实现说明 (给新手的 Tips)
 
-### 核心类：`SqliteConfigRepository`
-这个类实现了 **Read-Through Cache (读穿透缓存)** 模式。
--   **读 (Get)**: 优先从内存缓存 (`cached_app_config_` 等) 读取，速度极快。
--   **写 (Update)**: 先写数据库，成功后更新内存缓存。这保证了数据持久化且内存状态一致。
--   **锁机制**: 使用了 `std::shared_mutex`。
-    -   `get...` 使用 `shared_lock` (读锁)：允许多个线程同时读。
-    -   `update...` 使用 `unique_lock` (写锁)：写的时候独占，防止读到脏数据。
+### 2.1 后端部分
+**文件**: `server/persistence/ConfigTypes.h`
+*   **Struct 序列化宏**:
+    我使用了 `NLOHMANN_DEFINE_TYPE_INTRUSIVE` 宏。
+    ```cpp
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AppConfig, ..., app_language, ...)
+    ```
+    *Tip*: 这个宏非常方便，它自动为你的结构体生成 `to_json` 和 `from_json` 函数。**但是**，你必须确保宏里面的字段顺序、名称和 JSON key 完全一致，否则反序列化时可能会对不上或者报错。
 
-### 关键逻辑：全量同步 (Full Sync / Upsert)
-在 `handleUpdatePrompt` 和 `handleUpdateChannel` 中，采用了一种“以输入为准”的策略：
-1.  **更新/插入**: 遍历前端传来的列表。如果有 ID，尝试 Update；如果没有 ID (或 ID=0)，执行 Insert。
-2.  **回填 ID**: 插入新数据后，利用 `sqlite3_last_insert_rowid` 获取新生成的 ID，并更新回内存对象中。
-3.  **修剪 (Pruning)**: 记录所有本次操作涉及的 ID (`active_ids`)。
-4.  **删除废弃项**: 执行 `DELETE FROM ... WHERE id NOT IN (...)`。这意味着，如果前端传来的列表里少了一项，数据库里就会把那一项删掉。**注意：这意味着前端必须总是提交完整的列表，而不能只提交修改项。**
+**文件**: `server/persistence/SqliteConfigRepository.cpp`
+*   **手动解析 KV**:
+    虽然我们在 `ConfigTypes.h` 里用了 JSON 宏，但在从 SQLite 的 `app_config` 表（Key-Value 结构）读取时，我们还是用了一堆 `if-else` 来判断 key。
+    ```cpp
+    else if (key == "app_language") config.app_language = val;
+    ```
+    *Tip*: 这里看起来有点笨（if-else），但在 C++ 中对于这种少量固定的配置项，`if-else` 配合 `std::string` 的性能完全足够，而且比引入反射机制或复杂的 map 映射更直观、易调试。不要为了“优雅”而过度设计。
 
----
+### 2.2 前端部分
+**文件**: `client/src/stores/system.ts`
+*   **Vue Watch**:
+    我在 Pinia store 里使用了 `watch`。
+    ```typescript
+    watch(() => settings.general.language, (newLang) => {
+        i18n.global.locale.value = newLang
+    })
+    ```
+    *Tip*: 这是因为 `settings` 对象是响应式的，但 `i18n` 的 locale 也是响应式的。我们需要一个桥梁，当用户在 UI 修改 `settings` 时，立即生效（不用等保存）。这种“副作用”逻辑放在 store 的 setup 函数里是很合适的。
 
-## 3. 踩坑点与经验总结 (Pitfalls & Lessons Learned)
-
-### 坑 1：`std::vector::emplace_back` 与 聚合初始化
-**现象**: 编译报错 `no matching function for call to PromptConfig::PromptConfig(...)`。
-**原因**:
-`PromptConfig` 原本是一个纯结构体（Aggregate）。在 C++17 中，`emplace_back` 应该能直接支持聚合初始化（即直接传成员变量的值）。
-但在某些编译器版本或特定写法下（特别是当结构体包含 `std::string` 等非平凡类型时），`emplace_back` 试图寻找显式的构造函数。
-**解决**:
-我在 `ConfigTypes.h` 中手动添加了构造函数：
-```cpp
-PromptConfig() = default;
-PromptConfig(int id, std::string name, std::string content, bool is_active)
-    : id(id), name(std::move(name)), content(std::move(content)), is_active(is_active) {}
-```
-**教训**: 如果你的结构体要放入 `vector` 并且使用 `emplace_back` 构造，为了保险起见，最好提供显式的构造函数。
-
-### 坑 2：CMake 的依赖地狱 (Dependency Hell)
-**现象**: CMake 配置 `cpr` 库时，报错找不到 `curl`，找不到 `libpsl`，或者提示需要安装 `meson` 构建工具。
-**原因**:
-`cpr` 默认倾向于使用系统安装的库。如果系统环境不纯净（比如缺少 `.pc` 文件或开发头文件），CMake `FindPackage` 就会失败。而 `cpr` 内部下载源码编译时，又依赖 `libpsl`，而 `libpsl` 的构建需要 `meson` 和 `ninja`。在沙箱或受限环境中，安装这些工具很麻烦。
-**解决**:
-通过 CMake 选项强行关闭不必要的外部依赖：
-```cmake
-set(CPR_USE_SYSTEM_CURL OFF)    # 不用系统的 Curl，自己编译
-set(CPR_USE_SYSTEM_LIB_PSL OFF) # 关闭 PSL (Public Suffix List) 支持，减少依赖
-set(CPR_ENABLE_SSL OFF)         # 暂时关闭 SSL，避免 OpenSSL 链接问题
-```
-**教训**: 在引入第三方库（尤其是像 Curl 这种重量级的）时，务必检查它的 CMake 选项，尽可能在开发阶段使用 `OFF` 关闭非核心功能，以减少环境依赖。
-
-### 坑 3：头文件与源文件的不一致
-**现象**: 编译报错 `mutex_ was not declared in this scope`。
-**原因**:
-开发者在 `.cpp` 里写了锁逻辑 `std::lock_guard<std::mutex> lock_(mutex_);`，但是在 `.h` 头文件里，把 `std::mutex mutex_;` 这行代码给注释掉了。
-**解决**: 把注释打开。
-**教训**: 修改类成员时，一定要同时检查头文件定义和源文件实现。编译器报错往往指向 `.cpp`，但根源在 `.h`。
+**文件**: `client/src/views/Settings.vue`
+*   **Element Plus Tabs**:
+    我增加了一个新的 `<el-tab-pane>`。
+    ```vue
+    <el-tab-pane :label="$t('settings.tabs.general')">
+    ```
+    *Tip*: 注意 `:label` 用了 `$t(...)`，这是为了让“General”这个标签本身也能随着语言切换而变（变成“常规”）。如果你写死成字符串 "General"，那切到中文时它还是英文。
 
 ---
 
-## 4. 重点函数讲解 (Key Functions)
+## 3. 踩坑记录 (避坑指南)
 
-### `ApplyConfigValue` (server/persistence/SqliteConfigRepository.cpp)
-这是一个简单的“映射器”。
--   **作用**: 将数据库里存储的字符串 (config_value) 转换成 C++ 结构体里的类型 (int, bool, string)。
--   **注意**: 这里用了 `try-catch` 包裹 `stoi` (字符串转整数)。这是为了防止数据库里有脏数据（比如 "abc" 强转 int）导致程序崩溃。新手要注意：**永远不要信任数据库里的数据格式，做好容错。**
+1.  **Element Plus Icon 引入**:
+    在 `Settings.vue` 中，我引入了 `<Setting />` 图标用于新的 Tab。
+    *坑*: 刚开始只引入了没在 `components` 注册或者没在 script setup 显式使用（只是放在 template 里），有些构建配置可能会报 "unused import" 或者类型错误。
+    *解*: 确保引入并在模板正确使用。如果是动态组件 `<component :is="...">`，要确保变量在 scope 内。在这个项目中，直接 `<el-icon><Setting /></el-icon>` 配合 `import { Setting } ...` 是最稳妥的。
 
-### `handleUpdateAppConfig`
--   **事务 (Transaction)**: 注意它使用了 `BEGIN TRANSACTION` 和 `COMMIT`。
--   **原子性**: 在循环中执行多条 UPDATE 语句。只要有一条失败（抛出异常），`catch` 块会执行 `ROLLBACK`。这保证了配置要么全更新，要么全不更新，不会出现“改了一半”的状态。
+2.  **Playwright 测试网络问题**:
+    在写验证脚本时，试图直接访问 `http://localhost:4173/settings`。
+    *坑*: 在某些 CI/容器环境中，`localhost` 可能解析不到，或者 Vite preview 还没完全启动脚本就跑了。
+    *解*: 脚本里我加了 `.wait_for_load_state("networkidle")`。如果还不行，通常要在 bash 里先确保 `npm run preview` 已经在后台跑起来且端口正确。
+    *Tip*: 如果前端页面加载不出来，Playwright 会报超时。这时候先用 `curl -v` 看看端口通不通。
 
-以上就是本次修改的详细说明。
+3.  **TS 类型定义**:
+    修改 `system.ts` 时，我加了 `GeneralSettings` 接口。
+    *坑*: 如果只在 `state` 里加了数据，没在 `interface` 定义里加，TypeScript 可能会报错或者没有补全。
+    *解*: 养成好习惯，改 state 结构前，先改 interface。
+
+---
+
+希望这份文档能帮你更好地理解这次修改！

@@ -200,7 +200,6 @@ add_test(NAME test_threadpool COMMAND test_threadpool)
 add_test(NAME test_sqlite COMMAND test_sqlite)
 add_test(NAME test_logbatcher COMMAND test_logbatcher)
 add_test(NAME test_config_repo COMMAND test_config_repo)
-
 gtest_discover_tests(test_http_context)
 gtest_discover_tests(test_util_traceidgenerate)
 gtest_discover_tests(test_threadpool)

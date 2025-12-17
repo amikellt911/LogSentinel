@@ -30,6 +30,7 @@ struct AppConfig {
     std::string ai_model = "gpt-4-turbo";
     std::string ai_api_key = "";
     std::string ai_language = "English";
+    std::string app_language = "en"; // Application UI Language
 
     // 内核设置
     int kernel_worker_threads = 4;
@@ -40,7 +41,7 @@ struct AppConfig {
 
     // 序列化宏 (注意：字段名需与 JSON key 及 DB config_key 一致)
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AppConfig, 
-        ai_provider, ai_model, ai_api_key, ai_language,
+        ai_provider, ai_model, ai_api_key, ai_language, app_language,
         kernel_worker_threads, kernel_max_batch, kernel_refresh_interval, kernel_io_buffer, kernel_adaptive_mode
     )
 };

@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import _ from 'lodash'
+import i18n from '../i18n'
 
 export interface LogEntry {
   id: number | string
@@ -49,6 +50,10 @@ export interface AISettings {
     language: 'en' | 'zh'
     maxBatchSize: number
     prompts: PromptConfig[]
+}
+
+export interface GeneralSettings {
+    language: 'en' | 'zh'
 }
 
 // Interface for Backend API Responses
@@ -138,6 +143,9 @@ export const useSystemStore = defineStore('system', () => {
 
   // Settings State
   const settings = reactive({
+    general: {
+      language: 'en'
+    } as GeneralSettings,
     ai: {
       provider: 'Local-Mock',
       modelName: 'gpt-4-turbo',
@@ -213,6 +221,12 @@ Metrics:
   // Computed Property for Dirty Check
   const isDirty = computed(() => {
       return !_.isEqual(settings, syncedSettings.value)
+  })
+
+  // Watch for language changes and update i18n immediately
+  watch(() => settings.general.language, (newLang) => {
+    // @ts-ignore
+    i18n.global.locale.value = newLang
   })
 
   // Cold Config Keys that require restart
@@ -460,6 +474,9 @@ Metrics:
 
       // Map Backend Data to Store State
       const newSettings = {
+        general: {
+          language: (data.config['app_language'] || 'en') as any
+        },
         ai: {
           provider: (data.config['ai_provider'] || 'Local-Mock') as any,
           modelName: data.config['ai_model'] || 'gpt-4-turbo',
@@ -513,6 +530,7 @@ Metrics:
        // It's easier to just construct payload and send if any differs.
 
        const configItems = [
+         { key: 'app_language', value: settings.general.language },
          { key: 'ai_provider', value: settings.ai.provider },
          { key: 'ai_model', value: settings.ai.modelName },
          { key: 'ai_api_key', value: settings.ai.apiKey },
@@ -532,7 +550,8 @@ Metrics:
        // Let's compare `settings.ai` (minus prompts) and `settings.kernel` with `syncedSettings`.
 
        const isConfigDirty = !_.isEqual(_.omit(settings.ai, 'prompts'), _.omit(syncedSettings.value.ai, 'prompts')) ||
-                             !_.isEqual(settings.kernel, syncedSettings.value.kernel)
+                             !_.isEqual(settings.kernel, syncedSettings.value.kernel) ||
+                             !_.isEqual(settings.general, syncedSettings.value.general)
 
        if (isConfigDirty) {
           promises.push(fetch('/api/settings/config', {

@@ -16,6 +16,8 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
             config.ai_api_key = val;
         else if (key == "ai_language")
             config.ai_language = val;
+        else if (key == "app_language")
+            config.app_language = val;
         else if (key == "kernel_io_buffer")
             config.kernel_io_buffer = val;
 
@@ -140,6 +142,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('ai_model', 'gpt-4-turbo', '模型名称'),
             ('ai_api_key', '', 'API密钥'),
             ('ai_language', 'English', '解析语言'),
+            ('app_language', 'en', '界面语言'),
             ('kernel_adaptive_mode', '1', '自适应微批模式开关 1/0'),
             ('kernel_max_batch', '50', '自适应最大阈值'),
             ('kernel_refresh_interval', '200', '刷新间隔ms'),
