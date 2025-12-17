@@ -36,6 +36,7 @@ public:
     AppConfig getAppConfig();
     std::vector<PromptConfig> getAllPrompts();
     std::vector<AlertChannel> getAllChannels();
+    AllSettings getAllSettings();
     void handleUpdateAppConfig(const std::map<std::string,std::string>& mp);
     void handleUpdatePrompt(const std::vector<PromptConfig>& prompts_input);
     void handleUpdateChannel(const std::vector<AlertChannel>& channels_input);

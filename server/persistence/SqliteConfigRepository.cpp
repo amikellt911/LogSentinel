@@ -275,6 +275,12 @@ std::vector<AlertChannel> SqliteConfigRepository::getAllChannels()
     return cached_channels_;
 }
 
+AllSettings SqliteConfigRepository::getAllSettings()
+{
+    std::shared_lock<std::shared_mutex> lock_(config_mutex_);
+    return AllSettings{cached_app_config_, cached_prompts_, cached_channels_};
+}
+
 void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, std::string> &mp)
 {
     std::unique_lock<std::shared_mutex> lock_(config_mutex_);

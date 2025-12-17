@@ -79,7 +79,9 @@ struct AllSettings {
     AppConfig config;
     std::vector<PromptConfig> prompts;
     std::vector<AlertChannel> channels;
-
+    AllSettings() = default;
+    AllSettings(AppConfig config_,std::vector<PromptConfig> prompts_,std::vector<AlertChannel> channels_)
+    : config(std::move(config_)), prompts(std::move(prompts_)), channels(std::move(channels_)){}
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AllSettings, config, prompts, channels)
 };
 
