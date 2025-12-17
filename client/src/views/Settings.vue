@@ -93,7 +93,22 @@
                            :class="{'bg-gray-800 border-l-2 border-l-primary': selectedPromptId === prompt.id}"
                            @click="selectedPromptId = prompt.id"
                         >
-                           <div class="font-mono text-sm text-gray-300 truncate pr-6">{{ prompt.name }}</div>
+                           <div class="flex items-center justify-between">
+                              <div class="font-mono text-sm text-gray-300 truncate pr-6 flex items-center gap-2">
+                                 <!-- Active Status Indicator/Toggle -->
+                                 <el-tooltip content="Set as Active Prompt" placement="top" :show-after="500">
+                                    <div
+                                       class="w-4 h-4 rounded-full border border-gray-500 flex items-center justify-center hover:border-primary transition-colors cursor-pointer"
+                                       :class="{'bg-primary border-primary': prompt.is_active}"
+                                       @click.stop="setActivePrompt(index)"
+                                    >
+                                       <el-icon v-if="prompt.is_active" class="text-black text-xs"><Select /></el-icon>
+                                    </div>
+                                 </el-tooltip>
+                                 <span :class="{'text-primary font-bold': prompt.is_active}">{{ prompt.name }}</span>
+                              </div>
+                           </div>
+
                            <!-- Delete Button -->
                            <div 
                              class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -309,7 +324,7 @@
  <script setup lang="ts">
  import { ref, computed, onMounted } from 'vue'
  import { useSystemStore, type WebhookConfig } from '../stores/system'
- import { Cpu, Share, Operation, Check, Plus, Delete, Promotion, Setting } from '@element-plus/icons-vue'
+ import { Cpu, Share, Operation, Check, Plus, Delete, Promotion, Setting, Select } from '@element-plus/icons-vue'
  import { ElMessage } from 'element-plus'
  import { useI18n } from 'vue-i18n'
  
@@ -337,14 +352,30 @@
     systemStore.settings.ai.prompts.push({
        id: newId,
        name: 'New Prompt',
-       content: ''
+       content: '',
+       is_active: systemStore.settings.ai.prompts.length === 0 // If it's the first one, make it active
     })
     selectedPromptId.value = newId
+ }
+
+ function setActivePrompt(index: number) {
+    // Set clicked to true, others to false
+    systemStore.settings.ai.prompts.forEach((p, i) => {
+       p.is_active = (i === index)
+    })
  }
  
  function deletePrompt(index: number) {
     const deletedId = systemStore.settings.ai.prompts[index].id
+    const wasActive = systemStore.settings.ai.prompts[index].is_active
+
     systemStore.settings.ai.prompts.splice(index, 1)
+
+    // If we deleted the active one, make the first one active (if exists)
+    if (wasActive && systemStore.settings.ai.prompts.length > 0) {
+       systemStore.settings.ai.prompts[0].is_active = true
+    }
+
     if (selectedPromptId.value === deletedId && systemStore.settings.ai.prompts.length > 0) {
        selectedPromptId.value = systemStore.settings.ai.prompts[0].id
     }
