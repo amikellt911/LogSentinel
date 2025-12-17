@@ -6,18 +6,18 @@
         <div>
             <h2 class="text-xl font-bold text-gray-100 flex items-center gap-3">
                 <el-icon class="text-purple-400"><Cpu /></el-icon>
-                AI Insight Stream (Reduce Phase)
+                {{ $t('insights.title') }}
             </h2>
             <p class="text-gray-500 text-sm mt-1 font-mono">
-                Real-time aggregation of log batches. Map-Reduce pipeline active.
+                {{ $t('insights.subtitle') }}
             </p>
         </div>
         <div class="flex items-center gap-4">
              <div class="flex items-center gap-2 text-xs font-mono bg-gray-900 px-3 py-1 rounded border border-gray-700">
                 <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                Last Batch: {{ lastBatchTime }}
+                {{ $t('insights.lastBatch') }}: {{ lastBatchTime }}
              </div>
-             <el-tag effect="dark" type="info" class="font-mono">Global Context Window: 512 tokens</el-tag>
+             <el-tag effect="dark" type="info" class="font-mono">{{ $t('insights.context') }}: 512 tokens</el-tag>
         </div>
     </div>
 
@@ -53,9 +53,9 @@
                             <div class="flex justify-between items-start mb-3 border-b border-gray-700/50 pb-2">
                                 <div>
                                     <h3 class="text-sm font-bold text-gray-200 flex items-center gap-2">
-                                        BATCH #{{ batch.id }}
+                                        {{ $t('insights.batch') }} #{{ batch.id }}
                                         <span class="px-1.5 py-0.5 rounded bg-gray-700 text-[10px] text-gray-400 font-normal">
-                                            Size: {{ batch.logCount }} logs
+                                            {{ $t('insights.size') }}: {{ batch.logCount }} {{ $t('insights.logs') }}
                                         </span>
                                     </h3>
                                 </div>
@@ -72,13 +72,13 @@
                                 <!-- Mini Stats -->
                                 <div class="w-24 shrink-0 flex flex-col gap-2 border-r border-gray-700/50 pr-4">
                                     <div class="text-center">
-                                        <div class="text-xs text-gray-500 uppercase">Risks</div>
+                                        <div class="text-xs text-gray-500 uppercase">{{ $t('insights.risks') }}</div>
                                         <div class="text-lg font-bold" :class="batch.riskCount > 0 ? 'text-red-400' : 'text-gray-400'">
                                             {{ batch.riskCount }}
                                         </div>
                                     </div>
                                     <div class="text-center">
-                                        <div class="text-xs text-gray-500 uppercase">Latency</div>
+                                        <div class="text-xs text-gray-500 uppercase">{{ $t('insights.latency') }}</div>
                                         <div class="text-sm font-mono text-blue-400">{{ batch.avgLatency }}ms</div>
                                     </div>
                                 </div>
@@ -86,7 +86,7 @@
                                 <!-- AI Text -->
                                 <div class="flex-1">
                                     <div class="text-xs text-purple-400 mb-1 font-bold uppercase tracking-wider flex items-center gap-1">
-                                        <el-icon><MagicStick /></el-icon> AI Summary
+                                        <el-icon><MagicStick /></el-icon> {{ $t('insights.aiSummary') }}
                                     </div>
                                     <p class="text-gray-300 text-sm leading-relaxed font-mono type-writer-text">
                                         {{ batch.summary }}
@@ -101,7 +101,7 @@
 
         <!-- Initial Placeholder -->
         <div v-if="batches.length === 0" class="flex justify-center items-center h-64 text-gray-600 font-mono animate-pulse">
-            Waiting for next batch processing window...
+            {{ $t('insights.waiting') }}
         </div>
     </div>
   </div>
@@ -111,6 +111,9 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Cpu, MagicStick, Check, Warning, CircleCheck, CircleClose, View } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
+import { useSystemStore } from '../stores/system'
+
+const systemStore = useSystemStore()
 
 interface BatchItem {
     id: number
@@ -131,7 +134,7 @@ let batchCounter = 1024
 
 // --- Mock Data Generator ---
 
-const TEMPLATES = [
+const TEMPLATES_EN = [
     {
         status: 'NORMAL',
         summary: "Traffic patterns nominal. User authentication flows behaving as expected. No anomalies detected in the last 5s window.",
@@ -164,6 +167,39 @@ const TEMPLATES = [
     }
 ]
 
+const TEMPLATES_ZH = [
+    {
+        status: 'NORMAL',
+        summary: "流量模式正常。用户认证流程运行符合预期。过去 5 秒窗口内未检测到异常。",
+        tags: ['认证', '正常'],
+        riskCount: 0
+    },
+    {
+        status: 'NORMAL',
+        summary: "批处理完成。数据库查询平均延迟稳定在 45ms。入口吞吐量平稳。",
+        tags: ['数据库', '性能'],
+        riskCount: 0
+    },
+    {
+        status: 'WARNING',
+        summary: "检测到 /api/v1/user 端点的 404 响应略有升高。可能是爬虫活动或死链引用。",
+        tags: ['404', '爬虫'],
+        riskCount: 2
+    },
+    {
+        status: 'CRITICAL',
+        summary: "安全警报：检测到针对登录控制器的协同 SQL 注入尝试，涉及 3 个不同 IP。攻击载荷已拦截。",
+        tags: ['安全', 'SQL注入', '攻击'],
+        riskCount: 15
+    },
+    {
+        status: 'WARNING',
+        summary: "检测到 Worker #3 内存使用率过高。垃圾回收频率增加。建议监控堆大小。",
+        tags: ['系统', '内存'],
+        riskCount: 1
+    }
+]
+
 function generateBatch() {
     batchCounter++
     const now = dayjs()
@@ -177,7 +213,10 @@ function generateBatch() {
     else if (r > 0.60) tplIndex = 4 // Warning (System)
     else tplIndex = Math.floor(Math.random() * 2) // Normal
 
-    const tpl = TEMPLATES[tplIndex]
+    // Switch template set based on current language
+    const templates = systemStore.settings.general.language === 'zh' ? TEMPLATES_ZH : TEMPLATES_EN
+    const tpl = templates[tplIndex]
+
     const logs = Math.floor(Math.random() * 40) + 10
 
     const batch: BatchItem = {

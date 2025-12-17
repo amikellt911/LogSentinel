@@ -3,8 +3,8 @@
     <!-- Filter Bar -->
     <div class="flex flex-wrap gap-4 items-center bg-gray-800/30 p-4 rounded border border-gray-700">
       <div class="flex items-center gap-2">
-        <label class="text-gray-400 text-sm">Risk Level:</label>
-        <el-select v-model="filterLevel" placeholder="All" size="small" class="w-32" clearable>
+        <label class="text-gray-400 text-sm">{{ $t('history.riskLevel') }}:</label>
+        <el-select v-model="filterLevel" :placeholder="$t('history.all')" size="small" class="w-32" clearable>
           <el-option label="Critical" value="Critical" />
           <el-option label="Error" value="Error" />
           <el-option label="Warning" value="Warning" />
@@ -13,10 +13,10 @@
       </div>
 
       <div class="flex items-center gap-2 flex-1">
-         <label class="text-gray-400 text-sm">Search:</label>
+         <label class="text-gray-400 text-sm">{{ $t('history.search') }}:</label>
          <el-input
             v-model="searchQuery"
-            placeholder="Search logs by keyword or Trace ID..."
+            :placeholder="$t('history.placeholder')"
             size="small"
             clearable
             :prefix-icon="Search"
@@ -24,7 +24,7 @@
       </div>
 
       <el-button type="primary" :icon="Refresh" size="small" @click="refreshLogs" :loading="loading">
-         Refresh
+         {{ $t('history.refresh') }}
       </el-button>
     </div>
 
@@ -37,20 +37,20 @@
         element-loading-background="rgba(0, 0, 0, 0.7)"
         :row-class-name="tableRowClassName"
       >
-        <el-table-column prop="timestamp" label="Time" width="180" sortable />
-        <el-table-column prop="level" label="Level" width="100">
+        <el-table-column prop="timestamp" :label="$t('history.table.time')" width="180" sortable />
+        <el-table-column prop="level" :label="$t('history.table.level')" width="100">
           <template #default="{ row }">
              <span class="px-2 py-1 rounded text-xs font-bold" :class="getLevelBadgeClass(row.level)">
                 {{ row.level }}
              </span>
           </template>
         </el-table-column>
-        <el-table-column prop="message" label="Summary" min-width="300" />
-        <el-table-column prop="id" label="Trace ID" width="220" />
-        <el-table-column label="Actions" width="100" fixed="right">
+        <el-table-column prop="message" :label="$t('history.table.summary')" min-width="300" />
+        <el-table-column prop="id" :label="$t('history.table.traceId')" width="220" />
+        <el-table-column :label="$t('history.table.actions')" width="100" fixed="right">
           <template #default="{ row }">
              <el-button type="primary" link size="small" @click="showDetails(row)">
-                Details
+                {{ $t('history.details') }}
              </el-button>
           </template>
         </el-table-column>
@@ -71,20 +71,20 @@
     </div>
 
     <!-- Details Dialog -->
-    <el-dialog v-model="dialogVisible" title="Log Details" width="60%">
+    <el-dialog v-model="dialogVisible" :title="$t('history.dialog.title')" width="60%">
        <div v-if="selectedLog" class="space-y-4">
           <div class="grid grid-cols-2 gap-4 text-sm">
-             <div><span class="text-gray-400">Trace ID:</span> {{ selectedLog.id }}</div>
-             <div><span class="text-gray-400">Time:</span> {{ selectedLog.timestamp }}</div>
-             <div><span class="text-gray-400">Level:</span> <span :class="getLevelTextClass(selectedLog.level)">{{ selectedLog.level }}</span></div>
+             <div><span class="text-gray-400">{{ $t('history.table.traceId') }}:</span> {{ selectedLog.id }}</div>
+             <div><span class="text-gray-400">{{ $t('history.table.time') }}:</span> {{ selectedLog.timestamp }}</div>
+             <div><span class="text-gray-400">{{ $t('history.table.level') }}:</span> <span :class="getLevelTextClass(selectedLog.level)">{{ selectedLog.level }}</span></div>
           </div>
 
           <div class="bg-black p-4 rounded font-mono text-xs overflow-x-auto border border-gray-700">
-             <div class="text-gray-500 mb-2"># AI Analysis Summary</div>
+             <div class="text-gray-500 mb-2"># {{ $t('history.dialog.aiSummary') }}</div>
              <div class="text-green-400">{{ selectedLog.message }}</div>
 
              <!-- Placeholder for raw log content if backend supports it later -->
-             <div class="mt-4 text-gray-500 border-t border-gray-800 pt-2"># Raw Log Content (Mock)</div>
+             <div class="mt-4 text-gray-500 border-t border-gray-800 pt-2"># {{ $t('history.dialog.rawContent') }}</div>
              <div class="text-gray-300">GET /api/v1/user/123 HTTP/1.1 ...</div>
           </div>
        </div>
