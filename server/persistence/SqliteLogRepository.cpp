@@ -11,7 +11,7 @@ SqliteLogRepository::SqliteLogRepository(const std::string &db_path)
         final_path = db_path;
     } else {
         // 只有纯文件名才加上默认目录
-        std::string data_path = "../server/persistence/data/";
+        std::string data_path = "../persistence/data/";
         if (!std::filesystem::exists(data_path)) {
             std::filesystem::create_directories(data_path);
         }

@@ -2,7 +2,7 @@
 /persistence/data
 /ai/.env
 /ai/proxy/__pycache__
-/venv
+/.venv
 /ai/proxy/providers/__pycache__
 tests/persistence
 tests/build

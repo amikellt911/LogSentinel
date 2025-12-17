@@ -15,6 +15,7 @@
 #include "handlers/LogHandler.h"
 #include "handlers/DashboardHandler.h"
 #include "handlers/HistoryHandler.h"
+#include "handlers/ConfigHandler.h"
 #include "core/LogBatcher.h"
 class testServer : public HttpServer
 {
@@ -69,11 +70,27 @@ int main(int argc, char* argv[])
     MiniMuduo::net::InetAddress addr(port);
     testServer server(&loop, addr, num_io_threads);
     ThreadPool tpool(num_worker_threads);
-    SqliteConfigRepository config_repo = SqliteConfigRepository(db_path);
-    std::vector<std::string> urls = config_repo.getActiveWebhookUrls();
+    auto config_repo = std::make_shared<SqliteConfigRepository>(db_path);
+    //std::vector<std::string> urls = config_repo->getActiveWebhookUrls();
+    std::vector<std::string> urls;
     std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(urls);
     
     std::shared_ptr<Router> router = std::make_shared<Router>();
+
+    // Config Handler
+    auto config_handler = std::make_shared<ConfigHandler>(config_repo, &tpool);
+    router->add("GET", "/settings/all", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        config_handler->handleGetSettings(req, resp, conn);
+    });
+    router->add("POST", "/settings/config", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        config_handler->handleUpdateAppConfig(req, resp, conn);
+    });
+    router->add("POST", "/settings/prompts", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        config_handler->handleUpdatePrompts(req, resp, conn);
+    });
+    router->add("POST", "/settings/channels", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        config_handler->handleUpdateChannels(req, resp, conn);
+    });
     std::shared_ptr<LogBatcher> batcher=std::make_shared<LogBatcher>(&loop,&tpool,persistence,ai_client,notifier);
     std::shared_ptr<HistoryHandler> history_handler=std::make_shared<HistoryHandler>(persistence,&tpool);
     //lambda默认值拷贝是const,但是handlePost是非const成员函数，会导致const值变化
