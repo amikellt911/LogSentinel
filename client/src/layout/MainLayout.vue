@@ -24,6 +24,11 @@
           <span>{{ $t('layout.logs') }}</span>
         </el-menu-item>
 
+        <el-menu-item index="/insights">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>Reduce Analysis</span>
+        </el-menu-item>
+
         <el-menu-item index="/history">
           <el-icon><Clock /></el-icon>
           <span>History</span>
@@ -111,7 +116,7 @@ const currentRouteName = computed(() => {
   switch (route.name) {
     case 'dashboard': return t('layout.missionControl')
     case 'logs': return t('layout.eventStream')
-    case 'insights': return 'AI Batch Insights'
+    case 'insights': return 'Reduce (Batch Analysis)'
     case 'settings': return t('layout.configuration')
     default: return t('layout.dashboard')
   }
