@@ -310,7 +310,7 @@ std::vector<PromptConfig> SqliteConfigRepository::getAllPrompts()
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
     if (rc != SQLITE_OK)
     {
-        checkSqliteError(db_, rc, "Failed to prepare statement");
+        checkSqliteError(db_, rc, "Failed to prepare statement for prompts");
     }
     StmtPtr stmt(stmt_);
     while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW)
@@ -331,4 +331,43 @@ std::vector<PromptConfig> SqliteConfigRepository::getAllPrompts()
         checkSqliteError(db_, rc, "Step execution failed during prompt loading");
     }
     return prompts;
+}
+
+std::vector<AlertChannel> SqliteConfigRepository::getAllChannels()
+{
+    std::lock_guard<std::mutex> lock_(mutex_);
+    std::vector<AlertChannel> alerts;
+    const char *sql = "select id,name,provider,webhook_url,alert_threshold,msg_template,is_active from alert_channels;";
+    sqlite3_stmt *stmt_ = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
+    if (rc != SQLITE_OK)
+    {
+        checkSqliteError(db_, rc, "Failed to prepare statement for channels");
+    }
+    StmtPtr stmt(stmt_);
+    while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW)
+    {
+        int id = sqlite3_column_int(stmt.get(),0);
+        const char *name_ptr = (const char *)sqlite3_column_text(stmt.get(), 1);
+        const char *provider_ptr = (const char *)sqlite3_column_text(stmt.get(), 2);
+        const char *webhook_url_ptr = (const char *)sqlite3_column_text(stmt.get(), 3);
+        const char *alert_threshold_ptr = (const char *)sqlite3_column_text(stmt.get(), 4);
+        const char *msg_template_ptr = (const char *)sqlite3_column_text(stmt.get(), 5);
+        int is_active=sqlite3_column_int(stmt.get(),6);
+        bool active_flag = (is_active != 0);
+        if (!name_ptr || !provider_ptr||!webhook_url_ptr||!alert_threshold_ptr)
+            continue;
+        std::string name = name_ptr;
+        std::string provider = provider_ptr;
+        std::string webhook_url = webhook_url_ptr;
+        std::string alert_threshold = alert_threshold_ptr;
+        // 模板可能是空的（允许为 NULL 或空字符串），视业务逻辑而定，这里假设也必须有值
+        std::string msg_template = msg_template_ptr ? msg_template_ptr : "";
+        alerts.emplace_back(id,name,provider,webhook_url,alert_threshold,msg_template,active_flag);
+    }
+    if (rc != SQLITE_DONE)
+    {
+        checkSqliteError(db_, rc, "Step execution failed during channels loading");
+    }
+    return alerts;
 }

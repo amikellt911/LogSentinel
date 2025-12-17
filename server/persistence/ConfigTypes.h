@@ -61,6 +61,7 @@ struct AlertChannel {
     std::string provider; // "DingTalk", "Slack"
     std::string webhook_url;
     std::string alert_threshold; // "Critical", "Warning"
+    std::string msg_template;
     bool is_active = false;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AlertChannel, id, name, provider, webhook_url, alert_threshold, is_active)
