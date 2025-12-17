@@ -78,7 +78,8 @@
         "codecvt": "cpp",
         "ranges": "cpp",
         "cinttypes": "cpp",
-        "valarray": "cpp"
+        "valarray": "cpp",
+        "shared_mutex": "cpp"
     },
     "liveServer.settings.port": 5502,
     "liveServer.settings.ignoreFiles": [
