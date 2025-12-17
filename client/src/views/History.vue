@@ -96,6 +96,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { useSystemStore, type LogEntry } from '../stores/system'
+import dayjs from 'dayjs'
 
 const systemStore = useSystemStore()
 const loading = ref(false)
@@ -131,6 +132,30 @@ const filteredLogs = computed(() => {
 async function refreshLogs() {
    loading.value = true
    try {
+      if (systemStore.isSimulationMode) {
+          // --- Mock Data Mode ---
+          await new Promise(r => setTimeout(r, 600)) // Fake latency
+
+          totalLogs.value = 500
+          const mockPage = []
+          const levels = ['INFO', 'WARN', 'RISK']
+          for(let i=0; i<pageSize.value; i++) {
+              const r = Math.random()
+              let level = 'INFO'
+              if (r > 0.9) level = 'RISK'
+              else if (r > 0.7) level = 'WARN'
+
+              mockPage.push({
+                  id: `mock-trace-${Date.now()}-${i}`,
+                  timestamp: dayjs().subtract(i * 10, 'minute').format('YYYY-MM-DD HH:mm:ss'),
+                  level: level as any,
+                  message: `Simulated log entry #${i} for demo purposes. Analysis result: ${level === 'RISK' ? 'Malicious pattern detected' : 'Routine operation'}.`
+              })
+          }
+          historyLogs.value = mockPage
+          return
+      }
+
       // Re-use system store's fetch capability but targeting history page
       const res = await fetch(`/api/history?page=${currentPage.value}&pageSize=${pageSize.value}`)
       if(res.ok) {
@@ -149,9 +174,13 @@ async function refreshLogs() {
                  message: item.summary
              }
          })
+      } else {
+         throw new Error('API Error')
       }
    } catch(e) {
-      console.error(e)
+      console.error("Fetch failed", e)
+      // Fallback to empty or error state, but don't auto-mock if simulation mode is OFF
+      // unless we want to be very resilient. For now, empty is correct if backend is down and SimMode is off.
    } finally {
       loading.value = false
    }
