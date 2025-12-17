@@ -272,6 +272,21 @@ std::vector<PromptConfig> SqliteConfigRepository::getAllPrompts()
     return cached_prompts_;
 }
 
+PromptConfig SqliteConfigRepository::getActivePrompt()
+{
+    std::shared_lock<std::shared_mutex> lock_(config_mutex_);
+    for (const auto& p : cached_prompts_) {
+        if (p.is_active) {
+            return p;
+        }
+    }
+    // Fallback: If cache is empty or no active prompt found, return a default/empty one
+    if (!cached_prompts_.empty()) {
+        return cached_prompts_[0];
+    }
+    return PromptConfig();
+}
+
 std::vector<AlertChannel> SqliteConfigRepository::getAllChannels()
 {
     std::shared_lock<std::shared_mutex> lock_(config_mutex_);
@@ -352,6 +367,32 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
 
     // 2. 创建本地副本 (我们需要修改其中的 ID，如果是新插入的话)
     auto new_prompts_cache = prompts_input;
+
+    // [New] Ensure Single Active Instance Invariant
+    // Logic: Count active prompts. If != 1, enforce strictly.
+    // Preference: If multiple active, keep the first active found, disable others.
+    // If none active, enable the first one (if list not empty).
+    int active_count = 0;
+    int first_active_idx = -1;
+
+    for (size_t i = 0; i < new_prompts_cache.size(); ++i) {
+        if (new_prompts_cache[i].is_active) {
+            active_count++;
+            if (first_active_idx == -1) first_active_idx = (int)i;
+        }
+    }
+
+    if (active_count == 0 && !new_prompts_cache.empty()) {
+        // Enforce: None active -> Make first active
+        new_prompts_cache[0].is_active = true;
+    }
+    else if (active_count > 1) {
+        // Enforce: Multiple active -> Keep only the first active one
+        for (size_t i = 0; i < new_prompts_cache.size(); ++i) {
+            if ((int)i == first_active_idx) continue;
+            new_prompts_cache[i].is_active = false;
+        }
+    }
 
     // 3. 开启事务
     char* errmsg = nullptr;

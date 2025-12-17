@@ -30,7 +30,7 @@ export interface PromptConfig {
   id: string | number
   name: string
   content: string
-  is_active?: number
+  is_active: boolean
 }
 
 export interface WebhookConfig {
@@ -93,7 +93,7 @@ export interface SettingsResponse {
     id: number
     name: string
     content: string
-    is_active: number
+    is_active: boolean | number
   }[]
   channels: {
     id: number
@@ -161,7 +161,8 @@ Focus on: SQL Injection patterns, XSS attempts, and unauthorized access.
 Output format: JSON with "risk_score" and "analysis".
 
 Logs:
-{{logs_batch}}`
+{{logs_batch}}`,
+          is_active: true
         },
         {
           id: 'p2',
@@ -170,7 +171,8 @@ Logs:
 Correlate timestamps between services.
 
 Context:
-{{logs_batch}}`
+{{logs_batch}}`,
+          is_active: false
         },
         {
           id: 'p3',
@@ -179,7 +181,8 @@ Context:
 Suggest indexing strategies or caching layers where appropriate.
 
 Metrics:
-{{metrics_batch}}`
+{{metrics_batch}}`,
+          is_active: false
         }
       ]
     } as AISettings,
@@ -486,7 +489,8 @@ Metrics:
           prompts: data.prompts.map(p => ({
             id: p.id,
             name: p.name,
-            content: p.content
+            content: p.content,
+            is_active: !!p.is_active
           }))
         },
         integration: {
@@ -567,7 +571,7 @@ Metrics:
                id: typeof p.id === 'number' ? p.id : 0, // 0 for new
                name: p.name,
                content: p.content,
-               is_active: 1
+               is_active: p.is_active ? 1 : 0
            }))
            promises.push(fetch('/api/settings/prompts', {
                method: 'POST',

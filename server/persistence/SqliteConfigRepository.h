@@ -35,6 +35,8 @@ public:
 
     AppConfig getAppConfig();
     std::vector<PromptConfig> getAllPrompts();
+    // Helper to get the single active prompt (or empty if none)
+    PromptConfig getActivePrompt();
     std::vector<AlertChannel> getAllChannels();
     AllSettings getAllSettings();
     void handleUpdateAppConfig(const std::map<std::string,std::string>& mp);
