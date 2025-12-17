@@ -1,6 +1,22 @@
 <template>
   <div class="h-full flex flex-col p-6 space-y-6 overflow-y-auto custom-scrollbar">
     
+    <!-- AI Pulse Banner (Reduce Visualization) -->
+    <div class="bg-gray-800/50 border border-blue-500/30 rounded p-4 shadow-lg flex items-center gap-4 relative overflow-hidden group">
+      <!-- Pulse Effect Background -->
+      <div class="absolute inset-0 bg-gradient-to-r from-blue-500/0 via-blue-500/5 to-blue-500/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-[3s] ease-in-out infinite"></div>
+
+      <div class="bg-blue-900/50 p-2 rounded-full border border-blue-500/50 shrink-0 animate-pulse">
+        <Cpu class="w-6 h-6 text-blue-400" />
+      </div>
+      <div class="flex-1 min-w-0">
+         <h4 class="text-xs font-bold text-blue-400 uppercase tracking-widest mb-1">AI Batch Insight (Reduce)</h4>
+         <p class="text-sm text-gray-200 font-mono truncate typing-effect">
+            {{ systemStore.latestBatchSummary }}
+         </p>
+      </div>
+    </div>
+
     <!-- Top Metrics Grid (2 Rows x 3 Cols) -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <!-- Row 1: Performance -->

@@ -72,6 +72,7 @@ export interface DashboardStatsResponse {
     unknown_risk: number
     avg_response_time: number
     recent_alerts: AlertInfoResponse[]
+    latest_batch_summary?: string
 }
 
 export interface HistoricalLogItemResponse {
@@ -137,6 +138,8 @@ export const useSystemStore = defineStore('system', () => {
     { id: 2, time: '10:23:05', service: 'Ingress-Gateway', level: 'Warning', summary: 'High latency on route /api/v1/data' },
     { id: 3, time: '10:24:12', service: 'DB-Connector', level: 'Error', summary: 'Connection pool exhausted (retry 2/3)' }
   ])
+
+  const latestBatchSummary = ref<string>("System initialized. Waiting for log batches...")
 
   // Logs
   const logs = ref<LogEntry[]>([])
@@ -412,6 +415,10 @@ Metrics:
             level: 'Error',
             summary: a.summary
         }));
+
+        if (data.latest_batch_summary) {
+            latestBatchSummary.value = data.latest_batch_summary
+        }
 
         // Simulate missing data for visual completeness until backend supports it
         const now = dayjs().format('HH:mm:ss')
@@ -702,6 +709,7 @@ Metrics:
     chartData,
     riskStats,
     recentAlerts,
+    latestBatchSummary,
     logs,
     toggleSystem,
     fetchSettings,

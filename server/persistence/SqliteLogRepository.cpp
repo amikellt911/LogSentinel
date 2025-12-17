@@ -417,6 +417,24 @@ DashboardStats SqliteLogRepository::getDashboardStats()
         throw std::runtime_error("Failed to prepare statement for select 5 recent alerts" + std::string(sqlite3_errmsg(db_)));
     }
     sqlite3_finalize(stmt);
+
+    // 查询5：查询最近一次非空的 global_summary
+    // Reduce 的可视化核心
+    sql = "SELECT global_summary FROM analysis_results WHERE global_summary IS NOT NULL AND global_summary != '' ORDER BY id DESC LIMIT 1;";
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) == SQLITE_OK)
+    {
+        if (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            const char *sum = (const char *)sqlite3_column_text(stmt, 0);
+            stats.latest_batch_summary = sum ? sum : "";
+        }
+        else
+        {
+            stats.latest_batch_summary = "Waiting for data...";
+        }
+    }
+    sqlite3_finalize(stmt);
+
     return stats;
 }
 
