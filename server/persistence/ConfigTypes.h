@@ -2,6 +2,7 @@
 #include<string>
 #include<vector>
 #include<nlohmann/json.hpp>
+#include "ai/AiTypes.h"
 // 【新增历史日志结构体】
 struct HistoricalLogItem {
     std::string trace_id;
@@ -74,4 +75,28 @@ struct AllSettings {
     std::vector<AlertChannel> channels;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AllSettings, config, prompts, channels)
+};
+
+struct AlertInfo{
+    std::string trace_id;
+    std::string summary;
+    std::string time;
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AlertInfo, trace_id, summary, time);
+};
+struct DashboardStats{
+    int total_logs=0;
+    int high_risk=0;
+    int medium_risk=0;
+    int low_risk=0;
+    int info_risk=0;
+    int unknown_risk=0;
+    double avg_response_time=0.0;
+    std::vector<AlertInfo> recent_alerts;
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, high_risk, medium_risk, low_risk,info_risk,unknown_risk, avg_response_time, recent_alerts);
+};
+struct AnalysisResultItem{
+    std::string trace_id;
+    LogAnalysisResult result;
+    int response_time_ms;
+    std::string status;
 };
