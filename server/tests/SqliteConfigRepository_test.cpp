@@ -3,18 +3,18 @@
 #include <filesystem>
 #include <fstream>
 
-// Use a distinct database file for testing
+// 使用单独的数据库文件进行测试
 const std::string TEST_DB_PATH = "test_config_repo.db";
 
 class SqliteConfigRepositoryTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Ensure a clean state before each test
+        // 在每个测试前确保环境干净
         cleanup();
     }
 
     void TearDown() override {
-        // Cleanup after each test
+        // 测试结束后清理
         cleanup();
     }
 
@@ -22,7 +22,7 @@ protected:
         if (std::filesystem::exists(TEST_DB_PATH)) {
             std::filesystem::remove(TEST_DB_PATH);
         }
-        // Also remove the wal/shm files if they exist
+        // 如果存在 wal/shm 文件也一并删除
         if (std::filesystem::exists(TEST_DB_PATH + "-wal")) {
             std::filesystem::remove(TEST_DB_PATH + "-wal");
         }
@@ -35,16 +35,16 @@ protected:
 TEST_F(SqliteConfigRepositoryTest, InitAndDefaultValues) {
     SqliteConfigRepository repo(TEST_DB_PATH);
 
-    // Verify default app config values are loaded (as defined in the constructor SQL)
+    // 验证默认应用配置值是否已加载（如构造函数 SQL 中定义）
     AppConfig config = repo.getAppConfig();
     EXPECT_EQ(config.ai_provider, "openai");
     EXPECT_EQ(config.kernel_worker_threads, 4);
 
-    // Verify prompts are empty or contain defaults if any (current code doesn't insert default prompts)
+    // 验证提示词是否为空或包含默认值（当前代码未插入默认提示词）
     auto prompts = repo.getAllPrompts();
     EXPECT_TRUE(prompts.empty());
 
-    // Verify channels are empty
+    // 验证渠道是否为空
     auto channels = repo.getAllChannels();
     EXPECT_TRUE(channels.empty());
 }
@@ -58,13 +58,13 @@ TEST_F(SqliteConfigRepositoryTest, UpdateAppConfig) {
 
         repo.handleUpdateAppConfig(updates);
 
-        // Check cache update immediately
+        // 立即检查缓存更新
         AppConfig config = repo.getAppConfig();
         EXPECT_EQ(config.ai_provider, "gemini");
         EXPECT_EQ(config.kernel_worker_threads, 8);
     }
 
-    // Reload from DB to check persistence
+    // 从数据库重新加载以检查持久性
     {
         SqliteConfigRepository repo(TEST_DB_PATH);
         AppConfig config = repo.getAppConfig();
@@ -78,7 +78,7 @@ TEST_F(SqliteConfigRepositoryTest, UpdatePrompts) {
         SqliteConfigRepository repo(TEST_DB_PATH);
 
         std::vector<PromptConfig> new_prompts;
-        // ID 0 indicates new insertion
+        // ID 0 表示新插入
         new_prompts.emplace_back(0, "test_prompt", "You are a test bot", true);
 
         repo.handleUpdatePrompt(new_prompts);
@@ -86,18 +86,18 @@ TEST_F(SqliteConfigRepositoryTest, UpdatePrompts) {
         auto prompts = repo.getAllPrompts();
         ASSERT_EQ(prompts.size(), 1);
         EXPECT_EQ(prompts[0].name, "test_prompt");
-        EXPECT_GT(prompts[0].id, 0); // ID should be assigned
+        EXPECT_GT(prompts[0].id, 0); // 应该分配了 ID
     }
 
-    // Reload and Update
+    // 重新加载并更新
     {
         SqliteConfigRepository repo(TEST_DB_PATH);
         auto prompts = repo.getAllPrompts();
         ASSERT_EQ(prompts.size(), 1);
 
-        // Modify existing
+        // 修改现有项
         prompts[0].content = "Modified content";
-        // Add another
+        // 添加另一项
         prompts.emplace_back(0, "second_prompt", "Another prompt", false);
 
         repo.handleUpdatePrompt(prompts);
@@ -105,8 +105,8 @@ TEST_F(SqliteConfigRepositoryTest, UpdatePrompts) {
         auto updated_prompts = repo.getAllPrompts();
         ASSERT_EQ(updated_prompts.size(), 2);
 
-        // Order isn't guaranteed by map/vector logic per se, but usually insertion order or ID.
-        // Let's find by name
+        // map/vector 的顺序本身不保证，通常按插入顺序或 ID。
+        // 这里按名称查找验证
         bool found_mod = false;
         bool found_new = false;
         for(const auto& p : updated_prompts) {
@@ -139,10 +139,10 @@ TEST_F(SqliteConfigRepositoryTest, UpdateChannels) {
         EXPECT_EQ(result[0].msg_template, "Error: {{msg}}");
     }
 
-    // Test Deletion (by omitting from the list)
+    // 测试删除（通过从列表中省略）
     {
         SqliteConfigRepository repo(TEST_DB_PATH);
-        // Pass empty list -> should delete everything
+        // 传入空列表 -> 应该删除所有内容
         repo.handleUpdateChannel({});
 
         auto result = repo.getAllChannels();
