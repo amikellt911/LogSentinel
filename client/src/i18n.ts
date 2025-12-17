@@ -48,9 +48,13 @@ const messages = {
       title: 'System Configuration',
       subtitle: 'Manage global policies, AI pipelines, and kernel parameters.',
       tabs: {
+        general: 'General',
         ai: 'AI Pipeline',
         integration: 'Integration',
         kernel: 'Kernel'
+      },
+      general: {
+        language: 'Application Language'
       },
       ai: {
         globalTitle: 'Global Engine Config',
@@ -149,9 +153,13 @@ const messages = {
       title: '系统配置',
       subtitle: '管理全局策略、AI 管道和内核参数。',
       tabs: {
+        general: '常规',
         ai: 'AI 管道',
         integration: '集成',
         kernel: '内核'
+      },
+      general: {
+        language: '系统语言'
       },
       ai: {
         globalTitle: '全局引擎配置',
