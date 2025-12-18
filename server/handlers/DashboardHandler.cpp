@@ -1,6 +1,5 @@
 #include "handlers/DashboardHandler.h"
 #include "persistence/SqliteLogRepository.h"
-#include "DashboardHandler.h"
 #include "threadpool/ThreadPool.h"
 #include "MiniMuduo/net/EventLoop.h"
 DashboardHandler::DashboardHandler(std::shared_ptr<SqliteLogRepository> repo, ThreadPool *tpool)

@@ -31,6 +31,9 @@ set(CPR_USE_SYSTEM_CURL OFF)
 set(CPR_USE_SYSTEM_LIB_PSL OFF)
 set(CPR_ENABLE_CURL_HTTP_ONLY ON)
 set(CPR_ENABLE_SSL OFF)
+set(BUILD_CURL_EXE OFF CACHE INTERNAL "Disable curl executable")
+set(BUILD_EXAMPLES OFF CACHE INTERNAL "Disable examples")
+set(CURL_HIDDEN_SYMBOLS ON CACHE INTERNAL "Hide symbols")
 
 FetchContent_Declare(
   nlohmann_json
@@ -77,6 +80,7 @@ add_library(handler_module STATIC
   handlers/LogHandler.cpp
   handlers/DashboardHandler.cpp
   handlers/HistoryHandler.cpp
+  handlers/ConfigHandler.cpp
 )
 target_include_directories(http_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}

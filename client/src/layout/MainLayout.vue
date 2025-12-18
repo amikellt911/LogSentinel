@@ -24,6 +24,21 @@
           <span>{{ $t('layout.logs') }}</span>
         </el-menu-item>
 
+        <el-menu-item index="/insights">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>Reduce Analysis</span>
+        </el-menu-item>
+
+        <el-menu-item index="/history">
+          <el-icon><Clock /></el-icon>
+          <span>History</span>
+        </el-menu-item>
+
+        <el-menu-item index="/benchmark">
+          <el-icon><Lightning /></el-icon>
+          <span>Benchmark</span>
+        </el-menu-item>
+
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <span>{{ $t('layout.settings') }}</span>
@@ -43,14 +58,6 @@
         </div>
         
         <div class="flex items-center gap-4">
-           <!-- Language Switcher -->
-           <button 
-            @click="toggleLanguage"
-            class="px-2 py-1 text-xs font-mono border border-gray-600 rounded text-gray-400 hover:text-white hover:border-gray-400 transition-colors"
-          >
-            {{ locale === 'en' ? 'EN' : '中文' }}
-          </button>
-          
           <!-- Simulation Mode Toggle -->
           <div class="flex items-center gap-2 border-r border-gray-700 pr-4 mr-2">
             <span class="text-xs font-mono uppercase tracking-widest text-gray-500">
@@ -102,18 +109,20 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSystemStore } from '../stores/system'
-import { Odometer, Monitor, Setting } from '@element-plus/icons-vue'
+import { Odometer, Monitor, Setting, Clock, DataAnalysis, Lightning } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const systemStore = useSystemStore()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const currentRouteName = computed(() => {
   switch (route.name) {
     case 'dashboard': return t('layout.missionControl')
     case 'logs': return t('layout.eventStream')
+    case 'insights': return 'Reduce (Batch Analysis)'
+    case 'benchmark': return 'Performance Arena'
     case 'settings': return t('layout.configuration')
     default: return t('layout.dashboard')
   }
@@ -133,10 +142,6 @@ function handleToggle(val: string | number | boolean) {
   }
   
   systemStore.toggleSystem(val as boolean)
-}
-
-function toggleLanguage() {
-  locale.value = locale.value === 'en' ? 'zh' : 'en'
 }
 </script>
 

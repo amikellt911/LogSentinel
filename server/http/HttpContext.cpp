@@ -1,5 +1,6 @@
 #include "http/HttpContext.h"
 #include <algorithm>
+//#include <MiniMuduo/base/LogMessage.h>
 HttpContext::ParseResult HttpContext::parseRequest(MiniMuduo::net::Buffer *buf)
 {
     bool hasMore = true;
@@ -17,6 +18,7 @@ HttpContext::ParseResult HttpContext::parseRequest(MiniMuduo::net::Buffer *buf)
             }
             if (!parseRequestLine(buf->peek(), crlf))
             {
+                //LOG_STREAM_ERROR<<"parseRequestLine error";
                 state_ = State::KError;
                 return ParseResult::kError;
             }
@@ -55,6 +57,7 @@ HttpContext::ParseResult HttpContext::parseRequest(MiniMuduo::net::Buffer *buf)
                 // 不是空行，说明这是一个普通的 Header 行
                 if (!parseOneHeaderLine(start, crlf))
                 {
+                    //LOG_STREAM_ERROR<<"parseOneHeaderLine error";
                     state_ = State::KError;
                     return ParseResult::kError;
                 }
@@ -64,13 +67,14 @@ HttpContext::ParseResult HttpContext::parseRequest(MiniMuduo::net::Buffer *buf)
         }
         else if (state_ == State::kExpectBody)
         {
-            if (request_.headers_.find("Content-Length") == request_.headers_.end())
+            if (request_.headers_.find("content-length") == request_.headers_.end())
             {
+                //LOG_STREAM_ERROR<<"Content-Length not found";
                 state_ = State::KError;
                 return ParseResult::kError;
             }
 
-            size_t len = std::stoul(request_.headers_["Content-Length"]);
+            size_t len = std::stoul(request_.headers_["content-length"]);
             if (buf->readableBytes() >= len)
             {
                 request_.body_.assign(buf->peek(), buf->peek() + len);
@@ -147,6 +151,7 @@ bool HttpContext::parseOneHeaderLine(const char *start, const char *end)
     std::string key = std::string(key_start, key_end + 1 - key_start);
     std::string value = std::string(value_start, value_end + 1 - value_start);
     request_.headers_[key] = value;
+    //LOG_STREAM_ERROR<<"parseOneHeaderLine: "<<key<<" "<<value;
     return true;
 }
 
@@ -180,6 +185,7 @@ bool HttpContext::parseHeaders(const char *start, const char *end)
                 return false;
             std::string key = std::string(key_start, key_end + 1 - key_start);
             std::string value = std::string(value_start, value_end + 1 - value_start);
+            std::transform(key.begin(), key.end(), key.begin(),::tolower);
             request_.headers_[key] = value;
             return true;
         }
