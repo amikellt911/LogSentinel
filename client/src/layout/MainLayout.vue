@@ -24,6 +24,21 @@
           <span>{{ $t('layout.logs') }}</span>
         </el-menu-item>
 
+        <el-menu-item index="/insights">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>Reduce Analysis</span>
+        </el-menu-item>
+
+        <el-menu-item index="/history">
+          <el-icon><Clock /></el-icon>
+          <span>History</span>
+        </el-menu-item>
+
+        <el-menu-item index="/benchmark">
+          <el-icon><Lightning /></el-icon>
+          <span>Benchmark</span>
+        </el-menu-item>
+
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
           <span>{{ $t('layout.settings') }}</span>
@@ -94,7 +109,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSystemStore } from '../stores/system'
-import { Odometer, Monitor, Setting } from '@element-plus/icons-vue'
+import { Odometer, Monitor, Setting, Clock, DataAnalysis, Lightning } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 
@@ -106,6 +121,8 @@ const currentRouteName = computed(() => {
   switch (route.name) {
     case 'dashboard': return t('layout.missionControl')
     case 'logs': return t('layout.eventStream')
+    case 'insights': return 'Reduce (Batch Analysis)'
+    case 'benchmark': return 'Performance Arena'
     case 'settings': return t('layout.configuration')
     default: return t('layout.dashboard')
   }

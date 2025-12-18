@@ -20,13 +20,41 @@
                </span>
              </template>
  
-             <div class="p-6">
-                <el-form-item :label="$t('settings.general.language')">
-                   <el-select v-model="systemStore.settings.general.language" class="w-full md:w-1/2">
-                      <el-option label="English" value="en" />
-                      <el-option label="中文 (Chinese)" value="zh" />
-                   </el-select>
-                </el-form-item>
+             <div class="p-6 space-y-8">
+                <!-- Language -->
+                <div class="bg-[#1a1a1a] border border-gray-700 p-6 rounded">
+                   <el-form-item :label="$t('settings.general.language')">
+                      <el-select v-model="systemStore.settings.general.language" class="w-full md:w-1/2">
+                         <el-option label="English" value="en" />
+                         <el-option label="中文 (Chinese)" value="zh" />
+                      </el-select>
+                   </el-form-item>
+                </div>
+
+                <!-- Log Retention Strategy -->
+                <div class="bg-[#1a1a1a] border border-gray-700 p-6 rounded">
+                   <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ $t('settings.general.logRetention') }}</h3>
+                   <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <el-form-item :label="$t('settings.general.retentionPeriod')">
+                         <el-input-number v-model="systemStore.settings.general.logRetentionDays" :min="1" :max="365">
+                            <template #suffix>{{ $t('settings.general.days') }}</template>
+                         </el-input-number>
+                      </el-form-item>
+                      <el-form-item :label="$t('settings.general.maxDisk')">
+                         <el-input-number v-model="systemStore.settings.general.maxDiskUsageGB" :min="1" :max="1000">
+                            <template #suffix>GB</template>
+                         </el-input-number>
+                      </el-form-item>
+                   </div>
+                </div>
+
+                <!-- Network Configuration -->
+                <div class="bg-[#1a1a1a] border border-gray-700 p-6 rounded">
+                   <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ $t('settings.general.network') }}</h3>
+                   <el-form-item :label="$t('settings.general.httpPort')">
+                      <el-input-number v-model="systemStore.settings.general.httpPort" :min="1024" :max="65535" />
+                   </el-form-item>
+                </div>
              </div>
            </el-tab-pane>
            
@@ -74,8 +102,43 @@
                      </el-form-item>
                   </div>
                </div>
- 
-               <!-- Region B: Bottom Strategy Manager -->
+
+                <!-- Region B: Resilience & Reliability (New Module) -->
+                <div class="bg-[#1a1a1a] border-b border-gray-700 p-6 flex flex-col justify-center shrink-0">
+                   <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ $t('settings.ai.resilienceTitle') }}</h3>
+                   <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <!-- Auto-Degradation -->
+                      <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
+                         <div class="flex items-center justify-between mb-4">
+                            <span class="text-sm font-bold text-gray-300">{{ $t('settings.ai.autoDegrade') }}</span>
+                            <el-switch v-model="systemStore.settings.ai.autoDegrade" inline-prompt :active-text="$t('settings.ai.enableDegrade')" />
+                         </div>
+                         <el-form-item :label="$t('settings.ai.fallbackModel')" class="mb-0">
+                            <el-input v-model="systemStore.settings.ai.fallbackModel" :disabled="!systemStore.settings.ai.autoDegrade" placeholder="e.g. local-mock" />
+                         </el-form-item>
+                      </div>
+
+                      <!-- Circuit Breaker -->
+                      <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
+                         <div class="flex items-center justify-between mb-4">
+                            <span class="text-sm font-bold text-gray-300">{{ $t('settings.ai.circuitBreaker') }}</span>
+                            <el-switch v-model="systemStore.settings.ai.circuitBreaker" inline-prompt :active-text="$t('settings.ai.enableBreaker')" />
+                         </div>
+                         <div class="flex gap-4">
+                            <el-form-item :label="$t('settings.ai.failureThreshold')" class="flex-1 mb-0">
+                               <el-input-number v-model="systemStore.settings.ai.failureThreshold" :min="1" :max="100" class="w-full" />
+                            </el-form-item>
+                            <el-form-item :label="$t('settings.ai.cooldown')" class="flex-1 mb-0">
+                               <el-input-number v-model="systemStore.settings.ai.cooldownSeconds" :min="10" :max="3600" class="w-full">
+                                  <template #suffix>s</template>
+                               </el-input-number>
+                            </el-form-item>
+                         </div>
+                      </div>
+                   </div>
+                </div>
+
+                <!-- Region C: Bottom Strategy Manager -->
                <div class="flex-1 flex flex-col md:flex-row border-t border-gray-700 min-h-0">
                   <!-- Left: Prompt List -->
                   <div class="w-full md:w-[25%] border-r border-gray-700 flex flex-col bg-[#1a1a1a]">
@@ -89,14 +152,21 @@
                         <div 
                            v-for="(prompt, index) in systemStore.settings.ai.prompts" 
                            :key="prompt.id"
-                           class="p-4 cursor-pointer hover:bg-gray-800 transition-colors border-b border-gray-800 relative group"
+                           class="p-4 cursor-pointer hover:bg-gray-800 transition-colors border-b border-gray-800 relative group flex items-center"
                            :class="{'bg-gray-800 border-l-2 border-l-primary': selectedPromptId === prompt.id}"
-                           @click="selectedPromptId = prompt.id"
+                           @click="handlePromptClick(prompt.id)"
                         >
-                           <div class="font-mono text-sm text-gray-300 truncate pr-6">{{ prompt.name }}</div>
+                           <!-- Status Dot -->
+                           <div class="mr-3 flex items-center justify-center">
+                              <div v-if="prompt.is_active" class="w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+                              <div v-else class="w-2.5 h-2.5 rounded-full border border-gray-500"></div>
+                           </div>
+
+                           <div class="font-mono text-sm text-gray-300 truncate flex-1 pr-2">{{ prompt.name }}</div>
+                           
                            <!-- Delete Button -->
                            <div 
-                             class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity"
+                             class="opacity-0 group-hover:opacity-100 transition-opacity ml-auto"
                              v-if="systemStore.settings.ai.prompts.length > 1"
                            >
                               <el-button type="danger" link size="small" @click.stop="deletePrompt(index)">
@@ -337,17 +407,36 @@
     systemStore.settings.ai.prompts.push({
        id: newId,
        name: 'New Prompt',
-       content: ''
+       content: '',
+       is_active: 0
     })
     selectedPromptId.value = newId
  }
- 
+
  function deletePrompt(index: number) {
     const deletedId = systemStore.settings.ai.prompts[index].id
+    const wasActive = systemStore.settings.ai.prompts[index].is_active
+    
     systemStore.settings.ai.prompts.splice(index, 1)
+    
+    // If active prompt was deleted, make the first one active if exists
+    if (wasActive && systemStore.settings.ai.prompts.length > 0) {
+        systemStore.settings.ai.prompts[0].is_active = 1
+    }
+
     if (selectedPromptId.value === deletedId && systemStore.settings.ai.prompts.length > 0) {
        selectedPromptId.value = systemStore.settings.ai.prompts[0].id
     }
+ }
+
+ function handlePromptClick(id: string | number) {
+    // 1. Select for editing
+    selectedPromptId.value = id
+    
+    // 2. Set as Active (Mutex logic)
+    systemStore.settings.ai.prompts.forEach(p => {
+        p.is_active = (p.id === id) ? 1 : 0
+    })
  }
  
  // --- Integration Logic ---
