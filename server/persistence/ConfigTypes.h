@@ -170,7 +170,8 @@ struct DashboardStats{
     int unknown_risk=0;
     double avg_response_time=0.0;
     std::vector<AlertInfo> recent_alerts;
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, high_risk, medium_risk, low_risk,info_risk,unknown_risk, avg_response_time, recent_alerts);
+    std::string latest_batch_summary; // 新增：最近一次批处理的宏观总结 (Reduce 结果)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, high_risk, medium_risk, low_risk,info_risk,unknown_risk, avg_response_time, recent_alerts, latest_batch_summary);
 };
 struct AnalysisResultItem{
     std::string trace_id;

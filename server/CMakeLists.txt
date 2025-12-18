@@ -22,11 +22,6 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/google/googletest.git
   GIT_TAG        v1.17.0
 )
-FetchContent_Declare(
-  cpr
-  GIT_REPOSITORY https://github.com/libcpr/cpr.git
-  GIT_TAG 1.12.0
-)
 set(CPR_USE_SYSTEM_CURL OFF)
 set(CPR_USE_SYSTEM_LIB_PSL OFF)
 set(CPR_ENABLE_CURL_HTTP_ONLY ON)
@@ -34,6 +29,13 @@ set(CPR_ENABLE_SSL OFF)
 set(BUILD_CURL_EXE OFF CACHE INTERNAL "Disable curl executable")
 set(BUILD_EXAMPLES OFF CACHE INTERNAL "Disable examples")
 set(CURL_HIDDEN_SYMBOLS ON CACHE INTERNAL "Hide symbols")
+set(CURL_USE_LIBPSL OFF CACHE INTERNAL "Disable libpsl for curl")
+
+FetchContent_Declare(
+  cpr
+  GIT_REPOSITORY https://github.com/libcpr/cpr.git
+  GIT_TAG 1.12.0
+)
 
 FetchContent_Declare(
   nlohmann_json

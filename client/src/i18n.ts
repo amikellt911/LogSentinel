@@ -10,7 +10,9 @@ const messages = {
       systemIdle: 'SYSTEM IDLE',
       missionControl: 'Mission Control Dashboard',
       eventStream: 'Real-time Event Stream',
-      configuration: 'System Configuration'
+      configuration: 'System Configuration',
+      insights: 'AI Batch Insights',
+      history: 'Historical Logs'
     },
     dashboard: {
       totalLogs: 'Total Logs Processed',
@@ -44,6 +46,39 @@ const messages = {
       paused: 'STREAM PAUSED',
       buffered: 'Events Buffered'
     },
+    history: {
+      riskLevel: 'Risk Level',
+      all: 'All',
+      search: 'Search',
+      placeholder: 'Search logs by keyword or Trace ID...',
+      refresh: 'Refresh',
+      details: 'Details',
+      table: {
+        time: 'Time',
+        level: 'Level',
+        summary: 'Summary',
+        traceId: 'Trace ID',
+        actions: 'Actions'
+      },
+      dialog: {
+        title: 'Log Details',
+        aiSummary: 'AI Analysis Summary',
+        rawContent: 'Raw Log Content (Mock)'
+      }
+    },
+    insights: {
+      title: 'AI Insight Stream (Reduce Phase)',
+      subtitle: 'Real-time aggregation of log batches. Map-Reduce pipeline active.',
+      lastBatch: 'Last Batch',
+      context: 'Global Context Window',
+      batch: 'BATCH',
+      size: 'Size',
+      logs: 'logs',
+      risks: 'Risks',
+      latency: 'Latency',
+      aiSummary: 'AI Summary',
+      waiting: 'Waiting for next batch processing window...'
+    },
     settings: {
       title: 'System Configuration',
       subtitle: 'Manage global policies, AI pipelines, and kernel parameters.',
@@ -54,7 +89,13 @@ const messages = {
         kernel: 'Kernel'
       },
       general: {
-        language: 'Application Language'
+        language: 'Application Language',
+        logRetention: 'Log Retention Strategy',
+        retentionPeriod: 'Retention Period',
+        days: 'days',
+        maxDisk: 'Max Disk Usage',
+        network: 'Network Configuration',
+        httpPort: 'HTTP Port'
       },
       ai: {
         globalTitle: 'Global Engine Config',
@@ -68,6 +109,15 @@ const messages = {
           fixedBatch: 'Fixed Batch Size',
           adaptiveDesc: 'Algorithm dynamically adjusts batch size based on back-pressure.',
           fixedDesc: 'System waits for buffer to fill before processing.',
+        resilienceTitle: 'Resilience & Reliability',
+        autoDegrade: 'Auto-Degradation',
+        enableDegrade: 'Enable Degradation',
+        fallbackModel: 'Fallback Model Name',
+        circuitBreaker: 'Circuit Breaker',
+        enableBreaker: 'Enable Circuit Breaker',
+        failureThreshold: 'Failure Threshold',
+        cooldown: 'Cool-down Period',
+        seconds: 'seconds',
         promptTemplate: 'Prompt Template',
           preview: 'PREVIEW',
           promptList: 'Prompts',
@@ -115,7 +165,9 @@ const messages = {
       systemIdle: '系统待机',
       missionControl: '任务控制仪表盘',
       eventStream: '实时事件流',
-      configuration: '系统配置'
+      configuration: '系统配置',
+      insights: 'AI 批次洞察',
+      history: '历史日志'
     },
     dashboard: {
       totalLogs: '日志处理总数',
@@ -149,6 +201,39 @@ const messages = {
       paused: '数据流已暂停',
       buffered: '个缓存事件'
     },
+    history: {
+      riskLevel: '风险等级',
+      all: '全部',
+      search: '搜索',
+      placeholder: '按关键词或 Trace ID 搜索...',
+      refresh: '刷新',
+      details: '详情',
+      table: {
+        time: '时间',
+        level: '级别',
+        summary: '摘要',
+        traceId: '追踪 ID',
+        actions: '操作'
+      },
+      dialog: {
+        title: '日志详情',
+        aiSummary: 'AI 分析摘要',
+        rawContent: '原始日志内容 (Mock)'
+      }
+    },
+    insights: {
+      title: 'AI 态势感知流 (Reduce 阶段)',
+      subtitle: '日志批次实时聚合。Map-Reduce 管道运行中。',
+      lastBatch: '最新批次',
+      context: '全局上下文窗口',
+      batch: '批次',
+      size: '大小',
+      logs: '条',
+      risks: '风险数',
+      latency: '延迟',
+      aiSummary: 'AI 总结',
+      waiting: '正在等待下一个批次处理窗口...'
+    },
     settings: {
       title: '系统配置',
       subtitle: '管理全局策略、AI 管道和内核参数。',
@@ -159,7 +244,13 @@ const messages = {
         kernel: '内核'
       },
       general: {
-        language: '系统语言'
+        language: '系统语言',
+        logRetention: '日志存储策略',
+        retentionPeriod: '保留天数',
+        days: '天',
+        maxDisk: '最大磁盘占用',
+        network: '网络监听配置',
+        httpPort: 'HTTP 端口'
       },
       ai: {
         globalTitle: '全局引擎配置',
@@ -173,6 +264,15 @@ const messages = {
         fixedBatch: '固定批处理大小',
         adaptiveDesc: '算法根据背压状态动态调整批次大小。',
         fixedDesc: '系统强制等待缓冲区填满才触发处理。',
+        resilienceTitle: '高可用与容灾',
+        autoDegrade: '自动降级',
+        enableDegrade: '启用降级',
+        fallbackModel: '降级模型名称',
+        circuitBreaker: '熔断机制',
+        enableBreaker: '启用熔断',
+        failureThreshold: '触发阈值',
+        cooldown: '冷却时间',
+        seconds: '秒',
         promptTemplate: '提示词模板',
         preview: '预览',
         promptList: '提示词列表',
