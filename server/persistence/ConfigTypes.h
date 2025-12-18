@@ -32,6 +32,23 @@ struct AppConfig {
     std::string ai_language = "English";
     std::string app_language = "en"; // Application UI Language
 
+    // 日志存储策略
+    int log_retention_days = 7;
+    int max_disk_usage_gb = 1;
+
+    // 网络监听配置
+    int http_port = 8080;
+
+    // 高可用与容灾
+    bool ai_auto_degrade = false;
+    std::string ai_fallback_model = "local-mock";
+    bool ai_circuit_breaker = true;
+    int ai_failure_threshold = 5;
+    int ai_cooldown_seconds = 60;
+
+    // Active Prompt ID
+    int active_prompt_id = 0; 
+
     // 内核设置
     int kernel_worker_threads = 4;
     int kernel_max_batch = 50;
@@ -42,6 +59,9 @@ struct AppConfig {
     // 序列化宏 (注意：字段名需与 JSON key 及 DB config_key 一致)
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AppConfig, 
         ai_provider, ai_model, ai_api_key, ai_language, app_language,
+        log_retention_days, max_disk_usage_gb, http_port,
+        ai_auto_degrade, ai_fallback_model, ai_circuit_breaker, ai_failure_threshold, ai_cooldown_seconds,
+        active_prompt_id,
         kernel_worker_threads, kernel_max_batch, kernel_refresh_interval, kernel_io_buffer, kernel_adaptive_mode
     )
 };
