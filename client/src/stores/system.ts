@@ -98,7 +98,7 @@ export interface HistoryPageResponse {
 
 // API Response Interfaces for Settings
 export interface SettingsResponse {
-  config: Record<string, string>
+  config: Record<string, any>
   prompts: {
     id: number
     name: string
@@ -497,6 +497,15 @@ Metrics:
       if (!res.ok) throw new Error('Failed to fetch settings')
       const data: SettingsResponse = await res.json()
 
+      // Helper to parse boolean from various backend types (string "1"/"true", number 1, boolean true)
+      const toBool = (val: any, defaultVal: boolean = false) => {
+        if (val === undefined || val === null) return defaultVal;
+        if (typeof val === 'boolean') return val;
+        if (typeof val === 'number') return val !== 0;
+        if (typeof val === 'string') return val === '1' || val.toLowerCase() === 'true';
+        return defaultVal;
+      };
+
       // Map Backend Data to Store State
       const newSettings = {
         general: {
@@ -511,9 +520,9 @@ Metrics:
           apiKey: data.config['ai_api_key'] || '',
           language: (data.config['ai_language'] || 'en') as any,
           maxBatchSize: parseInt(data.config['kernel_max_batch'] || '50'),
-          autoDegrade: data.config['ai_auto_degrade'] === '1',
+          autoDegrade: toBool(data.config['ai_auto_degrade'], false),
           fallbackModel: data.config['ai_fallback_model'] || 'local-mock',
-          circuitBreaker: data.config['ai_circuit_breaker'] !== '0', // Default true if missing
+          circuitBreaker: toBool(data.config['ai_circuit_breaker'], true), // Default true
           failureThreshold: parseInt(data.config['ai_failure_threshold'] || '5'),
           cooldownSeconds: parseInt(data.config['ai_cooldown_seconds'] || '60'),
           activePromptId: parseInt(data.config['active_prompt_id'] || '0'),
@@ -539,7 +548,7 @@ Metrics:
         kernel: {
           workerThreads: parseInt(data.config['kernel_worker_threads'] || '4'),
           ioBufferSize: data.config['kernel_io_buffer'] || '256MB',
-          adaptiveBatching: data.config['kernel_adaptive_mode'] === '1',
+          adaptiveBatching: toBool(data.config['kernel_adaptive_mode'], true),
           flushInterval: parseInt(data.config['kernel_refresh_interval'] || '200')
         }
       }
