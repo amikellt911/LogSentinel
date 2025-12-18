@@ -54,6 +54,7 @@ export interface AISettings {
     circuitBreaker: boolean
     failureThreshold: number
     cooldownSeconds: number
+    activePromptId: number
     prompts: PromptConfig[]
 }
 
@@ -171,6 +172,7 @@ export const useSystemStore = defineStore('system', () => {
       circuitBreaker: true,
       failureThreshold: 5,
       cooldownSeconds: 60,
+      activePromptId: 0,
       prompts: [
         {
           id: 'p1',
@@ -514,6 +516,7 @@ Metrics:
           circuitBreaker: data.config['ai_circuit_breaker'] !== '0', // Default true if missing
           failureThreshold: parseInt(data.config['ai_failure_threshold'] || '5'),
           cooldownSeconds: parseInt(data.config['ai_cooldown_seconds'] || '60'),
+          activePromptId: parseInt(data.config['active_prompt_id'] || '0'),
           prompts: data.prompts.map(p => ({
             id: p.id,
             name: p.name,
@@ -576,6 +579,7 @@ Metrics:
          { key: 'ai_circuit_breaker', value: settings.ai.circuitBreaker ? '1' : '0' },
          { key: 'ai_failure_threshold', value: settings.ai.failureThreshold.toString() },
          { key: 'ai_cooldown_seconds', value: settings.ai.cooldownSeconds.toString() },
+         { key: 'active_prompt_id', value: settings.ai.activePromptId.toString() },
 
          { key: 'kernel_adaptive_mode', value: settings.kernel.adaptiveBatching ? '1' : '0' },
          { key: 'kernel_max_batch', value: settings.ai.maxBatchSize.toString() },
