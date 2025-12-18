@@ -130,3 +130,20 @@ LogSentinel 是一个基于 C++ 实现的高性能日志分析服务。
         1.  **L1**: 极速正则/关键词匹配 (0ms, C++) -> 拦截已知错误。
         2.  **L2**: 小参数模型或统计模型 (10ms, Python Sidecar) -> 快速分类风险。
         3.  **L3**: 仅当 L2 判定为“高疑难”或“未知风险”时，才透传给 Gemini/OpenAI (1s+) 进行深度语义分析。
+### 11. C++17 现代化改造与内存安全 (C++17 Modernization & Memory Safety) [NEW]
+
+针对底层网络库与协议解析层进行深度重构，引入 C++17 特性以提升代码的可读性、安全性及性能。
+
+- **全面引入 `std::string_view` (Zero-copy Adoption)**:
+    - **痛点解决**: 消除 `HttpContext` 解析过程中产生的大量临时 `std::string` 对象（如 `method`, `version` 等），减少不必要的堆内存分配（Heap Allocation）。
+    - **实现思路**: 将 `parseRequest` 内部的逻辑从“手动指针偏移”重构为 `std::string_view` 的 `remove_prefix` 和 `find` 操作。利用视图进行高效率的切分和查找，仅在数据最终存入 `HttpRequest` 对象（需要跨越生命周期）时才进行物理拷贝。
+
+- **摒弃不安全的 C 字符串函数 (Deprecate Unsafe C-APIs)**:
+    - **痛点解决**: 消除网络缓冲区（Buffer）中因缺乏 `\0` 结尾导致使用 `strchr`, `strlen` 可能引发的 **缓冲区越界读取 (Buffer Over-read)** 风险。
+    - **实现思路**: 严格禁止在网络 Buffer 上使用依赖 `\0` 的函数。改用带长度限制的 `std::string_view::find` 或 `memchr`，强制执行边界检查，确保解析器永远不会读取超过 `readableBytes()` 范围的内存，防止类似 Heartbleed 的安全漏洞。
+
+- **明确“视图”与“资源”的生命周期界限 (View vs. Resource Ownership)**:
+    - **痛点解决**: 防止因误用 `string_view` 导致的 **悬空指针 (Dangling Pointer)** 问题，以及混淆“零拷贝”与“必要拷贝”的边界。
+    - **实现思路**: 在代码架构层面明确划分“解析层”与“存储层”。
+        - **解析层 (Parser)**: 持有 Buffer 的 `string_view`，生命周期仅限于 `onMessage` 回调函数栈内，负责无锁、无拷贝的高效处理。
+        - **存储层 (Model)**: `HttpRequest` 等业务对象必须持有 `std::string` 实体（Deep Copy），确保在网络 Buffer 被复用 (`retrieve`) 或连接断开后，业务数据依然有效且安全。

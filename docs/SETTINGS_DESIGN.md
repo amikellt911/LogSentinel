@@ -1,0 +1,163 @@
+# 设置功能设计与交互逻辑 (Settings Design)
+
+本文档详细描述了系统配置管理的数据库设计、前后端交互流程以及状态同步策略。
+
+## 1. 核心设计理念
+
+采用 **"显式保存，批量提交 (Explicit Save, Batch Submit)"** 的策略。
+
+*   **读取:** 只有在 **系统启动 (Startup)** 或 **刷新页面** 时，前端才会发起一次 `GET` 请求，拉取所有设置。
+*   **写入:** 用户必须点击“保存”按钮才能将修改提交到后端。
+
+---
+
+## 2. 数据库设计 (Schema)
+
+基于 SQLite，将配置分为三类数据表：
+
+```sql
+-- 1. 通用配置表 (Key-Value 存储)
+-- 用于存储 AI Key, 语言, 线程数等单值配置
+CREATE TABLE IF NOT EXISTS app_config (
+    config_key TEXT PRIMARY KEY,
+    config_value TEXT,
+    description TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. AI 提示词表 (多行记录)
+-- 用于存储不同的 Prompt 模板
+CREATE TABLE IF NOT EXISTS ai_prompts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    content TEXT NOT NULL,
+    is_active INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. 报警通知渠道表 (多行记录)
+-- 用于存储 Webhook URL 及其配置
+CREATE TABLE IF NOT EXISTS alert_channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    provider TEXT NOT NULL,         -- e.g., 'DingTalk', 'Slack'
+    webhook_url TEXT NOT NULL,
+    alert_threshold TEXT NOT NULL,  -- e.g., 'high', 'medium'
+    msg_template TEXT,
+    is_active INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 初始化默认配置数据
+INSERT OR IGNORE INTO app_config (config_key, config_value, description) VALUES 
+('ai_provider', 'openai', 'AI服务商类型'),
+('ai_model', 'gpt-4-turbo', '模型名称'),
+('ai_api_key', '', 'API密钥'),
+('ai_language', 'English', '解析语言'),
+('kernel_adaptive_mode', '1', '自适应微批模式开关 1/0'),
+('kernel_max_batch', '50', '自适应最大阈值'),
+('kernel_refresh_interval', '200', '刷新间隔ms'),
+('kernel_worker_threads', '4', '工作线程数'),
+('kernel_io_buffer', '256MB', 'IO缓冲区大小'); 
+```
+
+---
+
+## 3. 接口设计 (API Contract)
+
+### 3.1 获取所有配置 (Initialization)
+*   **Endpoint:** `GET /api/settings/all`
+*   **触发时机:** 浏览器页面加载 (`App.vue` onMounted)。
+*   **响应结构:**
+    ```json
+    {
+      "config": {
+        "ai_provider": "openai",
+        "ai_api_key": "sk-...",
+        "kernel_worker_threads": "4"
+        // ... 其他 KV 对
+      },
+      "prompts": [
+        { "id": 1, "name": "Security Audit", "content": "...", "is_active": 1 }
+      ],
+      "channels": [
+        { "id": 1, "name": "DingTalk Group", "url": "http://...", "is_active": 0 }
+      ]
+    }
+    ```
+
+### 3.2 更新配置 (Modification)
+前端根据修改对象的不同，调用不同的接口。
+
+#### A. 更新通用配置 (Base Config)
+*   **Endpoint:** `POST /api/settings/config`
+*   **Payload:**
+    ```json
+    {
+      "items": [
+        { "key": "ai_api_key", "value": "new-key-123" },
+        { "key": "ai_model", "value": "gpt-3.5-turbo" }
+      ]
+    }
+    ```
+*   **后端逻辑:** 遍历 items，执行 `UPDATE OR INSERT` 到 `app_config` 表。
+
+#### B. 更新/新增 Prompt
+*   **Endpoint:** `POST /api/settings/prompt`
+*   **Payload:**
+    ```json
+    {
+      "id": 1,           // 有 ID 为修改，无 ID 为新增
+      "name": "New Prompt",
+      "content": "Analyze this...",
+      "is_active": 1
+    }
+    ```
+
+#### C. 更新/新增 通知渠道
+*   **Endpoint:** `POST /api/settings/channel`
+*   **Payload:**
+    ```json
+    {
+      "id": 2,
+      "name": "Slack Alert",
+      "webhook_url": "...",
+      "is_active": 1
+    }
+    ```
+
+---
+
+## 4. 前端交互策略 (Frontend Logic)
+
+### 4.1 状态管理与变更追踪
+前端 Pinia Store 需要维护两份数据：
+1.  **Synced State (已保存状态):** 与服务器数据库保持一致的数据副本。
+2.  **Draft State (草稿状态):** 用户当前在输入框中看到的值。
+
+### 4.2 交互流程：显式保存 (Explicit Save)
+
+我们放弃“自动保存”，采用“手动保存按钮”方案，流程如下：
+
+1.  **用户输入:** 用户在配置页面的输入框中修改 `API Key` 或 `线程数`。
+2.  **变更检测 (Dirty Check):** 
+    *   前端实时比较 `Draft State` 和 `Synced State`。
+    *   一旦检测到任何差异，页面底部/顶部的 **“保存变更 (Save Changes)”** 按钮点亮（高亮/可点击）。
+3.  **用户提交:** 用户确认无误，点击“保存”按钮。
+4.  **发送请求:** 前端一次性将所有变更打包（或分批）发送 POST 请求给后端。
+5.  **处理响应:**
+    *   **成功:** 弹出“保存成功”提示，将 `Synced State` 更新为当前的 `Draft State`，按钮恢复置灰（不可点击）。
+    *   **失败:** 弹出错误提示，按钮保持高亮，允许用户重试。
+
+### 4.3 为什么选择“显式保存”？ (Design Rationale)
+
+1.  **防止意外提交 (Safety):** 自动保存容易将用户未输完的、错误的配置同步到服务器。对于 API Key 这种敏感字段，手动保存给了用户一个“缓冲区”，允许撤销和纠错。
+2.  **原子性 (Atomicity):** 用户可能同时修改了多个关联配置（如 Endpoint 和 Model Name）。手动保存确保这组修改作为一个整体被提交，避免因为自动保存的时间差导致配置不一致。
+3.  **减少网络开销 (Performance):** 避免了用户每输入一个字符或每切换一次焦点就发送一次 HTTP 请求。
+
+### 4.4 必须重启的提示
+对于 `app_config` 中属于 **冷启动配置** 的项（如 `kernel_worker_threads`）：
+1.  前端 Store 维护一个列表：`REQUIRE_RESTART_KEYS = ['kernel_worker_threads', ...]`。
+2.  保存成功后，如果检测到提交的变更中包含这些 Key，前端主动弹出全局提示：
+    > "配置已保存，但检测到核心参数变更。为了确保系统稳定，请**重启服务**以生效。"
+3.  提供一个 "立即重启" 按钮 (调用 `/api/restart`)。
