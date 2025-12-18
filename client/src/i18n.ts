@@ -89,7 +89,13 @@ const messages = {
         kernel: 'Kernel'
       },
       general: {
-        language: 'Application Language'
+        language: 'Application Language',
+        logRetention: 'Log Retention Strategy',
+        retentionPeriod: 'Retention Period',
+        days: 'days',
+        maxDisk: 'Max Disk Usage',
+        network: 'Network Configuration',
+        httpPort: 'HTTP Port'
       },
       ai: {
         globalTitle: 'Global Engine Config',
@@ -103,6 +109,15 @@ const messages = {
           fixedBatch: 'Fixed Batch Size',
           adaptiveDesc: 'Algorithm dynamically adjusts batch size based on back-pressure.',
           fixedDesc: 'System waits for buffer to fill before processing.',
+        resilienceTitle: 'Resilience & Reliability',
+        autoDegrade: 'Auto-Degradation',
+        enableDegrade: 'Enable Degradation',
+        fallbackModel: 'Fallback Model Name',
+        circuitBreaker: 'Circuit Breaker',
+        enableBreaker: 'Enable Circuit Breaker',
+        failureThreshold: 'Failure Threshold',
+        cooldown: 'Cool-down Period',
+        seconds: 'seconds',
         promptTemplate: 'Prompt Template',
           preview: 'PREVIEW',
           promptList: 'Prompts',
@@ -229,7 +244,13 @@ const messages = {
         kernel: '内核'
       },
       general: {
-        language: '系统语言'
+        language: '系统语言',
+        logRetention: '日志存储策略',
+        retentionPeriod: '保留天数',
+        days: '天',
+        maxDisk: '最大磁盘占用',
+        network: '网络监听配置',
+        httpPort: 'HTTP 端口'
       },
       ai: {
         globalTitle: '全局引擎配置',
@@ -243,6 +264,15 @@ const messages = {
         fixedBatch: '固定批处理大小',
         adaptiveDesc: '算法根据背压状态动态调整批次大小。',
         fixedDesc: '系统强制等待缓冲区填满才触发处理。',
+        resilienceTitle: '高可用与容灾',
+        autoDegrade: '自动降级',
+        enableDegrade: '启用降级',
+        fallbackModel: '降级模型名称',
+        circuitBreaker: '熔断机制',
+        enableBreaker: '启用熔断',
+        failureThreshold: '触发阈值',
+        cooldown: '冷却时间',
+        seconds: '秒',
         promptTemplate: '提示词模板',
         preview: '预览',
         promptList: '提示词列表',

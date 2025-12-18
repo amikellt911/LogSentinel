@@ -49,11 +49,19 @@ export interface AISettings {
     apiKey: string
     language: 'en' | 'zh'
     maxBatchSize: number
+    autoDegrade: boolean
+    fallbackModel: string
+    circuitBreaker: boolean
+    failureThreshold: number
+    cooldownSeconds: number
     prompts: PromptConfig[]
 }
 
 export interface GeneralSettings {
     language: 'en' | 'zh'
+    logRetentionDays: number
+    maxDiskUsageGB: number
+    httpPort: number
 }
 
 // Interface for Backend API Responses
@@ -147,7 +155,10 @@ export const useSystemStore = defineStore('system', () => {
   // Settings State
   const settings = reactive({
     general: {
-      language: 'en'
+      language: 'en',
+      logRetentionDays: 7,
+      maxDiskUsageGB: 1,
+      httpPort: 8080
     } as GeneralSettings,
     ai: {
       provider: 'Local-Mock',
@@ -155,6 +166,11 @@ export const useSystemStore = defineStore('system', () => {
       apiKey: '',
       language: 'en',
       maxBatchSize: 50,
+      autoDegrade: false,
+      fallbackModel: 'local-mock',
+      circuitBreaker: true,
+      failureThreshold: 5,
+      cooldownSeconds: 60,
       prompts: [
         {
           id: 'p1',
@@ -482,7 +498,10 @@ Metrics:
       // Map Backend Data to Store State
       const newSettings = {
         general: {
-          language: (data.config['app_language'] || 'en') as any
+          language: (data.config['app_language'] || 'en') as any,
+          logRetentionDays: parseInt(data.config['log_retention_days'] || '7'),
+          maxDiskUsageGB: parseInt(data.config['max_disk_usage_gb'] || '1'),
+          httpPort: parseInt(data.config['http_port'] || '8080')
         },
         ai: {
           provider: (data.config['ai_provider'] || 'Local-Mock') as any,
@@ -490,10 +509,16 @@ Metrics:
           apiKey: data.config['ai_api_key'] || '',
           language: (data.config['ai_language'] || 'en') as any,
           maxBatchSize: parseInt(data.config['kernel_max_batch'] || '50'),
+          autoDegrade: data.config['ai_auto_degrade'] === '1',
+          fallbackModel: data.config['ai_fallback_model'] || 'local-mock',
+          circuitBreaker: data.config['ai_circuit_breaker'] !== '0', // Default true if missing
+          failureThreshold: parseInt(data.config['ai_failure_threshold'] || '5'),
+          cooldownSeconds: parseInt(data.config['ai_cooldown_seconds'] || '60'),
           prompts: data.prompts.map(p => ({
             id: p.id,
             name: p.name,
-            content: p.content
+            content: p.content,
+            is_active: p.is_active // Map backend is_active
           }))
         },
         integration: {
@@ -538,10 +563,20 @@ Metrics:
 
        const configItems = [
          { key: 'app_language', value: settings.general.language },
+         { key: 'log_retention_days', value: settings.general.logRetentionDays.toString() },
+         { key: 'max_disk_usage_gb', value: settings.general.maxDiskUsageGB.toString() },
+         { key: 'http_port', value: settings.general.httpPort.toString() },
+
          { key: 'ai_provider', value: settings.ai.provider },
          { key: 'ai_model', value: settings.ai.modelName },
          { key: 'ai_api_key', value: settings.ai.apiKey },
          { key: 'ai_language', value: settings.ai.language },
+         { key: 'ai_auto_degrade', value: settings.ai.autoDegrade ? '1' : '0' },
+         { key: 'ai_fallback_model', value: settings.ai.fallbackModel },
+         { key: 'ai_circuit_breaker', value: settings.ai.circuitBreaker ? '1' : '0' },
+         { key: 'ai_failure_threshold', value: settings.ai.failureThreshold.toString() },
+         { key: 'ai_cooldown_seconds', value: settings.ai.cooldownSeconds.toString() },
+
          { key: 'kernel_adaptive_mode', value: settings.kernel.adaptiveBatching ? '1' : '0' },
          { key: 'kernel_max_batch', value: settings.ai.maxBatchSize.toString() },
          { key: 'kernel_refresh_interval', value: settings.kernel.flushInterval.toString() },
@@ -574,7 +609,7 @@ Metrics:
                id: typeof p.id === 'number' ? p.id : 0, // 0 for new
                name: p.name,
                content: p.content,
-               is_active: 1
+               is_active: p.is_active ? 1 : 0
            }))
            promises.push(fetch('/api/settings/prompts', {
                method: 'POST',
