@@ -12,7 +12,25 @@ const messages = {
       eventStream: 'Real-time Event Stream',
       configuration: 'System Configuration',
       insights: 'AI Batch Insights',
-      history: 'Historical Logs'
+      history: 'Historical Logs',
+      benchmark: 'Performance Arena'
+    },
+    benchmark: {
+      tool: 'Benchmark Tool',
+      threads: 'Threads',
+      connections: 'Connections',
+      duration: 'Duration',
+      start: 'Start Benchmark',
+      running: 'RUNNING BENCHMARK...',
+      metrics: {
+        qps: 'QPS (Throughput)',
+        p50: 'P50 Latency',
+        p99: 'P99 Latency',
+        net_io: 'Net I/O Latency',
+        scheduler: 'AI Scheduler Cost',
+        total_logs: 'Total Logs Processed',
+        total_ai: 'Total AI Calls'
+      }
     },
     dashboard: {
       totalLogs: 'Total Logs Processed',
@@ -167,7 +185,25 @@ const messages = {
       eventStream: '实时事件流',
       configuration: '系统配置',
       insights: 'AI 批次洞察',
-      history: '历史日志'
+      history: '历史日志',
+      benchmark: '性能竞技场'
+    },
+    benchmark: {
+      tool: '压测工具',
+      threads: '线程数',
+      connections: '并发连接数',
+      duration: '持续时间',
+      start: '开始基准测试',
+      running: '基准测试运行中...',
+      metrics: {
+        qps: 'QPS (吞吐量)',
+        p50: 'P50 延迟',
+        p99: 'P99 延迟',
+        net_io: '网络 I/O 延迟',
+        scheduler: 'AI 调度开销',
+        total_logs: '日志处理总数',
+        total_ai: 'AI 调用总数'
+      }
     },
     dashboard: {
       totalLogs: '日志处理总数',

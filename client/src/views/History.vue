@@ -149,7 +149,9 @@ async function refreshLogs() {
                   id: `mock-trace-${Date.now()}-${i}`,
                   timestamp: dayjs().subtract(i * 10, 'minute').format('YYYY-MM-DD HH:mm:ss'),
                   level: level as any,
-                  message: `Simulated log entry #${i} for demo purposes. Analysis result: ${level === 'RISK' ? 'Malicious pattern detected' : 'Routine operation'}.`
+                  message: systemStore.settings.general.language === 'zh'
+                      ? `模拟日志条目 #${i} 用于演示目的。分析结果：${level === 'RISK' ? '检测到恶意模式' : '常规操作'}。`
+                      : `Simulated log entry #${i} for demo purposes. Analysis result: ${level === 'RISK' ? 'Malicious pattern detected' : 'Routine operation'}.`
               })
           }
           historyLogs.value = mockPage
