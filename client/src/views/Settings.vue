@@ -415,13 +415,19 @@
 
  function deletePrompt(index: number) {
     const deletedId = systemStore.settings.ai.prompts[index].id
-    const wasActive = systemStore.settings.ai.prompts[index].is_active
     
     systemStore.settings.ai.prompts.splice(index, 1)
     
-    // If active prompt was deleted, make the first one active if exists
-    if (wasActive && systemStore.settings.ai.prompts.length > 0) {
-        systemStore.settings.ai.prompts[0].is_active = 1
+    // If active prompt was deleted (checked by ID), make the first one active if exists
+    // Note: Use weak comparison (==) to handle string/number mismatch
+    if (systemStore.settings.ai.activePromptId == deletedId && systemStore.settings.ai.prompts.length > 0) {
+        const nextPrompt = systemStore.settings.ai.prompts[0]
+        // Only set activePromptId if the ID is a valid number (persisted prompt)
+        // If it's a new prompt (string ID), we can't set it as persisted active ID yet,
+        // but we can update the UI selection.
+        if (typeof nextPrompt.id === 'number') {
+           systemStore.settings.ai.activePromptId = nextPrompt.id
+        }
     }
 
     if (selectedPromptId.value === deletedId && systemStore.settings.ai.prompts.length > 0) {
@@ -434,6 +440,12 @@
     selectedPromptId.value = id
     
     // 2. Set as Active (Mutex logic)
+    // Only set activePromptId if the ID is a valid number (persisted prompt)
+    if (typeof id === 'number') {
+        systemStore.settings.ai.activePromptId = id
+    }
+
+    // Legacy support: keep is_active flag for now if needed, or just relying on ID match
     systemStore.settings.ai.prompts.forEach(p => {
         p.is_active = (p.id === id) ? 1 : 0
     })
