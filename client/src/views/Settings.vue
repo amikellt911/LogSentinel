@@ -221,7 +221,7 @@
                    </div>
                    <div class="flex-1 overflow-y-auto custom-scrollbar">
                       <div 
-                         v-for="channel in systemStore.settings.integration.channels" 
+                         v-for="(channel, index) in systemStore.settings.integration.channels"
                          :key="channel.id"
                          class="p-4 cursor-pointer hover:bg-gray-800 transition-colors border-b border-gray-800 flex justify-between items-center group"
                          :class="{'bg-gray-800 border-l-2 border-l-primary': selectedChannelId === channel.id}"
@@ -231,7 +231,13 @@
                             <div class="w-2 h-2 rounded-full" :class="channel.enabled ? 'bg-green-500' : 'bg-gray-600'"></div>
                             <span class="font-mono text-sm text-gray-300 truncate">{{ channel.name }}</span>
                          </div>
-                         <el-switch v-model="channel.enabled" size="small" @click.stop />
+                         <div class="flex items-center gap-2">
+                             <el-switch v-model="channel.enabled" size="small" @click.stop />
+                             <!-- Delete Button -->
+                             <el-button type="danger" link size="small" @click.stop="deleteChannel(index)" class="opacity-0 group-hover:opacity-100 transition-opacity">
+                                <el-icon><Delete /></el-icon>
+                             </el-button>
+                         </div>
                       </div>
                    </div>
                 </div>
@@ -474,6 +480,20 @@
        enabled: false
     })
     selectedChannelId.value = newId
+ }
+
+ function deleteChannel(index: number) {
+    const deletedId = systemStore.settings.integration.channels[index].id
+    systemStore.settings.integration.channels.splice(index, 1)
+
+    // Update selection if the deleted one was selected
+    if (selectedChannelId.value === deletedId) {
+        if (systemStore.settings.integration.channels.length > 0) {
+             selectedChannelId.value = systemStore.settings.integration.channels[0].id
+        } else {
+             selectedChannelId.value = undefined
+        }
+    }
  }
  
  function onVendorChange(channel: WebhookConfig) {
