@@ -74,10 +74,11 @@ export interface AlertInfoResponse {
 
 export interface DashboardStatsResponse {
     total_logs: number
-    high_risk: number
-    medium_risk: number
-    low_risk: number
+    critical_risk: number
+    error_risk: number
+    warning_risk: number
     info_risk: number
+    safe_risk: number
     unknown_risk: number
     avg_response_time: number
     recent_alerts: AlertInfoResponse[]
@@ -420,11 +421,12 @@ Metrics:
         totalLogsProcessed.value = data.total_logs;
         netLatency.value = data.avg_response_time;
         
-        riskStats.Critical = data.high_risk;
-        riskStats.Error = data.medium_risk;
-        riskStats.Warning = data.low_risk;
+        riskStats.Critical = data.critical_risk;
+        riskStats.Error = data.error_risk;
+        riskStats.Warning = data.warning_risk;
         riskStats.Info = data.info_risk;
-        riskStats.Safe = data.total_logs - (data.high_risk + data.medium_risk + data.low_risk + data.info_risk);
+        // Use explicit safe_risk if backend provides it, otherwise fallback (though backend should provide it now)
+        riskStats.Safe = data.safe_risk || (data.total_logs - (data.critical_risk + data.error_risk + data.warning_risk + data.info_risk + data.unknown_risk));
 
         recentAlerts.value = data.recent_alerts.map(a => ({
             id: a.trace_id,

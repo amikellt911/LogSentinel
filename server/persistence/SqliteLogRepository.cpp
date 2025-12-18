@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS raw_logs (
         status TEXT NOT NULL,
         
         -- 核心字段拆分
-        risk_level TEXT,  -- high, medium, low
+        risk_level TEXT,  -- critical, error, warning, info, safe
         summary TEXT,
         root_cause TEXT,
         solution TEXT,
@@ -152,9 +152,13 @@ void SqliteLogRepository::saveAnalysisResult(const std::string &trace_id, const 
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
     if (rc == SQLITE_OK)
     {
+        // 转换 Enum 为 String
+        nlohmann::json j_risk = result.risk_level;
+        std::string risk_str = j_risk.get<std::string>();
+
         sqlite3_bind_text(stmt, 1, trace_id.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, status.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 3, result.risk_level.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, risk_str.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 4, result.summary.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 5, result.root_cause.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 6, result.solution.c_str(), -1, SQLITE_TRANSIENT);
@@ -273,7 +277,11 @@ std::optional<LogAnalysisResult> SqliteLogRepository::queryStructResultByTraceId
                 return txt ? std::string(txt) : "unknown";
             };
 
-            result.risk_level = get_col(0);
+            // 反序列化 String -> Enum
+            std::string risk_str = get_col(0);
+            nlohmann::json j = risk_str;
+            result.risk_level = j.get<RiskLevel>();
+
             result.root_cause = get_col(1);
             result.solution = get_col(2);
             result.summary = get_col(3);
@@ -352,20 +360,24 @@ DashboardStats SqliteLogRepository::getDashboardStats()
         int count = sqlite3_column_int(stmt, 1);
         if (risk != nullptr)
         {
-            if (std::string(risk) == "high")
+            std::string r = std::string(risk);
+            if (r == "critical" || r == "high")
             {
-                stats.high_risk = count;
+                stats.critical_risk += count;
             }
-            else if (std::string(risk) == "medium")
+            else if (r == "error" || r == "medium")
             {
-                stats.medium_risk = count;
+                stats.error_risk += count;
             }
-            else if (std::string(risk) == "low")
+            else if (r == "warning" || r == "low")
             {
-                stats.low_risk = count;
+                stats.warning_risk += count;
             }
-            else if (std::string(risk) == "info") {
-                stats.info_risk = count;
+            else if (r == "info") {
+                stats.info_risk += count;
+            }
+            else if (std::string(risk) == "safe") {
+                stats.safe_risk = count;
             }
             else {
                 // 其他所有未识别的字符串（如 "unknown", "", null）都算作 Unknown
@@ -386,7 +398,7 @@ DashboardStats SqliteLogRepository::getDashboardStats()
     sql = R"(
         SELECT trace_id, summary, processed_at 
         FROM analysis_results 
-        WHERE risk_level IN ('high') 
+        WHERE risk_level IN ('critical', 'high')
         ORDER BY id DESC 
         LIMIT 5;
     )";
@@ -509,10 +521,13 @@ void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResu
     {
         for (const auto &item : items)
         {
+            // 转换 Enum 为 String
+            nlohmann::json j_risk = item.result.risk_level;
+            std::string risk_str = j_risk.get<std::string>();
 
             sqlite3_bind_text(stmt.get(), 1, item.trace_id.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(stmt.get(), 2, item.status.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt.get(), 3, item.result.risk_level.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt.get(), 3, risk_str.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt.get(), 4, item.result.summary.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(stmt.get(), 5, item.result.root_cause.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(stmt.get(), 6, item.result.solution.c_str(), -1, SQLITE_STATIC);
@@ -608,16 +623,29 @@ HistoryPage SqliteLogRepository::getHistoricalLogs(int page, int pageSize)
         auto get_col = [&](int col) -> std::string
         {
             const char *txt = (const char *)sqlite3_column_text(stmt_page.get(), col);
-            return txt ? std::string(txt) : "unKnown";
+                return txt ? std::string(txt) : "safe";
         };
 
         // 迭代获取结果
         while ((rc = sqlite3_step(stmt_page.get())) == SQLITE_ROW)
         {
             // 顺序：trace_id(0), risk_level(1), summary(2), processed_at(3)
+            // 从 DB 获取 string
+            std::string risk_str = get_col(1);
+
+            // 手动转换 String -> Enum (利用 nlohmann::json 的转换能力)
+            nlohmann::json j_risk = risk_str;
+            RiskLevel risk_enum = RiskLevel::SAFE; // Default
+            try {
+                risk_enum = j_risk.get<RiskLevel>();
+            } catch (...) {
+                // Fallback if DB content is weird
+                risk_enum = RiskLevel::UNKNOWN;
+            }
+
             res.logs.emplace_back(HistoricalLogItem{
                 get_col(0),
-                get_col(1),
+                risk_enum,
                 get_col(2),
                 get_col(3)});
             // 【修正】：删除了 res.total_count++
