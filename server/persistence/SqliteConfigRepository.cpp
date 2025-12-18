@@ -28,11 +28,36 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
             config.kernel_max_batch = std::stoi(val);
         else if (key == "kernel_refresh_interval")
             config.kernel_refresh_interval = std::stoi(val);
+        
+        // --- 新增配置映射 ---
+        else if (key == "log_retention_days")
+            config.log_retention_days = std::stoi(val);
+        else if (key == "max_disk_usage_gb")
+            config.max_disk_usage_gb = std::stoi(val);
+        else if (key == "http_port")
+            config.http_port = std::stoi(val);
+        else if (key == "ai_failure_threshold")
+            config.ai_failure_threshold = std::stoi(val);
+        else if (key == "ai_cooldown_seconds")
+            config.ai_cooldown_seconds = std::stoi(val);
+        else if (key == "active_prompt_id")
+            config.active_prompt_id = std::stoi(val);
+        
+        else if (key == "ai_fallback_model")
+            config.ai_fallback_model = val;
 
         // --- 布尔类型 (兼容 1/true/TRUE) ---
         else if (key == "kernel_adaptive_mode")
         {
             config.kernel_adaptive_mode = (val == "1" || val == "true" || val == "TRUE");
+        }
+        else if (key == "ai_auto_degrade")
+        {
+            config.ai_auto_degrade = (val == "1" || val == "true" || val == "TRUE");
+        }
+        else if (key == "ai_circuit_breaker")
+        {
+            config.ai_circuit_breaker = (val == "1" || val == "true" || val == "TRUE");
         }
     }
     catch (const std::exception &e)
@@ -53,7 +78,13 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
     else
     {
         // TODO: 生产环境请改为获取可执行文件所在路径，避免相对路径地雷
+        // Update for testing: use simple path if we can't write to ../persistence/data/
         std::string data_path = "../persistence/data/";
+        // // Check if we are in server root (where persistence folder exists)
+        // if (std::filesystem::exists("persistence")) {
+        //      data_path = "persistence/data/";
+        // }
+        
         if (!std::filesystem::exists(data_path))
         {
             std::error_code ec;
@@ -61,6 +92,9 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             if (ec)
             {
                 throw std::runtime_error("Failed to create directory: " + data_path);
+                // // Fallback to /tmp or current dir if we can't create directory there (likely running from weird place in test)
+                // std::cerr << "[WARN] Failed to create directory: " << data_path << ", falling back to current directory." << std::endl;
+                // data_path = "./";
             }
         }
         final_path = data_path + db_path;
@@ -143,6 +177,18 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('ai_api_key', '', 'API密钥'),
             ('ai_language', 'English', '解析语言'),
             ('app_language', 'en', '界面语言'),
+            
+            -- 新增字段
+            ('log_retention_days', '7', '日志保留天数'),
+            ('max_disk_usage_gb', '1', '最大磁盘占用GB'),
+            ('http_port', '8080', 'HTTP服务端口'),
+            ('ai_auto_degrade', '0', '自动降级开关'),
+            ('ai_fallback_model', 'local-mock', '降级模型名称'),
+            ('ai_circuit_breaker', '1', '熔断机制开关'),
+            ('ai_failure_threshold', '5', '熔断触发阈值'),
+            ('ai_cooldown_seconds', '60', '熔断冷却时间s'),
+            ('active_prompt_id', '0', '当前激活的PromptID'),
+
             ('kernel_adaptive_mode', '1', '自适应微批模式开关 1/0'),
             ('kernel_max_batch', '50', '自适应最大阈值'),
             ('kernel_refresh_interval', '200', '刷新间隔ms'),
