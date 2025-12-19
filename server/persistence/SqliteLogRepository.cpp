@@ -648,7 +648,6 @@ HistoryPage SqliteLogRepository::getHistoricalLogs(int page, int pageSize)
                 risk_enum,
                 get_col(2),
                 get_col(3)});
-            // 【修正】：删除了 res.total_count++
         }
 
         // 检查最终状态：必须是 SQLITE_DONE
