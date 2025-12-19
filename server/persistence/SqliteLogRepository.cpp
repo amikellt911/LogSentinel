@@ -7,7 +7,11 @@ using namespace persistence;
 SqliteLogRepository::SqliteLogRepository(const std::string &db_path)
 {
     std::string final_path;
-    if (db_path.find('/') != std::string::npos || db_path.find('\\') != std::string::npos) {
+    // 特殊处理 :memory:
+    if (db_path == ":memory:") {
+        final_path = db_path;
+    }
+    else if (db_path.find('/') != std::string::npos || db_path.find('\\') != std::string::npos) {
         final_path = db_path;
     } else {
         // 只有纯文件名才加上默认目录

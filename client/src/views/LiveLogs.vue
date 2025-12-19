@@ -64,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useSystemStore } from '../stores/system'
 
 const systemStore = useSystemStore()
@@ -86,6 +86,21 @@ watch(() => systemStore.logs.length, () => {
 
 onMounted(() => {
   scrollToBottom()
+  // Start explicit polling for this view
+  if (systemStore.isRunning) {
+      systemStore.startLogPolling()
+  }
+})
+
+// Stop polling when leaving this view
+onUnmounted(() => {
+    systemStore.stopLogPolling()
+})
+
+// Also watch isRunning to toggle polling if changed while on this page
+watch(() => systemStore.isRunning, (newVal) => {
+    if (newVal) systemStore.startLogPolling()
+    else systemStore.stopLogPolling()
 })
 </script>
 
