@@ -1,7 +1,7 @@
 #include "persistence/SqliteLogRepository.h"
 #include <filesystem>
 #include <iostream>
-#include "persistence/SqliteLogRepository.h"
+#include <algorithm>
 #include "SqliteLogRepository.h"
 using namespace persistence;
 SqliteLogRepository::SqliteLogRepository(const std::string &db_path)
@@ -574,12 +574,19 @@ HistoryPage SqliteLogRepository::getHistoricalLogs(int page, int pageSize, const
     std::vector<std::string> bind_params;
 
     if (!level.empty()) {
-        // level 是确切匹配，因为 DB 里存的是 JSON 字符串 ("Critical")
-        // 如果前端传 "Critical", DB 里是 "Critical" (带引号? 不，DB存的是字符串内容)
-        // json序列化时 risk_level 变成 "Critical"
-        // 简单处理： risk_level = ?
-        where_clause += " AND risk_level = ? ";
-        bind_params.push_back(level);
+        std::string lower_level = level;
+        std::transform(lower_level.begin(), lower_level.end(), lower_level.begin(), ::tolower);
+
+        if (lower_level == "critical") {
+            where_clause += " AND risk_level IN ('critical', 'high') ";
+        } else if (lower_level == "error") {
+            where_clause += " AND risk_level IN ('error', 'medium') ";
+        } else if (lower_level == "warning") {
+            where_clause += " AND risk_level IN ('warning', 'low') ";
+        } else {
+             where_clause += " AND LOWER(risk_level) = ? ";
+             bind_params.push_back(lower_level);
+        }
     }
 
     if (!keyword.empty()) {
