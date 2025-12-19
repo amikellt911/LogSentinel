@@ -1,13 +1,17 @@
 #include "persistence/SqliteLogRepository.h"
 #include <filesystem>
 #include <iostream>
-#include "persistence/SqliteLogRepository.h"
+#include <algorithm>
 #include "SqliteLogRepository.h"
 using namespace persistence;
 SqliteLogRepository::SqliteLogRepository(const std::string &db_path)
 {
     std::string final_path;
-    if (db_path.find('/') != std::string::npos || db_path.find('\\') != std::string::npos) {
+    // 特殊处理 :memory:
+    if (db_path == ":memory:") {
+        final_path = db_path;
+    }
+    else if (db_path.find('/') != std::string::npos || db_path.find('\\') != std::string::npos) {
         final_path = db_path;
     } else {
         // 只有纯文件名才加上默认目录
@@ -559,108 +563,105 @@ void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResu
     }
 }
 
-HistoryPage SqliteLogRepository::getHistoricalLogs(int page, int pageSize)
+HistoryPage SqliteLogRepository::getHistoricalLogs(int page, int pageSize, const std::string& level, const std::string& keyword)
 {
-    // 1. 锁保护：确保线程安全
+    // 1. 锁保护
     std::lock_guard<std::mutex> lock_(mutex_);
     HistoryPage res;
 
-    // --- (1) 总数查询：获取总记录数 (Total Count)，用于计算总共页数 ---
-    {
-        const char *sql_count = "SELECT COUNT(*) FROM analysis_results;";
-        sqlite3_stmt *raw_stmt_count = nullptr;
+    // --- 构建 WHERE 子句 ---
+    std::string where_clause = " FROM analysis_results WHERE 1=1 ";
+    std::vector<std::string> bind_params;
 
-        int rc = sqlite3_prepare_v2(db_, sql_count, -1, &raw_stmt_count, nullptr);
-        if (rc != SQLITE_OK)
-        {
-            checkSqliteError(db_, rc, "Failed to prepare COUNT statement");
-        }
-        StmtPtr stmt_count(raw_stmt_count);
+    if (!level.empty()) {
+        std::string lower_level = level;
+        std::transform(lower_level.begin(), lower_level.end(), lower_level.begin(), ::tolower);
 
-        rc = sqlite3_step(stmt_count.get());
-        if (rc == SQLITE_ROW)
-        {
-            res.total_count = sqlite3_column_int(stmt_count.get(), 0);
-        }
-        else
-        {
-            // 即使查询失败，也应设置 total_count=0，并记录错误日志，而不是抛出致命异常。
-            // 保持健壮性：这里我们简单地抛出异常，因为查询总数是核心功能。
-            checkSqliteError(db_, rc, "Failed to execute COUNT statement");
+        if (lower_level == "critical") {
+            where_clause += " AND risk_level IN ('critical', 'high') ";
+        } else if (lower_level == "error") {
+            where_clause += " AND risk_level IN ('error', 'medium') ";
+        } else if (lower_level == "warning") {
+            where_clause += " AND risk_level IN ('warning', 'low') ";
+        } else {
+             where_clause += " AND LOWER(risk_level) = ? ";
+             bind_params.push_back(lower_level);
         }
     }
 
-    // --- (2) 分页查询：获取当前页的日志记录 ---
-    const int offset = std::max(0, (page - 1) * pageSize);
-
-    // 【关键修正】：添加 ORDER BY processed_at DESC
-    // 必须要排序，数据库内部不会自动排序
-    // processed_at 要不要加个索引啊？
-    const char *sql_page = R"(
-        SELECT trace_id, risk_level, summary, processed_at 
-        FROM analysis_results 
-        ORDER BY processed_at DESC  --必须要写，因为厂商和文档没有承诺，所以可能会朝令夕改，导致无序
-        LIMIT ? OFFSET ?;
-    )";
-
-    sqlite3_stmt *raw_stmt_page = nullptr;
-    int rc = sqlite3_prepare_v2(db_, sql_page, -1, &raw_stmt_page, nullptr);
-
-    if (rc != SQLITE_OK)
-    {
-        checkSqliteError(db_, rc, "Failed to prepare SELECT/LIMIT/OFFSET statement");
+    if (!keyword.empty()) {
+        // 模糊搜索： summary LIKE %keyword% OR trace_id LIKE %keyword%
+        where_clause += " AND (summary LIKE ? OR trace_id LIKE ?) ";
+        // 我们需要手动加 %
+        std::string p = "%" + keyword + "%";
+        bind_params.push_back(p);
+        bind_params.push_back(p);
     }
 
-    StmtPtr stmt_page(raw_stmt_page);
-    try
+    // --- (1) 总数查询 ---
     {
-        // 绑定 LIMIT = pageSize (参数1)
-        sqlite3_bind_int(stmt_page.get(), 1, pageSize);
-        // 绑定 OFFSET = offset (参数2)
-        sqlite3_bind_int(stmt_page.get(), 2, offset);
+        std::string sql_count = "SELECT COUNT(*) " + where_clause;
+        sqlite3_stmt *stmt = nullptr;
 
-        // 辅助函数：简化列提取
-        auto get_col = [&](int col) -> std::string
-        {
-            const char *txt = (const char *)sqlite3_column_text(stmt_page.get(), col);
-                return txt ? std::string(txt) : "safe";
+        int rc = sqlite3_prepare_v2(db_, sql_count.c_str(), -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) checkSqliteError(db_, rc, "Failed to prepare COUNT");
+
+        StmtPtr stmt_ptr(stmt);
+
+        // 绑定参数
+        int idx = 1;
+        for(const auto& val : bind_params) {
+            sqlite3_bind_text(stmt, idx++, val.c_str(), -1, SQLITE_TRANSIENT);
+        }
+
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            res.total_count = sqlite3_column_int(stmt, 0);
+        }
+    }
+
+    // --- (2) 分页查询 ---
+    {
+        // 排序和分页
+        std::string sql_page = "SELECT trace_id, risk_level, summary, processed_at " +
+                               where_clause +
+                               " ORDER BY processed_at DESC LIMIT ? OFFSET ?;";
+
+        sqlite3_stmt *stmt = nullptr;
+        int rc = sqlite3_prepare_v2(db_, sql_page.c_str(), -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) checkSqliteError(db_, rc, "Failed to prepare SELECT");
+
+        StmtPtr stmt_ptr(stmt);
+
+        // 绑定 WHERE 参数
+        int idx = 1;
+        for(const auto& val : bind_params) {
+            sqlite3_bind_text(stmt, idx++, val.c_str(), -1, SQLITE_TRANSIENT);
+        }
+
+        // 绑定 Limit/Offset
+        sqlite3_bind_int(stmt, idx++, pageSize);
+        sqlite3_bind_int(stmt, idx++, std::max(0, (page - 1) * pageSize));
+
+        auto get_col = [&](int col) -> std::string {
+            const char *txt = (const char *)sqlite3_column_text(stmt, col);
+            return txt ? std::string(txt) : "";
         };
 
-        // 迭代获取结果
-        while ((rc = sqlite3_step(stmt_page.get())) == SQLITE_ROW)
-        {
-            // 顺序：trace_id(0), risk_level(1), summary(2), processed_at(3)
-            // 从 DB 获取 string
-            std::string risk_str = get_col(1);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+             std::string risk_str = get_col(1);
+             // 容错处理
+             nlohmann::json j_risk = risk_str;
+             RiskLevel risk_enum = RiskLevel::UNKNOWN;
+             try { risk_enum = j_risk.get<RiskLevel>(); } catch(...){}
 
-            // 手动转换 String -> Enum (利用 nlohmann::json 的转换能力)
-            nlohmann::json j_risk = risk_str;
-            RiskLevel risk_enum = RiskLevel::SAFE; // Default
-            try {
-                risk_enum = j_risk.get<RiskLevel>();
-            } catch (...) {
-                // Fallback if DB content is weird
-                risk_enum = RiskLevel::UNKNOWN;
-            }
-
-            res.logs.emplace_back(HistoricalLogItem{
-                get_col(0),
-                risk_enum,
-                get_col(2),
-                get_col(3)});
+             res.logs.emplace_back(HistoricalLogItem{
+                 get_col(0),
+                 risk_enum,
+                 get_col(2),
+                 get_col(3)
+             });
         }
-
-        // 检查最终状态：必须是 SQLITE_DONE
-        if (rc != SQLITE_DONE)
-        {
-            checkSqliteError(db_, rc, "Step execution failed during pagination");
-        }
-
-        return res;
     }
-    catch (...)
-    {
-        // 智能指针 (StmtPtr) 自动处理 finalize
-        throw;
-    }
+
+    return res;
 }

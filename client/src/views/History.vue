@@ -93,7 +93,7 @@
  </template>
  
  <script setup lang="ts">
- import { ref, computed, onMounted } from 'vue'
+ import { ref, computed, onMounted, watch } from 'vue'
  import { Search, Refresh } from '@element-plus/icons-vue'
  import { useSystemStore, type LogEntry } from '../stores/system'
  import dayjs from 'dayjs'
@@ -115,19 +115,8 @@
  
  const historyLogs = ref<LogEntry[]>([])
  
- const filteredLogs = computed(() => {
-    // Client side filter for the currently fetched page (imperfect but better than nothing for demo)
-    // Ideally backend handles filter.
-    let res = historyLogs.value
-    if (filterLevel.value) {
-       res = res.filter(l => l.level.toLowerCase() === filterLevel.value.toLowerCase())
-    }
-    if (searchQuery.value) {
-       const q = searchQuery.value.toLowerCase()
-       res = res.filter(l => l.message.toLowerCase().includes(q) || String(l.id).toLowerCase().includes(q))
-    }
-    return res
- })
+ // Direct binding to table, as filtering is now server-side
+ const filteredLogs = computed(() => historyLogs.value)
  
  async function refreshLogs() {
     loading.value = true
@@ -159,16 +148,29 @@
            return
        }
  
-       // Re-use system store's fetch capability but targeting history page
-       const res = await fetch(`/api/history?page=${currentPage.value}&pageSize=${pageSize.value}`)
+       // Server-side filtering
+       const params = new URLSearchParams({
+          page: String(currentPage.value),
+          pageSize: String(pageSize.value)
+       })
+       if(filterLevel.value) params.append('level', filterLevel.value)
+       if(searchQuery.value) params.append('search', searchQuery.value)
+
+       const res = await fetch(`/api/history?${params.toString()}`)
        if(res.ok) {
           const data = await res.json()
           totalLogs.value = data.total_count
           
           historyLogs.value = data.logs.map((item: any) => {
-              let level = 'INFO'
-              if(['Critical', 'High', 'RISK'].includes(item.risk_level)) level = 'RISK'
-              else if(['Warning', 'Medium', 'WARN'].includes(item.risk_level)) level = 'WARN'
+              let level = item.risk_level;
+              // Normalize backend values to UI Display values
+              const lower = level.toLowerCase();
+              if (lower === 'critical' || lower === 'high') level = 'Critical';
+              else if (lower === 'error' || lower === 'medium') level = 'Error';
+              else if (lower === 'warning' || lower === 'low') level = 'Warning';
+              else if (lower === 'info') level = 'Info';
+              else if (lower === 'safe') level = 'Safe';
+              // else keep original or Capitalize
               
               return {
                   id: item.trace_id,
@@ -196,26 +198,38 @@
  
  function getLevelBadgeClass(level: string) {
     switch(level) {
-       case 'RISK': return 'bg-red-900/50 text-red-400 border border-red-500/30'
-       case 'WARN': return 'bg-yellow-900/50 text-yellow-400 border border-yellow-500/30'
+       case 'Critical': return 'bg-red-900/50 text-red-400 border border-red-500/30'
+       case 'Error': return 'bg-orange-900/50 text-orange-400 border border-orange-500/30'
+       case 'Warning': return 'bg-yellow-900/50 text-yellow-400 border border-yellow-500/30'
+       case 'Info': return 'bg-gray-700 text-gray-300 border border-gray-600/30'
+       case 'Safe': return 'bg-green-900/50 text-green-400 border border-green-500/30'
        default: return 'bg-gray-700 text-gray-300'
     }
  }
  
  function getLevelTextClass(level: string) {
      switch(level) {
-       case 'RISK': return 'text-red-400 font-bold'
-       case 'WARN': return 'text-yellow-400 font-bold'
+       case 'Critical': return 'text-red-400 font-bold'
+       case 'Error': return 'text-orange-400 font-bold'
+       case 'Warning': return 'text-yellow-400 font-bold'
+       case 'Info': return 'text-gray-400 font-bold'
+       case 'Safe': return 'text-green-400 font-bold'
        default: return 'text-gray-300'
     }
  }
  
  const tableRowClassName = ({ row }: { row: LogEntry }) => {
-   if (row.level === 'RISK') {
+   if (row.level === 'Critical' || row.level === 'Error') {
      return 'warning-row'
    }
    return ''
  }
+
+ // Watchers for filter interactivity
+ watch([filterLevel, searchQuery], () => {
+    currentPage.value = 1
+    refreshLogs()
+ })
  
  onMounted(() => {
     refreshLogs()

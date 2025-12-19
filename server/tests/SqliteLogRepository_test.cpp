@@ -108,3 +108,48 @@ TEST(SqliteLogRepositoryConstructorTest, ThrowsOnInvalidPath) {
     ASSERT_THROW(SqliteLogRepository{invalid_path}, std::runtime_error);
     #endif
 }
+TEST_F(SqliteLogRepository_test, test_get_historical_logs_filter)
+{
+    // 1. Setup Data
+    std::string trace1 = "t1";
+    LogAnalysisResult r1; r1.risk_level = RiskLevel::CRITICAL; r1.summary = "CritLog";
+    persistence_->SaveRawLog(trace1, "raw1");
+    persistence_->saveAnalysisResult(trace1, r1, 10, "SUCCESS");
+
+    std::string trace2 = "t2";
+    LogAnalysisResult r2; r2.risk_level = RiskLevel::WARNING; r2.summary = "WarnLog";
+    persistence_->SaveRawLog(trace2, "raw2");
+    persistence_->saveAnalysisResult(trace2, r2, 10, "SUCCESS");
+
+    std::string trace3 = "t3";
+    LogAnalysisResult r3; r3.risk_level = RiskLevel::INFO; r3.summary = "InfoLog";
+    persistence_->SaveRawLog(trace3, "raw3");
+    persistence_->saveAnalysisResult(trace3, r3, 10, "SUCCESS");
+
+    // 2. Test Filters
+    // Case 1: Filter "Critical" (Title Case) -> Should find t1
+    auto page1 = persistence_->getHistoricalLogs(1, 10, "Critical", "");
+    EXPECT_EQ(page1.total_count, 1);
+    ASSERT_EQ(page1.logs.size(), 1);
+    EXPECT_EQ(page1.logs[0].trace_id, trace1);
+
+    // Case 2: Filter "warning" (lowercase) -> Should find t2
+    auto page2 = persistence_->getHistoricalLogs(1, 10, "warning", "");
+    EXPECT_EQ(page2.total_count, 1);
+    ASSERT_EQ(page2.logs.size(), 1);
+    EXPECT_EQ(page2.logs[0].trace_id, trace2);
+
+    // Case 3: Filter "Info" -> Should find t3
+    auto page3 = persistence_->getHistoricalLogs(1, 10, "Info", "");
+    EXPECT_EQ(page3.total_count, 1);
+    ASSERT_EQ(page3.logs.size(), 1);
+    EXPECT_EQ(page3.logs[0].trace_id, trace3);
+
+    // Case 4: Filter "Safe" -> Should be empty
+    auto page4 = persistence_->getHistoricalLogs(1, 10, "Safe", "");
+    EXPECT_EQ(page4.total_count, 0);
+
+    // Case 5: Empty filter -> All 3
+    auto page5 = persistence_->getHistoricalLogs(1, 10, "", "");
+    EXPECT_EQ(page5.total_count, 3);
+}
