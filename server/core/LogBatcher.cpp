@@ -138,7 +138,7 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch) // 注意：这
                 // 失败：构造一个空的/错误的 Result，状态标记为 FAILURE
                 LogAnalysisResult error_res;
                 error_res.summary = "AI analysis missing";
-                error_res.risk_level = RiskLevel::UNKNOWN;
+                error_res.risk_level = "unknown";
                 items.push_back({task.trace_id, error_res, (int)micro_ms, "FAILURE"});
             }
         }

@@ -120,7 +120,7 @@
     // Ideally backend handles filter.
     let res = historyLogs.value
     if (filterLevel.value) {
-       res = res.filter(l => l.level.toLowerCase() === filterLevel.value.toLowerCase())
+       res = res.filter(l => l.level === filterLevel.value || (filterLevel.value === 'Risk' && (l.level === 'RISK' || l.level === 'Critical')))
     }
     if (searchQuery.value) {
        const q = searchQuery.value.toLowerCase()
@@ -138,21 +138,20 @@
            
            totalLogs.value = 500
            const mockPage = []
+           const levels = ['INFO', 'WARN', 'RISK']
            for(let i=0; i<pageSize.value; i++) {
                const r = Math.random()
-               let level = 'info'
-               if (r > 0.95) level = 'critical'
-               else if (r > 0.9) level = 'error'
-               else if (r > 0.8) level = 'warning'
-               else if (r > 0.6) level = 'safe'
+               let level = 'INFO'
+               if (r > 0.9) level = 'RISK'
+               else if (r > 0.7) level = 'WARN'
                
                mockPage.push({
                    id: `mock-trace-${Date.now()}-${i}`,
                    timestamp: dayjs().subtract(i * 10, 'minute').format('YYYY-MM-DD HH:mm:ss'),
-                   level: (level.charAt(0).toUpperCase() + level.slice(1)) as any, // UI expects Title Case for badges currently
+                   level: level as any,
                    message: systemStore.settings.general.language === 'zh'
-                       ? `模拟日志条目 #${i} 用于演示目的。分析结果：${level === 'critical' ? '检测到严重风险' : '常规操作'}。`
-                       : `Simulated log entry #${i} for demo purposes. Analysis result: ${level === 'critical' ? 'Critical risk detected' : 'Routine operation'}.`
+                       ? `模拟日志条目 #${i} 用于演示目的。分析结果：${level === 'RISK' ? '检测到恶意模式' : '常规操作'}。`
+                       : `Simulated log entry #${i} for demo purposes. Analysis result: ${level === 'RISK' ? 'Malicious pattern detected' : 'Routine operation'}.`
                })
            }
            historyLogs.value = mockPage
