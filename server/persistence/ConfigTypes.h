@@ -6,7 +6,7 @@
 // 【新增历史日志结构体】
 struct HistoricalLogItem {
     std::string trace_id;
-    std::string risk_level;
+    RiskLevel risk_level;
     std::string summary;
     std::string processed_at; // 日志分析完成的时间戳
 
@@ -183,14 +183,15 @@ struct AlertInfo{
 };
 struct DashboardStats{
     int total_logs=0;
-    int high_risk=0;
-    int medium_risk=0;
-    int low_risk=0;
+    int critical_risk=0;
+    int error_risk=0;
+    int warning_risk=0;
     int info_risk=0;
+    int safe_risk=0;
     int unknown_risk=0;
     double avg_response_time=0.0;
     std::vector<AlertInfo> recent_alerts;
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, high_risk, medium_risk, low_risk,info_risk,unknown_risk, avg_response_time, recent_alerts);
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, critical_risk, error_risk, warning_risk, info_risk, safe_risk, unknown_risk, avg_response_time, recent_alerts);
 };
 struct AnalysisResultItem{
     std::string trace_id;

@@ -90,4 +90,8 @@ set(CPR_ENABLE_SSL OFF)         # 暂时关闭 SSL，避免 OpenSSL 链接问题
 -   **事务 (Transaction)**: 注意它使用了 `BEGIN TRANSACTION` 和 `COMMIT`。
 -   **原子性**: 在循环中执行多条 UPDATE 语句。只要有一条失败（抛出异常），`catch` 块会执行 `ROLLBACK`。这保证了配置要么全更新，要么全不更新，不会出现“改了一半”的状态。
 
-以上就是本次修改的详细说明。
+## Refactoring Log Risk Levels (2025-12-18)
+- Replaced legacy risk levels (High, Medium, Low) with standard levels: **Critical**, **Error**, **Warning**, **Info**, **Safe**.
+- Backend `RiskLevel` enum (C++) now includes backward compatibility mappings for "high", "medium", and "low" strings in the database.
+- Dashboard statistics now explicitly count "Safe" logs instead of treating them as unknown.
+- **Tip**: When querying the database directly, remember that older records may still contain "high" or "medium" strings in the `risk_level` column, but the application treats them as "Critical" and "Error" respectively.

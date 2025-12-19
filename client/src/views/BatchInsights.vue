@@ -109,7 +109,7 @@
   
   <script setup lang="ts">
   import { ref, onMounted, onUnmounted } from 'vue'
-  import { Cpu, MagicStick, Check, Warning, CircleCheck, CircleClose, View } from '@element-plus/icons-vue'
+  import { Cpu, MagicStick, Warning, CircleCheck, CircleClose } from '@element-plus/icons-vue'
   import dayjs from 'dayjs'
   import { useSystemStore } from '../stores/system'
   
