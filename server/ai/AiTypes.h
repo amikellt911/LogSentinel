@@ -2,9 +2,31 @@
 #include<string>
 #include<nlohmann/json.hpp>
 
+enum class RiskLevel {
+    CRITICAL,
+    ERROR,
+    WARNING,
+    INFO,
+    SAFE,
+    UNKNOWN
+};
+
+NLOHMANN_JSON_SERIALIZE_ENUM(RiskLevel, {
+    {RiskLevel::UNKNOWN, "unknown"},
+    {RiskLevel::CRITICAL, "critical"},
+    {RiskLevel::ERROR, "error"},
+    {RiskLevel::WARNING, "warning"},
+    {RiskLevel::INFO, "info"},
+    {RiskLevel::SAFE, "safe"},
+    // Legacy Compatibility
+    {RiskLevel::CRITICAL, "high"},
+    {RiskLevel::ERROR, "medium"},
+    {RiskLevel::WARNING, "low"}
+})
+
 struct LogAnalysisResult{
     std::string summary;
-    std::string risk_level;
+    RiskLevel risk_level;
     std::string root_cause;
     std::string solution;
 

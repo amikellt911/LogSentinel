@@ -25,10 +25,12 @@
         :key="log.id"
         class="flex gap-3 hover:bg-gray-900/50 p-0.5 rounded leading-tight transition-colors duration-150"
         :class="{
-          'bg-red-900/20 animate-pulse-slow border-l-2 border-red-500': log.level === 'RISK',
-          'text-gray-300': log.level === 'INFO',
-          'text-yellow-100': log.level === 'WARN',
-          'text-red-100': log.level === 'RISK'
+          'bg-red-900/20 animate-pulse-slow border-l-2 border-red-500': log.level === 'Critical',
+          'bg-orange-900/20 border-l-2 border-orange-500': log.level === 'Error',
+          'text-gray-300': log.level === 'Info' || log.level === 'Safe',
+          'text-yellow-100': log.level === 'Warning',
+          'text-red-100': log.level === 'Critical',
+          'text-orange-100': log.level === 'Error'
         }"
       >
         <!-- Timestamp -->
@@ -38,9 +40,11 @@
         <span 
           class="font-bold shrink-0 w-16 text-center select-none"
           :class="{
-            'text-green-500': log.level === 'INFO',
-            'text-yellow-500': log.level === 'WARN',
-            'text-red-500': log.level === 'RISK'
+            'text-blue-500': log.level === 'Info',
+            'text-green-500': log.level === 'Safe',
+            'text-yellow-500': log.level === 'Warning',
+            'text-orange-500': log.level === 'Error',
+            'text-red-500': log.level === 'Critical'
           }"
         >
           {{ log.level }}

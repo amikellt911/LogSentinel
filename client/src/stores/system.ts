@@ -8,7 +8,7 @@ import i18n from '../i18n'
 export interface LogEntry {
   id: number | string
   timestamp: string
-  level: 'INFO' | 'WARN' | 'RISK'
+  level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe'
   message: string
 }
 
@@ -74,10 +74,11 @@ export interface AlertInfoResponse {
 
 export interface DashboardStatsResponse {
     total_logs: number
-    high_risk: number
-    medium_risk: number
-    low_risk: number
+    critical_risk: number
+    error_risk: number
+    warning_risk: number
     info_risk: number
+    safe_risk: number
     unknown_risk: number
     avg_response_time: number
     recent_alerts: AlertInfoResponse[]
@@ -302,9 +303,11 @@ Metrics:
 
   function generateRandomLog() {
     const r = Math.random()
-    let level: 'INFO' | 'WARN' | 'RISK' = 'INFO'
-    if (r > 0.96) level = 'RISK'
-    else if (r > 0.85) level = 'WARN'
+    let level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' = 'Info'
+    if (r > 0.98) level = 'Critical'
+    else if (r > 0.95) level = 'Error'
+    else if (r > 0.85) level = 'Warning'
+    else if (r > 0.70) level = 'Safe'
 
     const messageSet = settings.ai.language === 'zh' ? LOG_MESSAGES_ZH : LOG_MESSAGES
     // @ts-ignore
@@ -420,11 +423,12 @@ Metrics:
         totalLogsProcessed.value = data.total_logs;
         netLatency.value = data.avg_response_time;
         
-        riskStats.Critical = data.high_risk;
-        riskStats.Error = data.medium_risk;
-        riskStats.Warning = data.low_risk;
+        riskStats.Critical = data.critical_risk;
+        riskStats.Error = data.error_risk;
+        riskStats.Warning = data.warning_risk;
         riskStats.Info = data.info_risk;
-        riskStats.Safe = data.total_logs - (data.high_risk + data.medium_risk + data.low_risk + data.info_risk);
+        // Use explicit safe_risk if backend provides it, otherwise fallback (though backend should provide it now)
+        riskStats.Safe = data.safe_risk || (data.total_logs - (data.critical_risk + data.error_risk + data.warning_risk + data.info_risk + data.unknown_risk));
 
         recentAlerts.value = data.recent_alerts.map(a => ({
             id: a.trace_id,
@@ -465,9 +469,18 @@ Metrics:
           const data: HistoryPageResponse = await res.json();
 
           logs.value = data.logs.map(item => {
-              let level: 'INFO' | 'WARN' | 'RISK' = 'INFO';
-              if (item.risk_level === 'Critical' || item.risk_level === 'High') level = 'RISK';
-              else if (item.risk_level === 'Warning' || item.risk_level === 'Medium') level = 'WARN';
+              let level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' = 'Info';
+
+              let r = item.risk_level;
+              if (r) r = r.charAt(0).toUpperCase() + r.slice(1).toLowerCase(); // Normalize
+
+              if (r === 'High') level = 'Critical';
+              else if (r === 'Medium') level = 'Error';
+              else if (r === 'Low') level = 'Warning';
+              else if (r === 'Unknown') level = 'Safe';
+              else if (['Critical', 'Error', 'Warning', 'Info', 'Safe'].includes(r)) {
+                  level = r as any;
+              }
               
               return {
                   id: item.trace_id,

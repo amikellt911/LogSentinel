@@ -9,6 +9,7 @@
            <el-option label="Error" value="Error" />
            <el-option label="Warning" value="Warning" />
            <el-option label="Info" value="Info" />
+           <el-option label="Safe" value="Safe" />
          </el-select>
        </div>
  
@@ -120,7 +121,7 @@
     // Ideally backend handles filter.
     let res = historyLogs.value
     if (filterLevel.value) {
-       res = res.filter(l => l.level === filterLevel.value || (filterLevel.value === 'Risk' && (l.level === 'RISK' || l.level === 'Critical')))
+       res = res.filter(l => l.level.toLowerCase() === filterLevel.value.toLowerCase())
     }
     if (searchQuery.value) {
        const q = searchQuery.value.toLowerCase()
@@ -138,20 +139,21 @@
            
            totalLogs.value = 500
            const mockPage = []
-           const levels = ['INFO', 'WARN', 'RISK']
            for(let i=0; i<pageSize.value; i++) {
                const r = Math.random()
-               let level = 'INFO'
-               if (r > 0.9) level = 'RISK'
-               else if (r > 0.7) level = 'WARN'
+               let level = 'info'
+               if (r > 0.95) level = 'critical'
+               else if (r > 0.9) level = 'error'
+               else if (r > 0.8) level = 'warning'
+               else if (r > 0.6) level = 'safe'
                
                mockPage.push({
                    id: `mock-trace-${Date.now()}-${i}`,
                    timestamp: dayjs().subtract(i * 10, 'minute').format('YYYY-MM-DD HH:mm:ss'),
-                   level: level as any,
+                   level: (level.charAt(0).toUpperCase() + level.slice(1)) as any, // UI expects Title Case for badges currently
                    message: systemStore.settings.general.language === 'zh'
-                       ? `模拟日志条目 #${i} 用于演示目的。分析结果：${level === 'RISK' ? '检测到恶意模式' : '常规操作'}。`
-                       : `Simulated log entry #${i} for demo purposes. Analysis result: ${level === 'RISK' ? 'Malicious pattern detected' : 'Routine operation'}.`
+                       ? `模拟日志条目 #${i} 用于演示目的。分析结果：${level === 'critical' ? '检测到严重风险' : '常规操作'}。`
+                       : `Simulated log entry #${i} for demo purposes. Analysis result: ${level === 'critical' ? 'Critical risk detected' : 'Routine operation'}.`
                })
            }
            historyLogs.value = mockPage
@@ -165,9 +167,13 @@
           totalLogs.value = data.total_count
           
           historyLogs.value = data.logs.map((item: any) => {
-              let level = 'INFO'
-              if(['Critical', 'High', 'RISK'].includes(item.risk_level)) level = 'RISK'
-              else if(['Warning', 'Medium', 'WARN'].includes(item.risk_level)) level = 'WARN'
+              let level = item.risk_level || 'Info';
+              // Normalize case just in case
+              if(level) level = level.charAt(0).toUpperCase() + level.slice(1).toLowerCase();
+              if (level === 'High') level = 'Critical'; // Legacy compat
+              if (level === 'Medium') level = 'Error'; // Legacy compat
+              if (level === 'Low') level = 'Warning'; // Legacy compat
+              if (level === 'Unknown') level = 'Safe'; // Legacy compat
               
               return {
                   id: item.trace_id,
@@ -195,22 +201,26 @@
  
  function getLevelBadgeClass(level: string) {
     switch(level) {
-       case 'RISK': return 'bg-red-900/50 text-red-400 border border-red-500/30'
-       case 'WARN': return 'bg-yellow-900/50 text-yellow-400 border border-yellow-500/30'
-       default: return 'bg-gray-700 text-gray-300'
+       case 'Critical': return 'bg-red-900/50 text-red-400 border border-red-500/30'
+       case 'Error': return 'bg-orange-900/50 text-orange-400 border border-orange-500/30'
+       case 'Warning': return 'bg-yellow-900/50 text-yellow-400 border border-yellow-500/30'
+       case 'Safe': return 'bg-green-900/50 text-green-400 border border-green-500/30'
+       default: return 'bg-blue-900/50 text-blue-400 border border-blue-500/30'
     }
  }
  
  function getLevelTextClass(level: string) {
      switch(level) {
-       case 'RISK': return 'text-red-400 font-bold'
-       case 'WARN': return 'text-yellow-400 font-bold'
-       default: return 'text-gray-300'
+       case 'Critical': return 'text-red-400 font-bold'
+       case 'Error': return 'text-orange-400 font-bold'
+       case 'Warning': return 'text-yellow-400 font-bold'
+       case 'Safe': return 'text-green-400 font-bold'
+       default: return 'text-blue-400 font-bold'
     }
  }
  
  const tableRowClassName = ({ row }: { row: LogEntry }) => {
-   if (row.level === 'RISK') {
+   if (row.level === 'Critical') {
      return 'warning-row'
    }
    return ''
@@ -239,4 +249,3 @@
    background-color: rgba(127, 29, 29, 0.1) !important;
  }
  </style>
- 
