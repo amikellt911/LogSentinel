@@ -26,7 +26,7 @@ public:
     // 批量保存分析结果
     void saveAnalysisResultBatch(const std::vector<AnalysisResultItem>& items,const std::string& global_summary);
 
-    HistoryPage getHistoricalLogs(int page, int pageSize);
+    HistoryPage getHistoricalLogs(int page, int pageSize, const std::string& level = "", const std::string& keyword = "");
 private:
     sqlite3* db_=nullptr;
     std::mutex mutex_;

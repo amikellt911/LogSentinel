@@ -93,7 +93,7 @@
  </template>
  
  <script setup lang="ts">
- import { ref, computed, onMounted } from 'vue'
+ import { ref, computed, onMounted, watch } from 'vue'
  import { Search, Refresh } from '@element-plus/icons-vue'
  import { useSystemStore, type LogEntry } from '../stores/system'
  import dayjs from 'dayjs'
@@ -115,19 +115,8 @@
  
  const historyLogs = ref<LogEntry[]>([])
  
- const filteredLogs = computed(() => {
-    // Client side filter for the currently fetched page (imperfect but better than nothing for demo)
-    // Ideally backend handles filter.
-    let res = historyLogs.value
-    if (filterLevel.value) {
-       res = res.filter(l => l.level.toLowerCase() === filterLevel.value.toLowerCase())
-    }
-    if (searchQuery.value) {
-       const q = searchQuery.value.toLowerCase()
-       res = res.filter(l => l.message.toLowerCase().includes(q) || String(l.id).toLowerCase().includes(q))
-    }
-    return res
- })
+ // Direct binding to table, as filtering is now server-side
+ const filteredLogs = computed(() => historyLogs.value)
  
  async function refreshLogs() {
     loading.value = true
@@ -159,8 +148,15 @@
            return
        }
  
-       // Re-use system store's fetch capability but targeting history page
-       const res = await fetch(`/api/history?page=${currentPage.value}&pageSize=${pageSize.value}`)
+       // Server-side filtering
+       const params = new URLSearchParams({
+          page: String(currentPage.value),
+          pageSize: String(pageSize.value)
+       })
+       if(filterLevel.value) params.append('level', filterLevel.value)
+       if(searchQuery.value) params.append('search', searchQuery.value)
+
+       const res = await fetch(`/api/history?${params.toString()}`)
        if(res.ok) {
           const data = await res.json()
           totalLogs.value = data.total_count
@@ -216,6 +212,12 @@
    }
    return ''
  }
+
+ // Watchers for filter interactivity
+ watch([filterLevel, searchQuery], () => {
+    currentPage.value = 1
+    refreshLogs()
+ })
  
  onMounted(() => {
     refreshLogs()
