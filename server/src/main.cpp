@@ -57,7 +57,11 @@ int main(int argc, char* argv[])
     }
 
     // 创建AI客户端实例
-    std::shared_ptr<AiProvider> ai_client = std::make_shared<MockAI>();
+    // std::shared_ptr<AiProvider> ai_client = std::make_shared<MockAI>();
+    // TODO: 根据配置切换 AI Provider，目前先用 GeminiApiAi，因为它对接了 Proxy
+    // 我们的 LogHandler 会把 config 传给 Batcher，Batcher 传给 AiProvider
+    // 所以 AiProvider 本身可以是无状态的（除了 URL 配置），或者初始化一次即可
+    std::shared_ptr<AiProvider> ai_client = std::make_shared<GeminiApiAi>();
 
     const int num_cpu_cores = std::thread::hardware_concurrency();
     const int num_io_threads = 1; // 明确 I/O 线程数量
@@ -96,7 +100,9 @@ int main(int argc, char* argv[])
     //lambda默认值拷贝是const,但是handlePost是非const成员函数，会导致const值变化
     //所以需要加上mutable或shared_ptr,因为他是指针，在const中，让他不会改变指向，但是可以改变值
     //LogHandler handler(&tpool,persistence,ai_client, notifier);
-    auto handler = std::make_shared<LogHandler>(&tpool,persistence,batcher);
+    // 注入 config_repo
+    auto handler = std::make_shared<LogHandler>(&tpool,persistence,batcher, config_repo);
+
     router->add("POST", "/logs", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         handler->handlePost(req, resp, conn);
     });

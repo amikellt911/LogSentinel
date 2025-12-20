@@ -85,6 +85,12 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch) // 注意：这
         // 1. 准备数据 (Map 输入)
         std::vector<std::pair<std::string, std::string>> logs;
         logs.reserve(batch.size());
+
+        // Retrieve config from the first task
+        std::string ai_api_key = batch[0].ai_api_key;
+        std::string ai_model = batch[0].ai_model;
+        std::string prompt = batch[0].prompt;
+
         for (const auto &task : batch)
         {
             // 【新增防御】如果 trace_id 为空，直接丢弃！
@@ -104,7 +110,7 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch) // 注意：这
         std::unordered_map<std::string, LogAnalysisResult> mp;
         try
         {
-            mp = ai_client_->analyzeBatch(logs);
+            mp = ai_client_->analyzeBatch(logs, ai_api_key, ai_model, prompt);
         }
         catch (const std::exception &e)
         {
@@ -149,7 +155,7 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch) // 注意：这
         {
             try
             {
-                global_summary = ai_client_->summarize(results_for_summary);
+                global_summary = ai_client_->summarize(results_for_summary, ai_api_key, ai_model, prompt);
             }
             catch (...)
             {

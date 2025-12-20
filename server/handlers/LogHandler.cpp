@@ -1,6 +1,7 @@
 #include "handlers/LogHandler.h"
 #include "threadpool/ThreadPool.h"
 #include "persistence/SqliteLogRepository.h"
+#include "persistence/SqliteConfigRepository.h"
 #include "ai/AiProvider.h"
 #include "notification/INotifier.h"
 #include "core/AnalysisTask.h"
@@ -16,10 +17,11 @@
 //     resp->setHeader("Access-Control-Allow-Headers", "Content-Type");
 // }
 
-LogHandler::LogHandler(ThreadPool *tpool, std::shared_ptr<SqliteLogRepository> repo, std::shared_ptr<LogBatcher> batcher)
+LogHandler::LogHandler(ThreadPool *tpool, std::shared_ptr<SqliteLogRepository> repo, std::shared_ptr<LogBatcher> batcher, std::shared_ptr<SqliteConfigRepository> config_repo)
     :tpool_(tpool),
     repo_(repo),
-    batcher_(batcher)
+    batcher_(batcher),
+    config_repo_(config_repo)
 {
 }
 
@@ -32,6 +34,37 @@ void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const Mi
     task.trace_id = req.trace_id;
     task.raw_request_body = req.body_;
     task.start_time = std::chrono::steady_clock::now();
+
+    // 1. 获取 AppConfig (API Key, Model)
+    auto app_config = config_repo_->getAppConfig();
+    task.ai_api_key = app_config.ai_api_key;
+    task.ai_model = app_config.ai_model;
+
+    // 2. 获取 Active Prompt
+    auto all_prompts = config_repo_->getAllPrompts();
+    // 默认值，如果找不到 Active
+    task.prompt = "";
+
+    // 遍历查找 active_prompt_id 对应的 prompt content
+    // 也可以直接在 ConfigRepository 里加一个 getActivePrompt() 方法，但这里手动做也行
+    for (const auto& p : all_prompts) {
+        if (p.id == app_config.active_prompt_id) {
+            task.prompt = p.content;
+            break;
+        }
+    }
+
+    // Fallback: 如果没有找到对应的 prompt，尝试找任何一个 is_active 为 true 的
+    if (task.prompt.empty()) {
+        for (const auto& p : all_prompts) {
+            if (p.is_active) {
+                 task.prompt = p.content;
+                 break;
+            }
+        }
+    }
+
+
     if (batcher_->push(std::move(task)))
     {
         resp->setStatusCode(HttpResponse::HttpStatusCode::k202Acceptd);
