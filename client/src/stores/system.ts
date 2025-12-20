@@ -8,7 +8,7 @@ import i18n from '../i18n'
 export interface LogEntry {
   id: number | string
   timestamp: string
-  level: 'INFO' | 'WARN' | 'RISK'
+  level: 'INFO' | 'WARN' | 'RISK' | 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe'
   message: string
 }
 
