@@ -150,6 +150,7 @@ bool HttpContext::parseOneHeaderLine(const char *start, const char *end)
         return false;
     std::string key = std::string(key_start, key_end + 1 - key_start);
     std::string value = std::string(value_start, value_end + 1 - value_start);
+    std::transform(key.begin(), key.end(), key.begin(),::tolower);
     request_.headers_[key] = value;
     //LOG_STREAM_ERROR<<"parseOneHeaderLine: "<<key<<" "<<value;
     return true;

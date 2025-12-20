@@ -725,13 +725,13 @@ Metrics:
 
     // Initial fetch
     fetchDashboardStats();
-    fetchLogs();
+    // fetchLogs(); // Moved to explicit call by consumers (e.g. LiveLogs)
 
     // Poll every 1s
     // @ts-ignore
     pollingInterval.value = setInterval(() => {
         fetchDashboardStats();
-        fetchLogs();
+        // fetchLogs(); // Disabled global log polling to prevent conflicts with History view
     }, 1000) 
   }
 
@@ -740,6 +740,25 @@ Metrics:
       clearInterval(pollingInterval.value)
       pollingInterval.value = null
     }
+  }
+
+  // Explicit log polling actions
+  const logPollingInterval = ref<number | null>(null)
+  
+  function startLogPolling() {
+      if (logPollingInterval.value) return
+      fetchLogs()
+      // @ts-ignore
+      logPollingInterval.value = setInterval(() => {
+          fetchLogs()
+      }, 1000)
+  }
+
+  function stopLogPolling() {
+      if (logPollingInterval.value) {
+          clearInterval(logPollingInterval.value)
+          logPollingInterval.value = null
+      }
   }
 
   return {
@@ -763,6 +782,8 @@ Metrics:
     logs,
     toggleSystem,
     fetchSettings,
-    saveSettings: saveSettingsWithLogic
+    saveSettings: saveSettingsWithLogic,
+    startLogPolling,
+    stopLogPolling
   }
 })

@@ -65,16 +65,20 @@ void HistoryHandler::handleGetHistory(const HttpRequest &req, HttpResponse *resp
     if (pageSize < 1) pageSize = 10;
     if (pageSize > 100) pageSize = 100; // 硬限制
 
+    // 提取过滤参数
+    std::string level = queryParams.count("level") ? queryParams["level"] : "";
+    std::string search = queryParams.count("search") ? queryParams["search"] : "";
+
     // 3. 异步任务封装
     // 使用 weak_ptr 防止连接断开后仍然尝试发送
     std::weak_ptr<MiniMuduo::net::TcpConnection> weakConn = conn;
 
-    auto work = [repo = repo_, weakConn, page, pageSize]()
+    auto work = [repo = repo_, weakConn, page, pageSize, level, search]()
     {
         try
         {
             // 执行查询 (耗时操作)
-            HistoryPage result = repo->getHistoricalLogs(page, pageSize);
+            HistoryPage result = repo->getHistoricalLogs(page, pageSize, level, search);
             
             // 序列化 JSON
             nlohmann::json j = result;
