@@ -9,6 +9,7 @@
            <el-option label="Error" value="Error" />
            <el-option label="Warning" value="Warning" />
            <el-option label="Info" value="Info" />
+           <el-option label="Safe" value="Safe" />
          </el-select>
        </div>
  
@@ -20,11 +21,12 @@
              size="small"
              clearable
              :prefix-icon="Search"
+             @keydown.enter="handleSearch"
           />
        </div>
  
-       <el-button type="primary" :icon="Refresh" size="small" @click="refreshLogs" :loading="loading">
-          {{ $t('history.refresh') }}
+       <el-button type="primary" :icon="Search" size="small" @click="handleSearch" :loading="loading">
+          {{ $t('history.search') }}
        </el-button>
      </div>
  
@@ -94,7 +96,7 @@
  
  <script setup lang="ts">
  import { ref, computed, onMounted, watch } from 'vue'
- import { Search, Refresh } from '@element-plus/icons-vue'
+ import { Search } from '@element-plus/icons-vue'
  import { useSystemStore, type LogEntry } from '../stores/system'
  import dayjs from 'dayjs'
  
@@ -117,6 +119,11 @@
  
  // Direct binding to table, as filtering is now server-side
  const filteredLogs = computed(() => historyLogs.value)
+
+ function handleSearch() {
+    currentPage.value = 1
+    refreshLogs()
+ }
  
  async function refreshLogs() {
     loading.value = true
@@ -226,10 +233,10 @@
  }
 
  // Watchers for filter interactivity
- watch([filterLevel, searchQuery], () => {
-    currentPage.value = 1
-    refreshLogs()
- })
+ // watch([filterLevel, searchQuery], () => {
+ //    currentPage.value = 1
+ //    refreshLogs()
+ // })
  
  onMounted(() => {
     refreshLogs()
