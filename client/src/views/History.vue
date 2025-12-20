@@ -95,7 +95,7 @@
  </template>
  
  <script setup lang="ts">
- import { ref, computed, onMounted, watch } from 'vue'
+ import { ref, computed, onMounted } from 'vue'
  import { Search } from '@element-plus/icons-vue'
  import { useSystemStore, type LogEntry } from '../stores/system'
  import dayjs from 'dayjs'
