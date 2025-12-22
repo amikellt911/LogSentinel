@@ -1,14 +1,17 @@
 # ai/proxy/schemas.py
 from pydantic import BaseModel, Field
-from typing import List
-from typing import Any,Dict
+from typing import List, Optional, Any, Dict
 from enum import Enum
+
 class BatchLogItem(BaseModel):
-    id: str = Field(..., description="Unique trace ID from C++ backend")
-    text: str = Field(..., description="Raw log content")
+    id: str = Field(..., description="来自 C++ 后端的唯一 Trace ID")
+    text: str = Field(..., description="原始日志内容")
 
 class BatchRequestSchema(BaseModel):
     batch: List[BatchLogItem]
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    prompt: Optional[str] = None
 
 class ChatRequest(BaseModel):
     history: List[Dict[str, Any]]
@@ -19,17 +22,25 @@ class RiskLevel(str, Enum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
-    INFO = "info" # 建议加上 info，对应 C++ 里的未知情况
+    INFO = "info" # 对应 C++ 里的 INFO
     UNKNOWN = "unknown"
+    CRITICAL = "critical" # 处理旧版/映射后的等级
+    ERROR = "error"
+    WARNING = "warning"
+    SAFE = "safe"
+
 # 定义结构化输出的 Schema
 class LogAnalysisResult(BaseModel):
-    summary: str = Field(description="A concise summary of the log error.")
-    risk_level: RiskLevel = Field(description="The risk level of the error. Must be one of: 'high', 'medium', 'low','info','unknown'.")
-    root_cause: str = Field(description="The root cause of the error.")
-    solution: str = Field(description="Suggested solution or fix.")
+    summary: str = Field(description="日志错误或问题的简要总结。")
+    risk_level: str = Field(description="错误的风险等级。")
+    root_cause: str = Field(description="错误的根本原因。")
+    solution: str = Field(description="建议的解决方案或修复措施。")
 
 class SummarizeRequest(BaseModel):
     results: List[LogAnalysisResult]
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    prompt: Optional[str] = None
     
 class BatchAnalysisResponse(BaseModel):
     results: List[Dict[str, Any]]
@@ -43,6 +54,7 @@ class BatchResponseSchema(BaseModel):
 
 class SummaryResponse(BaseModel):
     summary: str
+
 BATCH_PROMPT_TEMPLATE = """You are a professional log analysis expert.
 
 Your task is to analyze the log entries provided below.
@@ -50,7 +62,7 @@ Analyze each log entry INDEPENDENTLY. Do not assume any correlation between thes
 
 For EACH log entry, you must provide:
 1. A concise summary.
-2. Risk assessment ('high', 'medium', 'low', 'info','unknown').
+2. Risk assessment ('critical', 'error', 'warning', 'info', 'safe', 'unknown').
 3. The root cause based strictly on that specific log's content.
 4. An actionable solution.
 

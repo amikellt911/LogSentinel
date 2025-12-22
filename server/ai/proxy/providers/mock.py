@@ -1,28 +1,29 @@
 # ai/proxy/providers/mock.py
 
 from .base import AIProvider
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import json
 import time
 import random
 
 class MockProvider(AIProvider):
     """
-    用于测试和开发的 Mock Provider。
+    用于测试和开发的 Mock 提供商。
     它不调用任何外部 API，而是返回预定义的结构化数据。
     可以通过 delay 参数模拟耗时，用于测试系统的背压机制。
     """
 
     def __init__(self, api_key: str = "mock-key", delay: float = 0.5):
         """
-        初始化 Mock Provider。
+        初始化 Mock 提供商。
         :param delay: 模拟分析的耗时（秒）。
                       设置为 0.5s 或 1s 可以让 Worker 线程处理变慢，
                       从而在压测时更容易触发 503 背压。
         """
         self.delay = delay
+        self.default_api_key = api_key
 
-    def analyze(self, log_text: str, prompt: str) -> str:
+    def analyze(self, log_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
         """
         模拟单次分析。
         """
@@ -34,15 +35,21 @@ class MockProvider(AIProvider):
         # 2. 根据日志内容简单的伪造逻辑，方便前端展示效果
         log_lower = log_text.lower()
         
-        risk = "low"
+        risk = "safe" # 默认为 safe
         summary = "Routine log entry detected."
         
         if "critical" in log_lower or "fatal" in log_lower:
-            risk = "high"
+            risk = "critical"
             summary = "Critical failure detected in system components."
         elif "error" in log_lower or "fail" in log_lower or "exception" in log_lower:
-            risk = "medium"
+            risk = "error"
             summary = "Standard error detected during operation."
+        elif "warn" in log_lower:
+            risk = "warning"
+            summary = "Warning detected."
+        elif "info" in log_lower:
+            risk = "info"
+            summary = "Info log detected."
 
         # 3. 构造符合 JSON Schema 的返回结果
         # 必须严格匹配 C++ 端要求的字段: summary, risk_level, root_cause, solution
@@ -62,7 +69,7 @@ class MockProvider(AIProvider):
         time.sleep(self.delay) # 同样模拟延迟
         return f"[Mock AI]: I received your message: '{new_message}'. This is a simulated response."
     
-    def analyze_batch(self, batch_logs: List[Dict[str, str]], prompt: str) -> List[Dict[str, Any]]:
+    def analyze_batch(self, batch_logs: List[Dict[str, str]], prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         模拟批量分析，接收 prompt 参数。
         """
@@ -76,11 +83,15 @@ class MockProvider(AIProvider):
             
             # 这里虽然是 Mock，但我们假装“收到”了 prompt
             # 实际逻辑还是简单的关键词匹配
-            risk = "low"
+            risk = "safe"
             if "error" in log_text.lower():
-                risk = "medium"
+                risk = "error"
             if "critical" in log_text.lower():
-                risk = "high"
+                risk = "critical"
+            if "warn" in log_text.lower():
+                risk = "warning"
+            if "info" in log_text.lower():
+                risk = "info"
 
             # 构造单条结果
             analysis_result = {
@@ -97,16 +108,16 @@ class MockProvider(AIProvider):
             
         return results
     
-    def summarize(self, summary_logs: List[Dict[str, Any]], prompt: str) -> str:
+    def summarize(self, summary_logs: List[Dict[str, Any]], prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
         """
         Mock Reduce 阶段。
         """
         time.sleep(self.delay) # 模拟思考时间
 
         count = len(summary_logs)
-        high_risk_count = sum(1 for log in summary_logs if log.get('risk_level') == 'high')
+        high_risk_count = sum(1 for log in summary_logs if log.get('risk_level') == 'high' or log.get('risk_level') == 'critical')
             
         if high_risk_count > 0:
-            return f"[Mock Summary] Critical Alert: Detected {high_risk_count} high-risk events among {count} logs. System stability at risk."
+            return f"[Mock Summary] Critical Alert: Detected {high_risk_count} critical events among {count} logs. System stability at risk."
         else:
             return f"[Mock Summary] System Healthy: Processed {count} logs, no critical anomalies detected."
