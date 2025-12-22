@@ -217,10 +217,8 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
         int processing_time_ms = 0;
 
         if (!batch.empty()) {
+            // 因为 RingBuffer 是 FIFO 的，所以 batch[0] 必然是最早进入的那个任务
             auto min_start_time = batch[0].start_time;
-            for(const auto& t : batch) {
-                if (t.start_time < min_start_time) min_start_time = t.start_time;
-            }
             processing_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(batch_end_time - min_start_time).count();
         }
 
