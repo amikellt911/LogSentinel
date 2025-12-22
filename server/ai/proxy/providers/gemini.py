@@ -1,7 +1,7 @@
 from .base import AIProvider
 from typing import List, Dict, Any, Optional
 from google import genai
-from ..schemas import LogAnalysisResult,BatchResponseSchema,SummaryResponse
+from ..schemas import LogAnalysisResult,BatchResponseSchema,SummaryResponse, BatchAnalysisOutput
 import json
 import os
 
@@ -134,7 +134,8 @@ class GeminiProvider(AIProvider):
     
     def summarize(self, summary_logs: List[Dict[str, Any]], prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
         """
-        Reduce 阶段：汇总分析
+        Reduce 阶段：汇总分析。
+        强制返回 BatchAnalysisOutput (JSON)。
         """
         client, target_model = self._get_client_and_model(api_key, model)
 
@@ -159,11 +160,17 @@ class GeminiProvider(AIProvider):
                 contents=full_prompt,
                 config={
                     "response_mime_type": "application/json",
-                    "response_schema": SummaryResponse
+                    "response_schema": BatchAnalysisOutput
                 }
             )
-            resp_data = json.loads(response.text)
-            return resp_data.get("summary", "No summary generated.")
+            # 这里的 response.text 是一个符合 BatchAnalysisOutput 的 JSON 字符串
+            # 直接返回给 C++，让 C++ 去解析
+            return response.text
         except Exception as e:
             print(f"Gemini Summarize Error: {e}")
-            return f"Error generating summary: {str(e)}"
+            # 返回一个符合 JSON 结构的错误信息
+            return json.dumps({
+                "global_summary": f"Error generating summary: {str(e)}",
+                "global_risk_level": "unknown",
+                "key_patterns": []
+            }, ensure_ascii=False)

@@ -13,17 +13,14 @@
 class LogBatcherTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // 0. 确保目录存在
-        if (!std::filesystem::exists("../persistence/data")) {
-            std::filesystem::create_directories("../persistence/data");
-        }
-
-        // 1. 准备 DB (每次测试用独立的 DB 文件，防止干扰)
-        test_db_path = "test_batcher_" + std::to_string(std::time(nullptr)) + ".db";
+        // 使用内存数据库避免文件系统权限问题
+        test_db_path = ":memory:";
         repo = std::make_shared<SqliteLogRepository>(test_db_path);
 
-        // 1.5 准备 Config Repo (复用 DB 路径)
-        config_repo = std::make_shared<SqliteConfigRepository>(test_db_path);
+        // 1.5 准备 Config Repo (复用 DB 路径 - 但对于 :memory: 每个连接是独立的，这里可能需要注意)
+        // 注意：SqliteConfigRepository 如果也用 :memory:，它和 SqliteLogRepository 看到的是不同的 DB
+        // 但在这个测试里，Batcher 只读 ConfigRepo，只要 ConfigRepo 能初始化成功就行
+        config_repo = std::make_shared<SqliteConfigRepository>(":memory:");
 
         // 2. 准备 Mock 组件
         ai = std::make_shared<MockAI>();
@@ -38,19 +35,7 @@ protected:
     }
 
     void TearDown() override {
-        // 清理 DB 文件
-        std::string path_prefix = "../persistence/data/";
-        std::string full_path = path_prefix + test_db_path;
-
-        if (std::filesystem::exists(full_path)) {
-            std::filesystem::remove(full_path);
-        }
-        if (std::filesystem::exists(full_path + "-shm")) {
-            std::filesystem::remove(full_path + "-shm");
-        }
-        if (std::filesystem::exists(full_path + "-wal")) {
-            std::filesystem::remove(full_path + "-wal");
-        }
+        // 内存数据库无需清理
     }
 
     // 辅助函数：等待异步操作完成

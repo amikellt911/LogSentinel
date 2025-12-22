@@ -196,8 +196,14 @@ struct DashboardStats{
     int safe_risk=0;
     int unknown_risk=0;
     double avg_response_time=0.0;
+
+    // --- 新增：瞬态指标 (Transient Metrics) ---
+    // 不需要序列化到数据库，但需要序列化成 JSON 给前端
+    double current_qps = 0.0;
+    double backpressure = 0.0;
+
     std::vector<AlertInfo> recent_alerts;
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, critical_risk, error_risk, warning_risk, info_risk, safe_risk, unknown_risk, avg_response_time, recent_alerts);
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, critical_risk, error_risk, warning_risk, info_risk, safe_risk, unknown_risk, avg_response_time, current_qps, backpressure, recent_alerts);
 };
 struct AnalysisResultItem{
     std::string trace_id;

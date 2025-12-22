@@ -53,6 +53,11 @@ class BatchResponseSchema(BaseModel):
 class SummaryResponse(BaseModel):
     summary: str
 
+class BatchAnalysisOutput(BaseModel):
+    global_summary: str = Field(description="批次日志的宏观总结，概括主要问题。")
+    global_risk_level: RiskLevel = Field(description="基于整批日志判断的全局风险等级。")
+    key_patterns: List[str] = Field(description="识别出的关键模式或标签，例如 ['#DatabaseConnection', '#Timeout']。")
+
 BATCH_PROMPT_TEMPLATE = """You are a professional log analysis expert.
 
 Your task is to analyze the log entries provided below.
