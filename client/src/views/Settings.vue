@@ -490,13 +490,21 @@
     
     // 2. Set as Active (Mutex logic per phase)
     // Only set activePromptId if the ID is a valid number (persisted prompt)
-    if (typeof id === 'number') {
+    // Also handle numeric strings (some backends might serialize IDs as strings)
+    // Ignore temp IDs (starting with 'p')
+    const isTempId = typeof id === 'string' && id.startsWith('p')
+
+    if (!isTempId) {
         const prompt = systemStore.settings.ai.prompts.find(p => p.id === id)
         if (prompt) {
-            if (prompt.type === 'map') {
-                systemStore.settings.ai.activeMapPromptId = id
-            } else {
-                systemStore.settings.ai.activeReducePromptId = id
+            // Ensure we store as number if possible, assuming backend expects numbers for saved IDs
+            const numericId = Number(id)
+            if (!isNaN(numericId)) {
+                if (prompt.type === 'map') {
+                    systemStore.settings.ai.activeMapPromptId = numericId
+                } else {
+                    systemStore.settings.ai.activeReducePromptId = numericId
+                }
             }
         }
     }
