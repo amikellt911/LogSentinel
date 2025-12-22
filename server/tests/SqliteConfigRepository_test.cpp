@@ -11,6 +11,10 @@ protected:
     void SetUp() override {
         // 在每个测试前确保环境干净
         cleanup();
+        // 创建测试所需的目录结构，防止相对路径问题
+        if (!std::filesystem::exists("../persistence/data")) {
+            std::filesystem::create_directories("../persistence/data");
+        }
     }
 
     void TearDown() override {
@@ -19,15 +23,17 @@ protected:
     }
 
     void cleanup() {
-        if (std::filesystem::exists(TEST_DB_PATH)) {
-            std::filesystem::remove(TEST_DB_PATH);
+        std::string path_prefix = "../persistence/data/";
+        std::string full_path = path_prefix + TEST_DB_PATH;
+
+        if (std::filesystem::exists(full_path)) {
+            std::filesystem::remove(full_path);
         }
-        // 如果存在 wal/shm 文件也一并删除
-        if (std::filesystem::exists(TEST_DB_PATH + "-wal")) {
-            std::filesystem::remove(TEST_DB_PATH + "-wal");
+        if (std::filesystem::exists(full_path + "-wal")) {
+            std::filesystem::remove(full_path + "-wal");
         }
-        if (std::filesystem::exists(TEST_DB_PATH + "-shm")) {
-            std::filesystem::remove(TEST_DB_PATH + "-shm");
+        if (std::filesystem::exists(full_path + "-shm")) {
+            std::filesystem::remove(full_path + "-shm");
         }
     }
 };
@@ -79,13 +85,14 @@ TEST_F(SqliteConfigRepositoryTest, UpdatePrompts) {
 
         std::vector<PromptConfig> new_prompts;
         // ID 0 表示新插入
-        new_prompts.emplace_back(0, "test_prompt", "You are a test bot", true);
+        new_prompts.emplace_back(0, "test_prompt", "You are a test bot", true, "map");
 
         repo.handleUpdatePrompt(new_prompts);
 
         auto prompts = repo.getAllPrompts();
         ASSERT_EQ(prompts.size(), 1);
         EXPECT_EQ(prompts[0].name, "test_prompt");
+        EXPECT_EQ(prompts[0].type, "map");
         EXPECT_GT(prompts[0].id, 0); // 应该分配了 ID
     }
 
@@ -98,7 +105,7 @@ TEST_F(SqliteConfigRepositoryTest, UpdatePrompts) {
         // 修改现有项
         prompts[0].content = "Modified content";
         // 添加另一项
-        prompts.emplace_back(0, "second_prompt", "Another prompt", false);
+        prompts.emplace_back(0, "second_prompt", "Another prompt", false, "reduce");
 
         repo.handleUpdatePrompt(prompts);
 
@@ -112,10 +119,14 @@ TEST_F(SqliteConfigRepositoryTest, UpdatePrompts) {
         for(const auto& p : updated_prompts) {
             if(p.name == "test_prompt") {
                 EXPECT_EQ(p.content, "Modified content");
+                EXPECT_EQ(p.type, "map");
                 found_mod = true;
             }
             if(p.name == "second_prompt") {
                 EXPECT_FALSE(p.is_active);
+                EXPECT_EQ(p.type, "reduce");
+                // Reduce ID 应该很大 (带偏移)
+                EXPECT_GT(p.id, 10000);
                 found_new = true;
             }
         }

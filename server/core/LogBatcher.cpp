@@ -64,7 +64,7 @@ void LogBatcher::tryDispatchLocked(size_t limit)
     }
     count_ -= limit;
 
-    // Capture configuration snapshot at aggregation moment
+    // 在聚合批次时刻捕获配置快照
     auto config = config_repo_->getSnapshot();
 
     thread_pool_->submit([this, batch = std::move(batch), config]() mutable
@@ -77,11 +77,11 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
         return;
     try
     {
-        // 1. Prepare data
+        // 1. 准备数据
         std::vector<std::pair<std::string, std::string>> logs;
         logs.reserve(batch.size());
 
-        // Use configuration from snapshot
+        // 使用快照中的配置
         std::string ai_api_key = config->app_config.ai_api_key;
         std::string ai_model = config->app_config.ai_model;
         std::string map_prompt = config->active_map_prompt;
@@ -97,10 +97,10 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
             logs.emplace_back(task.trace_id, task.raw_request_body);
         }
 
-        // 2. Save Raw Logs (IO)
+        // 2. 保存原始日志 (IO)
         repo_->saveRawLogBatch(logs);
 
-        // 3. AI Map Analysis (Network)
+        // 3. AI Map 阶段分析 (网络)
         std::unordered_map<std::string, LogAnalysisResult> mp;
         try
         {
@@ -111,7 +111,7 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
             std::cerr << "[Batcher] AI Analyze Failed: " << e.what() << std::endl;
         }
 
-        // 4. Assemble Results
+        // 4. 组装结果
         auto end_time = std::chrono::steady_clock::now();
         std::vector<AnalysisResultItem> items;
         std::vector<LogAnalysisResult> results_for_summary;
@@ -137,7 +137,7 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
             }
         }
 
-        // 5. AI Reduce Summary (Network)
+        // 5. AI Reduce 阶段摘要 (网络)
         std::string global_summary = "No summary available.";
         if (!results_for_summary.empty())
         {
@@ -151,10 +151,10 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
             }
         }
 
-        // 6. Save Results (IO)
+        // 6. 保存结果 (IO)
         repo_->saveAnalysisResultBatch(items, global_summary);
 
-        // 7. Notify (Network)
+        // 7. 发送通知 (网络)
         notifier_->notifyReport(global_summary, items);
     }
     catch (const std::exception &e)

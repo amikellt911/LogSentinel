@@ -7,50 +7,47 @@
 
 struct SystemConfig {
     const AppConfig app_config;
-    const std::vector<PromptConfig> prompts;
+    // 分离 Map 和 Reduce 的 Prompt 列表
+    const std::vector<PromptConfig> map_prompts;
+    const std::vector<PromptConfig> reduce_prompts;
     const std::vector<AlertChannel> channels;
 
-    // Pre-calculated active prompts for O(1) access
+    // 预计算的 Active Prompt，实现 O(1) 访问
     const std::string active_map_prompt;
     const std::string active_reduce_prompt;
 
     SystemConfig(AppConfig app,
-                 std::vector<PromptConfig> p,
+                 std::vector<PromptConfig> map_p,
+                 std::vector<PromptConfig> reduce_p,
                  std::vector<AlertChannel> c)
         : app_config(std::move(app)),
-          prompts(std::move(p)),
+          map_prompts(std::move(map_p)),
+          reduce_prompts(std::move(reduce_p)),
           channels(std::move(c)),
-          active_map_prompt(resolvePrompt(prompts, app_config.active_map_prompt_id, "map")),
-          active_reduce_prompt(resolvePrompt(prompts, app_config.active_reduce_prompt_id, "reduce"))
+          active_map_prompt(resolvePrompt(map_prompts, app_config.active_map_prompt_id)),
+          active_reduce_prompt(resolvePrompt(reduce_prompts, app_config.active_reduce_prompt_id))
           {}
 
     SystemConfig& operator=(const SystemConfig&) = delete;
 
 private:
-    static std::string resolvePrompt(const std::vector<PromptConfig>& prompts, int target_id, const std::string& type) {
-        // 1. Try to find by ID and Type
-        auto it = std::find_if(prompts.begin(), prompts.end(), [&](const PromptConfig& p) {
-            // Check ID
-            if (p.id != target_id) return false;
-            // Check Type (allow empty type to match 'map' for backward compat)
-            if (p.type == type) return true;
-            if (type == "map" && p.type.empty()) return true;
-            return false;
+    // 解析 Prompt 内容
+    static std::string resolvePrompt(const std::vector<PromptConfig>& prompt_list, int target_id) {
+        // 1. 尝试通过 ID 查找
+        auto it = std::find_if(prompt_list.begin(), prompt_list.end(), [&](const PromptConfig& p) {
+            return p.id == target_id;
         });
 
-        if (it != prompts.end()) {
+        if (it != prompt_list.end()) {
             return it->content;
         }
 
-        // 2. Fallback: Find first active prompt of that type
-        auto it_fallback = std::find_if(prompts.begin(), prompts.end(), [&](const PromptConfig& p) {
-            if (!p.is_active) return false;
-            if (p.type == type) return true;
-            if (type == "map" && p.type.empty()) return true;
-            return false;
+        // 2. 回退策略：查找第一个 Active 的 Prompt
+        auto it_fallback = std::find_if(prompt_list.begin(), prompt_list.end(), [&](const PromptConfig& p) {
+            return p.is_active;
         });
 
-        if (it_fallback != prompts.end()) {
+        if (it_fallback != prompt_list.end()) {
             return it_fallback->content;
         }
 
