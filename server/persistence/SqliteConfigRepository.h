@@ -3,47 +3,51 @@
 #include<string>
 #include<vector>
 #include<mutex>
-#include <shared_mutex>
-#include <persistence/ConfigTypes.h>
+#include <memory>
+#include "persistence/SystemConfig.h"
+#include "persistence/PromptIdHelper.h"
+
 class SqliteConfigRepository
 {
 private:
+    // 内部加载函数
     AppConfig getAppConfigInternal();
-    std::vector<PromptConfig> getAllPromptsInternal();
+    // 分别获取 Map 和 Reduce 的 Prompt
+    std::pair<std::vector<PromptConfig>, std::vector<PromptConfig>> getAllPromptsInternal();
     std::vector<AlertChannel> getAllChannelsInternal();
+    // 从数据库重新加载全部配置并生成新的快照
     void loadFromDbInternal();
-private:
-    // 缓存对象
-    AppConfig cached_app_config_;
-    std::vector<PromptConfig> cached_prompts_;
-    std::vector<AlertChannel> cached_channels_;
-    
-    // 读写锁 (比互斥锁更适合读多写少场景)
-    // 允许多个 AI 线程同时读，但写的时候互斥
-    mutable std::shared_mutex config_mutex_; 
-    
-    // 标记缓存是否已初始化
-    bool is_initialized_ = false;
 
-    //-------------------------
+private:
+    // --- 快照状态 ---
+    SystemConfigPtr current_snapshot_;
+    mutable std::mutex snapshot_mutex_; // 保护 current_snapshot_ 的交换
+
+    // --- 数据库状态 ---
     sqlite3* db_=nullptr;
-    std::mutex mutex_;
+    std::mutex db_write_mutex_; // 保护数据库写操作（事务）
+
 public:
     SqliteConfigRepository(const std::string & db_path);
     ~SqliteConfigRepository();
 
+    // 核心 API: 获取不可变快照
+    SystemConfigPtr getSnapshot();
 
+    // 兼容 API (委托给快照)
     AppConfig getAppConfig();
+    // 返回合并后的 Prompt 列表（Reduce ID 带偏移）
     std::vector<PromptConfig> getAllPrompts();
     std::vector<AlertChannel> getAllChannels();
     AllSettings getAllSettings();
+
+    // 写操作
     void handleUpdateAppConfig(const std::map<std::string,std::string>& mp);
     void handleUpdatePrompt(const std::vector<PromptConfig>& prompts_input);
     void handleUpdateChannel(const std::vector<AlertChannel>& channels_input);
-    //过时弃用的api
-    //////////////////////////////////////////////////
+
+    // 已弃用 API
     std::vector<std::string> getActiveWebhookUrls();
     void addWebhookUrl(const std::string& url) ;
     void deleteWebhookUrl(const std::string& url) ;
 };
-

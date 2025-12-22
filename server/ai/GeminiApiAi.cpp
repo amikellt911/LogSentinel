@@ -128,7 +128,12 @@ std::string GeminiApiAi::chat(const std::string& history_json, const std::string
     // .get<std::string>() 会自动处理类型转换，如果不是 string 会抛出 type_error，这也符合我们的异常预期
     return response_json["response"].get<std::string>();
 }
-std::unordered_map<std::string, LogAnalysisResult> GeminiApiAi::analyzeBatch(const std::vector<std::pair<std::string, std::string>> &logs)
+std::unordered_map<std::string, LogAnalysisResult> GeminiApiAi::analyzeBatch(
+    const std::vector<std::pair<std::string, std::string>> &logs,
+    const std::string& api_key,
+    const std::string& model,
+    const std::string& prompt
+)
 {
     cpr::Session session_;
     session_.SetHeader(cpr::Header{{"Content-Type", "application/json"}});
@@ -144,6 +149,12 @@ std::unordered_map<std::string, LogAnalysisResult> GeminiApiAi::analyzeBatch(con
         batch_array.push_back(std::move(item)); // 这里 move 是对的，因为 item 是局部变量
     }
     request_json["batch"] = batch_array;
+
+    // Inject AI Config
+    request_json["api_key"] = api_key;
+    request_json["model"] = model;
+    request_json["prompt"] = prompt;
+
     session_.SetBody(request_json.dump());
     auto r = session_.Post();
     if (r.status_code != 200)
@@ -191,7 +202,12 @@ std::unordered_map<std::string, LogAnalysisResult> GeminiApiAi::analyzeBatch(con
     return resultMap;
 }
 
-std::string GeminiApiAi::summarize(const std::vector<LogAnalysisResult> &results)
+std::string GeminiApiAi::summarize(
+    const std::vector<LogAnalysisResult> &results,
+    const std::string& api_key,
+    const std::string& model,
+    const std::string& prompt
+)
 {
     cpr::Session session_;
     // 【修正1】类型要是 json，Python 那边才好自动解析
@@ -209,6 +225,12 @@ std::string GeminiApiAi::summarize(const std::vector<LogAnalysisResult> &results
     }
 
     request_json["results"] = batch_array;
+
+    // Inject AI Config
+    request_json["api_key"] = api_key;
+    request_json["model"] = model;
+    request_json["prompt"] = prompt;
+
     session_.SetBody(request_json.dump());
 
     auto r = session_.Post();

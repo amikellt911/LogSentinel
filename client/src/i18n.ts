@@ -141,7 +141,9 @@ const messages = {
           promptList: 'Prompts',
           newPrompt: 'New Prompt',
           promptName: 'Prompt Name',
-          templateContent: 'Template Content'
+          templateContent: 'Template Content',
+          mapPhase: 'Map Phase',
+          reducePhase: 'Reduce Phase'
       },
       integration: {
         threshold: 'Alert Threshold',
@@ -314,7 +316,9 @@ const messages = {
         promptList: '提示词列表',
         newPrompt: '新建提示词',
         promptName: '提示词名称',
-        templateContent: '模板内容'
+        templateContent: '模板内容',
+        mapPhase: 'Map 阶段',
+        reducePhase: 'Reduce 阶段'
       },
       integration: {
         threshold: '报警阈值',
