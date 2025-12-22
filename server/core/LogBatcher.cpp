@@ -40,6 +40,14 @@ bool LogBatcher::push(AnalysisTask &&task)
     return true;
 }
 
+// [设计决策] 采用“定期巡检”而非“推迟重置”
+// 1. 避免系统调用风暴：高并发下频繁 reset 会导致大量 timerfd_settime 系统调用
+//    和用户态/内核态切换，这是严重的性能杀手。
+// 2. 负载无关性：runEvery 的开销是固定的（每秒 n 次），不会随 QPS 线性增长，
+//    配合 Mutex 的双重检查机制，是目前最稳健的工业级实践。
+// 每次只定时，不reset，是因为频繁定时器重置，会频繁系统调用和用户系统态切换，耗时大
+// 主要是高负载情况下，可能10ms就满了，到batch_size_了，结果频繁重置定时器，就会导致开销大
+// 短负载也有mutex，所以可行，是最靠谱的工业实践
 void LogBatcher::onTimeout()
 {
     std::lock_guard<std::mutex> lock(mutex_);

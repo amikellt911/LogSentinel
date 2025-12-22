@@ -5,9 +5,7 @@
 #include<mutex>
 #include <memory>
 #include "persistence/SystemConfig.h"
-
-// Reduce ID 的偏移量，用于在 API 层区分 Map 和 Reduce 的 Prompt ID
-constexpr int REDUCE_ID_OFFSET = 100000000;
+#include "persistence/PromptIdHelper.h"
 
 class SqliteConfigRepository
 {

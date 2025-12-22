@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <iostream>
 #include "persistence/SqliteHelper.h"
+#include "persistence/PromptIdHelper.h"
 
 using namespace persistence;
 
@@ -178,7 +179,7 @@ AppConfig SqliteConfigRepository::getAppConfig()
     // 需要对 API 返回的 Config 做调整：Reduce ID 加上偏移量
     AppConfig cfg = getSnapshot()->app_config;
     if (cfg.active_reduce_prompt_id > 0) {
-        cfg.active_reduce_prompt_id += REDUCE_ID_OFFSET;
+        cfg.active_reduce_prompt_id = PromptIdHelper::toExternalId(cfg.active_reduce_prompt_id, "reduce");
     }
     return cfg;
 }
@@ -198,7 +199,7 @@ std::vector<PromptConfig> SqliteConfigRepository::getAllPrompts()
 
     for (const auto& p : snap->reduce_prompts) {
         PromptConfig cp = p;
-        cp.id += REDUCE_ID_OFFSET; // 加上偏移量
+        cp.id = PromptIdHelper::toExternalId(cp.id, "reduce"); // 加上偏移量
         cp.type = "reduce"; // 显式标记
         merged.push_back(cp);
     }
@@ -252,10 +253,8 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
             if (key == "active_reduce_prompt_id") {
                 try {
                     int id_val = std::stoi(val);
-                    if (id_val >= REDUCE_ID_OFFSET) {
-                        id_val -= REDUCE_ID_OFFSET;
-                        effective_val = std::to_string(id_val);
-                    }
+                    auto [internal_id, type] = PromptIdHelper::parseExternalId(id_val);
+                    effective_val = std::to_string(internal_id);
                 } catch (...) {
                     // ignore parse error, let ApplyConfigValue handle or fail
                 }
@@ -312,9 +311,8 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
         if (item.type == "reduce") {
             PromptConfig p = item;
             // 如果是更新，减去偏移量还原 ID
-            if (p.id >= REDUCE_ID_OFFSET) {
-                p.id -= REDUCE_ID_OFFSET;
-            }
+            auto [internal_id, type] = PromptIdHelper::parseExternalId(p.id);
+            p.id = internal_id;
             new_reduce_prompts.push_back(p);
         } else {
             // map or default
