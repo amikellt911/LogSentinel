@@ -142,15 +142,34 @@
                <div class="flex-1 flex flex-col md:flex-row border-t border-gray-700 min-h-0">
                   <!-- Left: Prompt List -->
                   <div class="w-full md:w-[25%] border-r border-gray-700 flex flex-col bg-[#1a1a1a]">
-                     <div class="p-4 border-b border-gray-700 flex justify-between items-center bg-[#252525]">
-                        <span class="text-sm font-bold text-gray-400 uppercase">{{ $t('settings.ai.promptList') }}</span>
-                        <el-button type="primary" size="small" circle @click="addNewPrompt">
-                          <el-icon><Plus /></el-icon>
-                        </el-button>
+                     <div class="p-4 border-b border-gray-700 flex flex-col gap-4 bg-[#252525]">
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm font-bold text-gray-400 uppercase">{{ $t('settings.ai.promptList') }}</span>
+                            <el-button type="primary" size="small" circle @click="addNewPrompt">
+                              <el-icon><Plus /></el-icon>
+                            </el-button>
+                        </div>
+                        <!-- Phase Tabs -->
+                        <div class="flex bg-gray-900 rounded p-1">
+                           <button
+                             class="flex-1 text-xs py-1.5 rounded transition-colors"
+                             :class="activePromptTab === 'map' ? 'bg-primary text-white font-bold' : 'text-gray-400 hover:text-gray-200'"
+                             @click="activePromptTab = 'map'"
+                           >
+                             {{ $t('settings.ai.mapPhase') }}
+                           </button>
+                           <button
+                             class="flex-1 text-xs py-1.5 rounded transition-colors"
+                             :class="activePromptTab === 'reduce' ? 'bg-primary text-white font-bold' : 'text-gray-400 hover:text-gray-200'"
+                             @click="activePromptTab = 'reduce'"
+                           >
+                             {{ $t('settings.ai.reducePhase') }}
+                           </button>
+                        </div>
                      </div>
                      <div class="flex-1 overflow-y-auto custom-scrollbar">
                         <div 
-                           v-for="(prompt, index) in systemStore.settings.ai.prompts" 
+                           v-for="prompt in filteredPrompts"
                            :key="prompt.id"
                            class="p-4 cursor-pointer hover:bg-gray-800 transition-colors border-b border-gray-800 relative group flex items-center"
                            :class="{'bg-gray-800 border-l-2 border-l-primary': selectedPromptId === prompt.id}"
@@ -158,7 +177,7 @@
                         >
                            <!-- Status Dot -->
                            <div class="mr-3 flex items-center justify-center">
-                              <div v-if="prompt.is_active" class="w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+                              <div v-if="isPromptActive(prompt)" class="w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
                               <div v-else class="w-2.5 h-2.5 rounded-full border border-gray-500"></div>
                            </div>
 
@@ -167,9 +186,9 @@
                            <!-- Delete Button -->
                            <div 
                              class="opacity-0 group-hover:opacity-100 transition-opacity ml-auto"
-                             v-if="systemStore.settings.ai.prompts.length > 1"
+                             v-if="filteredPrompts.length > 1"
                            >
-                              <el-button type="danger" link size="small" @click.stop="deletePrompt(index)">
+                              <el-button type="danger" link size="small" @click.stop="deletePrompt(prompt.id)">
                                 <el-icon><Delete /></el-icon>
                               </el-button>
                            </div>
@@ -383,8 +402,8 @@
  </template>
  
  <script setup lang="ts">
- import { ref, computed, onMounted } from 'vue'
- import { useSystemStore, type WebhookConfig } from '../stores/system'
+ import { ref, computed, onMounted, watch } from 'vue'
+ import { useSystemStore, type WebhookConfig, type PromptConfig } from '../stores/system'
  import { Cpu, Share, Operation, Check, Plus, Delete, Promotion, Setting } from '@element-plus/icons-vue'
  import { ElMessage } from 'element-plus'
  import { useI18n } from 'vue-i18n'
@@ -399,11 +418,25 @@
  
  // --- AI Pipeline Logic ---
  const selectedPromptId = ref<string | number | undefined>(undefined)
+ const activePromptTab = ref<'map' | 'reduce'>('map')
+
+ const filteredPrompts = computed(() => {
+    return systemStore.settings.ai.prompts.filter(p => p.type === activePromptTab.value)
+ })
  
+ // Watch tab change to re-select
+ watch(activePromptTab, () => {
+     if (filteredPrompts.value.length > 0) {
+         selectedPromptId.value = filteredPrompts.value[0].id
+     } else {
+         selectedPromptId.value = undefined
+     }
+ })
+
  // Initialize selection once prompts are loaded
  const selectedPrompt = computed(() => {
-    if (!selectedPromptId.value && systemStore.settings.ai.prompts.length > 0) {
-       selectedPromptId.value = systemStore.settings.ai.prompts[0].id
+    if (!selectedPromptId.value && filteredPrompts.value.length > 0) {
+       selectedPromptId.value = filteredPrompts.value[0].id
     }
     return systemStore.settings.ai.prompts.find(p => p.id === selectedPromptId.value)
  })
@@ -414,30 +447,40 @@
        id: newId,
        name: 'New Prompt',
        content: '',
-       is_active: 0
+       is_active: 0,
+       type: activePromptTab.value
     })
     selectedPromptId.value = newId
  }
 
- function deletePrompt(index: number) {
-    const deletedId = systemStore.settings.ai.prompts[index].id
-    
+ function deletePrompt(id: number | string) {
+    const index = systemStore.settings.ai.prompts.findIndex(p => p.id === id)
+    if (index === -1) return
+
+    const deletedType = systemStore.settings.ai.prompts[index].type
     systemStore.settings.ai.prompts.splice(index, 1)
     
-    // If active prompt was deleted (checked by ID), make the first one active if exists
-    // Note: Use weak comparison (==) to handle string/number mismatch
-    if (systemStore.settings.ai.activePromptId == deletedId && systemStore.settings.ai.prompts.length > 0) {
-        const nextPrompt = systemStore.settings.ai.prompts[0]
-        // Only set activePromptId if the ID is a valid number (persisted prompt)
-        // If it's a new prompt (string ID), we can't set it as persisted active ID yet,
-        // but we can update the UI selection.
-        if (typeof nextPrompt.id === 'number') {
-           systemStore.settings.ai.activePromptId = nextPrompt.id
+    // Check if we deleted the active prompt
+    if (deletedType === 'map' && systemStore.settings.ai.activeMapPromptId == id) {
+        // Fallback: pick first map prompt
+        const next = systemStore.settings.ai.prompts.find(p => p.type === 'map')
+        if (next && typeof next.id === 'number') {
+            systemStore.settings.ai.activeMapPromptId = next.id
+        }
+    } else if (deletedType === 'reduce' && systemStore.settings.ai.activeReducePromptId == id) {
+        const next = systemStore.settings.ai.prompts.find(p => p.type === 'reduce')
+        if (next && typeof next.id === 'number') {
+            systemStore.settings.ai.activeReducePromptId = next.id
         }
     }
 
-    if (selectedPromptId.value === deletedId && systemStore.settings.ai.prompts.length > 0) {
-       selectedPromptId.value = systemStore.settings.ai.prompts[0].id
+    // Update selection
+    if (selectedPromptId.value === id) {
+        if (filteredPrompts.value.length > 0) {
+            selectedPromptId.value = filteredPrompts.value[0].id
+        } else {
+            selectedPromptId.value = undefined
+        }
     }
  }
 
@@ -445,16 +488,32 @@
     // 1. Select for editing
     selectedPromptId.value = id
     
-    // 2. Set as Active (Mutex logic)
+    // 2. Set as Active (Mutex logic per phase)
     // Only set activePromptId if the ID is a valid number (persisted prompt)
     if (typeof id === 'number') {
-        systemStore.settings.ai.activePromptId = id
+        const prompt = systemStore.settings.ai.prompts.find(p => p.id === id)
+        if (prompt) {
+            if (prompt.type === 'map') {
+                systemStore.settings.ai.activeMapPromptId = id
+            } else {
+                systemStore.settings.ai.activeReducePromptId = id
+            }
+        }
     }
     
-    // Legacy support: keep is_active flag for now if needed, or just relying on ID match
+    // UI update for is_active flag (optional if we use isPromptActive helper)
     systemStore.settings.ai.prompts.forEach(p => {
-        p.is_active = (p.id === id) ? 1 : 0
+        if (p.id === id) p.is_active = 1
+        else if (p.type === activePromptTab.value) p.is_active = 0
     })
+ }
+
+ function isPromptActive(prompt: PromptConfig) {
+     if (prompt.type === 'map') {
+         return systemStore.settings.ai.activeMapPromptId == prompt.id
+     } else {
+         return systemStore.settings.ai.activeReducePromptId == prompt.id
+     }
  }
  
  // --- Integration Logic ---
@@ -607,4 +666,3 @@
    border-radius: 4px;
  }
  </style>
- 

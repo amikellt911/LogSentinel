@@ -7,9 +7,8 @@
 // 前向声明，减少头文件依赖
 class ThreadPool;
 class SqliteLogRepository;
-class AiProvider;
-class INotifier;
 class LogBatcher;
+
 class LogHandler {
 public:
     // 构造函数：一次性注入所有依赖

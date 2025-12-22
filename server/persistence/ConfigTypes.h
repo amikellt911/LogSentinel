@@ -46,8 +46,9 @@ struct AppConfig {
     int ai_failure_threshold = 5;
     int ai_cooldown_seconds = 60;
 
-    // Active Prompt ID
-    int active_prompt_id = 0; 
+    // Active Prompt IDs
+    int active_map_prompt_id = 0;
+    int active_reduce_prompt_id = 0;
 
     // 内核设置
     int kernel_worker_threads = 4;
@@ -61,7 +62,7 @@ struct AppConfig {
         ai_provider, ai_model, ai_api_key, ai_language, app_language,
         log_retention_days, max_disk_usage_gb, http_port,
         ai_auto_degrade, ai_fallback_model, ai_circuit_breaker, ai_failure_threshold, ai_cooldown_seconds,
-        active_prompt_id,
+        active_map_prompt_id, active_reduce_prompt_id,
         kernel_worker_threads, kernel_max_batch, kernel_refresh_interval, kernel_io_buffer, kernel_adaptive_mode
     )
 };
@@ -72,9 +73,11 @@ struct PromptConfig {
     std::string name;
     std::string content;
     bool is_active = true;
+    std::string type = "map"; // "map" or "reduce"
+
     PromptConfig() = default;
-    PromptConfig(int id, std::string name, std::string content, bool is_active)
-        : id(id), name(std::move(name)), content(std::move(content)), is_active(is_active) {}
+    PromptConfig(int id, std::string name, std::string content, bool is_active, std::string type = "map")
+        : id(id), name(std::move(name)), content(std::move(content)), is_active(is_active), type(std::move(type)) {}
 
     // 【核心修改】手动实现 to_json (序列化)
     friend void to_json(nlohmann::json& j, const PromptConfig& p) {
@@ -82,7 +85,8 @@ struct PromptConfig {
             {"id", p.id},
             {"name", p.name},
             {"content", p.content},
-            {"is_active", p.is_active} // 输出时还是 true/false，规范
+            {"is_active", p.is_active}, // 输出时还是 true/false，规范
+            {"type", p.type}
         };
     }
 
@@ -91,6 +95,8 @@ struct PromptConfig {
         j.at("id").get_to(p.id);
         j.at("name").get_to(p.name);
         j.at("content").get_to(p.content);
+        // Default to map if missing (backward compatibility)
+        p.type = j.value("type", "map");
 
         // 重点：宽容处理 is_active
         if (j.contains("is_active")) {

@@ -4,6 +4,8 @@
 #include<memory>
 #include<mutex>
 #include"core/AnalysisTask.h"
+#include "persistence/SqliteConfigRepository.h"
+
 namespace MiniMuduo{namespace net{class EventLoop;}};
 class ThreadPool;
 class SqliteLogRepository;
@@ -13,8 +15,8 @@ class INotifier;
 class LogBatcher
 {
 public:
-    LogBatcher(ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai_client_,std::shared_ptr<INotifier> notifier);
-    LogBatcher(MiniMuduo::net::EventLoop* loop,ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai_client_,std::shared_ptr<INotifier> notifier);
+    LogBatcher(ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai_client_,std::shared_ptr<INotifier> notifier, std::shared_ptr<SqliteConfigRepository> config_repo);
+    LogBatcher(MiniMuduo::net::EventLoop* loop,ThreadPool* thread_pool,std::shared_ptr<SqliteLogRepository> repo,std::shared_ptr<AiProvider> ai_client_,std::shared_ptr<INotifier> notifier, std::shared_ptr<SqliteConfigRepository> config_repo);
     ~LogBatcher();
     bool push(AnalysisTask&& task);
     // 【测试专用】
@@ -30,13 +32,15 @@ public:
 private:
     void tryDispatchLocked(size_t limit);
     void onTimeout();
-    void processBatch(std::vector<AnalysisTask>&& batch);
+    void processBatch(std::vector<AnalysisTask>&& batch, SystemConfigPtr config);
 private:
     MiniMuduo::net::EventLoop* loop_;
     ThreadPool* thread_pool_;
     std::shared_ptr<SqliteLogRepository> repo_;
     std::shared_ptr<AiProvider> ai_client_;
     std::shared_ptr<INotifier> notifier_;
+    std::shared_ptr<SqliteConfigRepository> config_repo_;
+
     // --- 核心：Ring Buffer 实现 ---
     std::vector<AnalysisTask> ring_buffer_; 
     size_t capacity_ = 10000; // 也是硬上限
@@ -49,4 +53,3 @@ private:
     size_t batch_size_ = 100;    // 攒够多少发车
     size_t pool_threshold_ = 90; // 下游堵了就不发
 };
-

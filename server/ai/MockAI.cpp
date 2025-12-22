@@ -1,4 +1,4 @@
-// ai/GeminiApiAi.cpp
+// ai/MockAI.cpp
 #include "ai/MockAI.h"
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp> // 我们需要一个JSON库来解析单次分析的响应和构建聊天请求
@@ -136,7 +136,12 @@ std::string MockAI::chat(const std::string &history_json, const std::string &new
     // .get<std::string>() 会自动处理类型转换，如果不是 string 会抛出 type_error，这也符合我们的异常预期
     return response_json["response"].get<std::string>();
 }
-std::unordered_map<std::string, LogAnalysisResult> MockAI::analyzeBatch(const std::vector<std::pair<std::string, std::string>> &logs)
+std::unordered_map<std::string, LogAnalysisResult> MockAI::analyzeBatch(
+    const std::vector<std::pair<std::string, std::string>> &logs,
+    const std::string& api_key,
+    const std::string& model,
+    const std::string& prompt
+)
 {
     cpr::Session session_;
     session_.SetHeader(cpr::Header{{"Content-Type", "application/json"}});
@@ -201,7 +206,12 @@ std::unordered_map<std::string, LogAnalysisResult> MockAI::analyzeBatch(const st
     return resultMap;
 }
 
-std::string MockAI::summarize(const std::vector<LogAnalysisResult> &results)
+std::string MockAI::summarize(
+    const std::vector<LogAnalysisResult> &results,
+    const std::string& api_key,
+    const std::string& model,
+    const std::string& prompt
+)
 {
     cpr::Session session_;
     // 【修正1】类型要是 json，Python 那边才好自动解析

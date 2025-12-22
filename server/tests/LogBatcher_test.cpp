@@ -3,6 +3,7 @@
 #include <filesystem>
 #include "core/LogBatcher.h"
 #include "persistence/SqliteLogRepository.h"
+#include "persistence/SqliteConfigRepository.h"
 #include "ai/MockAI.h"
 #include "notification/WebhookNotifier.h"
 #include "threadpool/ThreadPool.h"
@@ -12,9 +13,17 @@
 class LogBatcherTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        // 0. 确保目录存在
+        if (!std::filesystem::exists("../persistence/data")) {
+            std::filesystem::create_directories("../persistence/data");
+        }
+
         // 1. 准备 DB (每次测试用独立的 DB 文件，防止干扰)
         test_db_path = "test_batcher_" + std::to_string(std::time(nullptr)) + ".db";
         repo = std::make_shared<SqliteLogRepository>(test_db_path);
+
+        // 1.5 准备 Config Repo (复用 DB 路径)
+        config_repo = std::make_shared<SqliteConfigRepository>(test_db_path);
 
         // 2. 准备 Mock 组件
         ai = std::make_shared<MockAI>();
@@ -25,14 +34,23 @@ protected:
 
         // 4. 创建被测对象 Batcher
         // 注意：传入 &loop
-        batcher = std::make_shared<LogBatcher>(&loop, tpool.get(), repo, ai, notifier);
+        batcher = std::make_shared<LogBatcher>(&loop, tpool.get(), repo, ai, notifier, config_repo);
     }
 
     void TearDown() override {
         // 清理 DB 文件
-        std::filesystem::remove(test_db_path);
-        std::filesystem::remove(test_db_path + "-shm"); // WAL 模式可能有这些
-        std::filesystem::remove(test_db_path + "-wal");
+        std::string path_prefix = "../persistence/data/";
+        std::string full_path = path_prefix + test_db_path;
+
+        if (std::filesystem::exists(full_path)) {
+            std::filesystem::remove(full_path);
+        }
+        if (std::filesystem::exists(full_path + "-shm")) {
+            std::filesystem::remove(full_path + "-shm");
+        }
+        if (std::filesystem::exists(full_path + "-wal")) {
+            std::filesystem::remove(full_path + "-wal");
+        }
     }
 
     // 辅助函数：等待异步操作完成
@@ -48,6 +66,7 @@ protected:
     MiniMuduo::net::EventLoop loop; // 局部的 EventLoop
     std::unique_ptr<ThreadPool> tpool;
     std::shared_ptr<SqliteLogRepository> repo;
+    std::shared_ptr<SqliteConfigRepository> config_repo;
     std::shared_ptr<AiProvider> ai;
     std::shared_ptr<WebhookNotifier> notifier;
     std::shared_ptr<LogBatcher> batcher;

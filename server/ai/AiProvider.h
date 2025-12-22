@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include "AiTypes.h"
 #include<utility>
 // 为了与Python端的JSON结构保持一致，我们可以定义一个简单的消息结构体
@@ -35,8 +36,7 @@ public:
     virtual std::string chat(const std::string& history_json, const std::string& new_message) = 0;
 
     //Map
-    virtual std::unordered_map<std::string,LogAnalysisResult> analyzeBatch(const std::vector<std::pair<std::string,std::string>>& logs)=0;
+    virtual std::unordered_map<std::string,LogAnalysisResult> analyzeBatch(const std::vector<std::pair<std::string,std::string>>& logs, const std::string& api_key, const std::string& model, const std::string& prompt)=0;
     //Reduce
-    virtual std::string summarize(const std::vector<LogAnalysisResult>& results)=0;
+    virtual std::string summarize(const std::vector<LogAnalysisResult>& results, const std::string& api_key, const std::string& model, const std::string& prompt)=0;
 };
-

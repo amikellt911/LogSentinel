@@ -1,4 +1,4 @@
-// ai/GeminiApiAi.h
+// ai/MockAI.h
 #pragma once
 
 #include "ai/AiProvider.h"
@@ -24,12 +24,18 @@ public:
 
     // 【新增】Map 阶段接口
     std::unordered_map<std::string, LogAnalysisResult> analyzeBatch(
-        const std::vector<std::pair<std::string, std::string>>& logs
+        const std::vector<std::pair<std::string, std::string>>& logs,
+        const std::string& api_key,
+        const std::string& model,
+        const std::string& prompt
     ) override;
 
     // 【新增】Reduce 阶段接口
     std::string summarize(
-        const std::vector<LogAnalysisResult>& results
+        const std::vector<LogAnalysisResult>& results,
+        const std::string& api_key,
+        const std::string& model,
+        const std::string& prompt
     ) override;
 private:
     std::string analyze_url_;
