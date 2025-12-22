@@ -209,7 +209,20 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
         // 注意：这里我们只算当前批次的“累加”部分，QPS和Backpressure是瞬态的，这里设为0
         DashboardStats batch_stats;
         batch_stats.total_logs = items.size();
-        int processing_time_ms = 0; // 暂时没统计整个 processBatch 的耗时，可以以后加
+
+        // 计算批次处理总耗时 (Batch Latency)
+        // 逻辑：当前时刻 (Summary 完成) - 批次中最早的任务开始时间
+        // 这反映了用户感知的“最大等待时间”
+        auto batch_end_time = std::chrono::steady_clock::now();
+        int processing_time_ms = 0;
+
+        if (!batch.empty()) {
+            auto min_start_time = batch[0].start_time;
+            for(const auto& t : batch) {
+                if (t.start_time < min_start_time) min_start_time = t.start_time;
+            }
+            processing_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(batch_end_time - min_start_time).count();
+        }
 
         for(const auto& item : items) {
              nlohmann::json j_risk = item.result.risk_level;
@@ -220,9 +233,6 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
              else if (r == "info") batch_stats.info_risk++;
              else if (r == "safe") batch_stats.safe_risk++;
              else batch_stats.unknown_risk++;
-
-             // 累加微观耗时作为大概的 processing_time
-             processing_time_ms += item.response_time_ms;
         }
 
         // 7. 保存宏观分析结果 (获取 batch_id)
