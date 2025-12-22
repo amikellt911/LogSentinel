@@ -2,7 +2,7 @@
 import os
 from fastapi import FastAPI, Request, HTTPException
 from dotenv import load_dotenv
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from pathlib import Path
 import uvicorn
@@ -93,16 +93,19 @@ async def analyze_log(provider_name: str, request: Request):
 
 1. A concise summary of the error or issue
 2. Risk level assessment:
-   - 'high': System crashes, data loss, security vulnerabilities, critical service failures
-   - 'medium': Performance degradation, non-critical errors, warnings that may escalate
-   - 'low': Informational messages, minor warnings, expected errors
+   - 'critical': System crashes, data loss, security vulnerabilities, critical service failures
+   - 'error': Performance degradation, non-critical errors, warnings that may escalate
+   - 'warning': Informational messages, minor warnings, expected errors
    - 'info': Normal operational logs, state changes, heartbeats
+   - 'safe': Verified safe operations
    - 'unknown': Unintelligible logs, binary data, or insufficient context to determine risk
 3. Root cause analysis based on the log content
 4. Actionable solution or remediation steps
 
 Provide your analysis in a structured format."""
         
+        # Note: analyze() only receives raw text from C++, so we can't extract api_key/model here.
+        # We use default provider config.
         result = provider.analyze(log_text=log_text, prompt=default_prompt)
         
         return {"provider": provider_name, "analysis": result}
@@ -116,7 +119,16 @@ async def analyze_log_batch(provider_name: str, request: BatchRequestSchema):
         raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found or not configured.")
     try:
         logs_list=[item.model_dump() for item in request.batch]
-        results=provider.analyze_batch(logs_list,BATCH_PROMPT_TEMPLATE)
+
+        # Use provided prompt or fallback to default template
+        prompt_to_use = request.prompt if request.prompt else BATCH_PROMPT_TEMPLATE
+
+        results=provider.analyze_batch(
+            batch_logs=logs_list,
+            prompt=prompt_to_use,
+            api_key=request.api_key,
+            model=request.model
+        )
         return {"provider": provider_name, "results": results}
     except Exception as e:
         print(f"[Error] Batch analysis failed: {e}")
@@ -133,8 +145,17 @@ async def summarize_logs(provider_name: str, request_data: SummarizeRequest):
     try:
         # 将 Pydantic 对象列表转为 Dict 列表
         results_list = [item.model_dump() for item in request_data.results]
+
+        # Use provided prompt or fallback to default template
+        prompt_to_use = request_data.prompt if request_data.prompt else SUMMARIZE_PROMPT_TEMPLATE
+
         # 调用 Provider 的 summarize 接口
-        summary_text = provider.summarize(results_list, prompt=SUMMARIZE_PROMPT_TEMPLATE)
+        summary_text = provider.summarize(
+            summary_logs=results_list,
+            prompt=prompt_to_use,
+            api_key=request_data.api_key,
+            model=request_data.model
+        )
         # 返回格式要匹配 C++ 端的 expectations
         # C++ MockAI::summarize 里解析的是 response_json["summary"]
         return {"provider": provider_name, "summary": summary_text}

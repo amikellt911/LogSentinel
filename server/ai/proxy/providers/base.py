@@ -1,6 +1,6 @@
 # ai/proxy/providers/base.py
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 class AIProvider(ABC):
     """
@@ -10,7 +10,7 @@ class AIProvider(ABC):
     """
 
     @abstractmethod
-    def analyze(self, log_text: str, prompt: str) -> str:
+    def analyze(self, log_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
         """
         执行一次性的、无上下文的分析任务。
         """
@@ -26,24 +26,28 @@ class AIProvider(ABC):
         pass
 
     @abstractmethod
-    def analyze_batch(self, batch_logs: List[Dict[str, str]], prompt: str) -> List[Dict[str, Any]]:
+    def analyze_batch(self, batch_logs: List[Dict[str, str]], prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         批量分析接口。
             
         :param batch_logs: 日志列表。
-        :param prompt:  【新增】传递给 AI 的提示词（Prompt），用于控制分析逻辑（比如强调要无状态分析）。
+        :param prompt:  传递给 AI 的提示词（Prompt），用于控制分析逻辑（比如强调要无状态分析）。
+        :param api_key: Optional dynamic API key.
+        :param model: Optional dynamic model name.
         :return: 结果列表。
         """
         pass
 
     @abstractmethod
-    def summarize(self, summary_logs: List[Dict[str, Any]], prompt: str) -> str:
+    def summarize(self, summary_logs: List[Dict[str, Any]], prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
         """
         Reduce 阶段：对一批分析结果进行汇总。
         
         :param summary_logs: 上一阶段的分析结果列表。
                              使用 Any 是为了兼容未来可能出现的非字符串字段（如分数、时间戳）。
         :param prompt: 总结用的提示词。
+        :param api_key: Optional dynamic API key.
+        :param model: Optional dynamic model name.
         :return: 全局总结文本。
         """
         pass
