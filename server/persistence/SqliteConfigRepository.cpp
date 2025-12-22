@@ -40,8 +40,12 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
             config.ai_failure_threshold = std::stoi(val);
         else if (key == "ai_cooldown_seconds")
             config.ai_cooldown_seconds = std::stoi(val);
-        else if (key == "active_prompt_id")
-            config.active_prompt_id = std::stoi(val);
+
+        // Updated Active IDs
+        else if (key == "active_map_prompt_id")
+            config.active_map_prompt_id = std::stoi(val);
+        else if (key == "active_reduce_prompt_id")
+            config.active_reduce_prompt_id = std::stoi(val);
         
         else if (key == "ai_fallback_model")
             config.ai_fallback_model = val;
@@ -78,12 +82,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
     else
     {
         // TODO: 生产环境请改为获取可执行文件所在路径，避免相对路径地雷
-        // Update for testing: use simple path if we can't write to ../persistence/data/
         std::string data_path = "../persistence/data/";
-        // // Check if we are in server root (where persistence folder exists)
-        // if (std::filesystem::exists("persistence")) {
-        //      data_path = "persistence/data/";
-        // }
         
         if (!std::filesystem::exists(data_path))
         {
@@ -92,9 +91,6 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             if (ec)
             {
                 throw std::runtime_error("Failed to create directory: " + data_path);
-                // // Fallback to /tmp or current dir if we can't create directory there (likely running from weird place in test)
-                // std::cerr << "[WARN] Failed to create directory: " << data_path << ", falling back to current directory." << std::endl;
-                // data_path = "./";
             }
         }
         final_path = data_path + db_path;
@@ -116,25 +112,16 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
     {
         char *errmsg = nullptr;
 
-        // 3. 设置 WAL 模式 (必须在事务外)
-        //    // pragma:指令
-        // journal:日志
-        // wal和以前的区别
-        // 以前的：undo，会将这一片修改区域给备份起来，然后用户去修改主页面，如果遇到问题就用备份的去恢复，但是问题是修改主页面那就要加锁
-        // wal:redo，追加写，有一个wal文件，记录了你的每一次操作，你的每次操作不是在主页面进行，只有等你提交或页数满了之后，主页面才会加锁更新，这样就导致可以有多个读者来读wal和db
+        // 3. 设置 WAL 模式
         const char *sql_wal = "PRAGMA journal_mode=WAL;";
         rc = sqlite3_exec(db_, sql_wal, nullptr, nullptr, &errmsg);
         if (rc != SQLITE_OK)
         {
             std::cerr << "[WARN] Cannot set WAL mode: " << (errmsg ? errmsg : "unknown") << std::endl;
             sqlite3_free(errmsg);
-            // WAL 开启失败虽然不是致命错误，但严重影响高并发性能
         }
 
         // 4. 开启事务初始化表
-        // 注意：这里手动管理事务，如果 checkSqliteError 会抛出异常，必须确保 db_ 能被释放
-        // 但由于 db_ 是成员变量，构造函数抛出异常析构函数不执行，所以 catch 块很重要
-
         rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
         if (rc != SQLITE_OK)
             throw std::runtime_error("Failed to begin transaction");
@@ -154,6 +141,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
                 name TEXT NOT NULL UNIQUE,
                 content TEXT NOT NULL,
                 is_active INTEGER DEFAULT 1,
+                prompt_type TEXT DEFAULT 'map',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -170,7 +158,6 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             );
 
             -- 初始化默认配置数据
-            -- 修复了这里的语法错误：去掉了末尾逗号，加了分号
             INSERT OR IGNORE INTO app_config (config_key, config_value, description) VALUES 
             ('ai_provider', 'openai', 'AI服务商类型'),
             ('ai_model', 'gpt-4-turbo', '模型名称'),
@@ -187,7 +174,8 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('ai_circuit_breaker', '1', '熔断机制开关'),
             ('ai_failure_threshold', '5', '熔断触发阈值'),
             ('ai_cooldown_seconds', '60', '熔断冷却时间s'),
-            ('active_prompt_id', '0', '当前激活的PromptID'),
+            ('active_map_prompt_id', '0', 'Map阶段激活的PromptID'),
+            ('active_reduce_prompt_id', '0', 'Reduce阶段激活的PromptID'),
 
             ('kernel_adaptive_mode', '1', '自适应微批模式开关 1/0'),
             ('kernel_max_batch', '50', '自适应最大阈值'),
@@ -203,6 +191,21 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             sqlite3_free(errmsg);
             throw std::runtime_error("Failed to Create Tables: " + err_str);
         }
+
+        // --- Schema Migration for Existing DB ---
+        // Try to add column if it doesn't exist. SQLite allows adding column even if it exists in some versions with specific syntax or just ignoring error.
+        // But simplest way in SQLite is just run it and ignore error if column exists.
+        // However, "duplicate column name" is the error.
+        // We will catch it.
+        const char *migration_sql = "ALTER TABLE ai_prompts ADD COLUMN prompt_type TEXT DEFAULT 'map';";
+        char *mig_errmsg = nullptr;
+        rc = sqlite3_exec(db_, migration_sql, nullptr, nullptr, &mig_errmsg);
+        if (rc != SQLITE_OK) {
+             // Ignore error (likely column already exists), just log debug
+             // std::cerr << "[Info] Migration (prompt_type): " << (mig_errmsg ? mig_errmsg : "unknown") << std::endl;
+             if (mig_errmsg) sqlite3_free(mig_errmsg);
+        }
+
         loadFromDbInternal();
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
         if (rc != SQLITE_OK)
@@ -409,8 +412,9 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
     sqlite3_stmt* stmt_update = nullptr;
     
     // SQL: 注意索引从1开始
-    const char* sql_insert = "INSERT INTO ai_prompts (name, content, is_active) VALUES (?, ?, ?);";
-    const char* sql_update = "UPDATE ai_prompts SET name=?, content=?, is_active=? WHERE id=?;";
+    // Added prompt_type
+    const char* sql_insert = "INSERT INTO ai_prompts (name, content, is_active, prompt_type) VALUES (?, ?, ?, ?);";
+    const char* sql_update = "UPDATE ai_prompts SET name=?, content=?, is_active=?, prompt_type=? WHERE id=?;";
 
     // 资源管理
     try {
@@ -436,7 +440,8 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
                 sqlite3_bind_text(curr_stmt, 1, item.name.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_text(curr_stmt, 2, item.content.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_int(curr_stmt, 3, item.is_active ? 1 : 0);
-                sqlite3_bind_int(curr_stmt, 4, item.id);
+                sqlite3_bind_text(curr_stmt, 4, item.type.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_int(curr_stmt, 5, item.id);
                 
                 active_ids.push_back(item.id);
             } else {
@@ -445,6 +450,7 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
                 sqlite3_bind_text(curr_stmt, 1, item.name.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_text(curr_stmt, 2, item.content.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_int(curr_stmt, 3, item.is_active ? 1 : 0);
+                sqlite3_bind_text(curr_stmt, 4, item.type.c_str(), -1, SQLITE_STATIC);
             }
 
             if (sqlite3_step(curr_stmt) != SQLITE_DONE) {
@@ -621,7 +627,8 @@ AppConfig SqliteConfigRepository::getAppConfigInternal()
 std::vector<PromptConfig> SqliteConfigRepository::getAllPromptsInternal()
 {
     std::vector<PromptConfig> prompts;
-    const char *sql = "select id,name,content,is_active from ai_prompts;";
+    // Updated SQL to include prompt_type
+    const char *sql = "select id,name,content,is_active,prompt_type from ai_prompts;";
     sqlite3_stmt *stmt_ = nullptr;
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
     if (rc != SQLITE_OK)
@@ -635,12 +642,15 @@ std::vector<PromptConfig> SqliteConfigRepository::getAllPromptsInternal()
         const char *name_ptr = (const char *)sqlite3_column_text(stmt.get(), 1);
         const char *content_ptr = (const char *)sqlite3_column_text(stmt.get(), 2);
         int is_active = sqlite3_column_int(stmt.get(), 3);
+        const char *type_ptr = (const char *)sqlite3_column_text(stmt.get(), 4);
+
         bool active_flag = (is_active != 0);
         if (!name_ptr || !content_ptr)
             continue;
         std::string name = name_ptr;
         std::string content = content_ptr;
-        prompts.emplace_back(id, name, content, active_flag);
+        std::string type = type_ptr ? type_ptr : "map"; // Default to map
+        prompts.emplace_back(id, name, content, active_flag, type);
     }
     if (rc != SQLITE_DONE)
     {

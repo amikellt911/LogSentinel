@@ -31,6 +31,7 @@ export interface PromptConfig {
   name: string
   content: string
   is_active?: number
+  type: 'map' | 'reduce'
 }
 
 export interface WebhookConfig {
@@ -54,7 +55,8 @@ export interface AISettings {
     circuitBreaker: boolean
     failureThreshold: number
     cooldownSeconds: number
-    activePromptId: number
+    activeMapPromptId: number
+    activeReducePromptId: number
     prompts: PromptConfig[]
 }
 
@@ -105,6 +107,7 @@ export interface SettingsResponse {
     name: string
     content: string
     is_active: number
+    type?: string
   }[]
   channels: {
     id: number
@@ -173,35 +176,22 @@ export const useSystemStore = defineStore('system', () => {
       circuitBreaker: true,
       failureThreshold: 5,
       cooldownSeconds: 60,
-      activePromptId: 0,
+      activeMapPromptId: 0,
+      activeReducePromptId: 0,
       prompts: [
         {
           id: 'p1',
-          name: 'Security Audit',
-          content: `Analyze the following log entries for potential security breaches. 
-Focus on: SQL Injection patterns, XSS attempts, and unauthorized access.
-Output format: JSON with "risk_score" and "analysis".
-
-Logs:
-{{logs_batch}}`
+          name: 'Security Audit (Map)',
+          content: `Analyze...`,
+          type: 'map',
+          is_active: 1
         },
         {
           id: 'p2',
-          name: 'Root Cause Analysis',
-          content: `Identify the root cause of the system failure based on the provided stack traces and error logs.
-Correlate timestamps between services.
-
-Context:
-{{logs_batch}}`
-        },
-        {
-          id: 'p3',
-          name: 'Performance Tuning',
-          content: `Review the latency metrics and DB query logs. 
-Suggest indexing strategies or caching layers where appropriate.
-
-Metrics:
-{{metrics_batch}}`
+          name: 'Summary (Reduce)',
+          content: `Summarize...`,
+          type: 'reduce',
+          is_active: 1
         }
       ]
     } as AISettings,
@@ -216,15 +206,6 @@ Metrics:
           threshold: 'Error',
           template: '{"msgtype": "text", "text": {"content": "Alert: {{summary}}"}}',
           enabled: true
-        },
-        {
-          id: 'c2',
-          name: 'Security (Slack)',
-          vendor: 'Slack',
-          url: 'https://hooks.slack.com/services/...',
-          threshold: 'Critical',
-          template: '{"text": "Alert: {{summary}}"}',
-          enabled: false
         }
       ] as WebhookConfig[]
     },
@@ -527,12 +508,16 @@ Metrics:
           circuitBreaker: toBool(data.config['ai_circuit_breaker'], true), // Default true
           failureThreshold: parseInt(data.config['ai_failure_threshold'] || '5'),
           cooldownSeconds: parseInt(data.config['ai_cooldown_seconds'] || '60'),
-          activePromptId: parseInt(data.config['active_prompt_id'] || '0'),
+
+          activeMapPromptId: parseInt(data.config['active_map_prompt_id'] || '0'),
+          activeReducePromptId: parseInt(data.config['active_reduce_prompt_id'] || '0'),
+
           prompts: data.prompts.map(p => ({
             id: p.id,
             name: p.name,
             content: p.content,
-            is_active: p.is_active // Map backend is_active
+            is_active: p.is_active, // Map backend is_active
+            type: (p.type || 'map') as 'map' | 'reduce'
           }))
         },
         integration: {
@@ -570,11 +555,6 @@ Metrics:
        const promises = []
 
        // 1. Config Batch
-       // Check if config changed
-       // We only need to compare relevant fields to decide if we send 'config'
-       // But 'config' endpoint takes KV pairs. We can just check fields we map to KV.
-       // It's easier to just construct payload and send if any differs.
-
        const configItems = [
          { key: 'app_language', value: settings.general.language },
          { key: 'log_retention_days', value: settings.general.logRetentionDays.toString() },
@@ -590,7 +570,9 @@ Metrics:
          { key: 'ai_circuit_breaker', value: settings.ai.circuitBreaker ? '1' : '0' },
          { key: 'ai_failure_threshold', value: settings.ai.failureThreshold.toString() },
          { key: 'ai_cooldown_seconds', value: settings.ai.cooldownSeconds.toString() },
-         { key: 'active_prompt_id', value: settings.ai.activePromptId.toString() },
+
+         { key: 'active_map_prompt_id', value: settings.ai.activeMapPromptId.toString() },
+         { key: 'active_reduce_prompt_id', value: settings.ai.activeReducePromptId.toString() },
 
          { key: 'kernel_adaptive_mode', value: settings.kernel.adaptiveBatching ? '1' : '0' },
          { key: 'kernel_max_batch', value: settings.ai.maxBatchSize.toString() },
@@ -624,7 +606,8 @@ Metrics:
                id: typeof p.id === 'number' ? p.id : 0, // 0 for new
                name: p.name,
                content: p.content,
-               is_active: p.is_active ? 1 : 0
+               is_active: p.is_active ? 1 : 0,
+               type: p.type
            }))
            promises.push(fetch('/api/settings/prompts', {
                method: 'POST',

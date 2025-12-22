@@ -9,5 +9,6 @@ struct AnalysisTask
     // AI Config
     std::string ai_api_key;
     std::string ai_model;
-    std::string prompt;
+    std::string map_prompt;
+    std::string reduce_prompt;
 };

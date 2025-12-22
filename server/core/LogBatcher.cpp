@@ -89,7 +89,10 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch) // 注意：这
         // Retrieve config from the first task
         std::string ai_api_key = batch[0].ai_api_key;
         std::string ai_model = batch[0].ai_model;
-        std::string prompt = batch[0].prompt;
+        // Use map_prompt for Map Phase
+        std::string map_prompt = batch[0].map_prompt;
+        // Use reduce_prompt for Reduce Phase
+        std::string reduce_prompt = batch[0].reduce_prompt;
 
         for (const auto &task : batch)
         {
@@ -110,7 +113,8 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch) // 注意：这
         std::unordered_map<std::string, LogAnalysisResult> mp;
         try
         {
-            mp = ai_client_->analyzeBatch(logs, ai_api_key, ai_model, prompt);
+            // Pass map_prompt here
+            mp = ai_client_->analyzeBatch(logs, ai_api_key, ai_model, map_prompt);
         }
         catch (const std::exception &e)
         {
@@ -155,7 +159,8 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch) // 注意：这
         {
             try
             {
-                global_summary = ai_client_->summarize(results_for_summary, ai_api_key, ai_model, prompt);
+                // Pass reduce_prompt here
+                global_summary = ai_client_->summarize(results_for_summary, ai_api_key, ai_model, reduce_prompt);
             }
             catch (...)
             {

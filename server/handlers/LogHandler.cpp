@@ -40,25 +40,37 @@ void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const Mi
     task.ai_api_key = app_config.ai_api_key;
     task.ai_model = app_config.ai_model;
 
-    // 2. 获取 Active Prompt
+    // 2. 获取 Active Prompts
     auto all_prompts = config_repo_->getAllPrompts();
-    // 默认值，如果找不到 Active
-    task.prompt = "";
+    // 默认值
+    task.map_prompt = "";
+    task.reduce_prompt = "";
 
-    // 遍历查找 active_prompt_id 对应的 prompt content
-    // 也可以直接在 ConfigRepository 里加一个 getActivePrompt() 方法，但这里手动做也行
+    // 遍历查找 Active Map & Reduce Prompts
     for (const auto& p : all_prompts) {
-        if (p.id == app_config.active_prompt_id) {
-            task.prompt = p.content;
-            break;
+        if (p.id == app_config.active_map_prompt_id && (p.type == "map" || p.type.empty())) {
+            task.map_prompt = p.content;
+        }
+        if (p.id == app_config.active_reduce_prompt_id && p.type == "reduce") {
+            task.reduce_prompt = p.content;
         }
     }
 
-    // Fallback: 如果没有找到对应的 prompt，尝试找任何一个 is_active 为 true 的
-    if (task.prompt.empty()) {
+    // Fallback: 如果没有找到对应的 prompt，尝试找 active=true 的
+    // Map Fallback
+    if (task.map_prompt.empty()) {
         for (const auto& p : all_prompts) {
-            if (p.is_active) {
-                 task.prompt = p.content;
+            if (p.is_active && (p.type == "map" || p.type.empty())) {
+                 task.map_prompt = p.content;
+                 break;
+            }
+        }
+    }
+    // Reduce Fallback
+    if (task.reduce_prompt.empty()) {
+        for (const auto& p : all_prompts) {
+            if (p.is_active && p.type == "reduce") {
+                 task.reduce_prompt = p.content;
                  break;
             }
         }
