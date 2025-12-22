@@ -548,8 +548,12 @@ void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResu
             AlertInfo alert;
             alert.trace_id = item.trace_id;
             alert.summary = item.result.summary;
-            // 简单起见，这里没有时间戳，暂时留空或用系统时间
-            alert.time = "Just now";
+            // 获取当前时间字符串
+            time_t now = time(0);
+            tm *ltm = localtime(&now);
+            char buffer[80];
+            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", ltm);
+            alert.time = std::string(buffer);
             current_batch_stats->recent_alerts.push_back(alert);
         }
     }
@@ -621,10 +625,13 @@ void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResu
             new_stats->safe_risk += current_batch_stats->safe_risk;
             new_stats->unknown_risk += current_batch_stats->unknown_risk;
 
-            // 合并最近警报 (前插)
+            // 合并最近警报 (前插，手动管理小 vector 代替 Queue)
             if (!current_batch_stats->recent_alerts.empty()) {
+                // 1. 新的警报在最前
                 std::vector<AlertInfo> merged = current_batch_stats->recent_alerts;
+                // 2. 追加旧的警报
                 merged.insert(merged.end(), new_stats->recent_alerts.begin(), new_stats->recent_alerts.end());
+                // 3. 截断只保留前5个
                 if (merged.size() > 5) merged.resize(5);
                 new_stats->recent_alerts = merged;
             }
