@@ -50,6 +50,11 @@ class BatchResultItem(BaseModel):
 class BatchResponseSchema(BaseModel):
     results: List[BatchResultItem]
 
+class BatchSummaryResponse(BaseModel):
+    global_summary: str = Field(description="日志批次的综合总结。")
+    global_risk_level: RiskLevel = Field(description="该批次的整体风险等级。")
+    key_patterns: List[str] = Field(description="识别出的关键标签或模式列表，例如 ['#SQLInjection', '#Performance']。")
+
 class SummaryResponse(BaseModel):
     summary: str
 
