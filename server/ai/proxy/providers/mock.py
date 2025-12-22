@@ -8,14 +8,14 @@ import random
 
 class MockProvider(AIProvider):
     """
-    用于测试和开发的 Mock Provider。
+    用于测试和开发的 Mock 提供商。
     它不调用任何外部 API，而是返回预定义的结构化数据。
     可以通过 delay 参数模拟耗时，用于测试系统的背压机制。
     """
 
     def __init__(self, api_key: str = "mock-key", delay: float = 0.5):
         """
-        初始化 Mock Provider。
+        初始化 Mock 提供商。
         :param delay: 模拟分析的耗时（秒）。
                       设置为 0.5s 或 1s 可以让 Worker 线程处理变慢，
                       从而在压测时更容易触发 503 背压。
@@ -35,7 +35,7 @@ class MockProvider(AIProvider):
         # 2. 根据日志内容简单的伪造逻辑，方便前端展示效果
         log_lower = log_text.lower()
         
-        risk = "low"
+        risk = "safe" # 默认为 safe
         summary = "Routine log entry detected."
         
         if "critical" in log_lower or "fatal" in log_lower:
@@ -47,6 +47,9 @@ class MockProvider(AIProvider):
         elif "warn" in log_lower:
             risk = "warning"
             summary = "Warning detected."
+        elif "info" in log_lower:
+            risk = "info"
+            summary = "Info log detected."
 
         # 3. 构造符合 JSON Schema 的返回结果
         # 必须严格匹配 C++ 端要求的字段: summary, risk_level, root_cause, solution
@@ -80,13 +83,15 @@ class MockProvider(AIProvider):
             
             # 这里虽然是 Mock，但我们假装“收到”了 prompt
             # 实际逻辑还是简单的关键词匹配
-            risk = "low"
+            risk = "safe"
             if "error" in log_text.lower():
                 risk = "error"
             if "critical" in log_text.lower():
                 risk = "critical"
             if "warn" in log_text.lower():
                 risk = "warning"
+            if "info" in log_text.lower():
+                risk = "info"
 
             # 构造单条结果
             analysis_result = {

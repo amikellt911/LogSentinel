@@ -4,8 +4,8 @@ from typing import List, Optional, Any, Dict
 from enum import Enum
 
 class BatchLogItem(BaseModel):
-    id: str = Field(..., description="Unique trace ID from C++ backend")
-    text: str = Field(..., description="Raw log content")
+    id: str = Field(..., description="来自 C++ 后端的唯一 Trace ID")
+    text: str = Field(..., description="原始日志内容")
 
 class BatchRequestSchema(BaseModel):
     batch: List[BatchLogItem]
@@ -22,19 +22,19 @@ class RiskLevel(str, Enum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
-    INFO = "info" # 建议加上 info，对应 C++ 里的未知情况
+    INFO = "info" # 对应 C++ 里的 INFO
     UNKNOWN = "unknown"
-    CRITICAL = "critical" # Handle legacy/mapped levels if necessary
+    CRITICAL = "critical" # 处理旧版/映射后的等级
     ERROR = "error"
     WARNING = "warning"
     SAFE = "safe"
 
 # 定义结构化输出的 Schema
 class LogAnalysisResult(BaseModel):
-    summary: str = Field(description="A concise summary of the log error.")
-    risk_level: str = Field(description="The risk level of the error.")
-    root_cause: str = Field(description="The root cause of the error.")
-    solution: str = Field(description="Suggested solution or fix.")
+    summary: str = Field(description="日志错误或问题的简要总结。")
+    risk_level: str = Field(description="错误的风险等级。")
+    root_cause: str = Field(description="错误的根本原因。")
+    solution: str = Field(description="建议的解决方案或修复措施。")
 
 class SummarizeRequest(BaseModel):
     results: List[LogAnalysisResult]
