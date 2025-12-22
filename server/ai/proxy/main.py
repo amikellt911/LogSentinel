@@ -50,19 +50,21 @@ app = FastAPI(
 # 这种方式使得添加新的 Provider 变得非常容易。
 providers: Dict[str, AIProvider] = {}
 
-# 尝试初始化并注册 Gemini Provider
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-if gemini_api_key and gemini_api_key != "YOUR_API_KEY":
-    try:
-        providers["gemini"] = GeminiProvider(api_key=gemini_api_key)
-        print("Gemini Provider 初始化成功。")
-    except Exception as e:
-        print(f"初始化 Gemini Provider 失败: {e}")
-else:
-    if not gemini_api_key:
-        print("环境变量中未找到 GEMINI_API_KEY。Gemini Provider 已禁用。")
-    else:
-        print("发现 GEMINI_API_KEY 占位符。请在 ai/.env 中替换 'YOUR_API_KEY'。Gemini Provider 已禁用。")
+# 无条件初始化 Gemini Provider (支持懒加载)
+# 1. 获取环境变量（如果没有就是 None 或者 ""）
+gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+
+# 2. 不管有没有 Key，都强行初始化！
+#    我们把 "空白状态" 的处理逻辑下放给 Provider 内部去处理
+try:
+    print(f"正在初始化 Gemini Provider (Key 长度: {len(gemini_api_key)})...")
+    # 哪怕传进去的是空字符串，也要让它活着
+    providers["gemini"] = GeminiProvider(api_key=gemini_api_key)
+    print("Gemini Provider 已初始化 (如果 Key 为空则等待配置传入)。")
+except Exception as e:
+    # 只有这种真正的代码报错才抓，配置问题不报错
+    print(f"严重错误: 加载 Gemini 类失败: {e}")
+
 providers["mock"] = MockProvider(delay=0.5)
 # 未来可以在这里添加并注册 OpenAI, Claude 等其他 Provider
 # openai_api_key = os.getenv("OPENAI_API_KEY")

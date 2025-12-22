@@ -22,6 +22,15 @@
 
 `MockProvider` 已同步更新，不再返回旧版的 `high`/`medium`/`low`，而是返回上述标准等级。
 
+### 1.3 启动策略变更：懒加载 (Lazy Initialization)
+**原设计**: 如果环境变量中没有 API Key，`main.py` 会直接禁用 Gemini Provider。
+**问题**: 这导致了“死锁”。如果用户初次部署没有配置 Key，Proxy 启动后 Gemini 功能不可用，即使后续通过前端（C++）传来了 Key，Proxy 也不会响应（因为它根本没加载该模块）。
+**新设计**:
+- `main.py` 无条件加载 `GeminiProvider`。
+- `GeminiProvider.__init__` 允许空 Key 启动（此时 `default_client` 为 `None`）。
+- 只有当第一个携带有效 Key 的请求到达时，才真正初始化 `genai.Client`。
+- 如果在未配置 Key 的情况下强行调用（如单次分析接口），会返回明确的 JSON 错误信息。
+
 ## 2. 新手指南 & 踩坑记录
 
 ### 2.1 Google GenAI Client 的复用
