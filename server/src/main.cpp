@@ -61,7 +61,7 @@ int main(int argc, char* argv[])
     // TODO: 根据配置切换 AI Provider，目前先用 GeminiApiAi，因为它对接了 Proxy
     // 我们的 LogHandler 会把 config 传给 Batcher，Batcher 传给 AiProvider
     // 所以 AiProvider 本身可以是无状态的（除了 URL 配置），或者初始化一次即可
-    std::shared_ptr<AiProvider> ai_client = std::make_shared<GeminiApiAi>();
+    std::shared_ptr<AiProvider> ai_client = std::make_shared<MockAI>();
 
     const int num_cpu_cores = std::thread::hardware_concurrency();
     const int num_io_threads = 1; // 明确 I/O 线程数量

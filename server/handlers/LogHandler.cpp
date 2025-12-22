@@ -35,47 +35,14 @@ void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const Mi
     task.raw_request_body = req.body_;
     task.start_time = std::chrono::steady_clock::now();
 
-    // 1. 获取 AppConfig (API Key, Model)
-    auto app_config = config_repo_->getAppConfig();
-    task.ai_api_key = app_config.ai_api_key;
-    task.ai_model = app_config.ai_model;
+    // 1. Get Config Snapshot (O(1))
+    auto snap = config_repo_->getSnapshot();
 
-    // 2. 获取 Active Prompts
-    auto all_prompts = config_repo_->getAllPrompts();
-    // 默认值
-    task.map_prompt = "";
-    task.reduce_prompt = "";
-
-    // 遍历查找 Active Map & Reduce Prompts
-    for (const auto& p : all_prompts) {
-        if (p.id == app_config.active_map_prompt_id && (p.type == "map" || p.type.empty())) {
-            task.map_prompt = p.content;
-        }
-        if (p.id == app_config.active_reduce_prompt_id && p.type == "reduce") {
-            task.reduce_prompt = p.content;
-        }
-    }
-
-    // Fallback: 如果没有找到对应的 prompt，尝试找 active=true 的
-    // Map Fallback
-    if (task.map_prompt.empty()) {
-        for (const auto& p : all_prompts) {
-            if (p.is_active && (p.type == "map" || p.type.empty())) {
-                 task.map_prompt = p.content;
-                 break;
-            }
-        }
-    }
-    // Reduce Fallback
-    if (task.reduce_prompt.empty()) {
-        for (const auto& p : all_prompts) {
-            if (p.is_active && p.type == "reduce") {
-                 task.reduce_prompt = p.content;
-                 break;
-            }
-        }
-    }
-
+    // 2. Populate Task with cached values
+    task.ai_api_key = snap->app_config.ai_api_key;
+    task.ai_model = snap->app_config.ai_model;
+    task.map_prompt = snap->active_map_prompt;
+    task.reduce_prompt = snap->active_reduce_prompt;
 
     if (batcher_->push(std::move(task)))
     {
@@ -92,55 +59,6 @@ void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const Mi
         resp->addCorsHeaders();
         resp->body_ = "{\"error\": \"Server is overloaded\"}";
     }
-    // AnalysisTask task;
-    // // 没用，因为const(为了通用性)，会降级为拷贝
-    // //  task.trace_id = std::move(req.trace_id);
-    // //  task.raw_request_body = std::move(req.body_);
-    // task.trace_id = req.trace_id;
-    // task.raw_request_body = req.body_;
-    // task.start_time = std::chrono::steady_clock::now();
-    // auto work = [task, repo = repo_, ai_client = ai_client_, notifier = notifier_]
-    // {
-    //     try
-    //     {
-    //         // Step 1: 保存原始日志
-    //         repo->SaveRawLog(task.trace_id, task.raw_request_body);
-
-    //         // Step 2: 调用 AI
-    //         LogAnalysisResult ai_result = ai_client->analyze(task.raw_request_body);
-    //         auto end_time = std::chrono::steady_clock::now();
-    //         auto micro_ms=std::chrono::duration_cast<std::chrono::microseconds>(end_time-task.start_time).count();
-
-    //         // Step 3: 保存结果
-    //         // 只要 analyze 没抛异常，我们就认为拿到了合法的 JSON (在 GeminiApiAi 内部做过校验)
-    //         repo->saveAnalysisResult(task.trace_id, ai_result, (int)micro_ms,"SUCCESS");
-
-    //         // Step 4: Webhook 通知
-    //         // 这里再 parse 一次虽有开销，但解耦了逻辑，MVP 可以接受
-    //         notifier->notify(task.trace_id, ai_result);
-    //     }
-    //     catch (const std::exception &e)
-    //     {
-    //         std::cerr << "[Worker Error] TraceID: " << task.trace_id << " | " << e.what() << '\n';
-    //         // 记录失败状态
-    //         repo->saveAnalysisResultError(task.trace_id, std::string("Error: ") + e.what());
-    //     }
-    // };
-    // if (tpool_->submit(std::move(work)))
-    // {
-    //     resp->setStatusCode(HttpResponse::HttpStatusCode::k202Acceptd);
-    //     resp->setHeader("Content-Type", "application/json");
-    //     resp->addCorsHeaders();
-    //     nlohmann::json j;
-    //     j["trace_id"] = task.trace_id;
-    //     resp->body_ = j.dump();
-    // }
-    // else
-    // {
-    //     resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-    //     resp->addCorsHeaders();
-    //     resp->body_ = "{\"error\": \"Server is overloaded\"}";
-    // }
 }
 void LogHandler::handleGetResult(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
 {
