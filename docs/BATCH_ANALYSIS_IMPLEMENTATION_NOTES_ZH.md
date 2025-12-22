@@ -25,7 +25,7 @@
     *   `LogBatcher`:
         *   **JSON 解析**: 在 `processBatch` 中解析 AI 返回的 JSON 字符串。
         *   **双写逻辑**: 先写 `saveBatchSummary` 获取 ID，再写 `analysis_results`。
-        *   **QPS 计算**: 利用 `onTimeout` 定时器（每 200ms），每 500ms 计算一次 QPS 和队列水位，并通过 `repo_->updateRealtimeMetrics` 推送给存储层。
+        *   **QPS 计算**: 利用 `onTimeout` 定时器（每 200ms），每 1000ms (1s) 计算一次 QPS 和队列水位，并通过 `repo_->updateRealtimeMetrics` 推送给存储层。这是为了配合前端图表的 1秒 精度。
 
 ## 2. 踩坑与修复记录 (Pitfalls & Fixes)
 
@@ -61,7 +61,7 @@
 
 ### 3.3 定时器策略
 *   **代码**: `loop_->runEvery(0.2, ...)`
-*   **注意**: 不要为了“精确”而在回调里反复 `reset` 定时器。固定频率的轮询（Tick）配合状态检查（`elapsed_ms >= 500`）是开销最小、最稳定的做法。
+*   **注意**: 不要为了“精确”而在回调里反复 `reset` 定时器。固定频率的轮询（Tick）配合状态检查（`elapsed_ms >= 1000`）是开销最小、最稳定的做法。
 
 ---
 **文档作者**: Jules

@@ -65,8 +65,8 @@ void LogBatcher::onTimeout()
     auto now = std::chrono::steady_clock::now();
     auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_stat_time_).count();
 
-    // 每 500ms 更新一次仪表盘，避免过于频繁
-    if (elapsed_ms >= 500) {
+    // 每 1000ms (1s) 更新一次仪表盘，配合前端图表精度
+    if (elapsed_ms >= 1000) {
         // A. 计算 QPS
         // (当前总处理量 - 上次总处理量) / 时间间隔(秒)
         size_t delta = total_processed_global_ - last_total_processed_;
