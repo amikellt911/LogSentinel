@@ -1,7 +1,6 @@
 #include "handlers/LogHandler.h"
 #include "threadpool/ThreadPool.h"
 #include "persistence/SqliteLogRepository.h"
-#include "persistence/SqliteConfigRepository.h"
 #include "ai/AiProvider.h"
 #include "notification/INotifier.h"
 #include "core/AnalysisTask.h"
@@ -17,11 +16,10 @@
 //     resp->setHeader("Access-Control-Allow-Headers", "Content-Type");
 // }
 
-LogHandler::LogHandler(ThreadPool *tpool, std::shared_ptr<SqliteLogRepository> repo, std::shared_ptr<LogBatcher> batcher, std::shared_ptr<SqliteConfigRepository> config_repo)
+LogHandler::LogHandler(ThreadPool *tpool, std::shared_ptr<SqliteLogRepository> repo, std::shared_ptr<LogBatcher> batcher)
     :tpool_(tpool),
     repo_(repo),
-    batcher_(batcher),
-    config_repo_(config_repo)
+    batcher_(batcher)
 {
 }
 
@@ -34,15 +32,6 @@ void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const Mi
     task.trace_id = req.trace_id;
     task.raw_request_body = req.body_;
     task.start_time = std::chrono::steady_clock::now();
-
-    // 1. Get Config Snapshot (O(1))
-    auto snap = config_repo_->getSnapshot();
-
-    // 2. Populate Task with cached values
-    task.ai_api_key = snap->app_config.ai_api_key;
-    task.ai_model = snap->app_config.ai_model;
-    task.map_prompt = snap->active_map_prompt;
-    task.reduce_prompt = snap->active_reduce_prompt;
 
     if (batcher_->push(std::move(task)))
     {

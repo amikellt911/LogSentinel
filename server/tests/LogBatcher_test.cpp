@@ -3,6 +3,7 @@
 #include <filesystem>
 #include "core/LogBatcher.h"
 #include "persistence/SqliteLogRepository.h"
+#include "persistence/SqliteConfigRepository.h"
 #include "ai/MockAI.h"
 #include "notification/WebhookNotifier.h"
 #include "threadpool/ThreadPool.h"
@@ -16,6 +17,9 @@ protected:
         test_db_path = "test_batcher_" + std::to_string(std::time(nullptr)) + ".db";
         repo = std::make_shared<SqliteLogRepository>(test_db_path);
 
+        // 1.5 准备 Config Repo (复用 DB 路径)
+        config_repo = std::make_shared<SqliteConfigRepository>(test_db_path);
+
         // 2. 准备 Mock 组件
         ai = std::make_shared<MockAI>();
         notifier = std::make_shared<WebhookNotifier>(std::vector<std::string>{});
@@ -25,7 +29,7 @@ protected:
 
         // 4. 创建被测对象 Batcher
         // 注意：传入 &loop
-        batcher = std::make_shared<LogBatcher>(&loop, tpool.get(), repo, ai, notifier);
+        batcher = std::make_shared<LogBatcher>(&loop, tpool.get(), repo, ai, notifier, config_repo);
     }
 
     void TearDown() override {
@@ -48,6 +52,7 @@ protected:
     MiniMuduo::net::EventLoop loop; // 局部的 EventLoop
     std::unique_ptr<ThreadPool> tpool;
     std::shared_ptr<SqliteLogRepository> repo;
+    std::shared_ptr<SqliteConfigRepository> config_repo;
     std::shared_ptr<AiProvider> ai;
     std::shared_ptr<WebhookNotifier> notifier;
     std::shared_ptr<LogBatcher> batcher;
