@@ -147,37 +147,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             throw std::runtime_error("Failed to Create Tables: " + err_str);
         }
 
-        // 迁移逻辑：重命名 ai_prompts -> map_prompts
-        // 检查 ai_prompts 是否存在
-        bool has_old_table = false;
-        {
-            sqlite3_stmt* check_stmt;
-            sqlite3_prepare_v2(db_, "SELECT name FROM sqlite_master WHERE type='table' AND name='ai_prompts';", -1, &check_stmt, nullptr);
-            if (sqlite3_step(check_stmt) == SQLITE_ROW) has_old_table = true;
-            sqlite3_finalize(check_stmt);
-        }
-
-        if (has_old_table) {
-            // 如果 map_prompts 也存在（可能之前的 create table 创建了空表），需要先删除空的 map_prompts 以便重命名
-            // 或者将数据迁移过去。这里简单起见，如果 ai_prompts 存在且 map_prompts 是空的，则删除 map_prompts 并重命名
-            // 但如果 init_sql 刚刚创建了 map_prompts...
-            // 简单策略：如果 ai_prompts 存在，尝试重命名。如果重命名失败（目标已存在），则假定已经迁移过或手动合并。
-            // 更好的策略：INSERT INTO map_prompts SELECT * FROM ai_prompts; DROP TABLE ai_prompts;
-            // 还需要注意列匹配。ai_prompts 可能有 prompt_type 列，map_prompts 没有。
-
-            const char* migrate_sql = R"(
-                INSERT INTO map_prompts (id, name, content, is_active, created_at)
-                SELECT id, name, content, is_active, created_at FROM ai_prompts;
-                DROP TABLE ai_prompts;
-            )";
-            char* mig_err = nullptr;
-            rc = sqlite3_exec(db_, migrate_sql, nullptr, nullptr, &mig_err);
-             if (rc != SQLITE_OK) {
-                // 可能是 map_prompts 表结构不匹配或者已经有数据冲突，只记录警告不崩溃，视具体情况而定
-                std::cerr << "[Migration] Warn: Failed to migrate ai_prompts to map_prompts: " << (mig_err ? mig_err : "unknown") << std::endl;
-                sqlite3_free(mig_err);
-            }
-        }
+        // 移除了 ai_prompts 迁移逻辑，由用户手动清理数据库文件
 
         loadFromDbInternal();
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
