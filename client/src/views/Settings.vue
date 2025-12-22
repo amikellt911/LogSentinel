@@ -151,14 +151,14 @@
                         </div>
                         <!-- Phase Tabs -->
                         <div class="flex bg-gray-900 rounded p-1">
-                           <button
+                           <button 
                              class="flex-1 text-xs py-1.5 rounded transition-colors"
                              :class="activePromptTab === 'map' ? 'bg-primary text-white font-bold' : 'text-gray-400 hover:text-gray-200'"
                              @click="activePromptTab = 'map'"
                            >
                              {{ $t('settings.ai.mapPhase') }}
                            </button>
-                           <button
+                           <button 
                              class="flex-1 text-xs py-1.5 rounded transition-colors"
                              :class="activePromptTab === 'reduce' ? 'bg-primary text-white font-bold' : 'text-gray-400 hover:text-gray-200'"
                              @click="activePromptTab = 'reduce'"
@@ -169,7 +169,7 @@
                      </div>
                      <div class="flex-1 overflow-y-auto custom-scrollbar">
                         <div 
-                           v-for="prompt in filteredPrompts"
+                           v-for="prompt in filteredPrompts" 
                            :key="prompt.id"
                            class="p-4 cursor-pointer hover:bg-gray-800 transition-colors border-b border-gray-800 relative group flex items-center"
                            :class="{'bg-gray-800 border-l-2 border-l-primary': selectedPromptId === prompt.id}"
@@ -489,30 +489,28 @@
     selectedPromptId.value = id
     
     // 2. Set as Active (Mutex logic per phase)
-    // Only set activePromptId if the ID is a valid number (persisted prompt)
-    if (typeof id === 'number') {
-        const prompt = systemStore.settings.ai.prompts.find(p => p.id === id)
-        if (prompt) {
-            if (prompt.type === 'map') {
-                systemStore.settings.ai.activeMapPromptId = id
-            } else {
-                systemStore.settings.ai.activeReducePromptId = id
-            }
+    // Use loose equality to find prompt as ID types (string/number) might vary in frontend state vs store
+    const prompt = systemStore.settings.ai.prompts.find(p => p.id == id)
+    if (prompt && typeof id === 'number') {
+        if (prompt.type === 'map') {
+            systemStore.settings.ai.activeMapPromptId = id
+        } else {
+            systemStore.settings.ai.activeReducePromptId = id
         }
     }
     
     // UI update for is_active flag (optional if we use isPromptActive helper)
     systemStore.settings.ai.prompts.forEach(p => {
-        if (p.id === id) p.is_active = 1
+        if (p.id == id) p.is_active = 1
         else if (p.type === activePromptTab.value) p.is_active = 0
     })
  }
 
  function isPromptActive(prompt: PromptConfig) {
      if (prompt.type === 'map') {
-         return systemStore.settings.ai.activeMapPromptId == prompt.id
+         return String(systemStore.settings.ai.activeMapPromptId) === String(prompt.id)
      } else {
-         return systemStore.settings.ai.activeReducePromptId == prompt.id
+         return String(systemStore.settings.ai.activeReducePromptId) === String(prompt.id)
      }
  }
  
