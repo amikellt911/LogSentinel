@@ -446,9 +446,10 @@ int64_t SqliteLogRepository::saveBatchSummary(
 
     StmtPtr stmt_ptr(stmt);
 
-    sqlite3_bind_text(stmt, 1, global_summary.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, global_risk_level.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, key_patterns.c_str(), -1, SQLITE_TRANSIENT);
+    // 优化：参数是 const std::string&，在函数执行期间有效，所以可以用 SQLITE_STATIC 避免 SQLite 内部拷贝
+    sqlite3_bind_text(stmt, 1, global_summary.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, global_risk_level.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, key_patterns.c_str(), -1, SQLITE_STATIC);
 
     sqlite3_bind_int64(stmt, 4, batch_stats.total_logs);
     sqlite3_bind_int64(stmt, 5, batch_stats.critical_risk);
