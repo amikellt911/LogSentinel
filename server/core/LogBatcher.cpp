@@ -163,7 +163,7 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
         repo_->saveAnalysisResultBatch(items, global_summary);
 
         // 7. 发送通知 (网络)
-        notifier_->notifyReport(global_summary, items);
+        //notifier_->notifyReport(global_summary, items);
     }
     catch (const std::exception &e)
     {

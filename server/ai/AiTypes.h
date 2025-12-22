@@ -18,10 +18,6 @@ NLOHMANN_JSON_SERIALIZE_ENUM(RiskLevel, {
     {RiskLevel::WARNING, "warning"},
     {RiskLevel::INFO, "info"},
     {RiskLevel::SAFE, "safe"},
-    // Legacy Compatibility
-    {RiskLevel::CRITICAL, "high"},
-    {RiskLevel::ERROR, "medium"},
-    {RiskLevel::WARNING, "low"}
 })
 
 struct LogAnalysisResult{

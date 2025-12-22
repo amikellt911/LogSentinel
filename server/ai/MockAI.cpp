@@ -69,7 +69,7 @@ LogAnalysisResult MockAI::analyze(const std::string &log_text)
         }
     }
     std::string risk = analysis_json["risk_level"];
-    if (risk != "high" && risk != "medium" && risk != "low" && risk != "info"&&risk!="unknown")
+    if (risk != "critical" && risk != "warning" && risk != "error" && risk != "info"&&risk!="safe")
     {
         // 这里可以选择抛异常，或者自动修正为 unknown，看业务宽容度
         throw std::runtime_error("Validation Error: Invalid risk_level '" + risk + "'");
@@ -193,7 +193,7 @@ std::unordered_map<std::string, LogAnalysisResult> MockAI::analyzeBatch(
             }
         }
         std::string risk = result_json["risk_level"];
-        if (risk != "high" && risk != "medium" && risk != "low" && risk != "info"&&risk!="unknown")
+        if (risk != "critical" && risk != "warning" && risk != "error" && risk != "info"&&risk!="safe")
         {
             // 这里可以选择抛异常，或者自动修正为 unknown，看业务宽容度
             throw std::runtime_error("Validation Error: Invalid risk_level '" + risk + "'");

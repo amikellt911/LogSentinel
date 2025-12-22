@@ -19,20 +19,18 @@ class ChatRequest(BaseModel):
 
 # 定义风险等级枚举
 class RiskLevel(str, Enum):
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INFO = "info" # 对应 C++ 里的 INFO
-    UNKNOWN = "unknown"
-    CRITICAL = "critical" # 处理旧版/映射后的等级
+    CRITICAL = "critical" 
     ERROR = "error"
     WARNING = "warning"
+    INFO = "info" 
     SAFE = "safe"
+    UNKNOWN = "unknown"
 
 # 定义结构化输出的 Schema
 class LogAnalysisResult(BaseModel):
     summary: str = Field(description="日志错误或问题的简要总结。")
-    risk_level: str = Field(description="错误的风险等级。")
+    # 强制使用 RiskLevel 枚举，如果 AI 返回了不在枚举中的值，Pydantic 会抛出校验错误
+    risk_level: RiskLevel = Field(description="错误的风险等级。必须是 critical, error, warning, info, safe, unknown 之一。")
     root_cause: str = Field(description="错误的根本原因。")
     solution: str = Field(description="建议的解决方案或修复措施。")
 

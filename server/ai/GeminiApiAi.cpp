@@ -3,7 +3,6 @@
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp> // 我们需要一个JSON库来解析单次分析的响应和构建聊天请求
 #include <vector>            // 用于字段验证
-#include "GeminiApiAi.h"
 
 // 构造函数：初始化会话和URL
 GeminiApiAi::GeminiApiAi()
@@ -70,7 +69,7 @@ LogAnalysisResult GeminiApiAi::analyze(const std::string &log_text)
         }
     }
     std::string risk = analysis_json["risk_level"];
-    if (risk != "high" && risk != "medium" && risk != "low" && risk != "info"&&risk!="unknown")
+    if (risk != "critical" && risk != "warning" && risk != "error" && risk != "info"&&risk!="safe")
     {
         // 这里可以选择抛异常，或者自动修正为 unknown，看业务宽容度
         throw std::runtime_error("Validation Error: Invalid risk_level '" + risk + "'");
@@ -189,7 +188,7 @@ std::unordered_map<std::string, LogAnalysisResult> GeminiApiAi::analyzeBatch(
             }
         }
         std::string risk = result_json["risk_level"];
-        if (risk != "high" && risk != "medium" && risk != "low" && risk != "info"&&risk!="unknown")
+        if (risk != "critical" && risk != "warning" && risk != "error" && risk != "info"&&risk!="safe")
         {
             // 这里可以选择抛异常，或者自动修正为 unknown，看业务宽容度
             throw std::runtime_error("Validation Error: Invalid risk_level '" + risk + "'");
