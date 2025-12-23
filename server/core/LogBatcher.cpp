@@ -11,13 +11,15 @@ LogBatcher::LogBatcher(ThreadPool *thread_pool, std::shared_ptr<SqliteLogReposit
     : thread_pool_(thread_pool), repo_(repo), ai_client_(ai_client), notifier_(notifier), config_repo_(config_repo)
 {
     ring_buffer_.resize(capacity_);
+    last_stat_time_ = std::chrono::steady_clock::now();
 }
 
 LogBatcher::LogBatcher(MiniMuduo::net::EventLoop *loop, ThreadPool *thread_pool, std::shared_ptr<SqliteLogRepository> repo, std::shared_ptr<AiProvider> ai_client, std::shared_ptr<INotifier> notifier, std::shared_ptr<SqliteConfigRepository> config_repo)
     : loop_(loop), thread_pool_(thread_pool), repo_(repo), ai_client_(ai_client), notifier_(notifier), config_repo_(config_repo)
 {
     ring_buffer_.resize(capacity_);
-    loop_->runEvery(0.5, [this]()
+    last_stat_time_ = std::chrono::steady_clock::now();
+    loop_->runEvery(0.2, [this]() // 改为 0.2s 轮询，响应更及时
                     { this->onTimeout(); });
 }
 
@@ -51,10 +53,34 @@ bool LogBatcher::push(AnalysisTask &&task)
 void LogBatcher::onTimeout()
 {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    // 1. 处理常规的 dispatch 逻辑
     if (count_ > 0)
     {
         size_t limit = std::min(count_, batch_size_);
         tryDispatchLocked(limit);
+    }
+
+    // 2. --- 新增：计算瞬态指标 ---
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_stat_time_).count();
+
+    // 每 1000ms (1s) 更新一次仪表盘，配合前端图表精度
+    if (elapsed_ms >= 1000) {
+        // A. 计算 QPS
+        // (当前总处理量 - 上次总处理量) / 时间间隔(秒)
+        size_t delta = total_processed_global_ - last_total_processed_;
+        double qps = (double)delta * 1000.0 / elapsed_ms;
+
+        // B. 计算背压 (队列占用率)
+        double bp = (double)count_ / capacity_;
+
+        // C. 推送到 Repo (更新快照)
+        repo_->updateRealtimeMetrics(qps, bp);
+
+        // D. 重置基准点
+        last_stat_time_ = now;
+        last_total_processed_ = total_processed_global_;
     }
 }
 
@@ -71,6 +97,7 @@ void LogBatcher::tryDispatchLocked(size_t limit)
         head_ = (head_ + 1) % capacity_;
     }
     count_ -= limit;
+    total_processed_global_ += limit; // <--- 记录处理总数
 
     // 在聚合批次时刻捕获配置快照
     auto config = config_repo_->getSnapshot();
@@ -146,24 +173,80 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
         }
 
         // 5. AI Reduce 阶段摘要 (网络)
-        std::string global_summary = "No summary available.";
+        std::string global_summary_text = "No summary available.";
+        std::string global_risk = "unknown";
+        std::string key_patterns = "[]";
+
         if (!results_for_summary.empty())
         {
             try
             {
-                global_summary = ai_client_->summarize(results_for_summary, ai_api_key, ai_model, reduce_prompt);
+                // 这里 ai_client_->summarize 返回的是 JSON 字符串
+                std::string json_str = ai_client_->summarize(results_for_summary, ai_api_key, ai_model, reduce_prompt);
+
+                // 解析 JSON
+                try {
+                    auto j = nlohmann::json::parse(json_str);
+                    global_summary_text = j.value("global_summary", "No summary");
+                    // 注意：RiskLevel 是个 Enum，JSON 里是 string
+                    global_risk = j.value("global_risk_level", "unknown");
+                    // key_patterns 是个数组
+                    if (j.contains("key_patterns")) {
+                        key_patterns = j["key_patterns"].dump(); // 存成 JSON 字符串
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "[LogBatcher] Failed to parse summary JSON: " << e.what() << "\nRaw: " << json_str << std::endl;
+                    global_summary_text = "JSON Parse Error: " + std::string(e.what());
+                }
             }
             catch (...)
             {
-                global_summary = "Summary generation failed.";
+                global_summary_text = "Summary generation failed.";
             }
         }
 
-        // 6. 保存结果 (IO)
-        repo_->saveAnalysisResultBatch(items, global_summary);
+        // 6. 准备批次统计数据 (DashboardStats)
+        // 注意：这里我们只算当前批次的“累加”部分，QPS和Backpressure是瞬态的，这里设为0
+        DashboardStats batch_stats;
+        batch_stats.total_logs = items.size();
 
-        // 7. 发送通知 (网络)
-        //notifier_->notifyReport(global_summary, items);
+        // 计算批次处理总耗时 (Batch Latency)
+        // 逻辑：当前时刻 (Summary 完成) - 批次中最早的任务开始时间
+        // 这反映了用户感知的“最大等待时间”
+        auto batch_end_time = std::chrono::steady_clock::now();
+        int processing_time_ms = 0;
+
+        if (!batch.empty()) {
+            // 因为 RingBuffer 是 FIFO 的，所以 batch[0] 必然是最早进入的那个任务
+            auto min_start_time = batch[0].start_time;
+            processing_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(batch_end_time - min_start_time).count();
+        }
+
+        for(const auto& item : items) {
+             nlohmann::json j_risk = item.result.risk_level;
+             std::string r = j_risk.get<std::string>();
+             if (r == "critical") batch_stats.critical_risk++;
+             else if (r == "error") batch_stats.error_risk++;
+             else if (r == "warning") batch_stats.warning_risk++;
+             else if (r == "info") batch_stats.info_risk++;
+             else if (r == "safe") batch_stats.safe_risk++;
+             else batch_stats.unknown_risk++;
+        }
+
+        // 7. 保存宏观分析结果 (获取 batch_id)
+        int64_t batch_id = repo_->saveBatchSummary(
+            global_summary_text,
+            global_risk,
+            key_patterns,
+            batch_stats,
+            processing_time_ms
+        );
+
+        // 8. 保存微观分析结果 (带 batch_id)
+        repo_->saveAnalysisResultBatch(items, batch_id);
+
+        // 9. 发送通知 (网络)
+        //notifier_->notifyReport(global_summary_text, items);
     }
     catch (const std::exception &e)
     {

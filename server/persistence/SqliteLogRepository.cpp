@@ -65,11 +65,39 @@ CREATE TABLE IF NOT EXISTS raw_logs (
         throw std::runtime_error("Failed to create raw_logs table");
     }
 
+    // 0. 主表: batch_summaries
+    const char *sql_create_batch = R"(
+    CREATE TABLE IF NOT EXISTS batch_summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        global_summary TEXT,
+        global_risk_level TEXT,
+        key_patterns TEXT,
+        total_logs INTEGER DEFAULT 0,
+        cnt_critical INTEGER DEFAULT 0,
+        cnt_error    INTEGER DEFAULT 0,
+        cnt_warning  INTEGER DEFAULT 0,
+        cnt_info     INTEGER DEFAULT 0,
+        cnt_safe     INTEGER DEFAULT 0,
+        cnt_unknown  INTEGER DEFAULT 0,
+        processing_time_ms INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    )";
+
+    errmsg = nullptr;
+    rc = sqlite3_exec(db_, sql_create_batch, nullptr, nullptr, &errmsg);
+    if (rc != SQLITE_OK) {
+         std::cerr << "Cannot create batch_summaries: " << errmsg << std::endl;
+         sqlite3_free(errmsg); errmsg = nullptr;
+    }
+
     // 以前是 analysis_content TEXT, 现在拆开了
+    // 更新：关联 batch_id，去掉 global_summary (移到主表)
     const char *sql_create_results = R"(
     CREATE TABLE IF NOT EXISTS analysis_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         trace_id TEXT NOT NULL UNIQUE,
+        batch_id INTEGER,  -- 新增外键
         status TEXT NOT NULL,
         
         -- 核心字段拆分
@@ -80,10 +108,10 @@ CREATE TABLE IF NOT EXISTS raw_logs (
         
         -- 新增：响应耗时 (用于计算平均值,微秒)
         response_time_ms INTEGER DEFAULT 0,
-        -- 新增：批次的总结内容
-        global_summary TEXT,
+
         processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (trace_id) REFERENCES raw_logs(trace_id)
+        FOREIGN KEY (trace_id) REFERENCES raw_logs(trace_id),
+        FOREIGN KEY (batch_id) REFERENCES batch_summaries(id)
     )
 )";
     errmsg = nullptr; // 重置 errmsg
@@ -107,6 +135,9 @@ CREATE TABLE IF NOT EXISTS raw_logs (
         sqlite3_free(errmsg);
         // 索引创建失败通常不是致命错误，可以记录日志但让程序继续运行
     }
+
+    // 启动时构建内存快照
+    rebuildStatsFromDb();
 }
 
 SqliteLogRepository::~SqliteLogRepository()
@@ -310,130 +341,131 @@ std::optional<LogAnalysisResult> SqliteLogRepository::queryStructResultByTraceId
     return std::optional<LogAnalysisResult>();
 }
 
-DashboardStats SqliteLogRepository::getDashboardStats()
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    DashboardStats stats;
-    // 查询1：平均耗时
-    const char *sql = "SELECT AVG(response_time_ms) FROM analysis_results";
-    sqlite3_stmt *stmt = nullptr;
-    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK)
-    {
-        throw std::runtime_error("Failed to prepare statement for select avg response_time_ms " + std::string(sqlite3_errmsg(db_)));
-    }
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_ROW)
-    {
-        stats.avg_response_time = sqlite3_column_double(stmt, 0);
-        sqlite3_finalize(stmt);
-    }
-    else
-    {
-        sqlite3_finalize(stmt);
-        throw std::runtime_error("Failed to execute select avg response_time_ms" + std::string(sqlite3_errmsg(db_)));
-    }
-    // 查询2： 查询总日志(raw_logs)数量
-    sql = "SELECT COUNT(*) FROM raw_logs;";
-    rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK)
-    {
-        throw std::runtime_error("Failed to prepare statement for select total logs" + std::string(sqlite3_errmsg(db_)));
-    }
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_ROW)
-    {
-        stats.total_logs = sqlite3_column_int(stmt, 0);
-        sqlite3_finalize(stmt);
-    }
-    else
-    {
-        sqlite3_finalize(stmt);
-        throw std::runtime_error("Failed to execute select total logs" + std::string(sqlite3_errmsg(db_)));
-    }
-    // 查询3：查询log_analysis中risk_level分别为high，medium,low的日志数量
-    sql = "select risk_level,count(*) from analysis_results group by risk_level";
-    rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-    if (rc != SQLITE_OK)
-    {
-        throw std::runtime_error("Failed to prepare statement for select risk level counts" + std::string(sqlite3_errmsg(db_)));
-    }
-    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
-    {
-        const char *risk = (const char *)sqlite3_column_text(stmt, 0);
-        int count = sqlite3_column_int(stmt, 1);
-        if (risk != nullptr)
-        {
-            std::string r = std::string(risk);
-            if (r == "critical" || r == "high")
-            {
-                stats.critical_risk += count;
-            }
-            else if (r == "error" || r == "medium")
-            {
-                stats.error_risk += count;
-            }
-            else if (r == "warning" || r == "low")
-            {
-                stats.warning_risk += count;
-            }
-            else if (r == "info") {
-                stats.info_risk += count;
-            }
-            else if (std::string(risk) == "safe") {
-                stats.safe_risk = count;
-            }
-            else {
-                // 其他所有未识别的字符串（如 "unknown", "", null）都算作 Unknown
-                stats.unknown_risk += count;
-            }
-        }else {
-            // risk 字段本身是 NULL
-            stats.unknown_risk += count;
+void SqliteLogRepository::rebuildStatsFromDb() {
+    std::lock_guard<std::mutex> lock(mutex_); // 锁 DB
+
+    auto stats = std::make_shared<DashboardStats>();
+
+    // 1. 统计累加计数 (从 batch_summaries 聚合，极快)
+    // 如果没有 batch_summaries 数据，会返回 NULL，coalesce 转为 0
+    const char* sql = R"(
+        SELECT
+            COALESCE(SUM(total_logs), 0),
+            COALESCE(SUM(cnt_critical), 0),
+            COALESCE(SUM(cnt_error), 0),
+            COALESCE(SUM(cnt_warning), 0),
+            COALESCE(SUM(cnt_info), 0),
+            COALESCE(SUM(cnt_safe), 0),
+            COALESCE(SUM(cnt_unknown), 0)
+        FROM batch_summaries;
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            stats->total_logs = sqlite3_column_int64(stmt, 0);
+            stats->critical_risk = sqlite3_column_int64(stmt, 1);
+            stats->error_risk = sqlite3_column_int64(stmt, 2);
+            stats->warning_risk = sqlite3_column_int64(stmt, 3);
+            stats->info_risk = sqlite3_column_int64(stmt, 4);
+            stats->safe_risk = sqlite3_column_int64(stmt, 5);
+            stats->unknown_risk = sqlite3_column_int64(stmt, 6);
         }
     }
-    if (rc != SQLITE_DONE)
-    {
-        sqlite3_finalize(stmt);
-        throw std::runtime_error("Failed to execute select risk_level count statement");
-    }
     sqlite3_finalize(stmt);
-    // 查询4：查询5条风险日志
-    sql = R"(
+
+    // 2. 加载最近警报 (查 analysis_results)
+    // 注意：这里还是得查一次 DB
+    const char* sql_alerts = R"(
         SELECT trace_id, summary, processed_at 
         FROM analysis_results 
         WHERE risk_level IN ('critical', 'high')
         ORDER BY id DESC 
         LIMIT 5;
     )";
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) == SQLITE_OK)
-    {
-        while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
-        {
+    if (sqlite3_prepare_v2(db_, sql_alerts, -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
             AlertInfo alert;
-            alert.trace_id = (const char *)sqlite3_column_text(stmt, 0);
-
-            const char *sum = (const char *)sqlite3_column_text(stmt, 1);
-            alert.summary = sum ? sum : "No Summary";
-
-            const char *time = (const char *)sqlite3_column_text(stmt, 2);
-            alert.time = time ? time : "";
-
-            stats.recent_alerts.push_back(alert);
+            alert.trace_id = (const char*)sqlite3_column_text(stmt, 0);
+            alert.summary = (const char*)sqlite3_column_text(stmt, 1) ? (const char*)sqlite3_column_text(stmt, 1) : "";
+            alert.time = (const char*)sqlite3_column_text(stmt, 2) ? (const char*)sqlite3_column_text(stmt, 2) : "";
+            stats->recent_alerts.push_back(alert);
         }
-        if (rc != SQLITE_DONE)
-        {
-            sqlite3_finalize(stmt);
-            throw std::runtime_error("queryRecentAlerts failed: " + std::string(sqlite3_errmsg(db_)));
-        }
-    }
-    else
-    {
-        sqlite3_finalize(stmt);
-        throw std::runtime_error("Failed to prepare statement for select 5 recent alerts" + std::string(sqlite3_errmsg(db_)));
     }
     sqlite3_finalize(stmt);
-    return stats;
+
+    // 更新原子指针
+    std::lock_guard<std::mutex> stats_lock(stats_mutex_);
+    cached_stats_ = stats;
+}
+
+DashboardStats SqliteLogRepository::getDashboardStats()
+{
+    // 直接返回内存快照，O(1), 无 DB IO
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    if (!cached_stats_) {
+        return DashboardStats();
+    }
+    return *cached_stats_;
+}
+
+void SqliteLogRepository::updateRealtimeMetrics(double qps, double backpressure) {
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    if (!cached_stats_) return;
+
+    // COW: Copy On Write
+    auto new_stats = std::make_shared<DashboardStats>(*cached_stats_);
+    new_stats->current_qps = qps;
+    new_stats->backpressure = backpressure; // 注意 DashboardStats 里的字段名
+
+    cached_stats_ = new_stats;
+}
+
+int64_t SqliteLogRepository::saveBatchSummary(
+    const std::string& global_summary,
+    const std::string& global_risk_level,
+    const std::string& key_patterns,
+    const DashboardStats& batch_stats,
+    int processing_time_ms
+) {
+    std::lock_guard<std::mutex> lock_(mutex_);
+
+    const char* sql = R"(
+        INSERT INTO batch_summaries
+        (global_summary, global_risk_level, key_patterns,
+         total_logs, cnt_critical, cnt_error, cnt_warning, cnt_info, cnt_safe, cnt_unknown,
+         processing_time_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        checkSqliteError(db_, rc, "Failed to prepare saveBatchSummary");
+    }
+
+    StmtPtr stmt_ptr(stmt);
+
+    // 优化：参数是 const std::string&，在函数执行期间有效，所以可以用 SQLITE_STATIC 避免 SQLite 内部拷贝
+    sqlite3_bind_text(stmt, 1, global_summary.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, global_risk_level.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, key_patterns.c_str(), -1, SQLITE_STATIC);
+
+    sqlite3_bind_int64(stmt, 4, batch_stats.total_logs);
+    sqlite3_bind_int64(stmt, 5, batch_stats.critical_risk);
+    sqlite3_bind_int64(stmt, 6, batch_stats.error_risk);
+    sqlite3_bind_int64(stmt, 7, batch_stats.warning_risk);
+    sqlite3_bind_int64(stmt, 8, batch_stats.info_risk);
+    sqlite3_bind_int64(stmt, 9, batch_stats.safe_risk);
+    sqlite3_bind_int64(stmt, 10, batch_stats.unknown_risk);
+
+    sqlite3_bind_int(stmt, 11, processing_time_ms);
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        checkSqliteError(db_, SQLITE_ERROR, "Failed to insert batch summary");
+    }
+
+    return sqlite3_last_insert_rowid(db_);
 }
 
 void SqliteLogRepository::saveRawLogBatch(const std::vector<std::pair<std::string, std::string>> &logs)
@@ -494,72 +526,152 @@ void SqliteLogRepository::saveRawLogBatch(const std::vector<std::pair<std::strin
         throw;
     }
 }
-void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResultItem> &items, const std::string &global_summary)
+void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResultItem> &items, int64_t batch_id)
 {
-    std::lock_guard<std::mutex> lock_(mutex_);
-
-    // 1. 开启事务 (利用 helper 函数检查错误)
-    int rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
-    checkSqliteError(db_, rc, "Failed to begin transaction");
-
-    // 2. 准备语句
-    const char *sql = R"(
-        INSERT INTO analysis_results 
-        (trace_id, status, risk_level, summary, root_cause, solution, response_time_ms,global_summary) 
-        VALUES (?, ?, ?, ?, ?, ?, ?,?);
-    )";
-    sqlite3_stmt *raw_stmt = nullptr;
-    rc = sqlite3_prepare_v2(db_, sql, -1, &raw_stmt, nullptr);
-
-    // 如果 prepare 失败，先回滚再抛异常
-    if (rc != SQLITE_OK)
+    // --- 优化 1: 预先计算时间字符串 (One-time calculation) ---
+    // 整个批次共享同一个“当前时间”，减少 N 次系统调用
+    std::string batch_time_str;
     {
-        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
-        checkSqliteError(db_, rc, "Failed to prepare statement");
+        time_t now = time(0);
+        tm *ltm = localtime(&now);
+        char buffer[32];
+        // 格式化一次即可
+        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", ltm);
+        batch_time_str = std::string(buffer);
     }
 
-    // 【接管】让智能指针接管，从此以后不用写 finalize
-    StmtPtr stmt(raw_stmt);
+    // A. 准备当前批次的统计数据 (内存计算, 不持锁)
+    auto current_batch_stats = std::make_shared<DashboardStats>();
+    current_batch_stats->total_logs = items.size();
 
-    try
+    // 预留空间，避免 vector 扩容 (虽然 Alert 不多，但好习惯要有)
+    current_batch_stats->recent_alerts.reserve(5);
+
+    // --- 第一遍循环：计算统计数值 (必须全遍历) ---
+    // 这一步非常快，纯内存计算，没有任何 string copy
+    for (const auto& item : items) {
+        nlohmann::json j_risk = item.result.risk_level;
+        std::string r = j_risk.get<std::string>();
+        // 简单计数
+        if (r == "critical") current_batch_stats->critical_risk++;
+        else if (r == "error") current_batch_stats->error_risk++;
+        else if (r == "warning") current_batch_stats->warning_risk++;
+        else if (r == "info") current_batch_stats->info_risk++;
+        else if (r == "safe") current_batch_stats->safe_risk++;
+        else current_batch_stats->unknown_risk++;
+    }
+
+    // --- 第二遍循环：只采集警报 (倒序遍历) ---
+    // 目标：只拿本批次中“最新”的 5 个 Critical
+    // 倒序是因为 items.back() 通常是时间最近的日志
+    int collected_count = 0;
+    for (auto it = items.rbegin(); it != items.rend(); ++it) {
+        // 如果已经拿够 5 个了，直接退出循环！不用再往下看了
+        if (collected_count >= 5) break;
+
+        nlohmann::json j_risk = it->result.risk_level;
+        if (j_risk.get<std::string>() == "critical") {
+            AlertInfo alert;
+            alert.trace_id = it->trace_id;
+            alert.summary = it->result.summary;
+            alert.risk = "critical";
+
+            // 【直接赋值】：这是最安全的，避免污染旧数据
+            alert.time = batch_time_str;
+
+            current_batch_stats->recent_alerts.push_back(std::move(alert));
+            collected_count++;
+        }
+    }
+
+    // B. 数据库操作 (IO 操作，持 DB 锁)
     {
-        for (const auto &item : items)
-        {
-            // 转换 Enum 为 String
-            nlohmann::json j_risk = item.result.risk_level;
-            std::string risk_str = j_risk.get<std::string>();
+        std::lock_guard<std::mutex> lock_(mutex_);
 
-            sqlite3_bind_text(stmt.get(), 1, item.trace_id.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt.get(), 2, item.status.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt.get(), 3, risk_str.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(stmt.get(), 4, item.result.summary.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt.get(), 5, item.result.root_cause.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt.get(), 6, item.result.solution.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_int(stmt.get(), 7, item.response_time_ms);
-            sqlite3_bind_text(stmt.get(), 8, global_summary.c_str(), -1, SQLITE_STATIC);
-            // 执行
-            if (sqlite3_step(stmt.get()) != SQLITE_DONE)
-            {
-                // 主动抛出异常，让 catch 块去回滚
-                checkSqliteError(db_, SQLITE_ERROR, "Step execution failed");
-            }
+        // 1. 开启事务
+        int rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
+        checkSqliteError(db_, rc, "Failed to begin transaction");
 
-            // 重置
-            sqlite3_reset(stmt.get());
+        // 2. 准备语句 (Updated columns)
+        const char *sql = R"(
+            INSERT INTO analysis_results
+            (trace_id, batch_id, status, risk_level, summary, root_cause, solution, response_time_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        )";
+        sqlite3_stmt *raw_stmt = nullptr;
+        rc = sqlite3_prepare_v2(db_, sql, -1, &raw_stmt, nullptr);
+
+        if (rc != SQLITE_OK) {
+            sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+            checkSqliteError(db_, rc, "Failed to prepare statement");
         }
 
-        // 3. 提交事务
-        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
-        checkSqliteError(db_, rc, "Failed to commit");
-    }
-    catch (...)
+        StmtPtr stmt(raw_stmt);
+
+        try {
+            for (const auto &item : items) {
+                nlohmann::json j_risk = item.result.risk_level;
+                std::string risk_str = j_risk.get<std::string>();
+
+                sqlite3_bind_text(stmt.get(), 1, item.trace_id.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_int64(stmt.get(), 2, batch_id); // New: batch_id
+                sqlite3_bind_text(stmt.get(), 3, item.status.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt.get(), 4, risk_str.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt.get(), 5, item.result.summary.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt.get(), 6, item.result.root_cause.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt.get(), 7, item.result.solution.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_int(stmt.get(), 8, item.response_time_ms);
+
+                if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+                    checkSqliteError(db_, SQLITE_ERROR, "Step execution failed");
+                }
+                sqlite3_reset(stmt.get());
+            }
+
+            rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+            checkSqliteError(db_, rc, "Failed to commit");
+        }
+        catch (...) {
+            sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+            throw;
+        }
+    } // DB 锁释放
+
+    // C. 更新内存快照 (极快, 持 Cache 锁)
     {
-        // 异常发生时：
-        // 1. 回滚事务
-        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
-        // 2. stmt 自动析构 (finalize)
-        // 3. 继续抛出让上层处理
-        throw;
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        if (cached_stats_) {
+            auto new_stats = std::make_shared<DashboardStats>(*cached_stats_);
+            // 累加
+            new_stats->total_logs += current_batch_stats->total_logs;
+            new_stats->critical_risk += current_batch_stats->critical_risk;
+            new_stats->error_risk += current_batch_stats->error_risk;
+            new_stats->warning_risk += current_batch_stats->warning_risk;
+            new_stats->info_risk += current_batch_stats->info_risk;
+            new_stats->safe_risk += current_batch_stats->safe_risk;
+            new_stats->unknown_risk += current_batch_stats->unknown_risk;
+
+            // --- 智能合并 ---
+            // 此时 current_batch_stats->recent_alerts 里已经是本批次最新的 5 个了
+            // 且顺序是 [最新 -> 较新] (因为我们是倒序遍历插入的)
+            // 注意：因为我们是倒序遍历 items，所以 push_back 进去的第一个就是最新的。
+            // 所以 current_batch_stats->recent_alerts 的顺序是 [Newest, 2nd Newest, ...]
+
+            std::vector<AlertInfo> final_alerts = current_batch_stats->recent_alerts;
+
+            // 如果还不够 5 个，再去旧快照里补
+            if (final_alerts.size() < 5) {
+                const auto& old_alerts = cached_stats_->recent_alerts;
+                for (const auto& alert : old_alerts) {
+                    if (final_alerts.size() >= 5) break;
+                    final_alerts.push_back(alert); // Copy 旧的 (时间戳是旧的，正确！)
+                }
+            }
+
+            new_stats->recent_alerts = std::move(final_alerts);
+
+            cached_stats_ = new_stats;
+        }
     }
 }
 

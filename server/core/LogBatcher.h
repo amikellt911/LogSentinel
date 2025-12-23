@@ -52,4 +52,9 @@ private:
     // 流控参数
     size_t batch_size_ = 100;    // 攒够多少发车
     size_t pool_threshold_ = 90; // 下游堵了就不发
+
+    // QPS 计算辅助变量
+    std::chrono::steady_clock::time_point last_stat_time_;
+    size_t last_total_processed_ = 0; // 记录上一次算 QPS 时处理了多少条
+    size_t total_processed_global_ = 0; // LogBatcher 生命周期处理的总数
 };

@@ -23,13 +23,33 @@ public:
     // 批量保存原始日志 (BEGIN TRANSACTION ... COMMIT)
     void saveRawLogBatch(const std::vector<std::pair<std::string, std::string>>& logs);
 
-    // 批量保存分析结果
-    void saveAnalysisResultBatch(const std::vector<AnalysisResultItem>& items,const std::string& global_summary);
+    // 新增：保存批次宏观总结 (返回 batch_id)
+    int64_t saveBatchSummary(
+        const std::string& global_summary,
+        const std::string& global_risk_level,
+        const std::string& key_patterns,
+        const DashboardStats& stats,
+        int processing_time_ms
+    );
+
+    // 批量保存分析结果 (更新：增加 batch_id, 并触发内存快照更新)
+    void saveAnalysisResultBatch(const std::vector<AnalysisResultItem>& items, int64_t batch_id);
+
+    // 更新实时指标 (QPS, Backpressure)
+    void updateRealtimeMetrics(double qps, double backpressure);
 
     HistoryPage getHistoricalLogs(int page, int pageSize, const std::string& level = "", const std::string& keyword = "");
 private:
     sqlite3* db_=nullptr;
-    std::mutex mutex_;
+    std::mutex mutex_; // 保护 DB 访问
+
+    // --- 内存快照 (The Snapshot) ---
+    std::shared_ptr<const DashboardStats> cached_stats_;
+    mutable std::mutex stats_mutex_; // 保护指针交换
+
+    // 启动时从数据库重建缓存
+    void rebuildStatsFromDb();
+
     friend class SqliteLogRepository_test;
 };
 
