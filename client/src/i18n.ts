@@ -13,7 +13,8 @@ const messages = {
       configuration: 'System Configuration',
       insights: 'AI Batch Insights',
       history: 'Historical Logs',
-      benchmark: 'Performance Arena'
+      benchmark: 'Performance Arena',
+      simMode: 'SIM MODE'
     },
     benchmark: {
       tool: 'Benchmark Tool',
@@ -186,9 +187,10 @@ const messages = {
       missionControl: '任务控制仪表盘',
       eventStream: '实时事件流',
       configuration: '系统配置',
-      insights: 'AI 批次洞察',
+      insights: '智能分析',
       history: '历史日志',
-      benchmark: '性能竞技场'
+      benchmark: '基准测试',
+      simMode: '模拟模式'
     },
     benchmark: {
       tool: '压测工具',
