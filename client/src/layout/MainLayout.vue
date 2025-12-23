@@ -26,17 +26,17 @@
 
         <el-menu-item index="/insights">
           <el-icon><DataAnalysis /></el-icon>
-          <span>Reduce Analysis</span>
+          <span>{{ $t('layout.insights') }}</span>
         </el-menu-item>
 
         <el-menu-item index="/history">
           <el-icon><Clock /></el-icon>
-          <span>History</span>
+          <span>{{ $t('layout.history') }}</span>
         </el-menu-item>
 
         <el-menu-item index="/benchmark">
           <el-icon><Lightning /></el-icon>
-          <span>Benchmark</span>
+          <span>{{ $t('layout.benchmark') }}</span>
         </el-menu-item>
 
         <el-menu-item index="/settings">
@@ -61,7 +61,7 @@
           <!-- Simulation Mode Toggle -->
           <div class="flex items-center gap-2 border-r border-gray-700 pr-4 mr-2">
             <span class="text-xs font-mono uppercase tracking-widest text-gray-500">
-              SIM MODE
+              {{ $t('layout.simMode') }}
             </span>
             <el-switch
               v-model="systemStore.isSimulationMode"
@@ -121,8 +121,8 @@ const currentRouteName = computed(() => {
   switch (route.name) {
     case 'dashboard': return t('layout.missionControl')
     case 'logs': return t('layout.eventStream')
-    case 'insights': return 'Reduce (Batch Analysis)'
-    case 'benchmark': return 'Performance Arena'
+    case 'insights': return t('layout.insights')
+    case 'benchmark': return t('layout.benchmark')
     case 'settings': return t('layout.configuration')
     default: return t('layout.dashboard')
   }
