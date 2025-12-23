@@ -547,6 +547,8 @@ void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResu
     // 预留空间，避免 vector 扩容 (虽然 Alert 不多，但好习惯要有)
     current_batch_stats->recent_alerts.reserve(5);
 
+    // --- 第一遍循环：计算统计数值 (必须全遍历) ---
+    // 这一步非常快，纯内存计算，没有任何 string copy
     for (const auto& item : items) {
         nlohmann::json j_risk = item.result.risk_level;
         std::string r = j_risk.get<std::string>();
@@ -557,14 +559,28 @@ void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResu
         else if (r == "info") current_batch_stats->info_risk++;
         else if (r == "safe") current_batch_stats->safe_risk++;
         else current_batch_stats->unknown_risk++;
+    }
 
-        // 如果是高风险，加入最近警报缓存 (只存内存，不用查库)
-        if (r == "critical") {
+    // --- 第二遍循环：只采集警报 (倒序遍历) ---
+    // 目标：只拿本批次中“最新”的 5 个 Critical
+    // 倒序是因为 items.back() 通常是时间最近的日志
+    int collected_count = 0;
+    for (auto it = items.rbegin(); it != items.rend(); ++it) {
+        // 如果已经拿够 5 个了，直接退出循环！不用再往下看了
+        if (collected_count >= 5) break;
+
+        nlohmann::json j_risk = it->result.risk_level;
+        if (j_risk.get<std::string>() == "critical") {
             AlertInfo alert;
-            alert.trace_id = item.trace_id;
-            alert.summary = item.result.summary;
-            alert.time = batch_time_str; // --- 直接复用 ---
+            alert.trace_id = it->trace_id;
+            alert.summary = it->result.summary;
+            alert.risk = "critical";
+
+            // 【直接赋值】：这是最安全的，避免污染旧数据
+            alert.time = batch_time_str;
+
             current_batch_stats->recent_alerts.push_back(std::move(alert));
+            collected_count++;
         }
     }
 
@@ -635,32 +651,23 @@ void SqliteLogRepository::saveAnalysisResultBatch(const std::vector<AnalysisResu
             new_stats->safe_risk += current_batch_stats->safe_risk;
             new_stats->unknown_risk += current_batch_stats->unknown_risk;
 
-            // --- 优化 2: 智能合并列表 (Smart Merge) ---
-            // 目标: 构造一个只有 5 个元素的 vector，优先放新批次的，不够放旧的
+            // --- 智能合并 ---
+            // 此时 current_batch_stats->recent_alerts 里已经是本批次最新的 5 个了
+            // 且顺序是 [最新 -> 较新] (因为我们是倒序遍历插入的)
+            // 注意：因为我们是倒序遍历 items，所以 push_back 进去的第一个就是最新的。
+            // 所以 current_batch_stats->recent_alerts 的顺序是 [Newest, 2nd Newest, ...]
 
-            std::vector<AlertInfo> final_alerts;
-            final_alerts.reserve(5);
+            std::vector<AlertInfo> final_alerts = current_batch_stats->recent_alerts;
 
-            // 1. 先从当前批次里拿 (最新的)
-            //    注意：当前批次可能有 0 个，也可能有 50 个
-            const auto& new_alerts = current_batch_stats->recent_alerts;
-
-            // 修正策略：倒序插入 (最新的在 vector 头部)
-            // 1. 把新批次的数据倒序放入 (因为 batch 后面的是最新的)
-            for (auto it = new_alerts.rbegin(); it != new_alerts.rend(); ++it) {
-                if (final_alerts.size() >= 5) break;
-                final_alerts.push_back(*it);
+            // 如果还不够 5 个，再去旧快照里补
+            if (final_alerts.size() < 5) {
+                const auto& old_alerts = cached_stats_->recent_alerts;
+                for (const auto& alert : old_alerts) {
+                    if (final_alerts.size() >= 5) break;
+                    final_alerts.push_back(alert); // Copy 旧的 (时间戳是旧的，正确！)
+                }
             }
 
-            // 2. 如果还没满 5 个，去旧缓存里拿
-            // 旧缓存 (cached_stats_->recent_alerts) 假设已经是排好序的 (最新的在0)
-            const auto& old_alerts = cached_stats_->recent_alerts;
-            for (const auto& alert : old_alerts) {
-                if (final_alerts.size() >= 5) break;
-                final_alerts.push_back(alert);
-            }
-
-            // 赋值回去
             new_stats->recent_alerts = std::move(final_alerts);
 
             cached_stats_ = new_stats;

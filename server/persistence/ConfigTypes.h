@@ -185,7 +185,8 @@ struct AlertInfo{
     std::string trace_id;
     std::string summary;
     std::string time;
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AlertInfo, trace_id, summary, time);
+    std::string risk; // Added risk field
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AlertInfo, trace_id, summary, time, risk);
 };
 struct DashboardStats{
     int total_logs=0;
