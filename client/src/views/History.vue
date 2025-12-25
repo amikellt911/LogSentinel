@@ -99,6 +99,7 @@
  import { ref, computed, onMounted } from 'vue'
  import { Search } from '@element-plus/icons-vue'
  import { useSystemStore, type LogEntry } from '../stores/system'
+ import { formatToBeijingTime } from '../utils/timeFormat'
  import dayjs from 'dayjs'
  
  const systemStore = useSystemStore()
@@ -183,7 +184,7 @@
 
               return {
                   id: item.trace_id,
-                  timestamp: item.processed_at,
+                  timestamp: formatToBeijingTime(item.processed_at),
                   level: level,
                   message: item.summary
               }

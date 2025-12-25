@@ -156,7 +156,7 @@ Client supports EN/ZH. Locale affects UI text only; backend responses are JSON.
 
 ### 3. Post-Task Review (任务后复盘)
 
-任务执行完毕后，必须在/docs/dev-log文件夹中生成一个如下格式：YYYYMMDD-type-scope.md的文件,例如：20251225-feat-logger.md，内容包括：
+任务执行完毕后，必须在/docs/dev-log文件夹（dev-log文件夹已经创建好了）中生成一个如下格式：YYYYMMDD-type-scope.md的文件,例如：20251225-feat-logger.md，内容包括：
 
 - **Git Commit Message**:
   - 必须遵循 **Conventional Commits** 标准（`type(scope): description`）。

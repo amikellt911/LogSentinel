@@ -4,6 +4,7 @@ import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import _ from 'lodash'
 import i18n from '../i18n'
+import { formatToBeijingTime } from '../utils/timeFormat'
 
 export interface LogEntry {
   id: number | string
@@ -411,7 +412,7 @@ export const useSystemStore = defineStore('system', () => {
 
         recentAlerts.value = data.recent_alerts.map(a => ({
             id: a.trace_id,
-            time: a.time,
+            time: formatToBeijingTime(a.time),
             service: 'LogSentinel',
             level: 'Error',
             summary: a.summary
@@ -451,10 +452,10 @@ export const useSystemStore = defineStore('system', () => {
               let level: 'INFO' | 'WARN' | 'RISK' = 'INFO';
               if (item.risk_level === 'Critical' || item.risk_level === 'High') level = 'RISK';
               else if (item.risk_level === 'Warning' || item.risk_level === 'Medium') level = 'WARN';
-              
+
               return {
                   id: item.trace_id,
-                  timestamp: item.processed_at,
+                  timestamp: formatToBeijingTime(item.processed_at),
                   level: level,
                   message: item.summary
               };
