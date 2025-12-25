@@ -20,27 +20,32 @@
       ref="logContainer" 
       class="flex-1 overflow-y-auto p-4 space-y-1 scroll-smooth"
     >
-      <div 
-        v-for="log in systemStore.logs" 
+      <div
+        v-for="log in systemStore.logs"
         :key="log.id"
         class="flex gap-3 hover:bg-gray-900/50 p-0.5 rounded leading-tight transition-colors duration-150"
         :class="{
-          'bg-red-900/20 animate-pulse-slow border-l-2 border-red-500': log.level === 'RISK',
-          'text-gray-300': log.level === 'INFO',
-          'text-yellow-100': log.level === 'WARN',
-          'text-red-100': log.level === 'RISK'
+          'bg-red-900/20 animate-pulse-slow border-l-2 border-red-500 text-red-100': log.level === 'Critical',
+          'bg-orange-900/20 border-l-2 border-orange-500 text-orange-100': log.level === 'Error',
+          'bg-yellow-900/20 border-l-2 border-yellow-500 text-yellow-100': log.level === 'Warning',
+          'bg-blue-900/20 border-l-2 border-blue-500 text-blue-100': log.level === 'Info',
+          'bg-green-900/20 border-l-2 border-green-500 text-green-100': log.level === 'Safe',
+          'bg-gray-800/50 border-l-2 border-gray-600 text-gray-400': log.level === 'Unknown'
         }"
       >
         <!-- Timestamp -->
         <span class="text-gray-600 shrink-0 select-none">[{{ log.timestamp }}]</span>
-        
+
         <!-- Level -->
-        <span 
-          class="font-bold shrink-0 w-16 text-center select-none"
+        <span
+          class="font-bold shrink-0 w-20 text-center select-none"
           :class="{
-            'text-green-500': log.level === 'INFO',
-            'text-yellow-500': log.level === 'WARN',
-            'text-red-500': log.level === 'RISK'
+            'text-red-500': log.level === 'Critical',
+            'text-orange-500': log.level === 'Error',
+            'text-yellow-500': log.level === 'Warning',
+            'text-blue-400': log.level === 'Info',
+            'text-green-500': log.level === 'Safe',
+            'text-gray-500': log.level === 'Unknown'
           }"
         >
           {{ log.level }}

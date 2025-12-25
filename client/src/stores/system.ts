@@ -9,7 +9,7 @@ import { formatToBeijingTime } from '../utils/timeFormat'
 export interface LogEntry {
   id: number | string
   timestamp: string
-  level: 'INFO' | 'WARN' | 'RISK' | 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe'
+  level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' | 'Unknown'
   message: string
 }
 
@@ -238,20 +238,30 @@ export const useSystemStore = defineStore('system', () => {
 
   // --- Constants for Mocking ---
   const LOG_MESSAGES = {
-    INFO: [
+    Info: [
       'Received batch of events from ingress-nginx',
       'Processing chunk ID #49281',
       'Flushing buffer to disk...',
       'AI analysis completed for request #8821',
       'Health check passed: component=db-connector'
     ],
-    WARN: [
+    Safe: [
+      'Routine operation completed',
+      'All systems nominal',
+      'Regular maintenance task finished'
+    ],
+    Warning: [
       'High latency detected in ingress (150ms)',
       'Buffer usage > 60%, scaling consumers',
       'Retry attempt 1/3 for downstream service',
       'Memory fragment warning in worker #2'
     ],
-    RISK: [
+    Error: [
+      'Connection timeout to database',
+      'Service temporarily unavailable',
+      'Failed to process request: invalid format'
+    ],
+    Critical: [
       'SQL Injection attempt detected from IP 192.168.1.104',
       'Anomaly detection triggered: Unusual payload size',
       'Unauthorized access attempt on /admin/config',
@@ -260,23 +270,33 @@ export const useSystemStore = defineStore('system', () => {
   }
 
   const LOG_MESSAGES_ZH = {
-    INFO: [
+    Info: [
       '从 ingress-nginx 接收到一批事件',
       '正在处理分块 ID #49281',
       '正在将缓冲区刷新到磁盘...',
       '请求 #8821 的 AI 分析已完成',
       '健康检查通过: component=db-connector'
     ],
-    WARN: [
+    Safe: [
+      '常规操作已完成',
+      '所有系统运行正常',
+      '定期维护任务已完成'
+    ],
+    Warning: [
       '检测到 Ingress 高延迟 (150ms)',
       '缓冲区使用率 > 60%，正在扩展消费者',
       '下游服务重试尝试 1/3',
       '工作线程 #2 中的内存碎片警告'
     ],
-    RISK: [
+    Error: [
+      '数据库连接超时',
+      '服务暂时不可用',
+      '处理请求失败：格式无效'
+    ],
+    Critical: [
       '检测到来自 IP 192.168.1.104 的 SQL 注入尝试',
-      '触发异常检测：异常的负载大小',
-      '对 /admin/config 的未授权访问尝试',
+      '异常检测触发：异常载荷大小',
+      '未授权访问尝试 /admin/config',
       '跨站脚本 (XSS) 签名匹配'
     ]
   }
@@ -285,9 +305,11 @@ export const useSystemStore = defineStore('system', () => {
 
   function generateRandomLog() {
     const r = Math.random()
-    let level: 'INFO' | 'WARN' | 'RISK' = 'INFO'
-    if (r > 0.96) level = 'RISK'
-    else if (r > 0.85) level = 'WARN'
+    let level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' | 'Unknown' = 'Info'
+    if (r > 0.96) level = 'Critical'
+    else if (r > 0.90) level = 'Error'
+    else if (r > 0.85) level = 'Warning'
+    else if (r > 0.70) level = 'Safe'
 
     const messageSet = settings.ai.language === 'zh' ? LOG_MESSAGES_ZH : LOG_MESSAGES
     // @ts-ignore
@@ -449,14 +471,20 @@ export const useSystemStore = defineStore('system', () => {
           const data: HistoryPageResponse = await res.json();
 
           logs.value = data.logs.map(item => {
-              let level: 'INFO' | 'WARN' | 'RISK' = 'INFO';
-              if (item.risk_level === 'Critical' || item.risk_level === 'High') level = 'RISK';
-              else if (item.risk_level === 'Warning' || item.risk_level === 'Medium') level = 'WARN';
+              // 使用和 History.vue 相同的等级映射逻辑
+              let level = item.risk_level;
+              const lower = level.toLowerCase();
+              if (lower === 'critical' || lower === 'high') level = 'Critical';
+              else if (lower === 'error' || lower === 'medium') level = 'Error';
+              else if (lower === 'warning' || lower === 'low') level = 'Warning';
+              else if (lower === 'info') level = 'Info';
+              else if (lower === 'safe') level = 'Safe';
+              else if (lower === 'unknown') level = 'Unknown';
 
               return {
                   id: item.trace_id,
                   timestamp: formatToBeijingTime(item.processed_at),
-                  level: level,
+                  level: level as any,
                   message: item.summary
               };
           });
