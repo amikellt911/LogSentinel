@@ -151,7 +151,7 @@ Client supports EN/ZH. Locale affects UI text only; backend responses are JSON.
 
 ### 2. Task Workflow (任务工作流)
 
-- **TodoList**: 在开始任何复杂编码任务前，必须先创建一个 `TodoList_xx.md`，列出详细步骤，每完成一步打钩确认。
+- **TodoList**: 在开始任何复杂编码任务前，必须先在docs/todo-list文件夹（todo-list文件夹已经创建好了）创建一个 `Todo_xx.md`，列出详细步骤，每完成一步打钩确认。
 - **Pre-check**: 在修改多个文件前，提醒用户检查 `git status` 确保工作区干净。
 
 ### 3. Post-Task Review (任务后复盘)
