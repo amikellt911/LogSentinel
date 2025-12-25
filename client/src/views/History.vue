@@ -10,6 +10,7 @@
            <el-option label="Warning" value="Warning" />
            <el-option label="Info" value="Info" />
            <el-option label="Safe" value="Safe" />
+           <el-option label="Unknown" value="Unknown" />
          </el-select>
        </div>
  
@@ -177,8 +178,9 @@
               else if (lower === 'warning' || lower === 'low') level = 'Warning';
               else if (lower === 'info') level = 'Info';
               else if (lower === 'safe') level = 'Safe';
+              else if (lower === 'unknown') level = 'Unknown';
               // else keep original or Capitalize
-              
+
               return {
                   id: item.trace_id,
                   timestamp: item.processed_at,
@@ -210,6 +212,7 @@
        case 'Warning': return 'bg-yellow-900/50 text-yellow-400 border border-yellow-500/30'
        case 'Info': return 'bg-gray-700 text-gray-300 border border-gray-600/30'
        case 'Safe': return 'bg-green-900/50 text-green-400 border border-green-500/30'
+       case 'Unknown': return 'bg-gray-700/50 text-gray-400 border border-gray-500/30'
        default: return 'bg-gray-700 text-gray-300'
     }
  }
@@ -221,6 +224,7 @@
        case 'Warning': return 'text-yellow-400 font-bold'
        case 'Info': return 'text-gray-400 font-bold'
        case 'Safe': return 'text-green-400 font-bold'
+       case 'Unknown': return 'text-gray-400 font-bold'
        default: return 'text-gray-300'
     }
  }
