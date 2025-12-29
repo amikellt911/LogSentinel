@@ -14,6 +14,11 @@
         background-color="transparent"
         router
       >
+        <el-menu-item index="/service">
+          <el-icon><Monitor /></el-icon>
+          <span>{{ $t('layout.serviceMonitor') }}</span>
+        </el-menu-item>
+
         <el-menu-item index="/">
           <el-icon><Odometer /></el-icon>
           <span>{{ $t('layout.dashboard') }}</span>
@@ -119,6 +124,7 @@ const { t } = useI18n()
 
 const currentRouteName = computed(() => {
   switch (route.name) {
+    case 'service': return t('layout.serviceMonitor')
     case 'dashboard': return t('layout.missionControl')
     case 'logs': return t('layout.eventStream')
     case 'insights': return t('layout.insights')

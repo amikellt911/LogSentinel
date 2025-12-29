@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '../layout/MainLayout.vue'
+import ServiceMonitor from '../views/ServiceMonitor.vue'
 import Dashboard from '../views/Dashboard.vue'
 import LiveLogs from '../views/LiveLogs.vue'
 import History from '../views/History.vue'
@@ -18,6 +19,11 @@ const router = createRouter({
           path: '',
           name: 'dashboard',
           component: Dashboard
+        },
+        {
+          path: 'service',
+          name: 'service',
+          component: ServiceMonitor
         },
         {
           path: 'logs',

@@ -3,6 +3,7 @@ import { createI18n } from 'vue-i18n'
 const messages = {
   en: {
     layout: {
+      serviceMonitor: 'Service Monitor',
       dashboard: 'Dashboard',
       logs: 'Live Logs',
       settings: 'Settings',
@@ -15,6 +16,28 @@ const messages = {
       history: 'Historical Logs',
       benchmark: 'Performance Arena',
       simMode: 'SIM MODE'
+    },
+    serviceMonitor: {
+      subtitle: 'Real-time business health monitoring and AI situation awareness',
+      healthScore: {
+        title: 'Today\'s Health Score',
+        label: 'vs. yesterday'
+      },
+      errorRate: {
+        title: 'Current Error Rate',
+        label: 'of total requests'
+      },
+      avgDuration: {
+        title: 'Average Duration',
+        label: 'per request'
+      },
+      aiStream: {
+        title: 'AI Situation Awareness Stream',
+        subtitle: 'Real-time log batch aggregation. Map-Reduce pipeline active.',
+        pause: 'Pause',
+        resume: 'Resume',
+        loadMore: 'Load More'
+      }
     },
     benchmark: {
       tool: 'Benchmark Tool',
@@ -179,6 +202,7 @@ const messages = {
   },
   zh: {
     layout: {
+      serviceMonitor: '服务监控',
       dashboard: '仪表盘',
       logs: '实时日志',
       settings: '系统设置',
@@ -191,6 +215,28 @@ const messages = {
       history: '历史日志',
       benchmark: '基准测试',
       simMode: '模拟模式'
+    },
+    serviceMonitor: {
+      subtitle: '实时业务健康监控与 AI 态势感知',
+      healthScore: {
+        title: '今日业务健康分',
+        label: '较昨日'
+      },
+      errorRate: {
+        title: '当前错误率',
+        label: '占请求总数'
+      },
+      avgDuration: {
+        title: '平均业务耗时',
+        label: '每次请求'
+      },
+      aiStream: {
+        title: 'AI 态势感知流',
+        subtitle: '日志批次实时聚合。Map-Reduce 管道运行中。',
+        pause: '暂停',
+        resume: '继续',
+        loadMore: '加载更多'
+      }
     },
     benchmark: {
       tool: '压测工具',
