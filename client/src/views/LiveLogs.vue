@@ -36,6 +36,12 @@
         <!-- Timestamp -->
         <span class="text-gray-600 shrink-0 select-none">[{{ log.timestamp }}]</span>
 
+        <!-- Trace ID -->
+        <span class="text-cyan-600 shrink-0 select-none font-mono text-xs">{{ log.trace_id }}</span>
+
+        <!-- Span ID -->
+        <span class="text-purple-600 shrink-0 select-none font-mono text-xs">{{ log.span_id }}</span>
+
         <!-- Level -->
         <span
           class="font-bold shrink-0 w-20 text-center select-none"

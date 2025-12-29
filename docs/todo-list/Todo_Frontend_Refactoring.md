@@ -14,12 +14,55 @@
 
 ---
 
+## 🔄 方案调整（2025-12-29）
+
+### 调整原因
+经过讨论，决定简化页面结构，合并功能重复的部分。
+
+### 新方案
+
+#### 1. **取消 AIEngine 独立页面**
+- ❌ 不再创建独立的 AI Engine 页面
+- ✅ **保留 4 个 Token 指标卡片**，迁移到 **SystemStatus** 页面
+
+#### 2. **Token 指标卡片迁移到 SystemStatus**
+原 AIEngine 的 4 个卡片移至 SystemStatus：
+- 今日 Token 消耗总量
+- 节省比例（85%，绿色突出）
+- 预估成本（$0.02）
+- 平均每批次 Token 数
+
+#### 3. **TraceExplorer 功能增强**
+表格修改：
+- ✅ **新增 Token 列**：显示该 Trace 的 Token 消耗
+- ✅ **拆分 Actions 列**：原来的"详情"按钮拆分为 3 个独立按钮
+  1. **AI 分析**（🤖 图标）→ 打开抽屉显示 AI Root Cause Analysis
+  2. **调用链**（📊 图标）→ 打开抽屉显示瀑布图 + Span 列表
+  3. **Prompt**（🔧 图标）→ 打开抽屉显示 Prompt Debugger（开发者视图）
+
+#### 4. **SystemStatus 页面结构**
+- 顶部：6 个原有性能指标卡片（总日志数、网络延迟、AI 延迟、AI 触发次数、内存、背压）
+- 中部：**4 个 Token 指标卡片**（从 AIEngine 迁移）
+- 底部：实时吞吐量图表（日志摄取速率 + AI 处理速率）
+
+#### 5. **导航菜单调整**
+- 移除：AI Engine（原 BatchInsights）
+- 保留：
+  1. 📊 Service Monitor（服务监控）
+  2. 💻 System Status（系统状态）- **新增 Token 卡片**
+  3. 📋 Live Logs（实时日志）
+  4. 🔍 Trace Explorer（Trace 追溯）- **新增 Token 列 + 拆分按钮**
+  5. ⚡ Benchmark（性能测试）
+  6. ⚙️ Settings（设置）
+
+---
+
 ## 📋 总体进度
 
 - [x] **阶段 1**：ServiceMonitor（新建首页）✅ 已完成 2025-12-29
 - [x] **阶段 2**：TraceExplorer（核心追溯功能）✅ 已完成 2025-12-29
-- [ ] **阶段 3**：AIEngine（技术展示）
-- [ ] **阶段 4**：SystemStatus（精简）+ 收尾
+- [x] **阶段 3**：AIEngine（已取消，组件保留复用）✅ 已完成 2025-12-29
+- [ ] **阶段 4**：SystemStatus（Token 卡片迁移）+ TraceExplorer 增强 + 收尾
 
 ---
 
@@ -188,30 +231,32 @@
 
 **目标**：展示 Token 消耗 + 历史批次存档（复用 BatchInsights 样式）+ Prompt 透视
 
+**状态**：✅ 已完成 2025-12-29
+
 > **💡 概念澄清**：
 > - `batch_id` = `trace_id`（在当前系统中是同一个概念）
 > - `span_count` = `log_count`（Span 数量就是日志数量）
 > - `risk_count` / `error_count` 不单独显示（详情卡片中的 Span 列表已直观展示哪些 Span 有问题）
 
 ### 3.1 页面骨架
-- [ ] 改造 `client/src/views/BatchInsights.vue` → 重命名为 `AIEngine.vue`
-- [ ] 设计**两段式布局**：
+- [x] 改造 `client/src/views/BatchInsights.vue` → 重命名为 `AIEngine.vue`
+- [x] 设计**两段式布局**：
   - **顶部**：Token 指标卡片（横向排列，4 个卡片）
   - **底部**：历史批次存档列表（表格形式）
 
 ### 3.2 Token 指标卡片组件（简化版）
-- [ ] 创建 `client/src/components/TokenMetricsCard.vue`
-- [ ] 实现指标展示（横向 4 个卡片）：
+- [x] 创建 `client/src/components/TokenMetricsCard.vue`
+- [x] 实现指标展示（横向 4 个卡片）：
   - 今日 Token 消耗总量
   - 节省比例（大数字，85%，绿色突出）
   - 预估成本（$0.02）
   - 平均每批次 Token 数
-- [ ] 颜色方案（节省比例用绿色突出）
-- [ ] 添加 hover 动画
+- [x] 颜色方案（节省比例用绿色突出）
+- [x] 添加 hover 动画
 
 ### 3.3 历史批次存档列表
-- [ ] 创建 `client/src/components/BatchArchiveList.vue`
-- [ ] **表格列**（只显示关键指标）：
+- [x] 创建 `client/src/components/BatchArchiveList.vue`
+- [x] **表格列**（只显示关键指标）：
   - trace_id / batch_id（可点击）
   - created_at（创建时间）
   - log_count（日志数量，即 Span 数量）
@@ -220,28 +265,28 @@
   - **操作**（两个按钮）：
     - 查看详情按钮 → 点击展开/折叠批次卡片（复用 BatchInsights 的卡片样式）
     - Prompt 透视按钮（开发者图标）→ 点击打开抽屉显示 JSON
-- [ ] **详情展开功能**：
+- [x] **详情展开功能**：
   - 点击"查看详情"后，在表格行下方展开一个区域
   - 展示内容**完全复用 BatchInsights.vue 的卡片样式**：
     - 左侧：时间 + 状态节点（带颜色圆圈）
     - 右侧：卡片内容（trace_id、log_count、token_count、avg_latency、risk_level 徽章、summary、tags）
   - 支持折叠
-- [ ] 分页组件（Element Plus Pagination）
-- [ ] 搜索过滤（按时间范围、风险等级）
+- [x] 分页组件（Element Plus Pagination）
+- [x] 搜索过滤（按时间范围、风险等级）
 
 ### 3.4 Prompt 透视组件（开发者视图）
-- [ ] 创建 `client/src/components/PromptDebugger.vue`（抽屉组件，从右侧滑出）
-- [ ] **触发方式**：点击表格中的"Prompt 透视"按钮
-- [ ] **布局结构**：
+- [x] 创建 `client/src/components/PromptDebugger.vue`（抽屉组件，从右侧滑出）
+- [x] **触发方式**：点击表格中的"Prompt 透视"按钮
+- [x] **布局结构**：
   - **顶部**：标题（Prompt 透视 - Batch #1024）+ 关闭按钮
   - **主体**：左右分栏布局
     - **左侧**：Input（发送给 AI 的 Prompt JSON）
     - **右侧**：Output（AI 返回的 Response JSON）
-- [ ] **JSON 高亮显示**：
-  - 使用 `vue-json-pretty` 库（推荐）
-  - 或手动实现 `<pre><code class="language-json">` + Prism.js
-  - 语法高亮、折叠/展开
-- [ ] **数据展示**：
+- [x] **JSON 高亮显示**：
+  - 使用 Tailwind CSS 类实现简单语法高亮
+  - 手动实现 `<pre><code class="language-json">`
+  - 语法高亮、复制功能
+- [x] **数据展示**：
   - **Input**：
     - `trace_context`：完整的追踪上下文
     - `constraint`：分析约束
@@ -252,129 +297,194 @@
     - `root_cause`：根因
     - `solution`：解决方案
   - **元数据**：时间戳、模型名称、耗时、Token 消耗
-- [ ] 复制按钮（一键复制 JSON）
+- [x] 复制按钮（一键复制 JSON）
 
 ### 3.5 TypeScript 接口类型定义（前端内部）
-- [ ] 定义前端数据结构类型
+- [x] 定义前端数据结构类型
   - `TokenMetrics`
   - `BatchArchiveItem`
   - `PromptDebugInfo`
-- [ ] 使用 Mock 数据进行演示
-- [ ] 预留 API 接口对接点（添加 TODO 注释）
+- [x] 使用 Mock 数据进行演示
+- [x] 预留 API 接口对接点（添加 TODO 注释）
 
 ### 3.6 国际化
-- [ ] 添加中文翻译
+- [x] 添加中文翻译
   - `aiEngine` 页面标题
   - Token 相关术语
   - Prompt 透视、开发者视图标签
-- [ ] 添加英文翻译
+- [x] 添加英文翻译
 
 ---
 
-## 💻 阶段 4：SystemStatus（系统状态）- 精简
+## 💻 阶段 4：SystemStatus（Token 卡片迁移）+ TraceExplorer 增强 + 收尾
 
-**目标**：精简原 Dashboard，只保留 LogSentinel 自身指标
+**目标**：将 Token 指标卡片迁移到 SystemStatus，并增强 TraceExplorer 功能
 
-### 4.1 页面改造
+### 4.1 SystemStatus 页面改造
+
+#### 4.1.1 页面结构
 - [ ] 改造 `client/src/views/Dashboard.vue` → 重命名为 `SystemStatus.vue`
-- [ ] **删除部分**：
-  - 风险分布饼图区域
-  - 最近告警列表区域
-- [ ] **保留部分**：
-  - 6 个性能指标卡片（总日志数、网络延迟、AI 延迟、AI 触发次数、内存、背压）
-  - 实时吞吐量图表（日志摄取速率 + AI 处理速率）
+- [ ] **三段式布局**：
+  - **顶部**：6 个原有性能指标卡片（总日志数、网络延迟、AI 延迟、AI 触发次数、内存、背压）
+  - **中部**：4 个 Token 指标卡片（从 AIEngine 迁移）
+  - **底部**：实时吞吐量图表（日志摄取速率 + AI 处理速率）
 
-### 4.2 组件复用
-- [ ] 复用 `MetricCard.vue` 组件（无需修改）
-- [ ] 复用 ECharts 图表配置（无需修改）
+#### 4.1.2 Token 指标卡片迁移
+- [ ] 将 `TokenMetricsCard.vue` 组件迁移到 SystemStatus
+- [ ] 4 个指标卡片：
+  - 今日 Token 消耗总量
+  - 节省比例（85%，绿色突出）
+  - 预估成本（$0.02）
+  - 平均每批次 Token 数
+- [ ] 卡片样式统一（与原有性能卡片保持一致）
 
-### 4.3 布局调整
-- [ ] 调整为两段式布局（顶部卡片 + 底部图表）
-- [ ] 增加留白，提升视觉呼吸感
+#### 4.1.3 删除冗余部分
+- [x] 删除风险分布饼图区域（已移到 ServiceMonitor）
+- [x] 删除最近告警列表区域（已移到 ServiceMonitor）
 
-### 4.4 国际化
+#### 4.1.4 组件复用
+- [x] 复用 `MetricCard.vue` 组件（无需修改）
+- [x] 复用 ECharts 图表配置（无需修改）
+
+#### 4.1.5 国际化
 - [ ] 修改翻译 key：`dashboard` → `systemStatus`
 - [ ] 更新中英文翻译文件
 
----
+### 4.2 TraceExplorer 表格增强
 
-## 🔧 阶段 5：路由和导航调整
+#### 4.2.1 新增 Token 列
+- [ ] 在 `TraceListTable.vue` 中添加 Token 列
+- [ ] 显示该 Trace 的 Token 消耗数量
+- [ ] 格式化数字显示（千分位分隔符）
+- [ ] 列宽优化（适中，不占用过多空间）
 
-### 5.1 路由配置
+#### 4.2.2 拆分 Actions 列为 3 个独立按钮
+原方案：一个"详情"按钮打开一个包含所有内容的抽屉
+
+新方案：3 个独立按钮，分别打开 3 个不同的抽屉
+- [ ] **按钮 1：AI 分析**（🤖 图标）
+  - 点击打开抽屉，只显示 **AI Root Cause Analysis 卡片**
+  - 不包含瀑布图和 Span 列表
+  - 专注展示 AI 分析结果（风险等级、总结、根因、解决方案、Tags）
+
+- [ ] **按钮 2：调用链**（📊 图标）
+  - 点击打开抽屉，只显示 **瀑布图 + Span 列表**
+  - 不包含 AI 分析内容
+  - 专注展示调用链可视化（ECharts 瀑布图、Span 详细列表）
+
+- [ ] **按钮 3：Prompt**（🔧 图标）
+  - 点击打开抽屉，显示 **Prompt Debugger**（开发者视图）
+  - 复用现有的 `PromptDebugger.vue` 组件
+  - 展示 Input/Output JSON、元数据
+
+#### 4.2.3 抽屉优化
+- [ ] 为 3 个不同功能创建 3 个独立的 Drawer 组件（或条件渲染）
+- [ ] 抽屉标题区分：
+  - AI 分析：`AI Analysis - trace-xxx`
+  - 调用链：`Call Chain - trace-xxx`
+  - Prompt：`Prompt Debugger - trace-xxx`
+- [ ] 抽屉宽度自适应（保持 70% 或自定义）
+
+#### 4.2.4 TypeScript 接口更新
+- [ ] 更新 `TraceListItem` 接口，添加 `token_count` 字段
+- [ ] 更新 Mock 数据生成器，添加 Token 数量
+
+#### 4.2.5 国际化
+- [ ] 添加按钮翻译：
+  - `aiAnalysis`：AI 分析 / AI Analysis
+  - `callChain`：调用链 / Call Chain
+  - `promptDebugger`：Prompt / Prompt Debugger
+- [ ] 添加 Token 列翻译：`tokenCount`：Token 数 / Tokens
+
+### 4.3 路由和导航调整
+
+#### 4.3.1 路由配置
 - [ ] 修改 `client/src/router/index.ts`
-  - 新增路由：`{ path: '/', name: 'service', component: ServiceMonitor }`（设为首页）
-  - 新增路由：`{ path: '/traces', name: 'traces', component: TraceExplorer }`
-  - 新增路由：`{ path: '/ai-engine', name: 'ai-engine', component: AIEngine }`
-  - 新增路由：`{ path: '/system', name: 'system', component: SystemStatus }`
-  - 保留路由：`/logs`（LiveLogs）、`/benchmark`、`/settings`
+  - ❌ 移除：AIEngine 路由（`/insights`）
+  - ✅ 新增：SystemStatus 路由（`/system`）
+  - 保留路由：Service Monitor、Trace Explorer、Live Logs、Benchmark、Settings
 - [ ] 路由懒加载优化（`() => import(...)`）
 
-### 5.2 导航菜单调整
+#### 4.3.2 导航菜单调整
 - [ ] 修改 `client/src/layout/MainLayout.vue`
-- [ ] 侧边栏顺序调整：
-  1. 📊 Service Monitor（服务监控）- **新增**
-  2. 💻 System Status（系统状态）- **新增**
-  3. 📋 Live Logs（实时日志）- **原位置**
-  4. 🔍 Trace Explorer（Trace 追溯）- **原名为 History**
-  5. 🤖 AI Engine（AI 引擎中心）- **原名为 BatchInsights**
-  6. ⚡ Benchmark（性能测试）- **原位置**
-  7. ⚙️ Settings（设置）- **原位置**
-- [ ] 图标优化（使用 Element Plus Icons）
-- [ ] 选中态样式优化
-- [ ] 响应式适配（移动端收起为汉堡菜单）
+- [ ] 侧边栏顺序：
+  1. 📊 Service Monitor（服务监控）
+  2. 💻 System Status（系统状态）- **包含 Token 卡片**
+  3. 📋 Live Logs（实时日志）
+  4. 🔍 Trace Explorer（Trace 追溯）- **增强功能**
+  5. ⚡ Benchmark（性能测试）
+  6. ⚙️ Settings（设置）
+- [ ] ❌ 移除：AI Engine 菜单项
 
-### 5.3 页面标题和元数据
+#### 4.3.3 页面标题和元数据
 - [ ] 更新每个页面的 `<title>`（document.title）
 - [ ] 添加页面描述（meta description）
 
+### 4.4 组件清理（可选）
+- [ ] 删除或归档 `AIEngine.vue` 页面（组件保留复用）
+- [ ] 删除或归档 `BatchArchiveList.vue`（暂不使用）
+- [ ] 删除或归档 `AIEngineSearchBar.vue`（暂不使用）
+- [ ] 保留可复用组件：
+  - `TokenMetricsCard.vue`（迁移到 SystemStatus）
+  - `PromptDebugger.vue`（TraceExplorer 使用）
+
+### 4.5 测试和验证
+- [ ] SystemStatus 页面：Token 卡片显示正常
+- [ ] TraceExplorer 页面：
+  - [ ] Token 列显示正确
+  - [ ] 3 个按钮功能正常
+  - [ ] 3 个抽屉内容正确
+- [ ] 导航菜单：移除 AI Engine，新增 SystemStatus
+- [ ] 路由跳转：所有页面正常访问
+
 ---
 
-## 🌐 阶段 6：国际化全面更新
+## 🌐 阶段 5：国际化全面更新
 
-### 6.1 中文翻译（zh-CN.ts）
+### 5.1 中文翻译（zh-CN.ts）
 - [ ] 添加新页面翻译
-  - `serviceMonitor`、`systemStatus`、`traceExplorer`、`aiEngine`
+  - `serviceMonitor`、`systemStatus`、`traceExplorer`
 - [ ] 添加新组件翻译
   - 业务健康卡片、Trace 搜索栏、瀑布图、Token 指标等
 - [ ] 添加新操作翻译
-  - "查看详情"、"开发者视图"、"搜索"、"重置"等
+  - "AI 分析"、"调用链"、"Prompt"、"搜索"、"重置"等
 - [ ] 统一术语翻译
   - `trace_id` → Trace ID
   - `span_id` → Span ID
   - `root_cause` → 根因
 
-### 6.2 英文翻译（en-US.ts）
+### 5.2 英文翻译（en-US.ts）
 - [ ] 同步所有中文翻译到英文
 - [ ] 检查术语一致性（使用业界标准术语）
-  - Service Monitor / Trace Explorer / AI Engine / Observability
+  - Service Monitor / System Status / Trace Explorer / Observability
 
-### 6.3 翻译文件组织
+### 5.3 翻译文件组织
 - [ ] 考虑拆分为多个模块（按页面拆分）
 - [ ] 或保持单文件（小项目推荐）
 
 ---
 
-## 🎨 阶段 7：样式优化和统一
+## 🎨 阶段 6：样式优化和统一
 
-### 7.1 全局样式
+### 6.1 全局样式
 - [ ] 统一颜色变量（CSS Variables）
   - 主色、成功、警告、错误、信息
   - 深色主题配色
 - [ ] 统一间距规范（4px 基准）
 - [ ] 统一圆角、阴影、字体
 
-### 7.2 组件样式
+### 6.2 组件样式
 - [ ] 所有新组件遵循相同设计规范
 - [ ] 深色模式统一（背景 `#1e1e1e`、卡片 `#2d2d2d`）
 - [ ] Element Plus 主题覆盖（如有必要）
 
-### 7.3 响应式适配
+### 6.3 响应式适配
 - [ ] 所有页面支持移动端（<768px）
 - [ ] 卡片自适应（1列 → 2列 → 3列）
 - [ ] 抽屉/弹窗自适应宽度
 - [ ] 表格横向滚动（小屏幕）
 
-### 7.4 动画和过渡
+### 6.4 动画和过渡
 - [ ] 页面切换动画（淡入淡出）
 - [ ] 卡片 hover 动画
 - [ ] 抽屉滑出动画
@@ -382,25 +492,25 @@
 
 ---
 
-## 📦 阶段 8：依赖安装和配置
+## 📦 阶段 7：依赖安装和配置
 
-### 8.1 新增依赖
+### 7.1 新增依赖
 - [ ] **JSON 高亮库**（用于 Prompt 透视）
   - 选项 A：`vue-json-pretty`（推荐）
   - 选项 B：`prismjs` + 自定义组件
   - 选项 C：原生 `<pre>` + CSS（轻量）
 - [ ] 其他可能的依赖（按需添加）
 
-### 8.2 配置文件
+### 7.2 配置文件
 - [ ] 更新 `vite.config.ts`（如有必要）
 - [ ] 更新 `tsconfig.json`（路径别名）
 - [ ] 更新 `.eslintrc.cjs`（规则调整）
 
 ---
 
-## 🧪 阶段 9：测试和优化
+## 🧪 阶段 8：测试和优化
 
-### 9.1 功能测试
+### 8.1 功能测试
 - [ ] ServiceMonitor 页面
   - [ ] 业务卡片数据加载
   - [ ] 风险分布和告警列表展示
@@ -418,20 +528,20 @@
   - [ ] 系统指标展示
   - [ ] 实时图表更新
 
-### 9.2 性能优化
+### 8.2 性能优化
 - [ ] 组件懒加载（路由级别）
 - [ ] ECharts 图表按需加载（不引入全部）
 - [ ] 防抖和节流（搜索、resize）
 - [ ] 虚拟滚动（长列表优化）
 - [ ] 图片/资源压缩
 
-### 9.3 兼容性测试
+### 8.3 兼容性测试
 - [ ] Chrome/Edge（主要）
 - [ ] Firefox
 - [ ] Safari（如有条件）
 - [ ] 移动端浏览器
 
-### 9.4 错误处理
+### 8.4 错误处理
 - [ ] API 请求失败处理
 - [ ] 网络超时重试
 - [ ] 用户友好错误提示
@@ -439,25 +549,25 @@
 
 ---
 
-## 📝 阶段 10：文档和收尾
+## 📝 阶段 9：文档和收尾
 
-### 10.1 代码注释
+### 9.1 代码注释
 - [ ] 所有新组件添加中文注释
 - [ ] 复杂逻辑添加"为什么这么写"的解释
 - [ ] ECharts 配置添加注释（方便维护）
 
-### 10.2 README 更新
+### 9.2 README 更新
 - [ ] 更新前端架构说明
 - [ ] 添加新页面截图
 - [ ] 更新开发命令
 
-### 10.3 CLAUDE.md 更新
+### 9.3 CLAUDE.md 更新
 - [ ] 更新项目架构描述
 - [ ] 更新模块结构说明
 - [ ] 添加新页面功能说明
 - [ ] 更新技术栈说明（新增依赖）
 
-### 10.4 Git 提交
+### 9.4 Git 提交
 - [ ] 每个阶段完成后提交一次
 - [ ] 提交信息遵循 Conventional Commits
 - [ ] 示例：`feat(client): 新增 ServiceMonitor 首页`

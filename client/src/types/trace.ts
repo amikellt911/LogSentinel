@@ -37,7 +37,32 @@ export interface TraceListItem {
   duration: number // 用户耗时（ms），即业务系统从请求开始到结束的真实墙钟时间
   span_count: number // Span 数量（调用链中的操作节点数）
   risk_level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' // 风险等级
+  token_count: number // Token 消耗数量
   timestamp: number // 时间戳（用于排序）
+}
+
+/**
+ * Prompt 调试信息（用于 Prompt Debugger）
+ */
+export interface PromptDebugInfo {
+  trace_id: string // Trace ID
+  input: {
+    trace_context: Record<string, any> // 完整的追踪上下文
+    constraint: string // 分析约束
+    system_prompt: string // 系统提示词
+  }
+  output: {
+    risk_level: string // 风险等级
+    summary: string // 总结
+    root_cause: string // 根因
+    solution: string // 解决方案
+  }
+  metadata: {
+    timestamp: string // 时间戳
+    model: string // 模型名称
+    duration: number // 耗时（ms）
+    total_tokens: number // 总 Token 数
+  }
 }
 
 /**
@@ -50,8 +75,11 @@ export interface TraceDetail {
   end_time: string // 结束时间（格式化）
   duration: number // 用户耗时（ms），即业务系统从请求开始到结束的真实墙钟时间
   span_count: number // Span 数量
+  token_count: number // Token 消耗数量
+  tags: string[] // 标签（如 ['认证', '安全']）
   spans: TraceSpan[] // Span 列表（调用链）
   ai_analysis: AIAnalysis | null // AI 分析结果
+  prompt_debug: PromptDebugInfo | null // Prompt 调试信息
 }
 
 /**
@@ -66,6 +94,7 @@ export interface TraceSearchCriteria {
   risk_level?: string[] // 风险等级（多选）
   min_duration?: number // 最小耗时（ms）
   max_duration?: number // 最大耗时（ms）
+  tags?: string[] // 标签（多选，支持搜索特定问题类型）
 }
 
 /**

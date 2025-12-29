@@ -11,7 +11,7 @@
         @row-click="handleRowClick"
       >
         <!-- Trace ID（可点击，自适应） -->
-        <el-table-column prop="trace_id" :label="$t('traceExplorer.table.traceId')" min-width="240">
+        <el-table-column prop="trace_id" :label="$t('traceExplorer.table.traceId')" min-width="220">
           <template #default="{ row }">
             <span class="text-blue-400 font-mono text-sm hover:text-blue-300 cursor-pointer">
               {{ row.trace_id }}
@@ -20,13 +20,13 @@
         </el-table-column>
 
         <!-- 服务名称（自适应） -->
-        <el-table-column prop="service_name" :label="$t('traceExplorer.table.serviceName')" min-width="180" />
+        <el-table-column prop="service_name" :label="$t('traceExplorer.table.serviceName')" min-width="160" />
 
         <!-- 开始时间（窄） -->
-        <el-table-column prop="start_time" :label="$t('traceExplorer.table.startTime')" width="150" sortable />
+        <el-table-column prop="start_time" :label="$t('traceExplorer.table.startTime')" width="140" sortable />
 
         <!-- 耗时（窄） -->
-        <el-table-column prop="duration" :label="$t('traceExplorer.table.duration')" width="90" sortable>
+        <el-table-column prop="duration" :label="$t('traceExplorer.table.duration')" width="85" sortable>
           <template #default="{ row }">
             <span class="font-mono text-sm" :class="getDurationClass(row.duration)">
               {{ row.duration }}ms
@@ -35,14 +35,21 @@
         </el-table-column>
 
         <!-- Span 数量 -->
-        <el-table-column prop="span_count" :label="$t('traceExplorer.table.spanCount')" width="100" sortable>
+        <el-table-column prop="span_count" :label="$t('traceExplorer.table.spanCount')" width="90" sortable>
           <template #default="{ row }">
             <span class="font-mono text-sm text-gray-400">{{ row.span_count }}</span>
           </template>
         </el-table-column>
 
+        <!-- Token 消耗（新增） -->
+        <el-table-column prop="token_count" :label="$t('traceExplorer.table.tokenCount')" width="100" sortable>
+          <template #default="{ row }">
+            <span class="font-mono text-sm text-purple-400">{{ formatNumber(row.token_count) }}</span>
+          </template>
+        </el-table-column>
+
         <!-- 风险等级（带颜色标识） -->
-        <el-table-column prop="risk_level" :label="$t('traceExplorer.table.riskLevel')" width="120">
+        <el-table-column prop="risk_level" :label="$t('traceExplorer.table.riskLevel')" width="110">
           <template #default="{ row }">
             <span class="px-2 py-1 rounded text-xs font-bold" :class="getLevelBadgeClass(row.risk_level)">
               {{ row.risk_level }}
@@ -50,12 +57,43 @@
           </template>
         </el-table-column>
 
-        <!-- 操作按钮 -->
-        <el-table-column :label="$t('traceExplorer.table.actions')" width="100" fixed="right">
+        <!-- 操作按钮（拆分为 3 个独立按钮） -->
+        <el-table-column :label="$t('traceExplorer.table.actions')" width="140" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click.stop="handleViewDetails(row)">
-              {{ $t('traceExplorer.table.viewDetails') }}
-            </el-button>
+            <div class="flex gap-1">
+              <!-- AI 分析按钮 -->
+              <el-tooltip :content="$t('traceExplorer.table.aiAnalysis')" placement="top">
+                <el-button
+                  type="primary"
+                  :icon="Cpu"
+                  circle
+                  size="small"
+                  @click.stop="handleAIAnalysis(row)"
+                />
+              </el-tooltip>
+
+              <!-- 调用链按钮 -->
+              <el-tooltip :content="$t('traceExplorer.table.callChain')" placement="top">
+                <el-button
+                  type="success"
+                  :icon="Histogram"
+                  circle
+                  size="small"
+                  @click.stop="handleCallChain(row)"
+                />
+              </el-tooltip>
+
+              <!-- Prompt 按钮 -->
+              <el-tooltip :content="$t('traceExplorer.table.promptDebugger')" placement="top">
+                <el-button
+                  type="warning"
+                  :icon="Document"
+                  circle
+                  size="small"
+                  @click.stop="handlePromptDebug(row)"
+                />
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -82,6 +120,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { Cpu, Histogram, Document } from '@element-plus/icons-vue'
 import type { TraceListItem } from '../types/trace'
 
 // Props
@@ -98,7 +137,9 @@ const props = withDefaults(defineProps<Props>(), {
 // Emits
 const emit = defineEmits<{
   'row-click': [row: TraceListItem]
-  'view-details': [row: TraceListItem]
+  'ai-analysis': [row: TraceListItem]
+  'call-chain': [row: TraceListItem]
+  'prompt-debug': [row: TraceListItem]
   'page-change': [page: number]
   'size-change': [size: number]
 }>()
@@ -106,6 +147,13 @@ const emit = defineEmits<{
 // 分页状态
 const currentPage = ref(1)
 const pageSize = ref(20)
+
+/**
+ * 格式化数字（千分位分隔符）
+ */
+function formatNumber(num: number): string {
+  return new Intl.NumberFormat('en-US').format(num)
+}
 
 /**
  * 根据风险等级返回徽章样式类名
@@ -144,10 +192,24 @@ function handleRowClick(row: TraceListItem) {
 }
 
 /**
- * 查看详情按钮点击事件
+ * AI 分析按钮点击事件
  */
-function handleViewDetails(row: TraceListItem) {
-  emit('view-details', row)
+function handleAIAnalysis(row: TraceListItem) {
+  emit('ai-analysis', row)
+}
+
+/**
+ * 调用链按钮点击事件
+ */
+function handleCallChain(row: TraceListItem) {
+  emit('call-chain', row)
+}
+
+/**
+ * Prompt 按钮点击事件
+ */
+function handlePromptDebug(row: TraceListItem) {
+  emit('prompt-debug', row)
 }
 
 /**

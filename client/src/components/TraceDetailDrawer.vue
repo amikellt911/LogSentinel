@@ -21,14 +21,26 @@
             <el-icon><MagicStick /></el-icon>
             {{ $t('traceExplorer.drawer.aiAnalysis') }}
           </h3>
-          <!-- 风险等级徽章 -->
-          <span
-            v-if="traceDetail.ai_analysis"
-            class="px-3 py-1 rounded-full text-xs font-bold"
-            :class="getLevelBadgeClass(traceDetail.ai_analysis.risk_level)"
-          >
-            {{ traceDetail.ai_analysis.risk_level }}
-          </span>
+          <div class="flex items-center gap-2">
+            <!-- 标签 -->
+            <div v-if="traceDetail.tags && traceDetail.tags.length > 0" class="flex gap-1">
+              <span
+                v-for="tag in traceDetail.tags"
+                :key="tag"
+                class="text-[10px] px-2 py-0.5 rounded-full border border-gray-600 text-gray-400 bg-gray-900/50"
+              >
+                #{{ tag }}
+              </span>
+            </div>
+            <!-- 风险等级徽章 -->
+            <span
+              v-if="traceDetail.ai_analysis"
+              class="px-3 py-1 rounded-full text-xs font-bold"
+              :class="getLevelBadgeClass(traceDetail.ai_analysis.risk_level)"
+            >
+              {{ traceDetail.ai_analysis.risk_level }}
+            </span>
+          </div>
         </div>
 
         <div v-if="traceDetail.ai_analysis" class="space-y-3">

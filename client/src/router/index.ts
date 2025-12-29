@@ -4,7 +4,6 @@ import ServiceMonitor from '../views/ServiceMonitor.vue'
 import Dashboard from '../views/Dashboard.vue'
 import LiveLogs from '../views/LiveLogs.vue'
 import TraceExplorer from '../views/TraceExplorer.vue'
-import BatchInsights from '../views/BatchInsights.vue'
 import Benchmark from '../views/Benchmark.vue'
 import Settings from '../views/Settings.vue'
 
@@ -34,11 +33,6 @@ const router = createRouter({
           path: 'traces',
           name: 'traces',
           component: TraceExplorer
-        },
-        {
-          path: 'insights',
-          name: 'insights',
-          component: BatchInsights
         },
         {
           path: 'benchmark',

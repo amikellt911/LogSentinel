@@ -10,6 +10,8 @@ export interface LogEntry {
   id: number | string
   timestamp: string
   level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' | 'Unknown'
+  trace_id: string
+  span_id: string
   message: string
 }
 
@@ -316,10 +318,18 @@ export const useSystemStore = defineStore('system', () => {
     const messages = messageSet[level]
     const message = messages[Math.floor(Math.random() * messages.length)] || 'Unknown system event'
 
+    // 生成 trace_id 和 span_id
+    const traceNum = Math.floor(Math.random() * 9000) + 1000
+    const spanNum = Math.floor(Math.random() * 900) + 100
+    const trace_id = `trace_${traceNum}`
+    const span_id = `span_${spanNum}`
+
     logs.value.push({
       id: Date.now() + Math.random(),
       timestamp: dayjs().format('HH:mm:ss.SSS'),
       level,
+      trace_id,
+      span_id,
       message
     })
 

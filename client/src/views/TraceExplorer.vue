@@ -21,16 +21,49 @@
         :loading="loading"
         :total="total"
         @row-click="handleRowClick"
-        @view-details="handleViewDetails"
+        @ai-analysis="handleAIAnalysis"
+        @call-chain="handleCallChain"
+        @prompt-debug="handlePromptDebug"
         @page-change="handlePageChange"
         @size-change="handleSizeChange"
       />
     </div>
 
-    <!-- 详情抽屉 -->
-    <TraceDetailDrawer
-      v-model="drawerVisible"
-      :trace-detail="selectedTraceDetail"
+    <!-- AI 分析抽屉 -->
+    <el-drawer
+      v-model="aiDrawerVisible"
+      :title="$t('traceExplorer.table.aiAnalysis') + ' - ' + selectedTraceId"
+      direction="rtl"
+      size="70%"
+      :destroy-on-close="true"
+      @closed="handleAIDrawerClosed"
+    >
+      <AIAnalysisDrawerContent
+        v-if="selectedTraceDetail"
+        :trace-detail="selectedTraceDetail"
+      />
+    </el-drawer>
+
+    <!-- 调用链抽屉 -->
+    <el-drawer
+      v-model="callChainDrawerVisible"
+      :title="$t('traceExplorer.table.callChain') + ' - ' + selectedTraceId"
+      direction="rtl"
+      size="70%"
+      :destroy-on-close="true"
+      @closed="handleCallChainDrawerClosed"
+    >
+      <CallChainDrawerContent
+        v-if="selectedTraceDetail"
+        :trace-detail="selectedTraceDetail"
+      />
+    </el-drawer>
+
+    <!-- Prompt Debugger 抽屉 -->
+    <PromptDebugger
+      v-model="promptDrawerVisible"
+      :prompt-debug-info="selectedPromptDebug"
+      :trace-id="selectedTraceId"
     />
   </div>
 </template>
@@ -39,8 +72,10 @@
 import { ref, onMounted } from 'vue'
 import TraceSearchBar from '../components/TraceSearchBar.vue'
 import TraceListTable from '../components/TraceListTable.vue'
-import TraceDetailDrawer from '../components/TraceDetailDrawer.vue'
-import type { TraceListItem, TraceDetail, TraceSearchCriteria, TraceSpan, AIAnalysis } from '../types/trace'
+import PromptDebugger from '../components/PromptDebugger.vue'
+import AIAnalysisDrawerContent from '../components/AIAnalysisDrawerContent.vue'
+import CallChainDrawerContent from '../components/CallChainDrawerContent.vue'
+import type { TraceListItem, TraceDetail, TraceSearchCriteria, TraceSpan, AIAnalysis, PromptDebugInfo } from '../types/trace'
 import dayjs from 'dayjs'
 
 // 响应式状态
@@ -49,8 +84,18 @@ const traceList = ref<TraceListItem[]>([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
-const drawerVisible = ref(false)
+
+// AI 分析抽屉状态
+const aiDrawerVisible = ref(false)
 const selectedTraceDetail = ref<TraceDetail | null>(null)
+const selectedTraceId = ref('')
+
+// 调用链抽屉状态
+const callChainDrawerVisible = ref(false)
+
+// Prompt Debugger 抽屉状态
+const promptDrawerVisible = ref(false)
+const selectedPromptDebug = ref<PromptDebugInfo | null>(null)
 
 // TODO: Replace with real API
 // TODO: 替换为真实 API 调用
@@ -90,6 +135,9 @@ function generateMockTraces(page: number, pageSize: number): { data: TraceListIt
     // 模拟 Span 数量
     const spanCount = Math.floor(Math.random() * 20) + 5
 
+    // 模拟 Token 消耗（基于 Span 数量和风险等级）
+    const tokenCount = Math.floor(spanCount * (100 + Math.random() * 50))
+
     mockData.push({
       trace_id: `trace_${String(1024 + index).padStart(6, '0')}`,
       service_name: services[Math.floor(Math.random() * services.length)],
@@ -97,6 +145,7 @@ function generateMockTraces(page: number, pageSize: number): { data: TraceListIt
       duration: Math.floor(duration),
       span_count: spanCount,
       risk_level: riskLevel,
+      token_count: tokenCount,
       timestamp: Date.now() - index * 60000
     })
   }
@@ -160,6 +209,48 @@ function generateMockTraceDetail(traceId: string): TraceDetail {
     confidence: 0.98
   }
 
+  // 生成标签
+  const allTags = ['认证', '安全', 'SQL注入', '登录', '数据库', '性能', '内存', '网络', '异常', '超时']
+  const tagCount = Math.floor(Math.random() * 3) + 1 // 1-3 个标签
+  const tags: string[] = []
+  for (let i = 0; i < tagCount; i++) {
+    const tag = allTags[Math.floor(Math.random() * allTags.length)]
+    if (!tags.includes(tag)) {
+      tags.push(tag)
+    }
+  }
+
+  // Token 消耗
+  const tokenCount = Math.floor(spanCount * (100 + Math.random() * 50))
+
+  // 生成 Prompt 调试信息
+  const promptDebug: PromptDebugInfo = {
+    trace_id: traceId,
+    input: {
+      trace_context: {
+        trace_id: traceId,
+        service_name: services[0],
+        span_count: spanCount,
+        total_duration: currentTime,
+        risk_spans: mockSpans.filter(s => s.status === 'error').map(s => s.span_id)
+      },
+      constraint: '分析此 Trace 的风险等级，提供根因分析和解决建议。',
+      system_prompt: '你是一个专业的日志分析助手，擅长识别分布式系统中的异常和性能瓶颈。'
+    },
+    output: {
+      risk_level: aiAnalysis.risk_level,
+      summary: aiAnalysis.summary,
+      root_cause: aiAnalysis.root_cause,
+      solution: aiAnalysis.solution
+    },
+    metadata: {
+      timestamp: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+      model: 'gemini-2.0-flash-exp',
+      duration: Math.floor(Math.random() * 500) + 100,
+      total_tokens: tokenCount
+    }
+  }
+
   return {
     trace_id: traceId,
     service_name: services[0],
@@ -167,8 +258,11 @@ function generateMockTraceDetail(traceId: string): TraceDetail {
     end_time: dayjs().add(currentTime, 'ms').format('YYYY-MM-DD HH:mm:ss'),
     duration: currentTime,
     span_count: spanCount,
+    token_count: tokenCount,
+    tags: tags,
     spans: mockSpans,
-    ai_analysis: aiAnalysis
+    ai_analysis: aiAnalysis,
+    prompt_debug: promptDebug
   }
 }
 
@@ -213,20 +307,59 @@ function loadTraces() {
 }
 
 /**
- * 行点击事件
+ * 行点击事件（默认打开 AI 分析）
  */
 function handleRowClick(row: TraceListItem) {
-  handleViewDetails(row)
+  handleAIAnalysis(row)
 }
 
 /**
- * 查看详情
+ * AI 分析按钮点击事件
  */
-function handleViewDetails(row: TraceListItem) {
+function handleAIAnalysis(row: TraceListItem) {
   // TODO: 替换为真实 API 调用
   const traceDetail = generateMockTraceDetail(row.trace_id)
   selectedTraceDetail.value = traceDetail
-  drawerVisible.value = true
+  selectedTraceId.value = row.trace_id
+  aiDrawerVisible.value = true
+}
+
+/**
+ * 调用链按钮点击事件
+ */
+function handleCallChain(row: TraceListItem) {
+  // TODO: 替换为真实 API 调用
+  const traceDetail = generateMockTraceDetail(row.trace_id)
+  selectedTraceDetail.value = traceDetail
+  selectedTraceId.value = row.trace_id
+  callChainDrawerVisible.value = true
+}
+
+/**
+ * Prompt Debugger 按钮点击事件
+ */
+function handlePromptDebug(row: TraceListItem) {
+  // TODO: 替换为真实 API 调用
+  const traceDetail = generateMockTraceDetail(row.trace_id)
+  selectedPromptDebug.value = traceDetail.prompt_debug
+  selectedTraceId.value = row.trace_id
+  promptDrawerVisible.value = true
+}
+
+/**
+ * AI 分析抽屉关闭时清理数据
+ */
+function handleAIDrawerClosed() {
+  selectedTraceDetail.value = null
+  selectedTraceId.value = ''
+}
+
+/**
+ * 调用链抽屉关闭时清理数据
+ */
+function handleCallChainDrawerClosed() {
+  selectedTraceDetail.value = null
+  selectedTraceId.value = ''
 }
 
 /**
