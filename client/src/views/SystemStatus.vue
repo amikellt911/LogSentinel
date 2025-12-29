@@ -67,8 +67,21 @@ const lineChartEl = ref<HTMLElement | null>(null)
 let lineChart: echarts.ECharts | null = null
 
 // -- 状态计算 --
-// @ts-ignore
-const stats = computed(() => systemStore.stats)
+const stats = computed(() => {
+    // Determine last AI Rate from chart history if available
+    let currentAiRate = 0
+    if (systemStore.chartData && systemStore.chartData.length > 0) {
+        currentAiRate = systemStore.chartData[systemStore.chartData.length - 1].aiRate
+    }
+
+    return {
+        total_logs: systemStore.totalLogsProcessed,
+        avg_latency: systemStore.netLatency,
+        ai_rate: currentAiRate,
+        backpressure: systemStore.backpressureStatus !== 'Normal',
+        current_qps: systemStore.chartData && systemStore.chartData.length > 0 ? systemStore.chartData[systemStore.chartData.length - 1].qps : 0
+    }
+})
 
 const latencyStatus = computed(() => {
     if (stats.value.avg_latency > 500) return 'danger'
@@ -154,12 +167,10 @@ onMounted(() => {
         const now = new Date()
         lineDataX.value.push(now.toLocaleTimeString())
         // 模拟 QPS 波动
-        // @ts-ignore
-        const baseIngest = systemStore.stats.current_qps || 120
+        const baseIngest = stats.value.current_qps || 120
         lineDataIngest.value.push(baseIngest + Math.floor(Math.random()*20 - 10))
 
-        // @ts-ignore
-        const baseAI = systemStore.stats.ai_rate || 35
+        const baseAI = stats.value.ai_rate || 35
         lineDataAI.value.push(baseAI + Math.floor(Math.random()*10 - 5))
 
         // 保持队列长度

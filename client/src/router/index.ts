@@ -16,9 +16,10 @@ const router = createRouter({
     {
       path: '/',
       component: MainLayout,
+      redirect: '/service',
       children: [
         {
-          path: '',
+          path: 'service',
           name: 'service',
           component: ServiceMonitor
         },

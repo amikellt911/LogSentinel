@@ -7,14 +7,14 @@
       </div>
       
       <el-menu
-        :default-active="route.path === '/' ? '/' : route.path"
+        :default-active="route.path === '/' ? '/service' : route.path"
         class="flex-1 bg-transparent border-r-0 pt-4"
         text-color="#9ca3af"
         active-text-color="#409eff"
         background-color="transparent"
         router
       >
-        <el-menu-item index="/">
+        <el-menu-item index="/service">
           <el-icon><Monitor /></el-icon>
           <span>{{ $t('layout.serviceMonitor') }}</span>
         </el-menu-item>
