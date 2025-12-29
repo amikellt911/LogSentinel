@@ -5,6 +5,7 @@ const messages = {
     layout: {
       serviceMonitor: 'Service Monitor',
       dashboard: 'Dashboard',
+      systemStatus: 'System Status',
       logs: 'Live Logs',
       settings: 'Settings',
       systemRunning: 'SYSTEM RUNNING',
@@ -13,6 +14,7 @@ const messages = {
       eventStream: 'Real-time Event Stream',
       configuration: 'System Configuration',
       insights: 'AI Batch Insights',
+      aiEngine: 'AI Engine',
       traceExplorer: 'Trace Explorer',
       history: 'Historical Logs',
       benchmark: 'Performance Arena',
@@ -87,6 +89,32 @@ const messages = {
         total: 'Total'
       }
     },
+    aiEngine: {
+        metrics: {
+            totalTokens: 'Total Tokens Consumed',
+            savings: 'Token Savings',
+            estCost: 'Estimated Cost',
+            avgTokens: 'Avg Tokens'
+        },
+        archiveList: {
+            title: 'Historical Batch Archive',
+            searchPlaceholder: 'Search Batch ID or Summary...',
+            time: 'Time',
+            logs: 'Logs',
+            risk: 'Risk Level',
+            tokens: 'Tokens',
+            actions: 'Actions',
+            debug: 'Debug Prompt'
+        },
+        promptDebugger: {
+            title: 'Prompt Debugger',
+            input: 'Input Context (JSON)',
+            output: 'Model Output (JSON)',
+            copy: 'Copy JSON',
+            copySuccess: 'JSON copied to clipboard',
+            noData: 'No debug data available'
+        }
+    },
     benchmark: {
       tool: 'Benchmark Tool',
       threads: 'Threads',
@@ -124,6 +152,9 @@ const messages = {
       queue: 'Queue',
       riskTitle: 'Risk Distribution',
       recentAlerts: 'Recent Alerts',
+      throughputTrend: 'Throughput Trend (Real-time)',
+      criticalRisks: 'Critical Risks',
+      riskDistribution: 'Risk Distribution',
       table: {
         time: 'Time',
         service: 'Service',
@@ -252,6 +283,7 @@ const messages = {
     layout: {
       serviceMonitor: '服务监控',
       dashboard: '仪表盘',
+      systemStatus: '系统状态',
       logs: '实时日志',
       settings: '系统设置',
       systemRunning: '系统运行中',
@@ -260,6 +292,7 @@ const messages = {
       eventStream: '实时事件流',
       configuration: '系统配置',
       insights: '智能分析',
+      aiEngine: 'AI 引擎中心',
       traceExplorer: 'Trace 追溯',
       history: '历史日志',
       benchmark: '基准测试',
@@ -334,6 +367,32 @@ const messages = {
         total: '总计'
       }
     },
+    aiEngine: {
+        metrics: {
+            totalTokens: '今日 Token 消耗',
+            savings: '节省比例',
+            estCost: '预估成本',
+            avgTokens: '平均 Token/批次'
+        },
+        archiveList: {
+            title: '历史批次存档',
+            searchPlaceholder: '搜索批次 ID 或摘要...',
+            time: '创建时间',
+            logs: '日志数',
+            risk: '风险等级',
+            tokens: 'Token 消耗',
+            actions: '操作',
+            debug: 'Prompt 透视'
+        },
+        promptDebugger: {
+            title: 'Prompt 透视',
+            input: '上下文输入 (JSON)',
+            output: '模型输出 (JSON)',
+            copy: '复制 JSON',
+            copySuccess: 'JSON 已复制到剪贴板',
+            noData: '暂无调试数据'
+        }
+    },
     benchmark: {
       tool: '压测工具',
       threads: '线程数',
@@ -371,6 +430,9 @@ const messages = {
       queue: '队列',
       riskTitle: '风险分布',
       recentAlerts: '最近告警',
+      throughputTrend: '实时吞吐量趋势',
+      criticalRisks: '严重风险',
+      riskDistribution: '风险分布',
       table: {
         time: '时间',
         service: '服务',

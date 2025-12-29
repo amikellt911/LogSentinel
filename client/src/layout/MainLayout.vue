@@ -1,27 +1,27 @@
 <template>
   <el-container class="h-screen w-screen overflow-hidden bg-bg-dark text-gray-200 font-sans">
-    <!-- Sidebar -->
+    <!-- 侧边栏 -->
     <el-aside width="240px" class="border-r border-gray-700 flex flex-col bg-[#181818]">
       <div class="h-16 flex items-center justify-center border-b border-gray-700">
         <h1 class="text-xl font-bold tracking-wider text-primary">LOG<span class="text-white">SENTINEL</span></h1>
       </div>
       
       <el-menu
-        :default-active="route.path"
+        :default-active="route.path === '/' ? '/' : route.path"
         class="flex-1 bg-transparent border-r-0 pt-4"
         text-color="#9ca3af"
         active-text-color="#409eff"
         background-color="transparent"
         router
       >
-        <el-menu-item index="/service">
+        <el-menu-item index="/">
           <el-icon><Monitor /></el-icon>
           <span>{{ $t('layout.serviceMonitor') }}</span>
         </el-menu-item>
 
-        <el-menu-item index="/">
+        <el-menu-item index="/system">
           <el-icon><Odometer /></el-icon>
-          <span>{{ $t('layout.dashboard') }}</span>
+          <span>{{ $t('layout.systemStatus') }}</span>
         </el-menu-item>
 
         <el-menu-item index="/logs">
@@ -29,14 +29,14 @@
           <span>{{ $t('layout.logs') }}</span>
         </el-menu-item>
 
-        <el-menu-item index="/insights">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>{{ $t('layout.insights') }}</span>
-        </el-menu-item>
-
         <el-menu-item index="/traces">
           <el-icon><Clock /></el-icon>
           <span>{{ $t('layout.traceExplorer') }}</span>
+        </el-menu-item>
+
+        <el-menu-item index="/ai-engine">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>{{ $t('layout.aiEngine') }}</span>
         </el-menu-item>
 
         <el-menu-item index="/benchmark">
@@ -56,14 +56,14 @@
     </el-aside>
 
     <el-container>
-      <!-- Header -->
+      <!-- 头部 -->
       <el-header height="64px" class="border-b border-gray-700 bg-bg-dark flex items-center justify-between px-6">
         <div class="text-lg font-medium text-gray-300">
           {{ currentRouteName }}
         </div>
         
         <div class="flex items-center gap-4">
-          <!-- Simulation Mode Toggle -->
+          <!-- 模拟模式开关 -->
           <div class="flex items-center gap-2 border-r border-gray-700 pr-4 mr-2">
             <span class="text-xs font-mono uppercase tracking-widest text-gray-500">
               {{ $t('layout.simMode') }}
@@ -85,7 +85,7 @@
             {{ systemStore.isRunning ? $t('layout.systemRunning') : $t('layout.systemIdle') }}
           </span>
           
-          <!-- Big Toggle Switch -->
+          <!-- 系统运行总开关 -->
           <el-switch
             v-model="systemStore.isRunning"
             @change="handleToggle"
@@ -98,7 +98,7 @@
         </div>
       </el-header>
 
-      <!-- Main Content -->
+      <!-- 主内容区 -->
       <el-main class="bg-bg-darker p-0 overflow-hidden relative">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
@@ -122,12 +122,13 @@ const route = useRoute()
 const systemStore = useSystemStore()
 const { t } = useI18n()
 
+// 根据当前路由显示标题
 const currentRouteName = computed(() => {
   switch (route.name) {
     case 'service': return t('layout.serviceMonitor')
-    case 'dashboard': return t('layout.missionControl')
+    case 'system': return t('layout.systemStatus')
     case 'logs': return t('layout.eventStream')
-    case 'insights': return t('layout.insights')
+    case 'ai-engine': return t('layout.aiEngine')
     case 'traces': return t('layout.traceExplorer')
     case 'benchmark': return t('layout.benchmark')
     case 'settings': return t('layout.configuration')
@@ -136,11 +137,11 @@ const currentRouteName = computed(() => {
 })
 
 function handleToggle(val: string | number | boolean) {
-  // Validation Logic
+  // 验证逻辑：如果未配置 API Key 且不是本地 Mock 模式，阻止开启
   if (val === true) {
     if (systemStore.settings.ai.provider !== 'Local-Mock' && !systemStore.settings.ai.apiKey) {
       ElMessage.error(t('settings.ai.apiKeyPlaceholder'))
-      // Reset switch asynchronously to avoid flicker issue or immediate revert
+      // 异步重置开关状态，避免闪烁
       setTimeout(() => {
         systemStore.toggleSystem(false)
       }, 0)
@@ -153,7 +154,7 @@ function handleToggle(val: string | number | boolean) {
 </script>
 
 <style scoped>
-/* Custom overrides for Element Menu to match dark theme */
+/* Element Menu 深色主题覆盖 */
 :deep(.el-menu-item) {
   margin: 4px 16px;
   border-radius: 8px;
@@ -168,6 +169,7 @@ function handleToggle(val: string | number | boolean) {
   background-color: rgba(64, 158, 255, 0.15) !important;
 }
 
+/* 页面切换过渡动画 */
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;
