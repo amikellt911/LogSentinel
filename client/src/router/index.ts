@@ -3,7 +3,7 @@ import MainLayout from '../layout/MainLayout.vue'
 import ServiceMonitor from '../views/ServiceMonitor.vue'
 import Dashboard from '../views/Dashboard.vue'
 import LiveLogs from '../views/LiveLogs.vue'
-import History from '../views/History.vue'
+import TraceExplorer from '../views/TraceExplorer.vue'
 import BatchInsights from '../views/BatchInsights.vue'
 import Benchmark from '../views/Benchmark.vue'
 import Settings from '../views/Settings.vue'
@@ -31,9 +31,9 @@ const router = createRouter({
           component: LiveLogs
         },
         {
-          path: 'history',
-          name: 'history',
-          component: History
+          path: 'traces',
+          name: 'traces',
+          component: TraceExplorer
         },
         {
           path: 'insights',

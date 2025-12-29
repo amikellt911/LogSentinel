@@ -13,6 +13,7 @@ const messages = {
       eventStream: 'Real-time Event Stream',
       configuration: 'System Configuration',
       insights: 'AI Batch Insights',
+      traceExplorer: 'Trace Explorer',
       history: 'Historical Logs',
       benchmark: 'Performance Arena',
       simMode: 'SIM MODE'
@@ -37,6 +38,53 @@ const messages = {
         pause: 'Pause',
         resume: 'Resume',
         loadMore: 'Load More'
+      }
+    },
+    traceExplorer: {
+      search: {
+        traceId: 'Trace ID',
+        traceIdPlaceholder: 'Enter Trace ID',
+        serviceName: 'Service',
+        allServices: 'All Services',
+        timeRange: 'Time Range',
+        startTime: 'Start Time',
+        endTime: 'End Time',
+        riskLevel: 'Risk Level',
+        allLevels: 'All Levels',
+        minDuration: 'Min Duration (ms)',
+        minDurationPlaceholder: 'Min Duration',
+        reset: 'Reset',
+        search: 'Search'
+      },
+      table: {
+        traceId: 'Trace ID',
+        serviceName: 'Service Name',
+        startTime: 'Start Time',
+        duration: 'Duration',
+        spanCount: 'Span Count',
+        riskLevel: 'Risk Level',
+        actions: 'Actions',
+        viewDetails: 'Details'
+      },
+      waterfall: {
+        title: 'Trace Waterfall Visualization',
+        spanId: 'Span ID',
+        operation: 'Operation',
+        startTime: 'Start Time',
+        duration: 'Duration',
+        status: 'Status'
+      },
+      drawer: {
+        title: 'Trace Details',
+        aiAnalysis: 'AI Root Cause Analysis',
+        summary: 'Summary',
+        rootCause: 'Root Cause',
+        solution: 'Solution',
+        noAnalysis: 'No AI analysis available',
+        spanList: 'Span List'
+      },
+      pagination: {
+        total: 'Total'
       }
     },
     benchmark: {
@@ -212,6 +260,7 @@ const messages = {
       eventStream: '实时事件流',
       configuration: '系统配置',
       insights: '智能分析',
+      traceExplorer: 'Trace 追溯',
       history: '历史日志',
       benchmark: '基准测试',
       simMode: '模拟模式'
@@ -236,6 +285,53 @@ const messages = {
         pause: '暂停',
         resume: '继续',
         loadMore: '加载更多'
+      }
+    },
+    traceExplorer: {
+      search: {
+        traceId: 'Trace ID',
+        traceIdPlaceholder: '输入 Trace ID',
+        serviceName: '服务名称',
+        allServices: '全部服务',
+        timeRange: '时间范围',
+        startTime: '开始时间',
+        endTime: '结束时间',
+        riskLevel: '风险等级',
+        allLevels: '全部等级',
+        minDuration: '最小耗时（ms）',
+        minDurationPlaceholder: '最小耗时',
+        reset: '重置',
+        search: '搜索'
+      },
+      table: {
+        traceId: 'Trace ID',
+        serviceName: '服务名称',
+        startTime: '开始时间',
+        duration: '耗时',
+        spanCount: 'Span 数量',
+        riskLevel: '风险等级',
+        actions: '操作',
+        viewDetails: '详情'
+      },
+      waterfall: {
+        title: 'Trace 瀑布图可视化',
+        spanId: 'Span ID',
+        operation: '操作',
+        startTime: '开始时间',
+        duration: '耗时',
+        status: '状态'
+      },
+      drawer: {
+        title: 'Trace 详情',
+        aiAnalysis: 'AI 根因分析',
+        summary: '总结',
+        rootCause: '根因',
+        solution: '解决方案',
+        noAnalysis: '暂无 AI 分析',
+        spanList: 'Span 列表'
+      },
+      pagination: {
+        total: '总计'
       }
     },
     benchmark: {

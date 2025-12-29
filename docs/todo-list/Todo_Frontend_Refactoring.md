@@ -17,7 +17,7 @@
 ## 📋 总体进度
 
 - [x] **阶段 1**：ServiceMonitor（新建首页）✅ 已完成 2025-12-29
-- [ ] **阶段 2**：TraceExplorer（核心追溯功能）
+- [x] **阶段 2**：TraceExplorer（核心追溯功能）✅ 已完成 2025-12-29
 - [ ] **阶段 3**：AIEngine（技术展示）
 - [ ] **阶段 4**：SystemStatus（精简）+ 收尾
 
@@ -87,45 +87,52 @@
 
 **目标**：实现 Trace 列表搜索 + 瀑布图展示 + 根因分析
 
+**状态**：✅ 已完成 2025-12-29
+
+**详见**：`docs/todo-list/Todo_Phase2_TraceExplorer.md`
+
 ### 2.1 页面骨架
-- [ ] 改造 `client/src/views/History.vue` → 重命名为 `TraceExplorer.vue`
-- [ ] 设计两段式布局（顶部搜索区 + 底部列表区，占满全屏）
-- [ ] 点击列表某一行后，弹出详情抽屉（从右侧滑出，覆盖在列表之上）
-- [ ] 抽屉宽度自适应（桌面端占 70%，平板占 80%，移动端占 100%）
+- [x] 改造 `client/src/views/History.vue` → 重命名为 `TraceExplorer.vue`
+- [x] 设计两段式布局（顶部搜索区 + 底部列表区，占满全屏）
+- [x] 点击列表某一行后，弹出详情抽屉（从右侧滑出，覆盖在列表之上）
+- [x] 抽屉宽度自适应（桌面端占 70%，平板占 80%，移动端占 100%）
 
 ### 2.2 搜索表单组件
-- [ ] 创建 `client/src/components/TraceSearchBar.vue`
-- [ ] 搜索字段：
+- [x] 创建 `client/src/components/TraceSearchBar.vue`
+- [x] 搜索字段：
   - `trace_id`（精确匹配）
   - `service_name`（下拉选择）
   - `time_range`（快捷选择：最近 1h/6h/24h/自定义）
   - `risk_level`（多选：Critical/Error/Warning/Info/Safe）
   - `min_duration`（耗时过滤）
-- [ ] 添加重置和搜索按钮
-- [ ] URL 参数同步（刷新保持搜索条件）
+- [x] 添加重置和搜索按钮
+- [ ] URL 参数同步（刷新保持搜索条件）- 可选优化
 
 ### 2.3 Trace 列表组件
-- [ ] 创建 `client/src/components/TraceListTable.vue`
-- [ ] 表格列：
+- [x] 创建 `client/src/components/TraceListTable.vue`
+- [x] 表格列：
   - trace_id（可点击，打开详情）
   - service_name（主要服务）
   - start_time（开始时间）
-  - duration（耗时，ms）
+  - duration（**用户耗时**，即业务系统从请求开始到结束的真实墙钟时间）
   - span_count（中文：Span 数量，表示 Trace 中的操作节点数）
   - risk_level（风险等级，颜色标识）
   - 操作（查看详情按钮，点击打开详情抽屉）
-- [ ] 分页组件（Element Plus Pagination）
-- [ ] 排序功能（按时间/耗时/风险）
-- [ ] 行点击事件（打开详情抽屉）
+- [x] 分页组件（Element Plus Pagination）
+- [x] 排序功能（按时间/耗时/风险）
+- [x] 行点击事件（打开详情抽屉）
+- [x] 列宽优化（Trace ID 和 Service Name 自适应，Start Time 和 Duration 缩小）
 
 ### 2.4 瀑布图组件（核心！）
-- [ ] 创建 `client/src/components/TraceWaterfall.vue`
-- [ ] **技术方案**：ECharts 堆叠条形图（Stacked Bar）
-  - X 轴：时间线（相对时间 0ms~500ms）
-  - Y 轴：服务名称（按调用顺序排序）
-  - 使用透明色占位实现瀑布效果
-  - 设置 `barMinWidth: 2` 防止细条看不见
-- [ ] **数据结构**：
+- [x] 创建 `client/src/components/TraceWaterfall.vue`
+- [x] **技术方案**：ECharts Custom Series + renderItem（最终方案）
+  - X 轴：时间线（相对时间 0ms ~ 总耗时）
+  - Y 轴：服务泳道（按服务合并，同一服务的所有请求落在同一行）
+  - 使用 `renderItem` 手动计算矩形位置，精确控制 x, y, width, height
+  - 使用 `filterMode: 'weakFilter'` 确保长 Span 不会被过滤
+  - 使用 `ResizeObserver` 解决 Drawer 动画渲染问题
+  - X 轴支持滚轮缩放、拖拽平移、底部滑动条
+- [x] **数据结构**：
   ```typescript
   interface TraceSpan {
     span_id: string
@@ -134,42 +141,46 @@
     duration: number
     parent_id: string | null
     status: 'success' | 'error' | 'warning'
+    operation?: string
   }
   ```
-- [ ] **交互功能**：
-  - Hover 显示详细信息（Tooltip）
-  - Click 高亮选中 Span
-  - 状态颜色映射（成功=绿，错误=红，慢查询=黄）
-  - 支持缩放（dataZoom）
-- [ ] **备选方案**：如果堆叠条形图效果不好，改用 Custom Series（renderItem）
+- [x] **交互功能**：
+  - Hover 显示详细信息（Tooltip，支持国际化，含 Span ID）
+  - 状态颜色映射（成功=绿，错误=红，警告=黄）
+  - X 轴缩放、平移、滑动条
+  - Y 轴滚动（服务很多时）
+  - 最小宽度 2px，防止极短耗时看不见
 
 ### 2.5 详情抽屉组件
-- [ ] 创建 `client/src/components/TraceDetailDrawer.vue`
-- [ ] **布局结构**：
+- [x] 创建 `client/src/components/TraceDetailDrawer.vue`
+- [x] **布局结构**：
   - **顶部**：AI 根因分析（用户最想看的内容）
     - 风险等级徽章
     - 根因总结
     - 解决建议
   - **中部**：瀑布图（调用链可视化）
   - **底部**：Span 详细列表（可折叠）
-- [ ] 抽屉从右侧滑出（宽度 70% 或自适应）
-- [ ] 支持全屏切换
-- [ ] 关闭时清空数据（释放内存）
+- [x] 抽屉从右侧滑出（宽度 70% 或自适应）
+- [x] 移除全屏切换按钮（Element Plus 无此图标）
+- [x] 只保留一个关闭按钮（移除重复按钮）
+- [x] 关闭时清空数据（释放内存）
 
 ### 2.6 TypeScript 接口类型定义（前端内部）
-- [ ] 定义前端数据结构类型
+- [x] 定义前端数据结构类型
   - `TraceListItem`（列表项）
   - `TraceDetail`（详情数据）
   - `TraceSpan`（Span 节点）
   - `AIAnalysis`（AI 分析结果）
-- [ ] 使用 Mock 数据进行演示
-- [ ] 预留 API 接口对接点（添加 TODO 注释）
+- [x] 使用 Mock 数据进行演示
+- [x] 预留 API 接口对接点（添加 TODO 注释）
 
 ### 2.7 国际化
-- [ ] 添加中文翻译
+- [x] 添加中文翻译
   - `traceExplorer` 页面标题
   - 表格列名、搜索标签、操作按钮
-- [ ] 添加英文翻译
+  - 瀑布图 tooltip 字段（Span ID、操作、开始时间、耗时、状态）
+- [x] 添加英文翻译
+- [x] 使用 `useI18n()` 实现动态切换
 
 ---
 

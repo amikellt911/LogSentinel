@@ -34,9 +34,9 @@
           <span>{{ $t('layout.insights') }}</span>
         </el-menu-item>
 
-        <el-menu-item index="/history">
+        <el-menu-item index="/traces">
           <el-icon><Clock /></el-icon>
-          <span>{{ $t('layout.history') }}</span>
+          <span>{{ $t('layout.traceExplorer') }}</span>
         </el-menu-item>
 
         <el-menu-item index="/benchmark">
@@ -128,6 +128,7 @@ const currentRouteName = computed(() => {
     case 'dashboard': return t('layout.missionControl')
     case 'logs': return t('layout.eventStream')
     case 'insights': return t('layout.insights')
+    case 'traces': return t('layout.traceExplorer')
     case 'benchmark': return t('layout.benchmark')
     case 'settings': return t('layout.configuration')
     default: return t('layout.dashboard')
