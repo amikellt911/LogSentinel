@@ -150,16 +150,29 @@ const messages = {
       threads: 'Threads',
       connections: 'Connections',
       duration: 'Duration',
+      totalLogs: 'Total Logs',
+      logs: 'logs',
       start: 'Start Benchmark',
       running: 'RUNNING BENCHMARK...',
+      tabs: {
+        qps: 'QPS Test',
+        cost: 'Cost Analysis'
+      },
       metrics: {
         qps: 'QPS (Throughput)',
         p50: 'P50 Latency',
         p99: 'P99 Latency',
-        net_io: 'Net I/O Latency',
-        scheduler: 'AI Scheduler Cost',
         total_logs: 'Total Logs Processed',
-        total_ai: 'Total AI Calls'
+        ai_calls: 'AI Calls',
+        input_tokens: 'Input Tokens',
+        output_tokens: 'Output Tokens',
+        estimated_cost: 'Estimated Cost'
+      },
+      priceRef: {
+        title: 'Price Reference (DeepSeek-V3)',
+        model: 'Model',
+        inputPrice: 'Input Tokens',
+        outputPrice: 'Output Tokens'
       }
     },
     dashboard: {
@@ -455,16 +468,29 @@ const messages = {
       threads: '线程数',
       connections: '并发连接数',
       duration: '持续时间',
+      totalLogs: '日志总数',
+      logs: '条',
       start: '开始基准测试',
       running: '基准测试运行中...',
+      tabs: {
+        qps: 'QPS 测试',
+        cost: '开销分析'
+      },
       metrics: {
         qps: 'QPS (吞吐量)',
         p50: 'P50 延迟',
         p99: 'P99 延迟',
-        net_io: '网络 I/O 延迟',
-        scheduler: 'AI 调度开销',
         total_logs: '日志处理总数',
-        total_ai: 'AI 调用总数'
+        ai_calls: 'AI 调用次数',
+        input_tokens: '输入 Tokens',
+        output_tokens: '输出 Tokens',
+        estimated_cost: '预计花费'
+      },
+      priceRef: {
+        title: '价格参考 (DeepSeek-V3)',
+        model: '模型',
+        inputPrice: '输入 Tokens',
+        outputPrice: '输出 Tokens'
       }
     },
     dashboard: {
