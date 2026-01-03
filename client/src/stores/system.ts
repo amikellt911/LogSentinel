@@ -33,8 +33,7 @@ export interface PromptConfig {
   id: string | number
   name: string
   content: string
-  is_active?: number
-  type: 'map' | 'reduce'
+  is_active?: number | boolean
 }
 
 export interface WebhookConfig {
@@ -58,8 +57,7 @@ export interface AISettings {
     circuitBreaker: boolean
     failureThreshold: number
     cooldownSeconds: number
-    activeMapPromptId: number
-    activeReducePromptId: number
+    activePromptId: number
     prompts: PromptConfig[]
 }
 
@@ -109,8 +107,7 @@ export interface SettingsResponse {
     id: number
     name: string
     content: string
-    is_active: number
-    type?: string
+    is_active: number | boolean
   }[]
   channels: {
     id: number
@@ -179,21 +176,12 @@ export const useSystemStore = defineStore('system', () => {
       circuitBreaker: true,
       failureThreshold: 5,
       cooldownSeconds: 60,
-      activeMapPromptId: 0,
-      activeReducePromptId: 0,
+      activePromptId: 0,
       prompts: [
         {
-          id: 'p1',
-          name: 'Security Audit (Map)',
-          content: `Analyze...`,
-          type: 'map',
-          is_active: 1
-        },
-        {
-          id: 'p2',
-          name: 'Summary (Reduce)',
-          content: `Summarize...`,
-          type: 'reduce',
+          id: 'p-aggregate',
+          name: 'Microservice Trace Summary',
+          content: `You are an observability assistant. Given aggregated logs from the same trace_id and ordered span_id, identify the main issue, impacted service, and suggested action.`,
           is_active: 1
         }
       ]
@@ -548,15 +536,13 @@ export const useSystemStore = defineStore('system', () => {
           failureThreshold: parseInt(data.config['ai_failure_threshold'] || '5'),
           cooldownSeconds: parseInt(data.config['ai_cooldown_seconds'] || '60'),
 
-          activeMapPromptId: parseInt(data.config['active_map_prompt_id'] || '0'),
-          activeReducePromptId: parseInt(data.config['active_reduce_prompt_id'] || '0'),
+          activePromptId: parseInt(data.config['active_prompt_id'] || '0'),
 
           prompts: data.prompts.map(p => ({
             id: p.id,
             name: p.name,
             content: p.content,
-            is_active: p.is_active, // Map backend is_active
-            type: (p.type || 'map') as 'map' | 'reduce'
+            is_active: toBool(p.is_active, false) // Map backend is_active
           }))
         },
         integration: {
@@ -610,8 +596,7 @@ export const useSystemStore = defineStore('system', () => {
          { key: 'ai_failure_threshold', value: settings.ai.failureThreshold.toString() },
          { key: 'ai_cooldown_seconds', value: settings.ai.cooldownSeconds.toString() },
 
-         { key: 'active_map_prompt_id', value: settings.ai.activeMapPromptId.toString() },
-         { key: 'active_reduce_prompt_id', value: settings.ai.activeReducePromptId.toString() },
+         { key: 'active_prompt_id', value: settings.ai.activePromptId.toString() },
 
          { key: 'kernel_adaptive_mode', value: settings.kernel.adaptiveBatching ? '1' : '0' },
          { key: 'kernel_max_batch', value: settings.ai.maxBatchSize.toString() },
@@ -645,8 +630,7 @@ export const useSystemStore = defineStore('system', () => {
                id: typeof p.id === 'number' ? p.id : 0, // 0 for new
                name: p.name,
                content: p.content,
-               is_active: p.is_active ? 1 : 0,
-               type: p.type
+               is_active: p.is_active ? 1 : 0
            }))
            promises.push(fetch('/api/settings/prompts', {
                method: 'POST',

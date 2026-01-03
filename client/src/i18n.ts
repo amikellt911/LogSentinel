@@ -86,7 +86,7 @@ const messages = {
       },
       aiStream: {
         title: 'AI Situation Awareness Stream',
-        subtitle: 'Real-time log batch aggregation. Map-Reduce pipeline active.',
+        subtitle: 'Real-time log batch aggregation with trace-aware grouping.',
         pause: 'Pause',
         resume: 'Resume',
         loadMore: 'Load More'
@@ -228,8 +228,8 @@ const messages = {
       }
     },
     insights: {
-      title: 'AI Insight Stream (Reduce Phase)',
-      subtitle: 'Real-time aggregation of log batches. Map-Reduce pipeline active.',
+      title: 'AI Insight Stream (Trace Summary)',
+      subtitle: 'Trace-based aggregation before a single LLM call.',
       lastBatch: 'Last Batch',
       context: 'Global Context Window',
       batch: 'BATCH',
@@ -284,9 +284,7 @@ const messages = {
           promptList: 'Prompts',
           newPrompt: 'New Prompt',
           promptName: 'Prompt Name',
-          templateContent: 'Template Content',
-          mapPhase: 'Map Phase',
-          reducePhase: 'Reduce Phase'
+          templateContent: 'Template Content'
       },
       integration: {
         threshold: 'Alert Threshold',
@@ -404,7 +402,7 @@ const messages = {
       },
       aiStream: {
         title: 'AI 态势感知流',
-        subtitle: '日志批次实时聚合。Map-Reduce 管道运行中。',
+        subtitle: '日志批次实时聚合，按 trace 汇总后统一分析。',
         pause: '暂停',
         resume: '继续',
         loadMore: '加载更多'
@@ -546,8 +544,8 @@ const messages = {
       }
     },
     insights: {
-      title: 'AI 态势感知流 (Reduce 阶段)',
-      subtitle: '日志批次实时聚合。Map-Reduce 管道运行中。',
+      title: 'AI 态势感知流（Trace 汇总）',
+      subtitle: '按 trace 聚合日志批次后再统一调用模型。',
       lastBatch: '最新批次',
       context: '全局上下文窗口',
       batch: '批次',
@@ -602,9 +600,7 @@ const messages = {
         promptList: '提示词列表',
         newPrompt: '新建提示词',
         promptName: '提示词名称',
-        templateContent: '模板内容',
-        mapPhase: 'Map 阶段',
-        reducePhase: 'Reduce 阶段'
+        templateContent: '模板内容'
       },
       integration: {
         threshold: '报警阈值',

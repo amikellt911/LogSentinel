@@ -1,8 +1,8 @@
 #include "SqliteConfigRepository.h"
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include "persistence/SqliteHelper.h"
-#include "persistence/PromptIdHelper.h"
 
 using namespace persistence;
 
@@ -25,8 +25,7 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         else if (key == "http_port") config.http_port = std::stoi(val);
         else if (key == "ai_failure_threshold") config.ai_failure_threshold = std::stoi(val);
         else if (key == "ai_cooldown_seconds") config.ai_cooldown_seconds = std::stoi(val);
-        else if (key == "active_map_prompt_id") config.active_map_prompt_id = std::stoi(val);
-        else if (key == "active_reduce_prompt_id") config.active_reduce_prompt_id = std::stoi(val);
+        else if (key == "active_prompt_id") config.active_prompt_id = std::stoi(val);
         else if (key == "ai_fallback_model") config.ai_fallback_model = val;
         else if (key == "kernel_adaptive_mode") config.kernel_adaptive_mode = (val == "1" || val == "true" || val == "TRUE");
         else if (key == "ai_auto_degrade") config.ai_auto_degrade = (val == "1" || val == "true" || val == "TRUE");
@@ -83,9 +82,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
         rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
         if (rc != SQLITE_OK) throw std::runtime_error("Failed to begin transaction");
 
-        // 初始化 SQL：重命名 ai_prompts -> map_prompts, 新增 reduce_prompts
-        // 注意：SQLite 不支持 DROP COLUMN，所以我们只需确保表名正确
-        // 如果旧表 ai_prompts 存在，我们将在迁移步骤重命名它
+        // 初始化 SQL：使用单一 prompts 表管理提示词
         const char *init_sql = R"(
             CREATE TABLE IF NOT EXISTS app_config (
                 config_key TEXT PRIMARY KEY,
@@ -93,17 +90,9 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
                 description TEXT,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
-            /* 将在迁移逻辑中重命名 ai_prompts -> map_prompts，这里定义 map_prompts 以防是全新库 */
-            CREATE TABLE IF NOT EXISTS map_prompts (
+            CREATE TABLE IF NOT EXISTS prompts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                content TEXT NOT NULL,
-                is_active INTEGER DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS reduce_prompts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
                 content TEXT NOT NULL,
                 is_active INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -132,8 +121,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('ai_circuit_breaker', '1', '熔断机制开关'),
             ('ai_failure_threshold', '5', '熔断触发阈值'),
             ('ai_cooldown_seconds', '60', '熔断冷却时间s'),
-            ('active_map_prompt_id', '0', 'Map阶段激活的PromptID'),
-            ('active_reduce_prompt_id', '0', 'Reduce阶段激活的PromptID'),
+            ('active_prompt_id', '0', '当前激活的PromptID'),
             ('kernel_adaptive_mode', '1', '自适应微批模式开关 1/0'),
             ('kernel_max_batch', '50', '自适应最大阈值'),
             ('kernel_refresh_interval', '200', '刷新间隔ms'),
@@ -147,8 +135,6 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             sqlite3_free(errmsg);
             throw std::runtime_error("Failed to Create Tables: " + err_str);
         }
-
-        // 移除了 ai_prompts 迁移逻辑，由用户手动清理数据库文件
 
         loadFromDbInternal();
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
@@ -176,35 +162,12 @@ SystemConfigPtr SqliteConfigRepository::getSnapshot()
 
 AppConfig SqliteConfigRepository::getAppConfig()
 {
-    // 需要对 API 返回的 Config 做调整：Reduce ID 加上偏移量
-    AppConfig cfg = getSnapshot()->app_config;
-    if (cfg.active_reduce_prompt_id > 0) {
-        cfg.active_reduce_prompt_id = PromptIdHelper::toExternalId(cfg.active_reduce_prompt_id, "reduce");
-    }
-    return cfg;
+    return getSnapshot()->app_config;
 }
 
 std::vector<PromptConfig> SqliteConfigRepository::getAllPrompts()
 {
-    // 合并 Map 和 Reduce 的 Prompt 列表，Reduce 的 ID 加上偏移量
-    auto snap = getSnapshot();
-    std::vector<PromptConfig> merged;
-    merged.reserve(snap->map_prompts.size() + snap->reduce_prompts.size());
-
-    for (const auto& p : snap->map_prompts) {
-        PromptConfig cp = p;
-        cp.type = "map"; // 显式标记
-        merged.push_back(cp);
-    }
-
-    for (const auto& p : snap->reduce_prompts) {
-        PromptConfig cp = p;
-        cp.id = PromptIdHelper::toExternalId(cp.id, "reduce"); // 加上偏移量
-        cp.type = "reduce"; // 显式标记
-        merged.push_back(cp);
-    }
-
-    return merged;
+    return getSnapshot()->prompts;
 }
 
 std::vector<AlertChannel> SqliteConfigRepository::getAllChannels()
@@ -214,7 +177,7 @@ std::vector<AlertChannel> SqliteConfigRepository::getAllChannels()
 
 AllSettings SqliteConfigRepository::getAllSettings()
 {
-    // 组装 AllSettings，注意调用 getAllPrompts 获取合并后的列表
+    // 组装 AllSettings，Prompt 列表已是统一单表
     return AllSettings{getAppConfig(), getAllPrompts(), getAllChannels()};
 }
 
@@ -248,17 +211,7 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
     {
         for (auto &[key, val] : mp)
         {
-            std::string effective_val = val;
-            // 特殊处理：如果是 active_reduce_prompt_id，需要减去偏移量
-            if (key == "active_reduce_prompt_id") {
-                try {
-                    int id_val = std::stoi(val);
-                    auto [internal_id, type] = PromptIdHelper::parseExternalId(id_val);
-                    effective_val = std::to_string(internal_id);
-                } catch (...) {
-                    // ignore parse error, let ApplyConfigValue handle or fail
-                }
-            }
+            const std::string& effective_val = val;
 
             sqlite3_bind_text(stmt.get(), 1, effective_val.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(stmt.get(), 2, key.c_str(), -1, SQLITE_STATIC);
@@ -274,8 +227,7 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
         // 更新快照
         auto new_snap = std::make_shared<SystemConfig>(
             std::move(configClone),
-            old_snap->map_prompts,
-            old_snap->reduce_prompts,
+            old_snap->prompts,
             old_snap->channels
         );
 
@@ -303,45 +255,28 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
         old_snap = current_snapshot_;
     }
 
-    // 分离 Map 和 Reduce
-    std::vector<PromptConfig> new_map_prompts;
-    std::vector<PromptConfig> new_reduce_prompts;
-
-    for (const auto& item : prompts_input) {
-        if (item.type == "reduce") {
-            PromptConfig p = item;
-            // 如果是更新，减去偏移量还原 ID
-            auto [internal_id, type] = PromptIdHelper::parseExternalId(p.id);
-            p.id = internal_id;
-            new_reduce_prompts.push_back(p);
-        } else {
-            // map or default
-            new_map_prompts.push_back(item);
-        }
-    }
-
+    auto new_prompts = prompts_input;
     sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
 
-    // 通用处理 lambda
-    auto processTable = [&](sqlite3* db, const std::string& tableName, std::vector<PromptConfig>& items) {
-        std::string sql_ins_str = "INSERT INTO " + tableName + " (name, content, is_active) VALUES (?, ?, ?);";
-        std::string sql_upd_str = "UPDATE " + tableName + " SET name=?, content=?, is_active=? WHERE id=?;";
-        
-        sqlite3_stmt* stmt_insert = nullptr;
-        sqlite3_stmt* stmt_update = nullptr;
+    const char* sql_insert = "INSERT INTO prompts (name, content, is_active) VALUES (?, ?, ?);";
+    const char* sql_update = "UPDATE prompts SET name=?, content=?, is_active=? WHERE id=?;";
 
-        int rc = sqlite3_prepare_v2(db, sql_ins_str.c_str(), -1, &stmt_insert, nullptr);
-        if (rc != SQLITE_OK) throw std::runtime_error("Prep Insert Failed for " + tableName);
+    sqlite3_stmt* stmt_insert = nullptr;
+    sqlite3_stmt* stmt_update = nullptr;
 
-        rc = sqlite3_prepare_v2(db, sql_upd_str.c_str(), -1, &stmt_update, nullptr);
-        if (rc != SQLITE_OK) throw std::runtime_error("Prep Update Failed for " + tableName);
+    int rc = sqlite3_prepare_v2(db_, sql_insert, -1, &stmt_insert, nullptr);
+    if (rc != SQLITE_OK) throw std::runtime_error("Prep Insert Failed for prompts");
 
-        StmtPtr ptr_insert(stmt_insert);
-        StmtPtr ptr_update(stmt_update);
+    rc = sqlite3_prepare_v2(db_, sql_update, -1, &stmt_update, nullptr);
+    if (rc != SQLITE_OK) throw std::runtime_error("Prep Update Failed for prompts");
 
-        std::vector<int> active_ids;
+    StmtPtr ptr_insert(stmt_insert);
+    StmtPtr ptr_update(stmt_update);
 
-        for (auto& item : items) {
+    std::vector<int> active_ids;
+
+    try {
+        for (auto& item : new_prompts) {
             sqlite3_stmt* curr_stmt = nullptr;
 
             if (item.id > 0) {
@@ -359,11 +294,11 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
             }
 
             if (sqlite3_step(curr_stmt) != SQLITE_DONE) {
-                throw std::runtime_error("Upsert step failed for " + tableName);
+                throw std::runtime_error("Upsert step failed for prompts");
             }
 
             if (item.id <= 0) {
-                int new_id = (int)sqlite3_last_insert_rowid(db);
+                int new_id = (int)sqlite3_last_insert_rowid(db_);
                 item.id = new_id;
                 active_ids.push_back(new_id);
             }
@@ -374,30 +309,23 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
 
         // 删除不在列表中的项
         if (active_ids.empty()) {
-            std::string del_all = "DELETE FROM " + tableName + ";";
-            sqlite3_exec(db, del_all.c_str(), nullptr, nullptr, nullptr);
+            sqlite3_exec(db_, "DELETE FROM prompts;", nullptr, nullptr, nullptr);
         } else {
             std::stringstream ss;
-            ss << "DELETE FROM " + tableName + " WHERE id NOT IN (";
+            ss << "DELETE FROM prompts WHERE id NOT IN (";
             for (size_t i = 0; i < active_ids.size(); ++i) {
                 ss << active_ids[i];
                 if (i < active_ids.size() - 1) ss << ",";
             }
             ss << ");";
-            int rc = sqlite3_exec(db, ss.str().c_str(), nullptr, nullptr, nullptr);
-            checkSqliteError(db, rc, "Prune failed for " + tableName);
+            rc = sqlite3_exec(db_, ss.str().c_str(), nullptr, nullptr, nullptr);
+            checkSqliteError(db_, rc, "Prune failed for prompts");
         }
-    };
-
-    try {
-        processTable(db_, "map_prompts", new_map_prompts);
-        processTable(db_, "reduce_prompts", new_reduce_prompts);
 
         // 更新快照
         auto new_snap = std::make_shared<SystemConfig>(
             old_snap->app_config,
-            std::move(new_map_prompts),
-            std::move(new_reduce_prompts),
+            std::move(new_prompts),
             old_snap->channels
         );
 
@@ -493,8 +421,7 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
         // 更新快照
         auto new_snap = std::make_shared<SystemConfig>(
             old_snap->app_config,
-            old_snap->map_prompts,
-            old_snap->reduce_prompts,
+            old_snap->prompts,
             std::move(new_channels_cache)
         );
 
@@ -510,59 +437,32 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
     }
 }
 
-// 内部加载器 (返回 pair<MapPrompts, ReducePrompts>)
-std::pair<std::vector<PromptConfig>, std::vector<PromptConfig>> SqliteConfigRepository::getAllPromptsInternal()
+// 内部加载器 (单表 prompts)
+std::vector<PromptConfig> SqliteConfigRepository::getAllPromptsInternal()
 {
-    std::vector<PromptConfig> map_prompts;
-    std::vector<PromptConfig> reduce_prompts;
+    std::vector<PromptConfig> prompts;
 
-    // 加载 Map Prompts
-    {
-        const char *sql = "select id,name,content,is_active from map_prompts;";
-        sqlite3_stmt *stmt_ = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
-        if (rc == SQLITE_OK) {
-            StmtPtr stmt(stmt_);
-            while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW)
-            {
-                int id = sqlite3_column_int(stmt.get(), 0);
-                const char *name_ptr = (const char *)sqlite3_column_text(stmt.get(), 1);
-                const char *content_ptr = (const char *)sqlite3_column_text(stmt.get(), 2);
-                int is_active = sqlite3_column_int(stmt.get(), 3);
+    const char *sql = "select id,name,content,is_active from prompts;";
+    sqlite3_stmt *stmt_ = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
+    if (rc == SQLITE_OK) {
+        StmtPtr stmt(stmt_);
+        while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW)
+        {
+            int id = sqlite3_column_int(stmt.get(), 0);
+            const char *name_ptr = (const char *)sqlite3_column_text(stmt.get(), 1);
+            const char *content_ptr = (const char *)sqlite3_column_text(stmt.get(), 2);
+            int is_active = sqlite3_column_int(stmt.get(), 3);
 
-                bool active_flag = (is_active != 0);
-                if (!name_ptr || !content_ptr) continue;
-                std::string name = name_ptr;
-                std::string content = content_ptr;
-                map_prompts.emplace_back(id, name, content, active_flag, "map");
-            }
+            bool active_flag = (is_active != 0);
+            if (!name_ptr || !content_ptr) continue;
+            std::string name = name_ptr;
+            std::string content = content_ptr;
+            prompts.emplace_back(id, name, content, active_flag);
         }
     }
 
-    // 加载 Reduce Prompts
-    {
-        const char *sql = "select id,name,content,is_active from reduce_prompts;";
-        sqlite3_stmt *stmt_ = nullptr;
-        int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
-        if (rc == SQLITE_OK) {
-            StmtPtr stmt(stmt_);
-            while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW)
-            {
-                int id = sqlite3_column_int(stmt.get(), 0);
-                const char *name_ptr = (const char *)sqlite3_column_text(stmt.get(), 1);
-                const char *content_ptr = (const char *)sqlite3_column_text(stmt.get(), 2);
-                int is_active = sqlite3_column_int(stmt.get(), 3);
-
-                bool active_flag = (is_active != 0);
-                if (!name_ptr || !content_ptr) continue;
-                std::string name = name_ptr;
-                std::string content = content_ptr;
-                reduce_prompts.emplace_back(id, name, content, active_flag, "reduce");
-            }
-        }
-    }
-
-    return {map_prompts, reduce_prompts};
+    return prompts;
 }
 
 // 内部加载器 (保持原样)
@@ -616,14 +516,13 @@ std::vector<AlertChannel> SqliteConfigRepository::getAllChannelsInternal()
 void SqliteConfigRepository::loadFromDbInternal()
 {
     auto app = getAppConfigInternal();
-    auto [map_prompts, reduce_prompts] = getAllPromptsInternal();
+    auto prompts = getAllPromptsInternal();
     auto channels = getAllChannelsInternal();
 
     std::lock_guard<std::mutex> lock(snapshot_mutex_);
     current_snapshot_ = std::make_shared<SystemConfig>(
         std::move(app),
-        std::move(map_prompts),
-        std::move(reduce_prompts),
+        std::move(prompts),
         std::move(channels)
     );
 }
