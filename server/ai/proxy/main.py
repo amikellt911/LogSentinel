@@ -2,7 +2,7 @@
 import os
 from fastapi import FastAPI, Request, HTTPException
 from dotenv import load_dotenv
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from pathlib import Path
 import uvicorn
@@ -25,7 +25,7 @@ sys.path.append(str(project_root))
 # 加载 .env 文件
 # 假设 .env 在 ai/ 目录下 (main.py -> proxy -> ai)
 dotenv_path = current_file.parent.parent / '.env'
-print(f"Attempting to load .env file from: {dotenv_path}")
+print(f"正在尝试加载 .env 文件: {dotenv_path}")
 load_dotenv(dotenv_path=dotenv_path)
 
 # ==========================================
@@ -41,30 +41,32 @@ from ai.proxy.schemas import BatchRequestSchema,ChatRequest,SummarizeRequest,BAT
 # --- 应用设置 ---
 app = FastAPI(
     title="LogSentinel AI Proxy",
-    description="一个用于代理不同AI提供商服务的中间层。",
+    description="一个用于代理不同 AI 提供商服务的中间层。",
     version="1.0.0",
 )
 
 # --- Provider 实例化和注册 ---
 # 在这里，我们创建所有可用的'转换插头'实例，并放入一个字典中进行管理。
-# 这种方式使得添加新的Provider变得非常容易。
+# 这种方式使得添加新的 Provider 变得非常容易。
 providers: Dict[str, AIProvider] = {}
 
-# 尝试初始化并注册Gemini Provider
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-if gemini_api_key and gemini_api_key != "YOUR_API_KEY":
-    try:
-        providers["gemini"] = GeminiProvider(api_key=gemini_api_key)
-        print("Gemini provider initialized successfully.")
-    except Exception as e:
-        print(f"Failed to initialize Gemini provider: {e}")
-else:
-    if not gemini_api_key:
-        print("GEMINI_API_KEY not found in environment variables. Gemini provider is disabled.")
-    else:
-        print("Found placeholder GEMINI_API_KEY. Please replace 'YOUR_API_KEY' in ai/.env. Gemini provider is disabled.")
+# 无条件初始化 Gemini Provider (支持懒加载)
+# 1. 获取环境变量（如果没有就是 None 或者 ""）
+gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+
+# 2. 不管有没有 Key，都强行初始化！
+#    我们把 "空白状态" 的处理逻辑下放给 Provider 内部去处理
+try:
+    print(f"正在初始化 Gemini Provider (Key 长度: {len(gemini_api_key)})...")
+    # 哪怕传进去的是空字符串，也要让它活着
+    providers["gemini"] = GeminiProvider(api_key=gemini_api_key)
+    print("Gemini Provider 已初始化 (如果 Key 为空则等待配置传入)。")
+except Exception as e:
+    # 只有这种真正的代码报错才抓，配置问题不报错
+    print(f"严重错误: 加载 Gemini 类失败: {e}")
+
 providers["mock"] = MockProvider(delay=0.5)
-# 未来可以在这里添加并注册OpenAI, Claude等其他Provider
+# 未来可以在这里添加并注册 OpenAI, Claude 等其他 Provider
 # openai_api_key = os.getenv("OPENAI_API_KEY")
 # if openai_api_key:
 #     providers["openai"] = OpenAIProvider(api_key=openai_api_key)
@@ -74,7 +76,7 @@ providers["mock"] = MockProvider(delay=0.5)
 
 @app.get("/")
 def read_root():
-    return {"status": "LogSentinel AI Proxy is running", "available_providers": list(providers.keys())}
+    return {"status": "LogSentinel AI Proxy 正在运行", "available_providers": list(providers.keys())}
 
 @app.post("/analyze/{provider_name}")
 async def analyze_log(provider_name: str, request: Request):
@@ -84,7 +86,7 @@ async def analyze_log(provider_name: str, request: Request):
     """
     provider = providers.get(provider_name)
     if not provider:
-        raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found or not configured.")
+        raise HTTPException(status_code=404, detail=f"未找到或未配置 Provider '{provider_name}'。")
 
     try:
         log_text = (await request.body()).decode('utf-8')
@@ -93,33 +95,45 @@ async def analyze_log(provider_name: str, request: Request):
 
 1. A concise summary of the error or issue
 2. Risk level assessment:
-   - 'high': System crashes, data loss, security vulnerabilities, critical service failures
-   - 'medium': Performance degradation, non-critical errors, warnings that may escalate
-   - 'low': Informational messages, minor warnings, expected errors
+   - 'critical': System crashes, data loss, security vulnerabilities, critical service failures
+   - 'error': Performance degradation, non-critical errors, warnings that may escalate
+   - 'warning': Informational messages, minor warnings, expected errors
    - 'info': Normal operational logs, state changes, heartbeats
+   - 'safe': Verified safe operations
    - 'unknown': Unintelligible logs, binary data, or insufficient context to determine risk
 3. Root cause analysis based on the log content
 4. Actionable solution or remediation steps
 
 Provide your analysis in a structured format."""
         
+        # 注意: analyze() 仅接收来自 C++ 的原始文本，因此无法在此提取 api_key/model。
+        # 我们使用默认的 Provider 配置。
         result = provider.analyze(log_text=log_text, prompt=default_prompt)
         
         return {"provider": provider_name, "analysis": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred during analysis: {e}")
+        raise HTTPException(status_code=500, detail=f"分析过程中发生错误: {e}")
 
 @app.post("/analyze/batch/{provider_name}")
 async def analyze_log_batch(provider_name: str, request: BatchRequestSchema):
     provider=providers.get(provider_name)
     if not provider:
-        raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found or not configured.")
+        raise HTTPException(status_code=404, detail=f"未找到或未配置 Provider '{provider_name}'。")
     try:
         logs_list=[item.model_dump() for item in request.batch]
-        results=provider.analyze_batch(logs_list,BATCH_PROMPT_TEMPLATE)
+
+        # 使用提供的 Prompt 或回退到默认模板
+        prompt_to_use = request.prompt if request.prompt else BATCH_PROMPT_TEMPLATE
+
+        results=provider.analyze_batch(
+            batch_logs=logs_list,
+            prompt=prompt_to_use,
+            api_key=request.api_key,
+            model=request.model
+        )
         return {"provider": provider_name, "results": results}
     except Exception as e:
-        print(f"[Error] Batch analysis failed: {e}")
+        print(f"[Error] 批量分析失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/summarize/{provider_name}")
@@ -129,17 +143,26 @@ async def summarize_logs(provider_name: str, request_data: SummarizeRequest):
     """
     provider = providers.get(provider_name)
     if not provider:
-        raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found")
+        raise HTTPException(status_code=404, detail=f"未找到 Provider '{provider_name}'")
     try:
         # 将 Pydantic 对象列表转为 Dict 列表
         results_list = [item.model_dump() for item in request_data.results]
+
+        # 使用提供的 Prompt 或回退到默认模板
+        prompt_to_use = request_data.prompt if request_data.prompt else SUMMARIZE_PROMPT_TEMPLATE
+
         # 调用 Provider 的 summarize 接口
-        summary_text = provider.summarize(results_list, prompt=SUMMARIZE_PROMPT_TEMPLATE)
-        # 返回格式要匹配 C++ 端的 expectations
+        summary_text = provider.summarize(
+            summary_logs=results_list,
+            prompt=prompt_to_use,
+            api_key=request_data.api_key,
+            model=request_data.model
+        )
+        # 返回格式要匹配 C++ 端的预期
         # C++ MockAI::summarize 里解析的是 response_json["summary"]
         return {"provider": provider_name, "summary": summary_text}
     except Exception as e:
-        print(f"[Error] Summarize failed: {e}")
+        print(f"[Error] 总结失败: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -148,11 +171,11 @@ async def summarize_logs(provider_name: str, request_data: SummarizeRequest):
 async def chat_with_logs(provider_name: str, chat_request: ChatRequest):
     """
     多轮日志对话端点。
-    接收一个包含历史记录和新消息的JSON对象。
+    接收一个包含历史记录和新消息的 JSON 对象。
     """
     provider = providers.get(provider_name)
     if not provider:
-        raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found or not configured.")
+        raise HTTPException(status_code=404, detail=f"未找到或未配置 Provider '{provider_name}'。")
 
     try:
         # 在这里，我们可以插入上下文管理逻辑（如滑动窗口、摘要等）
@@ -163,11 +186,11 @@ async def chat_with_logs(provider_name: str, chat_request: ChatRequest):
         
         return {"provider": provider_name, "response": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred during chat: {e}")
+        raise HTTPException(status_code=500, detail=f"对话过程中发生错误: {e}")
     
 
 if __name__ == "__main__":
     # host="0.0.0.0" 允许局域网访问，"127.0.0.1" 仅限本机
     # workers=1 单进程模式，适合调试
-    print(f"🚀 Starting LogSentinel AI Proxy on port 8001...")
+    print(f"🚀 LogSentinel AI Proxy 正在端口 8001 上启动...")
     uvicorn.run(app, host="127.0.0.1", port=8001)

@@ -14,6 +14,11 @@
         background-color="transparent"
         router
       >
+        <el-menu-item index="/service">
+          <el-icon><Monitor /></el-icon>
+          <span>{{ $t('layout.serviceMonitor') }}</span>
+        </el-menu-item>
+
         <el-menu-item index="/">
           <el-icon><Odometer /></el-icon>
           <span>{{ $t('layout.dashboard') }}</span>
@@ -24,19 +29,14 @@
           <span>{{ $t('layout.logs') }}</span>
         </el-menu-item>
 
-        <el-menu-item index="/insights">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>Reduce Analysis</span>
-        </el-menu-item>
-
-        <el-menu-item index="/history">
+        <el-menu-item index="/traces">
           <el-icon><Clock /></el-icon>
-          <span>History</span>
+          <span>{{ $t('layout.traceExplorer') }}</span>
         </el-menu-item>
 
         <el-menu-item index="/benchmark">
           <el-icon><Lightning /></el-icon>
-          <span>Benchmark</span>
+          <span>{{ $t('layout.benchmark') }}</span>
         </el-menu-item>
 
         <el-menu-item index="/settings">
@@ -61,7 +61,7 @@
           <!-- Simulation Mode Toggle -->
           <div class="flex items-center gap-2 border-r border-gray-700 pr-4 mr-2">
             <span class="text-xs font-mono uppercase tracking-widest text-gray-500">
-              SIM MODE
+              {{ $t('layout.simMode') }}
             </span>
             <el-switch
               v-model="systemStore.isSimulationMode"
@@ -109,7 +109,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSystemStore } from '../stores/system'
-import { Odometer, Monitor, Setting, Clock, DataAnalysis, Lightning } from '@element-plus/icons-vue'
+import { Odometer, Monitor, Setting, Clock, Lightning } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 
@@ -119,11 +119,12 @@ const { t } = useI18n()
 
 const currentRouteName = computed(() => {
   switch (route.name) {
-    case 'dashboard': return t('layout.missionControl')
-    case 'logs': return t('layout.eventStream')
-    case 'insights': return 'Reduce (Batch Analysis)'
-    case 'benchmark': return 'Performance Arena'
-    case 'settings': return t('layout.configuration')
+    case 'service': return t('layout.serviceMonitor')
+    case 'dashboard': return t('layout.dashboard')
+    case 'logs': return t('layout.logs')
+    case 'traces': return t('layout.traceExplorer')
+    case 'benchmark': return t('layout.benchmark')
+    case 'settings': return t('layout.settings')
     default: return t('layout.dashboard')
   }
 })

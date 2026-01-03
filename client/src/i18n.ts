@@ -2,8 +2,15 @@ import { createI18n } from 'vue-i18n'
 
 const messages = {
   en: {
+    common: {
+      copy: 'Copy',
+      copySuccess: 'Copied to clipboard',
+      copyFailed: 'Failed to copy',
+      operations: 'Actions'
+    },
     layout: {
-      dashboard: 'Dashboard',
+      serviceMonitor: 'Service Monitor',
+      dashboard: 'System Status',
       logs: 'Live Logs',
       settings: 'Settings',
       systemRunning: 'SYSTEM RUNNING',
@@ -12,24 +19,160 @@ const messages = {
       eventStream: 'Real-time Event Stream',
       configuration: 'System Configuration',
       insights: 'AI Batch Insights',
+      traceExplorer: 'Trace Explorer',
+      aiEngine: 'AI Engine',
       history: 'Historical Logs',
-      benchmark: 'Performance Arena'
+      benchmark: 'Performance Arena',
+      simMode: 'SIM MODE'
+    },
+    aiEngine: {
+      title: 'AI Engine Center',
+      subtitle: 'Token consumption monitoring and batch archive management',
+      status: 'Status',
+      running: 'Running',
+      model: 'Model',
+      todayTotalTokens: 'Today\'s Total Tokens',
+      tokens: 'Tokens',
+      savingRatio: 'Saving Ratio',
+      comparedToRaw: 'vs. raw logs',
+      estimatedCost: 'Estimated Cost',
+      today: 'today',
+      avgTokensPerBatch: 'Avg Tokens/Batch',
+      perBatch: 'per batch',
+      batchArchive: 'Batch Archive',
+      last1h: 'Last 1h',
+      last6h: 'Last 6h',
+      last24h: 'Last 24h',
+      last7d: 'Last 7d',
+      customTime: 'Custom',
+      allRisks: 'All Risks',
+      criticalOnly: 'Critical Only',
+      errorOnly: 'Error Only',
+      warningOnly: 'Warning Only',
+      traceId: 'Trace ID',
+      traceIdPlaceholder: 'Enter Trace ID',
+      trace: 'Trace',
+      createdAt: 'Created At',
+      logCount: 'Log Count',
+      logs: 'logs',
+      spanCount: 'Span Count',
+      riskLevel: 'Risk Level',
+      timeRange: 'Time Range',
+      tokenCount: 'Tokens',
+      viewDetails: 'View Details',
+      collapse: 'Collapse',
+      promptDebugger: 'Prompt Debugger',
+      total: 'Total',
+      batches: 'batches',
+      input: 'Input',
+      output: 'Output',
+      duration: 'Duration',
+      totalTokens: 'Total Tokens',
+      timestamp: 'Timestamp'
+    },
+    serviceMonitor: {
+      subtitle: 'Real-time business health monitoring and AI situation awareness',
+      healthScore: {
+        title: 'Today\'s Health Score',
+        label: 'vs. yesterday'
+      },
+      errorRate: {
+        title: 'Current Error Rate',
+        label: 'of total requests'
+      },
+      avgDuration: {
+        title: 'Average Duration',
+        label: 'per request'
+      },
+      aiStream: {
+        title: 'AI Situation Awareness Stream',
+        subtitle: 'Real-time log batch aggregation. Map-Reduce pipeline active.',
+        pause: 'Pause',
+        resume: 'Resume',
+        loadMore: 'Load More'
+      }
+    },
+    traceExplorer: {
+      search: {
+        traceId: 'Trace ID',
+        traceIdPlaceholder: 'Enter Trace ID',
+        serviceName: 'Service',
+        allServices: 'All Services',
+        timeRange: 'Time Range',
+        startTime: 'Start Time',
+        endTime: 'End Time',
+        riskLevel: 'Risk Level',
+        allLevels: 'All Levels',
+        minDuration: 'Min Duration (ms)',
+        minDurationPlaceholder: 'Min Duration',
+        tags: 'Tags',
+        tagPlaceholder: 'Search by tags...',
+        reset: 'Reset',
+        search: 'Search'
+      },
+      table: {
+        traceId: 'Trace ID',
+        serviceName: 'Service Name',
+        startTime: 'Start Time',
+        duration: 'Duration',
+        spanCount: 'Span Count',
+        tokenCount: 'Tokens',
+        riskLevel: 'Risk Level',
+        actions: 'Actions',
+        aiAnalysis: 'AI Analysis',
+        callChain: 'Call Chain',
+        promptDebugger: 'Prompt',
+        viewDetails: 'Details'
+      },
+      waterfall: {
+        title: 'Trace Waterfall Visualization',
+        spanId: 'Span ID',
+        operation: 'Operation',
+        startTime: 'Start Time',
+        duration: 'Duration',
+        status: 'Status'
+      },
+      drawer: {
+        title: 'Trace Details',
+        aiAnalysis: 'AI Root Cause Analysis',
+        summary: 'Summary',
+        rootCause: 'Root Cause',
+        solution: 'Solution',
+        noAnalysis: 'No AI analysis available',
+        spanList: 'Span List'
+      },
+      pagination: {
+        total: 'Total'
+      }
     },
     benchmark: {
       tool: 'Benchmark Tool',
       threads: 'Threads',
       connections: 'Connections',
       duration: 'Duration',
+      totalLogs: 'Total Logs',
+      logs: 'logs',
       start: 'Start Benchmark',
       running: 'RUNNING BENCHMARK...',
+      tabs: {
+        qps: 'QPS Test',
+        cost: 'Cost Analysis'
+      },
       metrics: {
         qps: 'QPS (Throughput)',
         p50: 'P50 Latency',
         p99: 'P99 Latency',
-        net_io: 'Net I/O Latency',
-        scheduler: 'AI Scheduler Cost',
         total_logs: 'Total Logs Processed',
-        total_ai: 'Total AI Calls'
+        ai_calls: 'AI Calls',
+        input_tokens: 'Input Tokens',
+        output_tokens: 'Output Tokens',
+        estimated_cost: 'Estimated Cost'
+      },
+      priceRef: {
+        title: 'Price Reference (DeepSeek-V3)',
+        model: 'Model',
+        inputPrice: 'Input Tokens',
+        outputPrice: 'Output Tokens'
       }
     },
     dashboard: {
@@ -44,10 +187,10 @@ const messages = {
       throttling: 'Throttling Active',
       congested: 'Queue Congested',
       ingestRate: 'Ingest Rate (QPS)',
-      aiRate: 'AI Rate',
+      aiRate: 'AI Throughput',
       realtimeTitle: 'Real-time Ingestion vs AI Processing',
       calls: 'calls',
-      netLatency: 'Net Latency (C++ Ingest)',
+      netLatency: 'Task Queue Time',
       aiLatency: 'AI Latency (Inference)',
       queue: 'Queue',
       riskTitle: 'Risk Distribution',
@@ -141,7 +284,9 @@ const messages = {
           promptList: 'Prompts',
           newPrompt: 'New Prompt',
           promptName: 'Prompt Name',
-          templateContent: 'Template Content'
+          templateContent: 'Template Content',
+          mapPhase: 'Map Phase',
+          reducePhase: 'Reduce Phase'
       },
       integration: {
         threshold: 'Alert Threshold',
@@ -175,8 +320,15 @@ const messages = {
     }
   },
   zh: {
+    common: {
+      copy: '复制',
+      copySuccess: '已复制到剪贴板',
+      copyFailed: '复制失败',
+      operations: '操作'
+    },
     layout: {
-      dashboard: '仪表盘',
+      serviceMonitor: '服务监控',
+      dashboard: '系统状态',
       logs: '实时日志',
       settings: '系统设置',
       systemRunning: '系统运行中',
@@ -184,25 +336,161 @@ const messages = {
       missionControl: '任务控制仪表盘',
       eventStream: '实时事件流',
       configuration: '系统配置',
-      insights: 'AI 批次洞察',
+      insights: '智能分析',
+      traceExplorer: 'Trace 追溯',
+      aiEngine: 'AI 引擎中心',
       history: '历史日志',
-      benchmark: '性能竞技场'
+      benchmark: '基准测试',
+      simMode: '模拟模式'
+    },
+    aiEngine: {
+      title: 'AI 引擎中心',
+      subtitle: 'Token 消耗监控与批次存档管理',
+      status: '状态',
+      running: '运行中',
+      model: '模型',
+      todayTotalTokens: '今日 Token 总量',
+      tokens: 'Tokens',
+      savingRatio: '节省比例',
+      comparedToRaw: '对比原始日志',
+      estimatedCost: '预估成本',
+      today: '今日',
+      avgTokensPerBatch: '平均 Token/批次',
+      perBatch: '每批次',
+      batchArchive: '批次存档',
+      last1h: '最近 1 小时',
+      last6h: '最近 6 小时',
+      last24h: '最近 24 小时',
+      last7d: '最近 7 天',
+      customTime: '自定义',
+      allRisks: '全部风险',
+      criticalOnly: '仅严重',
+      errorOnly: '仅错误',
+      warningOnly: '仅警告',
+      traceId: 'Trace ID',
+      traceIdPlaceholder: '输入 Trace ID',
+      trace: 'Trace',
+      createdAt: '创建时间',
+      logCount: '日志数量',
+      logs: '条',
+      spanCount: 'Span 数量',
+      riskLevel: '风险等级',
+      timeRange: '时间范围',
+      tokenCount: 'Token 数',
+      viewDetails: '查看详情',
+      collapse: '折叠',
+      promptDebugger: 'Prompt 透视',
+      total: '总计',
+      batches: '批次',
+      input: '输入',
+      output: '输出',
+      duration: '耗时',
+      totalTokens: '总 Token',
+      timestamp: '时间戳'
+    },
+    serviceMonitor: {
+      subtitle: '实时业务健康监控与 AI 态势感知',
+      healthScore: {
+        title: '今日业务健康分',
+        label: '较昨日'
+      },
+      errorRate: {
+        title: '当前错误率',
+        label: '占请求总数'
+      },
+      avgDuration: {
+        title: '平均业务耗时',
+        label: '每次请求'
+      },
+      aiStream: {
+        title: 'AI 态势感知流',
+        subtitle: '日志批次实时聚合。Map-Reduce 管道运行中。',
+        pause: '暂停',
+        resume: '继续',
+        loadMore: '加载更多'
+      }
+    },
+    traceExplorer: {
+      search: {
+        traceId: 'Trace ID',
+        traceIdPlaceholder: '输入 Trace ID',
+        serviceName: '服务名称',
+        allServices: '全部服务',
+        timeRange: '时间范围',
+        startTime: '开始时间',
+        endTime: '结束时间',
+        riskLevel: '风险等级',
+        allLevels: '全部等级',
+        minDuration: '最小耗时（ms）',
+        minDurationPlaceholder: '最小耗时',
+        tags: '标签',
+        tagPlaceholder: '按标签搜索...',
+        reset: '重置',
+        search: '搜索'
+      },
+      table: {
+        traceId: 'Trace ID',
+        serviceName: '服务名称',
+        startTime: '开始时间',
+        duration: '耗时',
+        spanCount: 'Span 数量',
+        tokenCount: 'Token 数',
+        riskLevel: '风险等级',
+        actions: '操作',
+        aiAnalysis: 'AI 分析',
+        callChain: '调用链',
+        promptDebugger: 'Prompt',
+        viewDetails: '详情'
+      },
+      waterfall: {
+        title: 'Trace 瀑布图可视化',
+        spanId: 'Span ID',
+        operation: '操作',
+        startTime: '开始时间',
+        duration: '耗时',
+        status: '状态'
+      },
+      drawer: {
+        title: 'Trace 详情',
+        aiAnalysis: 'AI 根因分析',
+        summary: '总结',
+        rootCause: '根因',
+        solution: '解决方案',
+        noAnalysis: '暂无 AI 分析',
+        spanList: 'Span 列表'
+      },
+      pagination: {
+        total: '总计'
+      }
     },
     benchmark: {
       tool: '压测工具',
       threads: '线程数',
       connections: '并发连接数',
       duration: '持续时间',
+      totalLogs: '日志总数',
+      logs: '条',
       start: '开始基准测试',
       running: '基准测试运行中...',
+      tabs: {
+        qps: 'QPS 测试',
+        cost: '开销分析'
+      },
       metrics: {
         qps: 'QPS (吞吐量)',
         p50: 'P50 延迟',
         p99: 'P99 延迟',
-        net_io: '网络 I/O 延迟',
-        scheduler: 'AI 调度开销',
         total_logs: '日志处理总数',
-        total_ai: 'AI 调用总数'
+        ai_calls: 'AI 调用次数',
+        input_tokens: '输入 Tokens',
+        output_tokens: '输出 Tokens',
+        estimated_cost: '预计花费'
+      },
+      priceRef: {
+        title: '价格参考 (DeepSeek-V3)',
+        model: '模型',
+        inputPrice: '输入 Tokens',
+        outputPrice: '输出 Tokens'
       }
     },
     dashboard: {
@@ -217,10 +505,10 @@ const messages = {
       throttling: '限流中',
       congested: '队列拥堵',
       ingestRate: '摄入速率 (QPS)',
-      aiRate: 'AI 处理率',
+      aiRate: 'AI 吞吐量',
       realtimeTitle: '实时摄入 vs AI 处理',
       calls: '次调用',
-      netLatency: '网络延迟 (C++ 接收)',
+      netLatency: '任务排队时间',
       aiLatency: 'AI 延迟 (模型推理)',
       queue: '队列',
       riskTitle: '风险分布',
@@ -314,7 +602,9 @@ const messages = {
         promptList: '提示词列表',
         newPrompt: '新建提示词',
         promptName: '提示词名称',
-        templateContent: '模板内容'
+        templateContent: '模板内容',
+        mapPhase: 'Map 阶段',
+        reducePhase: 'Reduce 阶段'
       },
       integration: {
         threshold: '报警阈值',

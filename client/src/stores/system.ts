@@ -4,11 +4,14 @@ import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import _ from 'lodash'
 import i18n from '../i18n'
+import { formatToBeijingTime } from '../utils/timeFormat'
 
 export interface LogEntry {
   id: number | string
   timestamp: string
-  level: 'INFO' | 'WARN' | 'RISK'
+  level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' | 'Unknown'
+  trace_id: string
+  span_id: string
   message: string
 }
 
@@ -31,6 +34,7 @@ export interface PromptConfig {
   name: string
   content: string
   is_active?: number
+  type: 'map' | 'reduce'
 }
 
 export interface WebhookConfig {
@@ -54,6 +58,8 @@ export interface AISettings {
     circuitBreaker: boolean
     failureThreshold: number
     cooldownSeconds: number
+    activeMapPromptId: number
+    activeReducePromptId: number
     prompts: PromptConfig[]
 }
 
@@ -73,10 +79,11 @@ export interface AlertInfoResponse {
 
 export interface DashboardStatsResponse {
     total_logs: number
-    high_risk: number
-    medium_risk: number
-    low_risk: number
+    critical_risk: number
+    error_risk: number
+    warning_risk: number
     info_risk: number
+    safe_risk: number
     unknown_risk: number
     avg_response_time: number
     recent_alerts: AlertInfoResponse[]
@@ -97,12 +104,13 @@ export interface HistoryPageResponse {
 
 // API Response Interfaces for Settings
 export interface SettingsResponse {
-  config: Record<string, string>
+  config: Record<string, any>
   prompts: {
     id: number
     name: string
     content: string
     is_active: number
+    type?: string
   }[]
   channels: {
     id: number
@@ -171,34 +179,22 @@ export const useSystemStore = defineStore('system', () => {
       circuitBreaker: true,
       failureThreshold: 5,
       cooldownSeconds: 60,
+      activeMapPromptId: 0,
+      activeReducePromptId: 0,
       prompts: [
         {
           id: 'p1',
-          name: 'Security Audit',
-          content: `Analyze the following log entries for potential security breaches. 
-Focus on: SQL Injection patterns, XSS attempts, and unauthorized access.
-Output format: JSON with "risk_score" and "analysis".
-
-Logs:
-{{logs_batch}}`
+          name: 'Security Audit (Map)',
+          content: `Analyze...`,
+          type: 'map',
+          is_active: 1
         },
         {
           id: 'p2',
-          name: 'Root Cause Analysis',
-          content: `Identify the root cause of the system failure based on the provided stack traces and error logs.
-Correlate timestamps between services.
-
-Context:
-{{logs_batch}}`
-        },
-        {
-          id: 'p3',
-          name: 'Performance Tuning',
-          content: `Review the latency metrics and DB query logs. 
-Suggest indexing strategies or caching layers where appropriate.
-
-Metrics:
-{{metrics_batch}}`
+          name: 'Summary (Reduce)',
+          content: `Summarize...`,
+          type: 'reduce',
+          is_active: 1
         }
       ]
     } as AISettings,
@@ -213,15 +209,6 @@ Metrics:
           threshold: 'Error',
           template: '{"msgtype": "text", "text": {"content": "Alert: {{summary}}"}}',
           enabled: true
-        },
-        {
-          id: 'c2',
-          name: 'Security (Slack)',
-          vendor: 'Slack',
-          url: 'https://hooks.slack.com/services/...',
-          threshold: 'Critical',
-          template: '{"text": "Alert: {{summary}}"}',
-          enabled: false
         }
       ] as WebhookConfig[]
     },
@@ -253,20 +240,30 @@ Metrics:
 
   // --- Constants for Mocking ---
   const LOG_MESSAGES = {
-    INFO: [
+    Info: [
       'Received batch of events from ingress-nginx',
       'Processing chunk ID #49281',
       'Flushing buffer to disk...',
       'AI analysis completed for request #8821',
       'Health check passed: component=db-connector'
     ],
-    WARN: [
+    Safe: [
+      'Routine operation completed',
+      'All systems nominal',
+      'Regular maintenance task finished'
+    ],
+    Warning: [
       'High latency detected in ingress (150ms)',
       'Buffer usage > 60%, scaling consumers',
       'Retry attempt 1/3 for downstream service',
       'Memory fragment warning in worker #2'
     ],
-    RISK: [
+    Error: [
+      'Connection timeout to database',
+      'Service temporarily unavailable',
+      'Failed to process request: invalid format'
+    ],
+    Critical: [
       'SQL Injection attempt detected from IP 192.168.1.104',
       'Anomaly detection triggered: Unusual payload size',
       'Unauthorized access attempt on /admin/config',
@@ -275,23 +272,33 @@ Metrics:
   }
 
   const LOG_MESSAGES_ZH = {
-    INFO: [
+    Info: [
       '从 ingress-nginx 接收到一批事件',
       '正在处理分块 ID #49281',
       '正在将缓冲区刷新到磁盘...',
       '请求 #8821 的 AI 分析已完成',
       '健康检查通过: component=db-connector'
     ],
-    WARN: [
+    Safe: [
+      '常规操作已完成',
+      '所有系统运行正常',
+      '定期维护任务已完成'
+    ],
+    Warning: [
       '检测到 Ingress 高延迟 (150ms)',
       '缓冲区使用率 > 60%，正在扩展消费者',
       '下游服务重试尝试 1/3',
       '工作线程 #2 中的内存碎片警告'
     ],
-    RISK: [
+    Error: [
+      '数据库连接超时',
+      '服务暂时不可用',
+      '处理请求失败：格式无效'
+    ],
+    Critical: [
       '检测到来自 IP 192.168.1.104 的 SQL 注入尝试',
-      '触发异常检测：异常的负载大小',
-      '对 /admin/config 的未授权访问尝试',
+      '异常检测触发：异常载荷大小',
+      '未授权访问尝试 /admin/config',
       '跨站脚本 (XSS) 签名匹配'
     ]
   }
@@ -300,19 +307,29 @@ Metrics:
 
   function generateRandomLog() {
     const r = Math.random()
-    let level: 'INFO' | 'WARN' | 'RISK' = 'INFO'
-    if (r > 0.96) level = 'RISK'
-    else if (r > 0.85) level = 'WARN'
+    let level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' | 'Unknown' = 'Info'
+    if (r > 0.96) level = 'Critical'
+    else if (r > 0.90) level = 'Error'
+    else if (r > 0.85) level = 'Warning'
+    else if (r > 0.70) level = 'Safe'
 
     const messageSet = settings.ai.language === 'zh' ? LOG_MESSAGES_ZH : LOG_MESSAGES
     // @ts-ignore
     const messages = messageSet[level]
     const message = messages[Math.floor(Math.random() * messages.length)] || 'Unknown system event'
 
+    // 生成 trace_id 和 span_id
+    const traceNum = Math.floor(Math.random() * 9000) + 1000
+    const spanNum = Math.floor(Math.random() * 900) + 100
+    const trace_id = `trace_${traceNum}`
+    const span_id = `span_${spanNum}`
+
     logs.value.push({
       id: Date.now() + Math.random(),
       timestamp: dayjs().format('HH:mm:ss.SSS'),
       level,
+      trace_id,
+      span_id,
       message
     })
 
@@ -418,15 +435,16 @@ Metrics:
         totalLogsProcessed.value = data.total_logs;
         netLatency.value = data.avg_response_time;
         
-        riskStats.Critical = data.high_risk;
-        riskStats.Error = data.medium_risk;
-        riskStats.Warning = data.low_risk;
+        riskStats.Critical = data.critical_risk;
+        riskStats.Error = data.error_risk;
+        riskStats.Warning = data.warning_risk;
         riskStats.Info = data.info_risk;
-        riskStats.Safe = data.total_logs - (data.high_risk + data.medium_risk + data.low_risk + data.info_risk);
+        // Use explicit safe_risk if backend provides it, otherwise fallback (though backend should provide it now)
+        riskStats.Safe = data.safe_risk || (data.total_logs - (data.critical_risk + data.error_risk + data.warning_risk + data.info_risk + data.unknown_risk));
 
         recentAlerts.value = data.recent_alerts.map(a => ({
             id: a.trace_id,
-            time: a.time,
+            time: formatToBeijingTime(a.time),
             service: 'LogSentinel',
             level: 'Error',
             summary: a.summary
@@ -463,14 +481,20 @@ Metrics:
           const data: HistoryPageResponse = await res.json();
 
           logs.value = data.logs.map(item => {
-              let level: 'INFO' | 'WARN' | 'RISK' = 'INFO';
-              if (item.risk_level === 'Critical' || item.risk_level === 'High') level = 'RISK';
-              else if (item.risk_level === 'Warning' || item.risk_level === 'Medium') level = 'WARN';
-              
+              // 使用和 History.vue 相同的等级映射逻辑
+              let level = item.risk_level;
+              const lower = level.toLowerCase();
+              if (lower === 'critical' || lower === 'high') level = 'Critical';
+              else if (lower === 'error' || lower === 'medium') level = 'Error';
+              else if (lower === 'warning' || lower === 'low') level = 'Warning';
+              else if (lower === 'info') level = 'Info';
+              else if (lower === 'safe') level = 'Safe';
+              else if (lower === 'unknown') level = 'Unknown';
+
               return {
                   id: item.trace_id,
-                  timestamp: item.processed_at,
-                  level: level,
+                  timestamp: formatToBeijingTime(item.processed_at),
+                  level: level as any,
                   message: item.summary
               };
           });
@@ -495,6 +519,15 @@ Metrics:
       if (!res.ok) throw new Error('Failed to fetch settings')
       const data: SettingsResponse = await res.json()
 
+      // Helper to parse boolean from various backend types (string "1"/"true", number 1, boolean true)
+      const toBool = (val: any, defaultVal: boolean = false) => {
+        if (val === undefined || val === null) return defaultVal;
+        if (typeof val === 'boolean') return val;
+        if (typeof val === 'number') return val !== 0;
+        if (typeof val === 'string') return val === '1' || val.toLowerCase() === 'true';
+        return defaultVal;
+      };
+
       // Map Backend Data to Store State
       const newSettings = {
         general: {
@@ -509,16 +542,21 @@ Metrics:
           apiKey: data.config['ai_api_key'] || '',
           language: (data.config['ai_language'] || 'en') as any,
           maxBatchSize: parseInt(data.config['kernel_max_batch'] || '50'),
-          autoDegrade: data.config['ai_auto_degrade'] === '1',
+          autoDegrade: toBool(data.config['ai_auto_degrade'], false),
           fallbackModel: data.config['ai_fallback_model'] || 'local-mock',
-          circuitBreaker: data.config['ai_circuit_breaker'] !== '0', // Default true if missing
+          circuitBreaker: toBool(data.config['ai_circuit_breaker'], true), // Default true
           failureThreshold: parseInt(data.config['ai_failure_threshold'] || '5'),
           cooldownSeconds: parseInt(data.config['ai_cooldown_seconds'] || '60'),
+
+          activeMapPromptId: parseInt(data.config['active_map_prompt_id'] || '0'),
+          activeReducePromptId: parseInt(data.config['active_reduce_prompt_id'] || '0'),
+
           prompts: data.prompts.map(p => ({
             id: p.id,
             name: p.name,
             content: p.content,
-            is_active: p.is_active // Map backend is_active
+            is_active: p.is_active, // Map backend is_active
+            type: (p.type || 'map') as 'map' | 'reduce'
           }))
         },
         integration: {
@@ -536,7 +574,7 @@ Metrics:
         kernel: {
           workerThreads: parseInt(data.config['kernel_worker_threads'] || '4'),
           ioBufferSize: data.config['kernel_io_buffer'] || '256MB',
-          adaptiveBatching: data.config['kernel_adaptive_mode'] === '1',
+          adaptiveBatching: toBool(data.config['kernel_adaptive_mode'], true),
           flushInterval: parseInt(data.config['kernel_refresh_interval'] || '200')
         }
       }
@@ -556,11 +594,6 @@ Metrics:
        const promises = []
 
        // 1. Config Batch
-       // Check if config changed
-       // We only need to compare relevant fields to decide if we send 'config'
-       // But 'config' endpoint takes KV pairs. We can just check fields we map to KV.
-       // It's easier to just construct payload and send if any differs.
-
        const configItems = [
          { key: 'app_language', value: settings.general.language },
          { key: 'log_retention_days', value: settings.general.logRetentionDays.toString() },
@@ -576,6 +609,9 @@ Metrics:
          { key: 'ai_circuit_breaker', value: settings.ai.circuitBreaker ? '1' : '0' },
          { key: 'ai_failure_threshold', value: settings.ai.failureThreshold.toString() },
          { key: 'ai_cooldown_seconds', value: settings.ai.cooldownSeconds.toString() },
+
+         { key: 'active_map_prompt_id', value: settings.ai.activeMapPromptId.toString() },
+         { key: 'active_reduce_prompt_id', value: settings.ai.activeReducePromptId.toString() },
 
          { key: 'kernel_adaptive_mode', value: settings.kernel.adaptiveBatching ? '1' : '0' },
          { key: 'kernel_max_batch', value: settings.ai.maxBatchSize.toString() },
@@ -609,7 +645,8 @@ Metrics:
                id: typeof p.id === 'number' ? p.id : 0, // 0 for new
                name: p.name,
                content: p.content,
-               is_active: p.is_active ? 1 : 0
+               is_active: p.is_active ? 1 : 0,
+               type: p.type
            }))
            promises.push(fetch('/api/settings/prompts', {
                method: 'POST',
@@ -710,13 +747,13 @@ Metrics:
 
     // Initial fetch
     fetchDashboardStats();
-    fetchLogs();
+    // fetchLogs(); // Moved to explicit call by consumers (e.g. LiveLogs)
 
     // Poll every 1s
     // @ts-ignore
     pollingInterval.value = setInterval(() => {
         fetchDashboardStats();
-        fetchLogs();
+        // fetchLogs(); // Disabled global log polling to prevent conflicts with History view
     }, 1000) 
   }
 
@@ -725,6 +762,25 @@ Metrics:
       clearInterval(pollingInterval.value)
       pollingInterval.value = null
     }
+  }
+
+  // Explicit log polling actions
+  const logPollingInterval = ref<number | null>(null)
+  
+  function startLogPolling() {
+      if (logPollingInterval.value) return
+      fetchLogs()
+      // @ts-ignore
+      logPollingInterval.value = setInterval(() => {
+          fetchLogs()
+      }, 1000)
+  }
+
+  function stopLogPolling() {
+      if (logPollingInterval.value) {
+          clearInterval(logPollingInterval.value)
+          logPollingInterval.value = null
+      }
   }
 
   return {
@@ -748,6 +804,8 @@ Metrics:
     logs,
     toggleSystem,
     fetchSettings,
-    saveSettings: saveSettingsWithLogic
+    saveSettings: saveSettingsWithLogic,
+    startLogPolling,
+    stopLogPolling
   }
 })

@@ -6,7 +6,7 @@
 // 【新增历史日志结构体】
 struct HistoricalLogItem {
     std::string trace_id;
-    std::string risk_level;
+    RiskLevel risk_level;
     std::string summary;
     std::string processed_at; // 日志分析完成的时间戳
 
@@ -32,6 +32,24 @@ struct AppConfig {
     std::string ai_language = "English";
     std::string app_language = "en"; // Application UI Language
 
+    // 日志存储策略
+    int log_retention_days = 7;
+    int max_disk_usage_gb = 1;
+
+    // 网络监听配置
+    int http_port = 8080;
+
+    // 高可用与容灾
+    bool ai_auto_degrade = false;
+    std::string ai_fallback_model = "local-mock";
+    bool ai_circuit_breaker = true;
+    int ai_failure_threshold = 5;
+    int ai_cooldown_seconds = 60;
+
+    // Active Prompt IDs
+    int active_map_prompt_id = 0;
+    int active_reduce_prompt_id = 0;
+
     // 内核设置
     int kernel_worker_threads = 4;
     int kernel_max_batch = 50;
@@ -42,6 +60,9 @@ struct AppConfig {
     // 序列化宏 (注意：字段名需与 JSON key 及 DB config_key 一致)
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AppConfig, 
         ai_provider, ai_model, ai_api_key, ai_language, app_language,
+        log_retention_days, max_disk_usage_gb, http_port,
+        ai_auto_degrade, ai_fallback_model, ai_circuit_breaker, ai_failure_threshold, ai_cooldown_seconds,
+        active_map_prompt_id, active_reduce_prompt_id,
         kernel_worker_threads, kernel_max_batch, kernel_refresh_interval, kernel_io_buffer, kernel_adaptive_mode
     )
 };
@@ -52,9 +73,11 @@ struct PromptConfig {
     std::string name;
     std::string content;
     bool is_active = true;
+    std::string type = "map"; // "map" or "reduce"
+
     PromptConfig() = default;
-    PromptConfig(int id, std::string name, std::string content, bool is_active)
-        : id(id), name(std::move(name)), content(std::move(content)), is_active(is_active) {}
+    PromptConfig(int id, std::string name, std::string content, bool is_active, std::string type = "map")
+        : id(id), name(std::move(name)), content(std::move(content)), is_active(is_active), type(std::move(type)) {}
 
     // 【核心修改】手动实现 to_json (序列化)
     friend void to_json(nlohmann::json& j, const PromptConfig& p) {
@@ -62,7 +85,8 @@ struct PromptConfig {
             {"id", p.id},
             {"name", p.name},
             {"content", p.content},
-            {"is_active", p.is_active} // 输出时还是 true/false，规范
+            {"is_active", p.is_active}, // 输出时还是 true/false，规范
+            {"type", p.type}
         };
     }
 
@@ -71,6 +95,8 @@ struct PromptConfig {
         j.at("id").get_to(p.id);
         j.at("name").get_to(p.name);
         j.at("content").get_to(p.content);
+        // Default to map if missing (backward compatibility)
+        p.type = j.value("type", "map");
 
         // 重点：宽容处理 is_active
         if (j.contains("is_active")) {
@@ -159,18 +185,26 @@ struct AlertInfo{
     std::string trace_id;
     std::string summary;
     std::string time;
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AlertInfo, trace_id, summary, time);
+    std::string risk; // Added risk field
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AlertInfo, trace_id, summary, time, risk);
 };
 struct DashboardStats{
     int total_logs=0;
-    int high_risk=0;
-    int medium_risk=0;
-    int low_risk=0;
+    int critical_risk=0;
+    int error_risk=0;
+    int warning_risk=0;
     int info_risk=0;
+    int safe_risk=0;
     int unknown_risk=0;
     double avg_response_time=0.0;
+
+    // --- 新增：瞬态指标 (Transient Metrics) ---
+    // 不需要序列化到数据库，但需要序列化成 JSON 给前端
+    double current_qps = 0.0;
+    double backpressure = 0.0;
+
     std::vector<AlertInfo> recent_alerts;
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, high_risk, medium_risk, low_risk,info_risk,unknown_risk, avg_response_time, recent_alerts);
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DashboardStats, total_logs, critical_risk, error_risk, warning_risk, info_risk, safe_risk, unknown_risk, avg_response_time, current_qps, backpressure, recent_alerts);
 };
 struct AnalysisResultItem{
     std::string trace_id;
