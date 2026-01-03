@@ -119,8 +119,7 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
         // 使用快照中的配置
         std::string ai_api_key = config->app_config.ai_api_key;
         std::string ai_model = config->app_config.ai_model;
-        std::string map_prompt = config->active_map_prompt;
-        std::string reduce_prompt = config->active_reduce_prompt;
+        std::string prompt_template = config->active_prompt;
 
         for (const auto &task : batch)
         {
@@ -139,7 +138,7 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
         std::unordered_map<std::string, LogAnalysisResult> mp;
         try
         {
-            mp = ai_client_->analyzeBatch(logs, ai_api_key, ai_model, map_prompt);
+            mp = ai_client_->analyzeBatch(logs, ai_api_key, ai_model, prompt_template);
         }
         catch (const std::exception &e)
         {
@@ -182,7 +181,7 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
             try
             {
                 // 这里 ai_client_->summarize 返回的是 JSON 字符串
-                std::string json_str = ai_client_->summarize(results_for_summary, ai_api_key, ai_model, reduce_prompt);
+                std::string json_str = ai_client_->summarize(results_for_summary, ai_api_key, ai_model, prompt_template);
 
                 // 解析 JSON
                 try {

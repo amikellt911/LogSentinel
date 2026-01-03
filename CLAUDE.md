@@ -63,9 +63,9 @@ The backend follows a modular architecture with clear separation of concerns:
    - Time-based: dispatch on timeout (via EventLoop timer)
    - Flow control: stops dispatching when thread pool utilization exceeds `pool_threshold_` (90%)
 
-3. **Map-Reduce Batch Processing**:
-   - Map phase: `analyzeBatch()` processes multiple logs in parallel
-   - Reduce phase: `summarize()` aggregates results into a single summary
+3. **Trace 聚合 + 单提示词**：
+   - 每条日志必须携带 `trace_id` 与 `span_id`，后台会按 trace 维度先聚合同一链路的所有跨度日志。
+   - 聚合后的批次使用统一的 Prompt 模板进行一次性分析/摘要（不再区分 Map/Reduce 两套模板）。
 
 4. **AI Provider Pattern**: Abstract `AiProvider` interface enables switching between Gemini, Mock, and future providers. Configuration (API key, model) is passed at call time.
 
@@ -73,10 +73,10 @@ The backend follows a modular architecture with clear separation of concerns:
 
 ### Data Flow
 
-1. Log submission: `POST /logs` → LogHandler → LogBatcher (ring buffer)
-2. Batch dispatch: LogBatcher → ThreadPool → AnalysisTask → AiProvider → Python proxy service
-3. Result storage: SqliteLogRepository saves to `logs_raw` and `analysis_results` tables
-4. Result retrieval: `GET /results/{trace_id}` → returns analysis or 404 if pending
+1. 日志上报：`POST /logs`（必须包含 `trace_id`、`span_id`）→ LogHandler → LogBatcher（ring buffer）
+2. 批次派发：LogBatcher 先按 `trace_id` 聚合同一链路的 span 日志，再以单一 Prompt 模板调用 AiProvider（Python 代理）完成分析与摘要。
+3. 结果存储：SqliteLogRepository 将原始日志、分析结果与批次概要持久化。
+4. 结果查询：`GET /results/{trace_id}` → 返回对应 trace 的分析摘要，若仍在处理中则返回 404。
 
 ### Thread Model
 
@@ -88,9 +88,9 @@ The backend follows a modular architecture with clear separation of concerns:
 
 - `logs_raw`: Raw log entries with trace_id, received_at, message
 - `analysis_results`: AI analysis outcomes with risk_level, summary, root_cause, solution
-- `system_config`: Key-value configuration (api_key, model, prompt, webhook_urls)
-- `prompts`: Custom AI prompt templates
-- `webhook_channels`: Notification configuration
+- `app_config`: Key-value configuration（模型、密钥、`active_prompt_id` 等运行参数）
+- `prompts`: 单表存储提示词模板，字段为 `id/name/content/is_active`
+- `alert_channels`: Notification configuration（钉钉/Slack 等渠道）
 
 ### Python AI Proxy Architecture
 
@@ -111,6 +111,7 @@ The Python service (`server/ai/proxy/main.py`) acts as an AI provider abstractio
 
 ### Trace ID Generation
 Used to correlate log submissions with analysis results. Generated via `TraceIdGenerator` (SHA-256 hash based). Plans to optimize length for readability.
+Each log record should include both `trace_id` and `span_id`; the backend relies on trace_id for grouping and span_id for ordering when aggregating spans before invoking the LLM.
 
 ### Error Handling
 - `SQLITE_BUSY`: Needs retry logic with backoff (current TODO)
@@ -120,6 +121,7 @@ Used to correlate log submissions with analysis results. Generated via `TraceIdG
 ### Configuration Management
 Runtime configuration via SqliteConfigRepository:
 - API keys and models stored in database
+- Single prompt table (`prompts`) + `active_prompt_id`，前后端设置页面只维护一份提示词列表
 - Changes applied via `/settings/*` endpoints
 - Server restart via `POST /restart` to reload config
 

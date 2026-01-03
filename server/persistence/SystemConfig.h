@@ -4,45 +4,37 @@
 #include <string>
 #include <algorithm>
 #include <unordered_map>
+#include <utility>
 #include "persistence/ConfigTypes.h"
 
 struct SystemConfig {
     const AppConfig app_config;
-    // 分离 Map 和 Reduce 的 Prompt 列表
-    const std::vector<PromptConfig> map_prompts;
-    const std::vector<PromptConfig> reduce_prompts;
+    // 单一 Prompt 列表
+    const std::vector<PromptConfig> prompts;
     const std::vector<AlertChannel> channels;
 
     // 预计算的 Active Prompt，实现 O(1) 访问
     // 移除 const 修饰符以避免在构造函数体中使用 const_cast (虽然对象本身通过 shared_ptr<const> 访问是安全的)
-    std::string active_map_prompt;
-    std::string active_reduce_prompt;
+    std::string active_prompt;
 
     // 索引缓存：通过 ID 快速查找 Content
     // 这在构建时生成，属于 "空间换时间"，避免运行时 O(N) 遍历
-    std::unordered_map<int, std::string> map_prompt_index_;
-    std::unordered_map<int, std::string> reduce_prompt_index_;
+    std::unordered_map<int, std::string> prompt_index_;
 
     SystemConfig(AppConfig app,
-                 std::vector<PromptConfig> map_p,
-                 std::vector<PromptConfig> reduce_p,
+                 std::vector<PromptConfig> prompts_,
                  std::vector<AlertChannel> c)
         : app_config(std::move(app)),
-          map_prompts(std::move(map_p)),
-          reduce_prompts(std::move(reduce_p)),
+          prompts(std::move(prompts_)),
           channels(std::move(c))
     {
         // 1. 构建索引 (O(N))
-        for (const auto& p : map_prompts) {
-            map_prompt_index_[p.id] = p.content;
-        }
-        for (const auto& p : reduce_prompts) {
-            reduce_prompt_index_[p.id] = p.content;
+        for (const auto& p : prompts) {
+            prompt_index_[p.id] = p.content;
         }
 
-        // 2. 解析 Active Prompts (O(1) 查找)
-        active_map_prompt = resolvePromptWithIndex(map_prompt_index_, map_prompts, app_config.active_map_prompt_id);
-        active_reduce_prompt = resolvePromptWithIndex(reduce_prompt_index_, reduce_prompts, app_config.active_reduce_prompt_id);
+        // 2. 解析 Active Prompt (O(1) 查找)
+        active_prompt = resolvePromptWithIndex(prompt_index_, prompts, app_config.active_prompt_id);
     }
 
     SystemConfig& operator=(const SystemConfig&) = delete;

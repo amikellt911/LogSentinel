@@ -403,24 +403,24 @@
  // Initialize selection once prompts are loaded
  const selectedPrompt = computed(() => {
     if (!selectedPromptId.value && systemStore.settings.ai.prompts.length > 0) {
-       selectedPromptId.value = systemStore.settings.ai.prompts[0].id
+       const active = systemStore.settings.ai.prompts.find(p => p.id === systemStore.settings.ai.activePromptId)
+       selectedPromptId.value = active ? active.id : systemStore.settings.ai.prompts[0].id
     }
     return systemStore.settings.ai.prompts.find(p => p.id === selectedPromptId.value)
  })
 
- function addNewPrompt() {
-    const newId = 'p' + Date.now()
-    systemStore.settings.ai.prompts.push({
-       id: newId,
-       name: 'New Prompt',
-       content: '',
-       is_active: 0,
-       type: 'map' // 默认为 map 类型
-    })
-    selectedPromptId.value = newId
- }
+function addNewPrompt() {
+   const newId = 'p' + Date.now()
+   systemStore.settings.ai.prompts.push({
+      id: newId,
+      name: 'New Prompt',
+      content: '',
+      is_active: 0
+   })
+   selectedPromptId.value = newId
+}
 
- function deletePrompt(id: number | string) {
+function deletePrompt(id: number | string) {
     const index = systemStore.settings.ai.prompts.findIndex(p => p.id === id)
     if (index === -1) return
 
@@ -428,16 +428,12 @@
     systemStore.settings.ai.prompts.splice(index, 1)
 
     // Check if we deleted the active prompt
-    if (deletedPrompt.type === 'map' && systemStore.settings.ai.activeMapPromptId == id) {
-        // Fallback: pick first map prompt
-        const next = systemStore.settings.ai.prompts.find(p => p.type === 'map')
+    if (systemStore.settings.ai.activePromptId == id) {
+        const next = systemStore.settings.ai.prompts.find(p => typeof p.id === 'number')
         if (next && typeof next.id === 'number') {
-            systemStore.settings.ai.activeMapPromptId = next.id
-        }
-    } else if (deletedPrompt.type === 'reduce' && systemStore.settings.ai.activeReducePromptId == id) {
-        const next = systemStore.settings.ai.prompts.find(p => p.type === 'reduce')
-        if (next && typeof next.id === 'number') {
-            systemStore.settings.ai.activeReducePromptId = next.id
+            systemStore.settings.ai.activePromptId = next.id
+        } else {
+            systemStore.settings.ai.activePromptId = 0
         }
     }
 
@@ -458,28 +454,19 @@
     // 2. Set as Active (Mutex logic per phase)
     const prompt = systemStore.settings.ai.prompts.find(p => p.id == id)
     if (prompt && typeof id === 'number') {
-        if (prompt.type === 'map') {
-            systemStore.settings.ai.activeMapPromptId = id
-        } else if (prompt.type === 'reduce') {
-            systemStore.settings.ai.activeReducePromptId = id
-        }
+        systemStore.settings.ai.activePromptId = id
     }
 
     // UI update for is_active flag
     systemStore.settings.ai.prompts.forEach(p => {
         if (p.id == id) p.is_active = 1
-        else if (p.type === prompt?.type) p.is_active = 0
+        else p.is_active = 0
     })
- }
+}
 
- function isPromptActive(prompt: PromptConfig) {
-     if (prompt.type === 'map') {
-         return String(systemStore.settings.ai.activeMapPromptId) === String(prompt.id)
-     } else if (prompt.type === 'reduce') {
-         return String(systemStore.settings.ai.activeReducePromptId) === String(prompt.id)
-     }
-     return false
- }
+function isPromptActive(prompt: PromptConfig) {
+     return String(systemStore.settings.ai.activePromptId) === String(prompt.id)
+}
 
  // --- Integration Logic ---
  const selectedChannelId = ref<string | number | undefined>(undefined)
@@ -631,4 +618,3 @@
    border-radius: 4px;
  }
  </style>
-

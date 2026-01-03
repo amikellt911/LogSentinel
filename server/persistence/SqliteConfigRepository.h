@@ -5,15 +5,14 @@
 #include<mutex>
 #include <memory>
 #include "persistence/SystemConfig.h"
-#include "persistence/PromptIdHelper.h"
 
 class SqliteConfigRepository
 {
 private:
     // 内部加载函数
     AppConfig getAppConfigInternal();
-    // 分别获取 Map 和 Reduce 的 Prompt
-    std::pair<std::vector<PromptConfig>, std::vector<PromptConfig>> getAllPromptsInternal();
+    // 获取 Prompt 列表
+    std::vector<PromptConfig> getAllPromptsInternal();
     std::vector<AlertChannel> getAllChannelsInternal();
     // 从数据库重新加载全部配置并生成新的快照
     void loadFromDbInternal();
@@ -36,7 +35,7 @@ public:
 
     // 兼容 API (委托给快照)
     AppConfig getAppConfig();
-    // 返回合并后的 Prompt 列表（Reduce ID 带偏移）
+    // 返回 Prompt 列表
     std::vector<PromptConfig> getAllPrompts();
     std::vector<AlertChannel> getAllChannels();
     AllSettings getAllSettings();
