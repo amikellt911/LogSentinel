@@ -1,48 +1,98 @@
-# LogSentinel 项目
+# LogSentinel
 
-LogSentinel 是一个基于 C++ 实现的高性能日志分析服务。
+LogSentinel 是一个面向云原生日志场景的“实时日志接入 + Trace 聚合 + AI 语义分析”的系统原型项目。
 
-项目采用 Reactor 模式处理网络I/O，并通过独立的线程池执行业务逻辑，以实现高并发和低延迟。
-## 项目简介 (Introduction)
+> ⚠️ 重要说明（请先读）
+>
+> - **目前项目处于“产品方案与前端 Demo 先行”的阶段。**
+> - **前端页面已更新**（用于展示系统形态与交互流程）。
+> - **后端 C++ 实现尚未按最新架构落地**：仓库中可能存在旧的模块结构、接口命名与说明。
+> - 因此：请将本 README 视为 **“当前规划与目标架构”**，并以代码实现为准；凡标注为 *Planned* 的部分尚未落地。
 
-**LogSentinel** 是一个高性能、低延迟的日志分析引擎。它旨在解决传统日志系统“只存储、不理解”的痛点。
+---
 
-通过结合 **C++ 高并发网络架构**（Reactor 模式 + 线程池）与 **大语言模型（LLM）** 的推理能力，LogSentinel 能够实时接收海量日志，异步进行根因分析（Root Cause Analysis），并提供结构化的修复建议与实时 Webhook 告警。
+## 项目目标（What this project aims to do）
 
-## 系统演示 (Demo)
+LogSentinel 的目标不是“只存日志”，而是在高并发日志流中：
+1. **稳定接入与持久化**（接得住，不丢数据）
+2. **按 Trace 上下文聚合日志**（把碎片化日志变成可分析的 Trace 会话）
+3. **调用云端大模型进行语义分析**（输出风险等级、根因摘要与修复建议）
+4. **提供可视化与告警闭环**（Dashboard + Webhook 推送）
 
-### 1. Web 监控面板
-![Alt text](%E6%97%A0%E6%A0%87%E9%A2%98.png)
+---
 
-### 2. 系统架构
-![Alt text](%E6%97%A0%E6%A0%87%E9%A2%98-1.png)
+## 当前状态（Status）
 
-![Alt text](%E6%97%A0%E6%A0%87%E9%A2%98-2.png)
+### 已完成（Done）
+- ✅ 前端 Demo 页面（Dashboard / 历史查询 / 设置等页面框架）
+- ✅ 产品方案与系统模块划分（以本文档“目标架构”部分为准）
 
-## 🛠️ 技术栈 (Tech Stack)
+### 进行中（In progress）
+- 🟡 后端接口与前端联调（API 形态仍在调整）
+- 🟡 Trace 聚合与微批调度的后端实现
 
-*   **Core Server**: C++17, CMake
-*   **Network**: MiniMuduo (Epoll, Non-blocking I/O)
-*   **Concurrency**: Thread Pool
-*   **Persistence**: SQLite3 (WAL Mode)
-*   **Network Client**: cpr 
-*   **JSON Processing**: nlohmann/json
-*   **AI Service**: Python 3.10, FastAPI, Google GenAI SDK
-*   **Frontend**: HTML5, CSS3, JavaScript (Fetch API)
+### 计划中（Planned, not implemented yet）
+- ⏳ **双线程池资源隔离**：交互通道（查询/控制台）与数据通道（写入/分析）分离
+- ⏳ **Trace 会话窗口聚合**：inactivity timeout + 容量触发
+- ⏳ **背压/限流**：过载保护，防止内存膨胀
+- ⏳ **LLM 结构化输出**：严格 JSON schema 校验、失败重试
+- ⏳ **结果复用/相似度缓存（simhash）**：减少重复云端推理
+- ⏳ （可选）端侧轻量预筛选：进一步降低云端调用量（优化方向）
 
-## 🔌 API 文档 (API Reference)
+---
 
-### 提交日志
-*   **URL**: `POST /logs`
-*   **Content-Type**: `application/json`
-*   **Body**: `{"msg": "Error content..."}`
-*   **Response**: `202 Accepted`, `{"trace_id": "..."}`
+## 目标架构（Target Architecture）
 
-### 查询结果
-*   **URL**: `GET /results/{trace_id}`
-*   **Response**:
-    *   `200 OK`: `{"result": {...}, "trace_id": "..."}`
-    *   `404 Not Found`: 处理中或不存在
+### 系统整体架构（简版）
+前端演示层  
+Vue 3 + Vite + Element Plus + Axios 接收用户交互请求并展示数据  
+
+后端处理层  
+C++ LogSentinel 服务 + SQLite + 线程池接收请求，负责接入、Trace 聚合与流程调度  
+
+核心算法层  
+Python AI Proxy + LLM 推理服务接收聚合后的 Trace 数据并返回结构化分析结果  
+
+LogSentinel 采用分层设计（按“先接住→再聚合→再分析→再展示”的主线）：
+
+### 1) 高性能网络接入层
+- Reactor + non-blocking I/O
+- 轻量 HTTP 解析、路由、CORS
+- 接入层只做轻量工作：**接收、校验、入队**
+
+### 2) 资源隔离与异步调度层（核心）
+- **双通道资源隔离（双线程池）**
+  - 交互通道：Dashboard 查询、配置管理，保证低延迟
+  - 数据通道：日志写入、聚合、分析任务，吞吐优先
+- **Trace 上下文自适应微批（Context-aware micro-batching）**
+  - 维护 trace 会话窗口
+  - inactivity timeout + 容量触发
+  - 将海量碎片日志降维成较少的 trace 事件
+- 背压机制：系统过载时主动降速，避免 OOM
+
+### 3) 智能分析与业务逻辑层
+- 将 LLM 视为“语义推理引擎”
+- 输入：聚合后的 trace 会话
+- 输出：结构化 JSON（风险等级 / 根因摘要 / 修复建议）
+- 成本控制：依赖聚合与流量控制减少 token 冗余
+
+### 4) 数据持久化与交互层
+- SQLite（WAL）作为轻量存储（后续可替换）
+- 原始日志与分析结果关联存储
+- REST API 支撑 Web 控制台：实时指标、趋势、历史检索
+- Webhook：高风险事件推送（飞书/钉钉等）
+
+---
+
+## API 设计（draft）
+
+> 注：接口仍可能变化，当前以“前后端联调”需要为准。
+
+- `POST /logs`：上报日志（建议携带 trace_id / span_id / service / timestamp / message）
+- `GET /results/{trace_id}`：获取某条 trace 的分析结果
+- `GET /dashboard/metrics`：系统指标（吞吐、队列水位、错误率等）
+- `GET /history`：历史检索（按时间/风险等级）
+- `POST /settings`：配置（模型、密钥、提示词等）
 
 ## 待优化项汇总 (Optimization Roadmap)
 
