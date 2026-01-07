@@ -61,12 +61,15 @@
 ### 2. 任务工作流
 
 - **TodoList**：开始任何复杂编码任务前，必须先在 `docs/todo-list` 目录创建 `Todo_xx.md`，列出详细步骤，并在完成后打勾确认。
+- **TodoList 合并**：同一主题只维护一个 `Todo_xx.md`，后续只追加条目与勾选，不重复新建文件。
 - **Pre-check**：修改多个文件前，提醒用户检查 `git status`，确保工作区干净。
 - **工作计划**：当前工作请查看根目录 `CurrentTask.md`，未来计划请查看根目录 `FutureMap.md`。
+- **问题记录**：已知问题与后续迭代事项请查看 `docs/KnownIssues.md`。
 
 ### 3. 任务后复盘
 
 任务完成后，必须在 `docs/dev-log` 目录生成一个 `YYYYMMDD-type-scope.md` 文件（例如 `20251225-feat-logger.md`），内容包括（**非代码变更可跳过 dev-log**）：
+- **Dev-log 合并**：新增 dev-log 前先检查 `git status`；若同一主题已有未提交的 dev-log，必须在同一文件追加记录，不得新建重复文件。
 
 - **Git Commit Message**：
   - 必须遵循 **Conventional Commits** 格式（`type(scope): description`）。

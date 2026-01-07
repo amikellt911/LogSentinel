@@ -1,6 +1,29 @@
 # Todo_TraceSessionManager
 
 - [x] 确认 core 模块新增类的命名与职责范围
+- [x] 明确 TraceSessionManager 的最小数据结构与占位职责
 - [x] 新建 `TraceSessionManager` 头文件与实现文件
+- [x] 完成 `TraceSession` 与容器的基础定义
+- [x] 提供最小可用的访问接口占位
+- [x] 新增 `SpanEvent` 占位结构体
+- [x] 补齐 `SpanEvent` 核心字段占位
+- [x] 增加 `SpanEvent` 扩展字段容器占位
+- [x] 增加 `SpanEvent` 状态字段占位
+- [x] 增加 `SpanEvent` kind 字段占位
+- [x] 完成 `TraceSession` 的基础容器与去重占位
+- [x] 完成 `Push` 的最小写入与去重逻辑
+- [x] 增加 TraceSession 容量构造与预分配占位
+- [x] 增加容量上限触发分发的占位逻辑
+- [x] TraceSessionManager 构造注入线程池指针
+- [x] 完成 `Dispatch` 的最小回收与占位逻辑
+- [x] 完成 `Dispatch` 的线程池占位分发
+- [x] 增加聚合索引与序列化的私有方法占位
+- [x] 补充 TraceIndex 与 DFS 顺序缓存的占位定义
+- [x] 完成 BuildTraceIndex 的最小实现
+- [x] 完成 BuildDfsOrder 的非递归遍历与防环逻辑
+- [x] 完成 SerializeTrace 的 JSON 序列化占位实现
+- [x] 合并 DFS 与序列化，顺带产出顺序缓存
+- [x] 在序列化中增加防环与 children 排序
+- [x] 补齐 `Push/Dispatch` 公共接口占位
 - [x] 将新文件加入 `core_module` 的 CMake 构建列表
 - [x] 复核文件命名、路径与编译依赖是否一致
