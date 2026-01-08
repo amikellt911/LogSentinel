@@ -12,3 +12,5 @@
 - Root span 未到达或乱序导致的聚合不完整处理方式待定
 - 扩展字段目前先用 `string` 承载，后续可升级为 `std::variant` 以提高类型安全
 - TraceIndex/DFS 当前存在额外构建开销，后续可考虑减少查表与内存分配（children 存指针、复用容器、仅在必要时构建）
+- Token 估算先用近似值做上限拦截，后续可结合 LLM 返回的 usage 做真实统计与回填
+- 前端 span 状态为 success/error/warning，后端为 UNSET/OK/ERROR，后续需统一或做映射

@@ -24,6 +24,12 @@
 - [x] 完成 SerializeTrace 的 JSON 序列化占位实现
 - [x] 合并 DFS 与序列化，顺带产出顺序缓存
 - [x] 在序列化中增加防环与 children 排序
+- [x] 增加显式结束标志并接入提前分发逻辑
+- [x] 增加 TraceSessionManager 的核心单测覆盖
+- [x] 增加 token 上限配置占位
+- [x] 增加 TokenEstimator 占位与 token 计数累加
+- [x] 增加 TraceAiProvider 与 MockTraceAi 占位接口
+- [x] Dispatch 组装 summary/spans/analysis 占位流程
 - [x] 补齐 `Push/Dispatch` 公共接口占位
 - [x] 将新文件加入 `core_module` 的 CMake 构建列表
 - [x] 复核文件命名、路径与编译依赖是否一致

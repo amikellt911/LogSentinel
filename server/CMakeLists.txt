@@ -62,10 +62,12 @@ add_library(core_module STATIC
     core/AnalysisTask.cpp
     core/LogBatcher.cpp
     core/TraceSessionManager.cpp
+    core/TokenEstimator.cpp
 )
 add_library(persistence_module STATIC
     persistence/SqliteLogRepository.cpp
     persistence/SqliteConfigRepository.cpp
+    persistence/SqliteTraceRepository.cpp
 )
 add_library(threadpool_module STATIC
   threadpool/ThreadPool.cpp
@@ -74,6 +76,7 @@ add_library(ai_module STATIC
   ai/MockAI.cpp
   ai/GeminiApiAi.cpp
   ai/AiTypes.h 
+  ai/MockTraceAi.cpp
 )
 add_library(notification_module STATIC
   notification/WebhookNotifier.cpp
@@ -163,6 +166,10 @@ add_executable(test_logbatcher
   tests/LogBatcher_test.cpp
 )
 
+add_executable(test_trace_session_manager
+  tests/TraceSessionManager_test.cpp
+)
+
 add_executable(test_config_repo
   tests/SqliteConfigRepository_test.cpp
 )
@@ -190,6 +197,10 @@ target_link_libraries(test_logbatcher PRIVATE
 GTest::gtest_main
 core_module
 )
+target_link_libraries(test_trace_session_manager PRIVATE
+GTest::gtest_main
+core_module
+)
 target_link_libraries(test_config_repo PRIVATE
 GTest::gtest_main
 persistence_module
@@ -201,6 +212,7 @@ add_test(NAME test_util_traceidgenerate COMMAND test_util_traceidgenerate)
 add_test(NAME test_threadpool COMMAND test_threadpool)
 add_test(NAME test_sqlite COMMAND test_sqlite)
 add_test(NAME test_logbatcher COMMAND test_logbatcher)
+add_test(NAME test_trace_session_manager COMMAND test_trace_session_manager)
 add_test(NAME test_config_repo COMMAND test_config_repo)
 
 gtest_discover_tests(test_http_context)
@@ -208,6 +220,7 @@ gtest_discover_tests(test_util_traceidgenerate)
 gtest_discover_tests(test_threadpool)
 gtest_discover_tests(test_sqlite)
 gtest_discover_tests(test_logbatcher)
+gtest_discover_tests(test_trace_session_manager)
 gtest_discover_tests(test_config_repo)
 #-----------不同模块测试用例---------------
 #这些测试用例版本变动，用不了了

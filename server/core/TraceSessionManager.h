@@ -9,7 +9,13 @@
 #include <unordered_set>
 #include <vector>
 
+#include "core/TokenEstimator.h"
+#include "ai/AiTypes.h"
+#include "persistence/TraceRepository.h"
+
 class ThreadPool;
+class TraceRepository;
+class TraceAiProvider;
 
 struct SpanEvent
 {
@@ -44,6 +50,8 @@ struct SpanEvent
         Consumer
     };
     std::optional<Kind> kind;
+    // trace_end 作为显式结束标志，便于在未构建树前触发提前分发。
+    std::optional<bool> trace_end;
     // 扩展字段先用字符串承载，保持解析与落库路径简单，后续可升级为 variant。
     std::unordered_map<std::string, std::string> attributes;
 };
@@ -51,10 +59,14 @@ struct SpanEvent
 struct TraceSession
 {
     // capacity 作为每条 Trace 的最大 span 容量，用于触发提前分发。
-    explicit TraceSession(size_t capacity);
+    explicit TraceSession(size_t capacity, size_t token_limit);
     // 先用 size_t 作为 trace_id 的紧凑标识，减少基础结构的负担，后续再视需求调整为原始 ID。
     size_t trace_key = 0;
     size_t capacity = 0;
+    // // token_limit 作为单条 Trace 的 token 上限占位，用于后续触发提前分发。
+    // size_t token_limit = 0;
+    // token_count 作为累计 token 计数占位，后续由 TokenEstimator 驱动更新。
+    size_t token_count = 0;
     // spans 采用到达顺序存储，便于后续批量遍历与一次性序列化。
     std::vector<SpanEvent> spans;
     // span_ids 用于去重与快速检测异常输入，避免重复 span 破坏聚合逻辑。
@@ -66,7 +78,11 @@ struct TraceSession
 class TraceSessionManager
 {
 public:
-    explicit TraceSessionManager(ThreadPool* thread_pool, size_t capacity);
+    explicit TraceSessionManager(ThreadPool* thread_pool,
+                                 TraceRepository* trace_repo,
+                                 TraceAiProvider* trace_ai,
+                                 size_t capacity,
+                                 size_t token_limit);
     ~TraceSessionManager();
 
     size_t size() const;
@@ -74,8 +90,16 @@ public:
     void Dispatch(size_t trace_key);
 
 private:
+    // 为了单元测试验证内部索引与序列化逻辑，开放特定测试友元访问，避免引入仅测试用途的公共接口。
+    friend class TraceSessionManagerTest_BuildTraceIndexRootsAndChildren_Test;
+    friend class TraceSessionManagerTest_SerializeTraceSortsChildrenByStartTime_Test;
+
     ThreadPool* thread_pool_ = nullptr;
+    TraceRepository* trace_repo_ = nullptr;
+    TraceAiProvider* trace_ai_ = nullptr;
     size_t capacity_ = 0;
+    size_t token_limit_ = 0;
+    TokenEstimator token_estimator_;
 
     struct TraceIndex
     {
@@ -88,6 +112,15 @@ private:
     TraceIndex BuildTraceIndex(const TraceSession& session);
     // 将 trace 按树形结构序列化为可传递的字符串，同时产出 DFS 顺序缓存。
     std::string SerializeTrace(const TraceIndex& index, std::vector<const SpanEvent*>* order);
+
+    // 将复杂组装逻辑拆分为独立步骤，避免在 Dispatch 中堆叠细节，便于单测与迭代。
+    TraceRepository::TraceSummary BuildTraceSummary(const TraceSession& session,
+                                                    const std::string& payload,
+                                                    const std::vector<const SpanEvent*>& order);
+    std::vector<TraceRepository::TraceSpanRecord> BuildSpanRecords(const TraceSession& session,
+                                                                   const std::string& trace_id);
+    TraceRepository::TraceAnalysisRecord BuildAnalysisRecord(const std::string& trace_id,
+                                                             const LogAnalysisResult& analysis);
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。
     std::vector<std::unique_ptr<TraceSession>> sessions_;
     // 通过 trace_key 快速定位到 vector 下标，避免线性扫描带来的开销。

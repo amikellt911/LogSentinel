@@ -1,17 +1,27 @@
 #include "core/TraceSessionManager.h"
 #include "threadpool/ThreadPool.h"
+#include "ai/TraceAiProvider.h"
+#include "persistence/TraceRepository.h"
 #include <algorithm>
+#include <limits>
 #include <nlohmann/json.hpp>
 
-TraceSession::TraceSession(size_t capacity)
+TraceSession::TraceSession(size_t capacity, size_t token_limit)
     : capacity(capacity)
 {
     spans.reserve(capacity);
 }
 
-TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool, size_t capacity)
+TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
+                                         TraceRepository* trace_repo,
+                                         TraceAiProvider* trace_ai,
+                                         size_t capacity,
+                                         size_t token_limit)
     : thread_pool_(thread_pool)
+    , trace_repo_(trace_repo)
+    , trace_ai_(trace_ai)
     , capacity_(capacity)
+    , token_limit_(token_limit)
 {
 }
 
@@ -26,7 +36,7 @@ void TraceSessionManager::Push(const SpanEvent& span)
 {
     auto iter = index_by_trace_.find(span.trace_key);
     if (iter == index_by_trace_.end()) {
-        auto session = std::make_unique<TraceSession>(capacity_);
+        auto session = std::make_unique<TraceSession>(capacity_, token_limit_);
         session->trace_key = span.trace_key;
         sessions_.push_back(std::move(session));
         index_by_trace_[span.trace_key] = sessions_.size() - 1;
@@ -39,11 +49,23 @@ void TraceSessionManager::Push(const SpanEvent& span)
         if (!session.duplicate_span_id.has_value()) {
             session.duplicate_span_id = span.span_id;
         }
+        Dispatch(session.trace_key);
         return;
     }
 
     // 先按到达顺序追加，后续聚合阶段再按 parent_id 重建结构。
     session.spans.push_back(span);
+    session.token_count += token_estimator_.Estimate(span);
+
+    if (span.trace_end.has_value() && span.trace_end.value()) {
+        Dispatch(session.trace_key);
+        return;
+    }
+
+    if (token_limit_ > 0 && session.token_count >= token_limit_) {
+        Dispatch(session.trace_key);
+        return;
+    }
 
     if (session.capacity > 0 && session.spans.size() >= session.capacity) {
         // 达到容量上限即触发分发，避免单个 Trace 无限膨胀。
@@ -77,9 +99,38 @@ void TraceSessionManager::Dispatch(size_t trace_key)
 
     // ThreadPool 的任务类型是 std::function，要求可拷贝，因此先转为 shared_ptr 以便捕获。
     std::shared_ptr<TraceSession> session_shared = std::move(session);
-    thread_pool_->submit([session_shared]() {
-        // TODO: 后续接入聚合逻辑，当前仅占位以验证分发链路。
-        (void)session_shared;
+    TraceSessionManager* manager = this;
+    TraceRepository* trace_repo = trace_repo_;
+    TraceAiProvider* trace_ai = trace_ai_;
+    thread_pool_->submit([manager, trace_repo, trace_ai, session_shared]() {
+        if (!manager || !trace_repo) {
+            return;
+        }
+
+        TraceSessionManager::TraceIndex index = manager->BuildTraceIndex(*session_shared);
+        std::vector<const SpanEvent*> order;
+        std::string trace_payload = manager->SerializeTrace(index, &order);
+
+        TraceRepository::TraceSummary summary =
+            manager->BuildTraceSummary(*session_shared, trace_payload, order);
+        if (!trace_repo->SaveTraceSummary(summary)) {
+            return;
+        }
+
+        std::vector<TraceRepository::TraceSpanRecord> span_records =
+            manager->BuildSpanRecords(*session_shared, summary.trace_id);
+        if (!trace_repo->SaveTraceSpans(summary.trace_id, span_records)) {
+            return;
+        }
+
+        if (!trace_ai) {
+            return;
+        }
+
+        LogAnalysisResult analysis = trace_ai->AnalyzeTrace(trace_payload);
+        TraceRepository::TraceAnalysisRecord analysis_record =
+            manager->BuildAnalysisRecord(summary.trace_id, analysis);
+        trace_repo->SaveTraceAnalysis(analysis_record);
     });
 }
 
@@ -225,4 +276,93 @@ std::string TraceSessionManager::SerializeTrace(const TraceIndex& index, std::ve
     }
 
     return output.dump();
+}
+
+TraceRepository::TraceSummary TraceSessionManager::BuildTraceSummary(const TraceSession& session,
+                                                                     const std::string& payload,
+                                                                     const std::vector<const SpanEvent*>& order)
+{
+    TraceRepository::TraceSummary summary;
+    summary.trace_id = std::to_string(session.trace_key);
+    summary.service_name = order.empty()
+                               ? (session.spans.empty() ? "" : session.spans.front().service_name)
+                               : order.front()->service_name;
+
+    int64_t min_start = std::numeric_limits<int64_t>::max();
+    int64_t max_end = std::numeric_limits<int64_t>::min();
+    bool has_end = false;
+    for (const auto& span : session.spans) {
+        min_start = std::min(min_start, span.start_time_ms);
+        if (span.end_time.has_value()) {
+            has_end = true;
+            max_end = std::max(max_end, span.end_time.value());
+        }
+    }
+
+    summary.start_time_ms = session.spans.empty() ? 0 : min_start;
+    summary.end_time_ms = has_end ? std::optional<int64_t>(max_end) : std::nullopt;
+    summary.duration_ms = (has_end && summary.start_time_ms > 0) ? (max_end - summary.start_time_ms) : 0;
+    summary.span_count = session.spans.size();
+    summary.token_count = session.token_count;
+    summary.risk_level = "unknown";
+
+    return summary;
+}
+
+std::vector<TraceRepository::TraceSpanRecord> TraceSessionManager::BuildSpanRecords(const TraceSession& session,
+                                                                                    const std::string& trace_id)
+{
+    std::vector<TraceRepository::TraceSpanRecord> span_records;
+    span_records.reserve(session.spans.size());
+
+    for (const auto& span : session.spans) {
+        TraceRepository::TraceSpanRecord record;
+        record.trace_id = trace_id;
+        record.span_id = std::to_string(span.span_id);
+        record.parent_id = span.parent_span_id.has_value()
+                               ? std::optional<std::string>(std::to_string(span.parent_span_id.value()))
+                               : std::nullopt;
+        record.service_name = span.service_name;
+        record.operation = span.name;
+        record.start_time_ms = span.start_time_ms;
+        record.duration_ms = span.end_time.has_value() ? (span.end_time.value() - span.start_time_ms) : 0;
+
+        if (!span.status.has_value()) {
+            record.status = "UNSET";
+        } else {
+            switch (span.status.value()) {
+                case SpanEvent::Status::Unset:
+                    record.status = "UNSET";
+                    break;
+                case SpanEvent::Status::Ok:
+                    record.status = "OK";
+                    break;
+                case SpanEvent::Status::Error:
+                    record.status = "ERROR";
+                    break;
+            }
+        }
+
+        record.attributes_json = nlohmann::json(span.attributes).dump();
+        span_records.push_back(std::move(record));
+    }
+
+    return span_records;
+}
+
+TraceRepository::TraceAnalysisRecord TraceSessionManager::BuildAnalysisRecord(const std::string& trace_id,
+                                                                              const LogAnalysisResult& analysis)
+{
+    TraceRepository::TraceAnalysisRecord analysis_record;
+    nlohmann::json risk_json = analysis.risk_level;
+
+    analysis_record.trace_id = trace_id;
+    analysis_record.risk_level = risk_json.get<std::string>();
+    analysis_record.summary = analysis.summary;
+    analysis_record.root_cause = analysis.root_cause;
+    analysis_record.solution = analysis.solution;
+    analysis_record.confidence = 0.0;
+    analysis_record.tags_json = "[]";
+
+    return analysis_record;
 }
