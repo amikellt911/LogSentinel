@@ -64,7 +64,7 @@ TEST_F(TraceSessionManagerTest, TraceEndTriggersDispatch)
 TEST_F(TraceSessionManagerTest, BuildTraceIndexRootsAndChildren)
 {
     TraceSessionManager manager(nullptr, nullptr, nullptr, 10, 1000);
-    TraceSession session(10, 1000);
+    TraceSession session(10);
     session.trace_key = 1;
 
     SpanEvent root = MakeSpan(1, 1, 10);
@@ -87,7 +87,7 @@ TEST_F(TraceSessionManagerTest, BuildTraceIndexRootsAndChildren)
 TEST_F(TraceSessionManagerTest, SerializeTraceSortsChildrenByStartTime)
 {
     TraceSessionManager manager(nullptr, nullptr, nullptr, 10, 1000);
-    TraceSession session(10, 1000);
+    TraceSession session(10);
     session.trace_key = 1;
 
     SpanEvent root = MakeSpan(1, 1, 10);

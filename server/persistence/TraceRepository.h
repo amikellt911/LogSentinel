@@ -1,15 +1,18 @@
 #pragma once
 
-#include <cstdint>
-#include <optional>
 #include <string>
-#include <vector>
+#include "persistence/TraceTypes.h"
 
 // TraceRepository 作为 Trace 持久化的抽象接口，便于后续替换不同存储实现。
 class TraceRepository
 {
 public:
     virtual ~TraceRepository() = default;
+
+    using TraceSummary = persistence::TraceSummary;
+    using TraceSpanRecord = persistence::TraceSpanRecord;
+    using TraceAnalysisRecord = persistence::TraceAnalysisRecord;
+    using PromptDebugRecord = persistence::PromptDebugRecord;
 
     // 最小表结构建议（用于 TraceExplorer）：
     // 1) trace_summary: trace_id, service_name, start_time_ms, end_time_ms, duration_ms,
@@ -19,52 +22,6 @@ public:
     // 3) trace_analysis: trace_id, risk_level, summary, root_cause, solution, confidence
     // 4) prompt_debug（可选）: trace_id, input, output, metadata
 
-    struct TraceSummary
-    {
-        std::string trace_id;
-        std::string service_name;
-        int64_t start_time_ms = 0;
-        std::optional<int64_t> end_time_ms;
-        int64_t duration_ms = 0;
-        size_t span_count = 0;
-        size_t token_count = 0;
-        std::string risk_level;
-    };
-
-    struct TraceSpanRecord
-    {
-        std::string trace_id;
-        std::string span_id;
-        std::optional<std::string> parent_id;
-        std::string service_name;
-        std::string operation;
-        int64_t start_time_ms = 0;
-        int64_t duration_ms = 0;
-        std::string status;
-        std::string attributes_json;
-    };
-
-    struct TraceAnalysisRecord
-    {
-        std::string trace_id;
-        std::string risk_level;
-        std::string summary;
-        std::string root_cause;
-        std::string solution;
-        double confidence = 0.0;
-    };
-
-    struct PromptDebugRecord
-    {
-        std::string trace_id;
-        std::string input_json;
-        std::string output_json;
-        // metadata 直接拆字段，便于查询与展示。
-        std::string model;
-        int64_t duration_ms = 0;
-        size_t total_tokens = 0;
-        std::string timestamp;
-    };
 
     // Trace 聚合完成后存储 summary 与 spans，供列表与详情查询。
     virtual bool SaveTraceSummary(const TraceSummary& summary) = 0;
@@ -73,4 +30,10 @@ public:
     virtual bool SaveTraceAnalysis(const TraceAnalysisRecord& analysis) = 0;
     // Prompt 调试信息存储，便于后续排查与回溯。
     virtual bool SavePromptDebug(const PromptDebugRecord& record) = 0;
+
+    // 批量保存聚合结果，优先用于主线闭环；分析与调试信息可为空指针。
+    virtual bool SaveTraceBatch(const TraceSummary& summary,
+                                const std::vector<TraceSpanRecord>& spans,
+                                const TraceAnalysisRecord* analysis,
+                                const PromptDebugRecord* prompt_debug) = 0;
 };

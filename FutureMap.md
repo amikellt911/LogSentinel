@@ -16,6 +16,7 @@
 ### pybind11 代替 C++ 与 Python 之间的 HTTP 交流
 ### LangGraph/Agent
 ### SQLite/B-Tree 迁移到 RocksDB/LSM-Tree
+### 线程池任务队列升级为无锁 MPSC Ring Buffer
 
 ## 可能增强点（占位）
 ### 增强点一（待补充）

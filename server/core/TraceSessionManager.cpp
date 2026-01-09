@@ -36,7 +36,7 @@ bool TraceSessionManager::Push(const SpanEvent& span)
 {
     auto iter = index_by_trace_.find(span.trace_key);
     if (iter == index_by_trace_.end()) {
-        auto session = std::make_unique<TraceSession>(capacity_, token_limit_);
+        auto session = std::make_unique<TraceSession>(capacity_);
         session->trace_key = span.trace_key;
         sessions_.push_back(std::move(session));
         index_by_trace_[span.trace_key] = sessions_.size() - 1;
@@ -116,24 +116,18 @@ void TraceSessionManager::Dispatch(size_t trace_key)
 
         TraceRepository::TraceSummary summary =
             manager->BuildTraceSummary(*session_shared, order);
-        if (!trace_repo->SaveTraceSummary(summary)) {
-            return;
-        }
-
         std::vector<TraceRepository::TraceSpanRecord> span_records =
             manager->BuildSpanRecords(order);
-        if (!trace_repo->SaveTraceSpans(summary.trace_id, span_records)) {
-            return;
+
+        TraceRepository::TraceAnalysisRecord analysis_record;
+        TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
+        if (trace_ai) {
+            LogAnalysisResult analysis = trace_ai->AnalyzeTrace(trace_payload);
+            analysis_record = manager->BuildAnalysisRecord(summary.trace_id, analysis);
+            analysis_ptr = &analysis_record;
         }
 
-        if (!trace_ai) {
-            return;
-        }
-
-        LogAnalysisResult analysis = trace_ai->AnalyzeTrace(trace_payload);
-        TraceRepository::TraceAnalysisRecord analysis_record =
-            manager->BuildAnalysisRecord(summary.trace_id, analysis);
-        trace_repo->SaveTraceAnalysis(analysis_record);
+        trace_repo->SaveTraceBatch(summary, span_records, analysis_ptr, nullptr);
     });
 }
 
