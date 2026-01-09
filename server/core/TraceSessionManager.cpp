@@ -307,7 +307,6 @@ TraceRepository::TraceSummary TraceSessionManager::BuildTraceSummary(const Trace
     summary.span_count = session.spans.size();
     summary.token_count = session.token_count;
     summary.risk_level = "unknown";
-    summary.tags_json = "[]";
 
     return summary;
 }
@@ -369,7 +368,6 @@ TraceRepository::TraceAnalysisRecord TraceSessionManager::BuildAnalysisRecord(co
     analysis_record.root_cause = analysis.root_cause;
     analysis_record.solution = analysis.solution;
     analysis_record.confidence = 0.0;
-    analysis_record.tags_json = "[]";
 
     return analysis_record;
 }

@@ -29,7 +29,6 @@ public:
         size_t span_count = 0;
         size_t token_count = 0;
         std::string risk_level;
-        std::string tags_json;
     };
 
     struct TraceSpanRecord
@@ -53,7 +52,6 @@ public:
         std::string root_cause;
         std::string solution;
         double confidence = 0.0;
-        std::string tags_json;
     };
 
     struct PromptDebugRecord

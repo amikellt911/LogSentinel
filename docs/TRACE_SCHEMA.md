@@ -13,8 +13,7 @@ CREATE TABLE IF NOT EXISTS trace_summary (
   duration_ms INTEGER NOT NULL,
   span_count INTEGER NOT NULL,
   token_count INTEGER NOT NULL,
-  risk_level TEXT NOT NULL,
-  tags_json TEXT NOT NULL
+  risk_level TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS trace_span (
@@ -38,7 +37,6 @@ CREATE TABLE IF NOT EXISTS trace_analysis (
   root_cause TEXT NOT NULL,
   solution TEXT NOT NULL,
   confidence REAL NOT NULL,
-  tags_json TEXT NOT NULL,
   FOREIGN KEY (trace_id) REFERENCES trace_summary(trace_id)
 );
 
