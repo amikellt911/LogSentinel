@@ -29,6 +29,7 @@ public:
         size_t span_count = 0;
         size_t token_count = 0;
         std::string risk_level;
+        std::string tags_json;
     };
 
     struct TraceSpanRecord

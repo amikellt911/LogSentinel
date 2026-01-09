@@ -6,7 +6,7 @@
 #include <limits>
 #include <nlohmann/json.hpp>
 
-TraceSession::TraceSession(size_t capacity, size_t token_limit)
+TraceSession::TraceSession(size_t capacity)
     : capacity(capacity)
 {
     spans.reserve(capacity);
@@ -32,7 +32,7 @@ size_t TraceSessionManager::size() const
     return sessions_.size();
 }
 
-void TraceSessionManager::Push(const SpanEvent& span)
+bool TraceSessionManager::Push(const SpanEvent& span)
 {
     auto iter = index_by_trace_.find(span.trace_key);
     if (iter == index_by_trace_.end()) {
@@ -50,7 +50,7 @@ void TraceSessionManager::Push(const SpanEvent& span)
             session.duplicate_span_id = span.span_id;
         }
         Dispatch(session.trace_key);
-        return;
+        return true;
     }
 
     // 先按到达顺序追加，后续聚合阶段再按 parent_id 重建结构。
@@ -59,18 +59,21 @@ void TraceSessionManager::Push(const SpanEvent& span)
 
     if (span.trace_end.has_value() && span.trace_end.value()) {
         Dispatch(session.trace_key);
-        return;
+        return true;
     }
 
     if (token_limit_ > 0 && session.token_count >= token_limit_) {
         Dispatch(session.trace_key);
-        return;
+        return true;
     }
 
     if (session.capacity > 0 && session.spans.size() >= session.capacity) {
         // 达到容量上限即触发分发，避免单个 Trace 无限膨胀。
         Dispatch(session.trace_key);
     }
+
+    // 当前仅做本地写入与分发占位，先返回成功；后续接入线程池/存储失败时再返回 false。
+    return true;
 }
 
 void TraceSessionManager::Dispatch(size_t trace_key)
@@ -112,13 +115,13 @@ void TraceSessionManager::Dispatch(size_t trace_key)
         std::string trace_payload = manager->SerializeTrace(index, &order);
 
         TraceRepository::TraceSummary summary =
-            manager->BuildTraceSummary(*session_shared, trace_payload, order);
+            manager->BuildTraceSummary(*session_shared, order);
         if (!trace_repo->SaveTraceSummary(summary)) {
             return;
         }
 
         std::vector<TraceRepository::TraceSpanRecord> span_records =
-            manager->BuildSpanRecords(*session_shared, summary.trace_id);
+            manager->BuildSpanRecords(order);
         if (!trace_repo->SaveTraceSpans(summary.trace_id, span_records)) {
             return;
         }
@@ -279,7 +282,6 @@ std::string TraceSessionManager::SerializeTrace(const TraceIndex& index, std::ve
 }
 
 TraceRepository::TraceSummary TraceSessionManager::BuildTraceSummary(const TraceSession& session,
-                                                                     const std::string& payload,
                                                                      const std::vector<const SpanEvent*>& order)
 {
     TraceRepository::TraceSummary summary;
@@ -305,19 +307,24 @@ TraceRepository::TraceSummary TraceSessionManager::BuildTraceSummary(const Trace
     summary.span_count = session.spans.size();
     summary.token_count = session.token_count;
     summary.risk_level = "unknown";
+    summary.tags_json = "[]";
 
     return summary;
 }
 
-std::vector<TraceRepository::TraceSpanRecord> TraceSessionManager::BuildSpanRecords(const TraceSession& session,
-                                                                                    const std::string& trace_id)
+std::vector<TraceRepository::TraceSpanRecord> TraceSessionManager::BuildSpanRecords(
+    const std::vector<const SpanEvent*>& order)
 {
     std::vector<TraceRepository::TraceSpanRecord> span_records;
-    span_records.reserve(session.spans.size());
+    span_records.reserve(order.size());
 
-    for (const auto& span : session.spans) {
+    for (const SpanEvent* span_ptr : order) {
+        if (!span_ptr) {
+            continue;
+        }
+        const SpanEvent& span = *span_ptr;
         TraceRepository::TraceSpanRecord record;
-        record.trace_id = trace_id;
+        record.trace_id = std::to_string(span.trace_key);
         record.span_id = std::to_string(span.span_id);
         record.parent_id = span.parent_span_id.has_value()
                                ? std::optional<std::string>(std::to_string(span.parent_span_id.value()))

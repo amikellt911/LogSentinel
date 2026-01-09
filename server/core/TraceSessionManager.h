@@ -59,7 +59,7 @@ struct SpanEvent
 struct TraceSession
 {
     // capacity 作为每条 Trace 的最大 span 容量，用于触发提前分发。
-    explicit TraceSession(size_t capacity, size_t token_limit);
+    explicit TraceSession(size_t capacity);
     // 先用 size_t 作为 trace_id 的紧凑标识，减少基础结构的负担，后续再视需求调整为原始 ID。
     size_t trace_key = 0;
     size_t capacity = 0;
@@ -86,7 +86,7 @@ public:
     ~TraceSessionManager();
 
     size_t size() const;
-    void Push(const SpanEvent& span);
+    bool Push(const SpanEvent& span);
     void Dispatch(size_t trace_key);
 
 private:
@@ -115,10 +115,8 @@ private:
 
     // 将复杂组装逻辑拆分为独立步骤，避免在 Dispatch 中堆叠细节，便于单测与迭代。
     TraceRepository::TraceSummary BuildTraceSummary(const TraceSession& session,
-                                                    const std::string& payload,
                                                     const std::vector<const SpanEvent*>& order);
-    std::vector<TraceRepository::TraceSpanRecord> BuildSpanRecords(const TraceSession& session,
-                                                                   const std::string& trace_id);
+    std::vector<TraceRepository::TraceSpanRecord> BuildSpanRecords(const std::vector<const SpanEvent*>& order);
     TraceRepository::TraceAnalysisRecord BuildAnalysisRecord(const std::string& trace_id,
                                                              const LogAnalysisResult& analysis);
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。
