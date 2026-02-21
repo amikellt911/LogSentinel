@@ -160,10 +160,15 @@ std::string TraceSessionManager::SerializeTrace(const TraceIndex& index, std::ve
     nlohmann::json output;
     std::unordered_set<size_t> visited;
     visited.reserve(index.span_map.size());
+    bool has_cycle = false;
+    std::vector<size_t> cycle_spans;
 
-    auto build_node = [&index, order, &visited](size_t span_id, const auto& self_ref) -> nlohmann::json {
+    auto build_node = [&index, order, &visited, &has_cycle, &cycle_spans](size_t span_id, const auto& self_ref) -> nlohmann::json {
         nlohmann::json node;
         if (!visited.insert(span_id).second) {
+            // 发现环时仅记录异常，避免继续递归导致无限循环。
+            has_cycle = true;
+            cycle_spans.push_back(span_id);
             return node;
         }
         auto span_iter = index.span_map.find(span_id);
@@ -270,6 +275,16 @@ std::string TraceSessionManager::SerializeTrace(const TraceIndex& index, std::ve
         if (!root_node.is_null() && !root_node.empty()) {
             output["spans"].push_back(std::move(root_node));
         }
+    }
+    if (has_cycle) {
+        nlohmann::json anomalies = nlohmann::json::array();
+        for (size_t span_id : cycle_spans) {
+            nlohmann::json item;
+            item["type"] = "cycle_detected";
+            item["span_id"] = span_id;
+            anomalies.push_back(std::move(item));
+        }
+        output["anomalies"] = std::move(anomalies);
     }
 
     return output.dump();

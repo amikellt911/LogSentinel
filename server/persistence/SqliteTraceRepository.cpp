@@ -194,8 +194,9 @@ bool SqliteTraceRepository::SaveTraceBatch(const TraceSummary& summary,
             persistence::checkSqliteError(db_, rc, "Prepare trace_summary insert");
             summary_stmt.reset(raw_stmt);
         }
-        sqlite3_bind_text(summary_stmt.get(), 1, summary.trace_id.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(summary_stmt.get(), 2, summary.service_name.c_str(), -1, SQLITE_TRANSIENT);
+        // 这里绑定的字符串来自入参对象，生命周期覆盖 sqlite3_step，因此使用 SQLITE_STATIC 减少拷贝。
+        sqlite3_bind_text(summary_stmt.get(), 1, summary.trace_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(summary_stmt.get(), 2, summary.service_name.c_str(), -1, SQLITE_STATIC);
         sqlite3_bind_int64(summary_stmt.get(), 3, summary.start_time_ms);
         if (summary.end_time_ms.has_value()) {
             sqlite3_bind_int64(summary_stmt.get(), 4, summary.end_time_ms.value());
@@ -205,7 +206,7 @@ bool SqliteTraceRepository::SaveTraceBatch(const TraceSummary& summary,
         sqlite3_bind_int64(summary_stmt.get(), 5, summary.duration_ms);
         sqlite3_bind_int64(summary_stmt.get(), 6, static_cast<sqlite3_int64>(summary.span_count));
         sqlite3_bind_int64(summary_stmt.get(), 7, static_cast<sqlite3_int64>(summary.token_count));
-        sqlite3_bind_text(summary_stmt.get(), 8, summary.risk_level.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(summary_stmt.get(), 8, summary.risk_level.c_str(), -1, SQLITE_STATIC);
         rc = sqlite3_step(summary_stmt.get());
         persistence::checkSqliteError(db_, rc, "Insert trace_summary");
 
@@ -224,19 +225,19 @@ bool SqliteTraceRepository::SaveTraceBatch(const TraceSummary& summary,
         for (const auto& span : spans) {
             sqlite3_reset(span_stmt.get());
             sqlite3_clear_bindings(span_stmt.get());
-            sqlite3_bind_text(span_stmt.get(), 1, span.trace_id.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(span_stmt.get(), 2, span.span_id.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(span_stmt.get(), 1, span.trace_id.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(span_stmt.get(), 2, span.span_id.c_str(), -1, SQLITE_STATIC);
             if (span.parent_id.has_value()) {
-                sqlite3_bind_text(span_stmt.get(), 3, span.parent_id->c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(span_stmt.get(), 3, span.parent_id->c_str(), -1, SQLITE_STATIC);
             } else {
                 sqlite3_bind_null(span_stmt.get(), 3);
             }
-            sqlite3_bind_text(span_stmt.get(), 4, span.service_name.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(span_stmt.get(), 5, span.operation.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(span_stmt.get(), 4, span.service_name.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(span_stmt.get(), 5, span.operation.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_int64(span_stmt.get(), 6, span.start_time_ms);
             sqlite3_bind_int64(span_stmt.get(), 7, span.duration_ms);
-            sqlite3_bind_text(span_stmt.get(), 8, span.status.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(span_stmt.get(), 9, span.attributes_json.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(span_stmt.get(), 8, span.status.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(span_stmt.get(), 9, span.attributes_json.c_str(), -1, SQLITE_STATIC);
             rc = sqlite3_step(span_stmt.get());
             persistence::checkSqliteError(db_, rc, "Insert trace_span");
         }
@@ -254,11 +255,11 @@ bool SqliteTraceRepository::SaveTraceBatch(const TraceSummary& summary,
                 persistence::checkSqliteError(db_, rc, "Prepare trace_analysis insert");
                 analysis_stmt.reset(raw_stmt);
             }
-            sqlite3_bind_text(analysis_stmt.get(), 1, analysis->trace_id.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(analysis_stmt.get(), 2, analysis->risk_level.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(analysis_stmt.get(), 3, analysis->summary.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(analysis_stmt.get(), 4, analysis->root_cause.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(analysis_stmt.get(), 5, analysis->solution.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(analysis_stmt.get(), 1, analysis->trace_id.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(analysis_stmt.get(), 2, analysis->risk_level.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(analysis_stmt.get(), 3, analysis->summary.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(analysis_stmt.get(), 4, analysis->root_cause.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(analysis_stmt.get(), 5, analysis->solution.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_double(analysis_stmt.get(), 6, analysis->confidence);
             rc = sqlite3_step(analysis_stmt.get());
             persistence::checkSqliteError(db_, rc, "Insert trace_analysis");
@@ -277,13 +278,13 @@ bool SqliteTraceRepository::SaveTraceBatch(const TraceSummary& summary,
                 persistence::checkSqliteError(db_, rc, "Prepare prompt_debug insert");
                 prompt_stmt.reset(raw_stmt);
             }
-            sqlite3_bind_text(prompt_stmt.get(), 1, prompt_debug->trace_id.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(prompt_stmt.get(), 2, prompt_debug->input_json.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(prompt_stmt.get(), 3, prompt_debug->output_json.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(prompt_stmt.get(), 4, prompt_debug->model.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(prompt_stmt.get(), 1, prompt_debug->trace_id.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(prompt_stmt.get(), 2, prompt_debug->input_json.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(prompt_stmt.get(), 3, prompt_debug->output_json.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(prompt_stmt.get(), 4, prompt_debug->model.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_int64(prompt_stmt.get(), 5, prompt_debug->duration_ms);
             sqlite3_bind_int64(prompt_stmt.get(), 6, static_cast<sqlite3_int64>(prompt_debug->total_tokens));
-            sqlite3_bind_text(prompt_stmt.get(), 7, prompt_debug->timestamp.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(prompt_stmt.get(), 7, prompt_debug->timestamp.c_str(), -1, SQLITE_STATIC);
             rc = sqlite3_step(prompt_stmt.get());
             persistence::checkSqliteError(db_, rc, "Insert prompt_debug");
         }

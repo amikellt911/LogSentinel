@@ -84,14 +84,8 @@ async def analyze_log(provider_name: str, request: Request):
     单次日志分析端点。
     接收纯文本格式的日志。
     """
-    provider = providers.get(provider_name)
-    if not provider:
-        raise HTTPException(status_code=404, detail=f"未找到或未配置 Provider '{provider_name}'。")
-
-    try:
-        log_text = (await request.body()).decode('utf-8')
-        # 优化的 Prompt：明确分析要求和风险等级判断标准
-        default_prompt = """You are a professional software engineer and log analysis expert. Analyze the following log entry and provide:
+    # 优化的 Prompt：明确分析要求和风险等级判断标准
+    default_prompt = """You are a professional software engineer and log analysis expert. Analyze the following log entry and provide:
 
 1. A concise summary of the error or issue
 2. Risk level assessment:
@@ -105,11 +99,48 @@ async def analyze_log(provider_name: str, request: Request):
 4. Actionable solution or remediation steps
 
 Provide your analysis in a structured format."""
-        
+    provider = providers.get(provider_name)
+    if not provider:
+        raise HTTPException(status_code=404, detail=f"未找到或未配置 Provider '{provider_name}'。")
+
+    try:
+        log_text = (await request.body()).decode('utf-8')
+        # 注意: analyze() 仅接收来自 C++ 的原始文本，因此无法在此提取 api_key/model。
+        # 我们使用默认的 Provider 配置。
+        result = provider.analyze_trace(trace_text=log_text, prompt=default_prompt)
+        return {"provider": provider_name, "analysis": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"分析过程中发生错误: {e}")
+
+@app.post("/analyze/trace/{provider_name}")
+async def analyze_trace(provider_name: str, request: Request):
+    """
+    Trace 聚合结果分析端点。
+    目前与单次日志分析保持一致，便于前后端统一接入路径。
+    """
+    default_prompt = """You are a professional software engineer and log analysis expert. Analyze the following log entry and provide:
+
+1. A concise summary of the error or issue
+2. Risk level assessment:
+   - 'critical': System crashes, data loss, security vulnerabilities, critical service failures
+   - 'error': Performance degradation, non-critical errors, warnings that may escalate
+   - 'warning': Informational messages, minor warnings, expected errors
+   - 'info': Normal operational logs, state changes, heartbeats
+   - 'safe': Verified safe operations
+   - 'unknown': Unintelligible logs, binary data, or insufficient context to determine risk
+3. Root cause analysis based on the log content
+4. Actionable solution or remediation steps
+
+Provide your analysis in a structured format."""
+    provider = providers.get(provider_name)
+    if not provider:
+        raise HTTPException(status_code=404, detail=f"未找到或未配置 Provider '{provider_name}'。")
+
+    try:
+        log_text = (await request.body()).decode('utf-8')
         # 注意: analyze() 仅接收来自 C++ 的原始文本，因此无法在此提取 api_key/model。
         # 我们使用默认的 Provider 配置。
         result = provider.analyze(log_text=log_text, prompt=default_prompt)
-        
         return {"provider": provider_name, "analysis": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"分析过程中发生错误: {e}")

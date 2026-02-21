@@ -82,6 +82,12 @@ class GeminiProvider(AIProvider):
             # 返回一个符合 JSON 结构的错误信息，以免前端解析失败
             return '{"summary": "Error calling AI", "risk_level": "critical", "root_cause": "API Error", "solution": "Check logs"}'
 
+    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
+        """
+        Trace 分析接口暂未单独实现，先占位以避免接口缺失。
+        """
+        raise NotImplementedError("GeminiProvider 的 Trace 分析尚未实现")
+
     def chat(self, history: List[Dict[str, Any]], new_message: str) -> str:
         """
         实现多轮对话功能。

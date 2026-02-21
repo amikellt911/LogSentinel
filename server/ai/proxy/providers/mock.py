@@ -62,6 +62,41 @@ class MockProvider(AIProvider):
 
         return json.dumps(result)
 
+    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
+        """
+        模拟 Trace 聚合结果分析。
+        这里单独实现而不是复用 analyze，便于后续扩展 Trace 专用策略。
+        """
+        actual_delay = self.delay + random.uniform(0, 0.1)
+        time.sleep(actual_delay)
+
+        trace_lower = trace_text.lower()
+
+        risk = "safe"
+        summary = "Trace aggregation looks normal."
+
+        if "critical" in trace_lower or "fatal" in trace_lower:
+            risk = "critical"
+            summary = "Trace indicates critical failure across spans."
+        elif "error" in trace_lower or "fail" in trace_lower or "exception" in trace_lower:
+            risk = "error"
+            summary = "Trace shows error patterns across spans."
+        elif "warn" in trace_lower:
+            risk = "warning"
+            summary = "Trace includes warning signals."
+        elif "info" in trace_lower:
+            risk = "info"
+            summary = "Trace contains informational spans."
+
+        result = {
+            "summary": summary,
+            "risk_level": risk,
+            "root_cause": f"Mocked trace root cause for: {trace_text[:30]}...",
+            "solution": "This is a mock trace solution. 1. Inspect trace. 2. Correlate spans. 3. Verify service health."
+        }
+
+        return json.dumps(result)
+
     def chat(self, history: List[Dict[str, Any]], new_message: str) -> str:
         """
         模拟多轮对话。

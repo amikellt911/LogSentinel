@@ -17,6 +17,13 @@ class AIProvider(ABC):
         pass
 
     @abstractmethod
+    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
+        """
+        执行一次 Trace 聚合结果的分析任务。
+        """
+        pass
+
+    @abstractmethod
     def chat(self, history: List[Dict[str, Any]], new_message: str) -> str:
         """
         根据提供的历史记录，进行一次多轮对话。
