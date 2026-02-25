@@ -56,6 +56,7 @@ add_library(http_module STATIC
 
 add_library(util_module STATIC
     util/TraceIdGenerator.cpp
+    util/DevSubprocessManager.cpp
 )
 
 add_library(core_module STATIC

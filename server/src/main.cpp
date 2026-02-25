@@ -17,6 +17,25 @@
 #include "handlers/HistoryHandler.h"
 #include "handlers/ConfigHandler.h"
 #include "core/LogBatcher.h"
+#include "util/DevSubprocessManager.h"
+#include <filesystem>
+#include <optional>
+#include <vector>
+
+namespace {
+std::optional<std::string> ResolveScriptPath(const std::vector<std::string>& candidates)
+{
+    for (const auto& candidate : candidates) {
+        const std::filesystem::path path(candidate);
+        if (std::filesystem::exists(path)) {
+            // 转成绝对路径是为了避免主进程后续工作目录变化导致子进程路径失效。
+            return std::filesystem::absolute(path).string();
+        }
+    }
+    return std::nullopt;
+}
+} // namespace
+
 class testServer : public HttpServer
 {
 public:
@@ -35,16 +54,61 @@ int main(int argc, char* argv[])
 {
     std::string db_path = "LogSentinel.db"; // 生产环境默认名
     int port = 8080;
+    bool auto_start_proxy = false;
+    bool auto_start_webhook_mock = false;
     //简单的命令行参数解析
-    // 支持格式: ./LogSentinel --db <path> --port <port>
+    // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--db" && i + 1 < argc) {
             db_path = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
             port = std::stoi(argv[++i]);
+        } else if (arg == "--auto-start-deps") {
+            auto_start_proxy = true;
+            auto_start_webhook_mock = true;
+        } else if (arg == "--auto-start-proxy") {
+            auto_start_proxy = true;
+        } else if (arg == "--auto-start-webhook-mock") {
+            auto_start_webhook_mock = true;
         }
     }
+
+    DevSubprocessManager dev_process_manager;
+    if (auto_start_proxy) {
+        std::optional<std::string> proxy_script = ResolveScriptPath({
+            "server/ai/proxy/main.py",
+            "ai/proxy/main.py",
+            "../ai/proxy/main.py",
+            "../../server/ai/proxy/main.py"
+        });
+        if (!proxy_script.has_value()) {
+            std::cerr << "Fatal Error: cannot find AI proxy script (main.py)." << std::endl;
+            return -1;
+        }
+        if (!dev_process_manager.EnsurePythonService("ai-proxy", proxy_script.value(), 8001)) {
+            std::cerr << "Fatal Error: AI proxy failed to start." << std::endl;
+            return -1;
+        }
+    }
+
+    if (auto_start_webhook_mock) {
+        std::optional<std::string> webhook_script = ResolveScriptPath({
+            "server/tests/mock_webhook_server.py",
+            "tests/mock_webhook_server.py",
+            "../tests/mock_webhook_server.py",
+            "../../server/tests/mock_webhook_server.py"
+        });
+        if (!webhook_script.has_value()) {
+            std::cerr << "Fatal Error: cannot find mock webhook server script." << std::endl;
+            return -1;
+        }
+        if (!dev_process_manager.EnsurePythonService("mock-webhook", webhook_script.value(), 9999)) {
+            std::cerr << "Fatal Error: mock webhook server failed to start." << std::endl;
+            return -1;
+        }
+    }
+
     std::shared_ptr<SqliteLogRepository> persistence;
     try
     {
@@ -77,6 +141,10 @@ int main(int argc, char* argv[])
     auto config_repo = std::make_shared<SqliteConfigRepository>(db_path);
     //std::vector<std::string> urls = config_repo->getActiveWebhookUrls();
     std::vector<std::string> urls;
+    if (auto_start_webhook_mock) {
+        // 开发时自动注入本地 webhook 地址，避免“服务已拉起但通知目标为空”的调试盲区。
+        urls.push_back("http://127.0.0.1:9999/webhook");
+    }
     std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(urls);
     
     std::shared_ptr<Router> router = std::make_shared<Router>();
