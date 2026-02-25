@@ -18,3 +18,7 @@
 - [x] 同步 TraceSessionManager 调用点与 SqliteTraceRepository 相关测试
 - [x] 编译并运行 SqliteTraceRepository 相关测试验证改名无回归
 - [x] 追加本次命名重构 dev-log 记录
+- [x] 实现 SaveSingleTraceSummary/Spans/Analysis/PromptDebug 四个接口的 SQLite 写入逻辑
+- [x] 为四个单表写入接口补充最小回归测试（成功与关键失败场景）
+- [x] 编译并运行 test_sqlite_trace_repo 验证无回归
+- [x] 追加本次补全实现 dev-log 记录

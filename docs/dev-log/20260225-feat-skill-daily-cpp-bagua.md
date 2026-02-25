@@ -54,3 +54,31 @@
 - 只改实现不改抽象接口，会导致调用方仍沿用旧语义，重构价值被抵消。
 - 只改函数名不改测试名，会在排查失败时继续出现“Batch=批量写库”的误导。
 - 集成测试依赖外部 AI Proxy，若本地未启动会出现与本次重命名无关的失败，需要和单元测试结果分开解读。
+
+---
+
+## 追加记录：补齐 TraceRepository 四个单表写入接口实现
+
+## Git Commit Message
+`feat(persistence): 完成Trace单表写入接口并补充回归测试`
+
+## Modification
+- `server/persistence/SqliteTraceRepository.cpp`
+- `server/tests/SqliteTraceRepository_test.cpp`
+- `docs/todo-list/Todo_TraceRepository.md`
+
+## Learning Tips
+
+### Newbie Tips
+- `bool` 返回风格的仓储接口，建议统一“内部抛异常，边界层 catch 后返回 false”，这样调用方处理路径更稳定。
+- 涉及多行写入（如 spans）即使是“单条 trace”也应使用事务，否则中途失败会造成部分落库。
+
+### Function Explanation
+- `sqlite3_prepare_v2`：预编译 SQL 语句，配合参数绑定可避免字符串拼接导致的 SQL 注入风险。
+- `sqlite3_reset + sqlite3_clear_bindings`：复用同一个 statement 时必须先重置执行状态和旧参数，避免上一轮绑定值污染下一轮。
+- `ROLLBACK`：事务失败时撤销已执行写入，保证接口语义与数据库状态一致。
+
+### Pitfalls
+- `SaveSingleTraceSpans` 若忽略入参 `trace_id` 与 `span.trace_id` 冲突，会写出同批次跨 trace 的脏数据。
+- `analysis/prompt_debug` 依赖 `trace_summary` 外键，先写子表会失败；这类失败应作为可预期业务失败返回 `false`。
+- 只实现功能不补失败场景测试，后续重构很容易把回滚/外键约束悄悄破坏。

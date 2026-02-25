@@ -128,31 +128,192 @@ SqliteTraceRepository::~SqliteTraceRepository()
 
 bool SqliteTraceRepository::SaveSingleTraceSummary(const TraceSummary& summary)
 {
-    // 仅占位，后续接入 SQLite 写入逻辑。
-    (void)summary;
-    return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        const char* sql_insert_summary = R"(
+            INSERT INTO trace_summary
+            (trace_id, service_name, start_time_ms, end_time_ms, duration_ms, span_count, token_count, risk_level)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        )";
+        persistence::StmtPtr summary_stmt;
+        {
+            sqlite3_stmt* raw_stmt = nullptr;
+            const int rc = sqlite3_prepare_v2(db_, sql_insert_summary, -1, &raw_stmt, nullptr);
+            persistence::checkSqliteError(db_, rc, "Prepare trace_summary insert");
+            summary_stmt.reset(raw_stmt);
+        }
+        // 这里沿用 SQLITE_STATIC：入参对象在 sqlite3_step 前保持存活，可以避免 SQLite 再做一次字符串拷贝。
+        sqlite3_bind_text(summary_stmt.get(), 1, summary.trace_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(summary_stmt.get(), 2, summary.service_name.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_int64(summary_stmt.get(), 3, summary.start_time_ms);
+        if (summary.end_time_ms.has_value()) {
+            sqlite3_bind_int64(summary_stmt.get(), 4, summary.end_time_ms.value());
+        } else {
+            sqlite3_bind_null(summary_stmt.get(), 4);
+        }
+        sqlite3_bind_int64(summary_stmt.get(), 5, summary.duration_ms);
+        sqlite3_bind_int64(summary_stmt.get(), 6, static_cast<sqlite3_int64>(summary.span_count));
+        sqlite3_bind_int64(summary_stmt.get(), 7, static_cast<sqlite3_int64>(summary.token_count));
+        sqlite3_bind_text(summary_stmt.get(), 8, summary.risk_level.c_str(), -1, SQLITE_STATIC);
+        const int rc = sqlite3_step(summary_stmt.get());
+        persistence::checkSqliteError(db_, rc, "Insert trace_summary");
+    } catch (const std::exception&) {
+        return false;
+    }
+    return true;
 }
 
 bool SqliteTraceRepository::SaveSingleTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans)
 {
-    // 仅占位，后续接入 SQLite 写入逻辑。
-    (void)trace_id;
-    (void)spans;
-    return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    if (spans.empty()) {
+        // 空集合直接成功返回，避免开启不必要事务，同时保持幂等调用语义。
+        return true;
+    }
+
+    char* errmsg = nullptr;
+    auto rollback = [this]() {
+        char* rollback_err = nullptr;
+        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &rollback_err);
+        if (rollback_err) {
+            sqlite3_free(rollback_err);
+        }
+    };
+
+    try {
+        int rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, &errmsg);
+        if (errmsg) {
+            sqlite3_free(errmsg);
+            errmsg = nullptr;
+        }
+        persistence::checkSqliteError(db_, rc, "Failed to begin trace_span transaction");
+
+        const char* sql_insert_span = R"(
+            INSERT INTO trace_span
+            (trace_id, span_id, parent_id, service_name, operation, start_time_ms, duration_ms, status, attributes_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+        )";
+        persistence::StmtPtr span_stmt;
+        {
+            sqlite3_stmt* raw_stmt = nullptr;
+            rc = sqlite3_prepare_v2(db_, sql_insert_span, -1, &raw_stmt, nullptr);
+            persistence::checkSqliteError(db_, rc, "Prepare trace_span insert");
+            span_stmt.reset(raw_stmt);
+        }
+
+        for (const auto& span : spans) {
+            sqlite3_reset(span_stmt.get());
+            sqlite3_clear_bindings(span_stmt.get());
+
+            if (!trace_id.empty() && !span.trace_id.empty() && span.trace_id != trace_id) {
+                // 显式拦截 trace_id 不一致，避免“调用方参数”和“记录内容”冲突时写入脏数据。
+                throw std::runtime_error("trace_id mismatch in SaveSingleTraceSpans");
+            }
+            const std::string& bind_trace_id = trace_id.empty() ? span.trace_id : trace_id;
+            sqlite3_bind_text(span_stmt.get(), 1, bind_trace_id.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(span_stmt.get(), 2, span.span_id.c_str(), -1, SQLITE_STATIC);
+            if (span.parent_id.has_value()) {
+                sqlite3_bind_text(span_stmt.get(), 3, span.parent_id->c_str(), -1, SQLITE_STATIC);
+            } else {
+                sqlite3_bind_null(span_stmt.get(), 3);
+            }
+            sqlite3_bind_text(span_stmt.get(), 4, span.service_name.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(span_stmt.get(), 5, span.operation.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_int64(span_stmt.get(), 6, span.start_time_ms);
+            sqlite3_bind_int64(span_stmt.get(), 7, span.duration_ms);
+            sqlite3_bind_text(span_stmt.get(), 8, span.status.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(span_stmt.get(), 9, span.attributes_json.c_str(), -1, SQLITE_STATIC);
+            rc = sqlite3_step(span_stmt.get());
+            persistence::checkSqliteError(db_, rc, "Insert trace_span");
+        }
+
+        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
+        if (errmsg) {
+            sqlite3_free(errmsg);
+            errmsg = nullptr;
+        }
+        persistence::checkSqliteError(db_, rc, "Commit trace_span transaction");
+    } catch (const std::exception&) {
+        rollback();
+        return false;
+    }
+    return true;
 }
 
 bool SqliteTraceRepository::SaveSingleTraceAnalysis(const TraceAnalysisRecord& analysis)
 {
-    // 仅占位，后续接入 SQLite 写入逻辑。
-    (void)analysis;
-    return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        const char* sql_insert_analysis = R"(
+            INSERT INTO trace_analysis
+            (trace_id, risk_level, summary, root_cause, solution, confidence)
+            VALUES (?, ?, ?, ?, ?, ?);
+        )";
+        persistence::StmtPtr analysis_stmt;
+        {
+            sqlite3_stmt* raw_stmt = nullptr;
+            const int rc = sqlite3_prepare_v2(db_, sql_insert_analysis, -1, &raw_stmt, nullptr);
+            persistence::checkSqliteError(db_, rc, "Prepare trace_analysis insert");
+            analysis_stmt.reset(raw_stmt);
+        }
+        sqlite3_bind_text(analysis_stmt.get(), 1, analysis.trace_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(analysis_stmt.get(), 2, analysis.risk_level.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(analysis_stmt.get(), 3, analysis.summary.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(analysis_stmt.get(), 4, analysis.root_cause.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(analysis_stmt.get(), 5, analysis.solution.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_double(analysis_stmt.get(), 6, analysis.confidence);
+        const int rc = sqlite3_step(analysis_stmt.get());
+        persistence::checkSqliteError(db_, rc, "Insert trace_analysis");
+    } catch (const std::exception&) {
+        return false;
+    }
+    return true;
 }
 
 bool SqliteTraceRepository::SaveSinglePromptDebug(const PromptDebugRecord& record)
 {
-    // 仅占位，后续接入 SQLite 写入逻辑。
-    (void)record;
-    return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        const char* sql_insert_prompt = R"(
+            INSERT INTO prompt_debug
+            (trace_id, input_json, output_json, model, duration_ms, total_tokens, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+        )";
+        persistence::StmtPtr prompt_stmt;
+        {
+            sqlite3_stmt* raw_stmt = nullptr;
+            const int rc = sqlite3_prepare_v2(db_, sql_insert_prompt, -1, &raw_stmt, nullptr);
+            persistence::checkSqliteError(db_, rc, "Prepare prompt_debug insert");
+            prompt_stmt.reset(raw_stmt);
+        }
+        sqlite3_bind_text(prompt_stmt.get(), 1, record.trace_id.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(prompt_stmt.get(), 2, record.input_json.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(prompt_stmt.get(), 3, record.output_json.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(prompt_stmt.get(), 4, record.model.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_int64(prompt_stmt.get(), 5, record.duration_ms);
+        sqlite3_bind_int64(prompt_stmt.get(), 6, static_cast<sqlite3_int64>(record.total_tokens));
+        sqlite3_bind_text(prompt_stmt.get(), 7, record.timestamp.c_str(), -1, SQLITE_STATIC);
+        const int rc = sqlite3_step(prompt_stmt.get());
+        persistence::checkSqliteError(db_, rc, "Insert prompt_debug");
+    } catch (const std::exception&) {
+        return false;
+    }
+    return true;
 }
 
 bool SqliteTraceRepository::SaveSingleTraceAtomic(const TraceSummary& summary,
