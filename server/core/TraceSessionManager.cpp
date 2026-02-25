@@ -127,7 +127,7 @@ void TraceSessionManager::Dispatch(size_t trace_key)
             analysis_ptr = &analysis_record;
         }
 
-        trace_repo->SaveTraceBatch(summary, span_records, analysis_ptr, nullptr);
+        trace_repo->SaveSingleTraceAtomic(summary, span_records, analysis_ptr, nullptr);
     });
 }
 

@@ -13,11 +13,11 @@ public:
     explicit SqliteTraceRepository(const std::string& db_path);
     ~SqliteTraceRepository();
 
-    bool SaveTraceSummary(const TraceSummary& summary) override;
-    bool SaveTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans) override;
-    bool SaveTraceAnalysis(const TraceAnalysisRecord& analysis) override;
-    bool SavePromptDebug(const PromptDebugRecord& record) override;
-    bool SaveTraceBatch(const TraceSummary& summary,
+    bool SaveSingleTraceSummary(const TraceSummary& summary) override;
+    bool SaveSingleTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans) override;
+    bool SaveSingleTraceAnalysis(const TraceAnalysisRecord& analysis) override;
+    bool SaveSinglePromptDebug(const PromptDebugRecord& record) override;
+    bool SaveSingleTraceAtomic(const TraceSummary& summary,
                         const std::vector<TraceSpanRecord>& spans,
                         const TraceAnalysisRecord* analysis,
                         const PromptDebugRecord* prompt_debug) override;

@@ -24,15 +24,15 @@ public:
 
 
     // Trace 聚合完成后存储 summary 与 spans，供列表与详情查询。
-    virtual bool SaveTraceSummary(const TraceSummary& summary) = 0;
-    virtual bool SaveTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans) = 0;
+    virtual bool SaveSingleTraceSummary(const TraceSummary& summary) = 0;
+    virtual bool SaveSingleTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans) = 0;
     // AI 分析完成后存储结果，供 Trace 详情展示。
-    virtual bool SaveTraceAnalysis(const TraceAnalysisRecord& analysis) = 0;
+    virtual bool SaveSingleTraceAnalysis(const TraceAnalysisRecord& analysis) = 0;
     // Prompt 调试信息存储，便于后续排查与回溯。
-    virtual bool SavePromptDebug(const PromptDebugRecord& record) = 0;
+    virtual bool SaveSinglePromptDebug(const PromptDebugRecord& record) = 0;
 
-    // 批量保存聚合结果，优先用于主线闭环；分析与调试信息可为空指针。
-    virtual bool SaveTraceBatch(const TraceSummary& summary,
+    // 单个 Trace 的多表原子写入；analysis 与 prompt_debug 可为空指针。
+    virtual bool SaveSingleTraceAtomic(const TraceSummary& summary,
                                 const std::vector<TraceSpanRecord>& spans,
                                 const TraceAnalysisRecord* analysis,
                                 const PromptDebugRecord* prompt_debug) = 0;

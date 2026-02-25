@@ -122,27 +122,27 @@ protected:
     std::string db_path;
 };
 
-TEST_F(SqliteTraceRepositoryTest, SaveTraceBatchSummaryAndSpans)
+TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicSummaryAndSpans)
 {
     persistence::TraceSummary summary = MakeSummary("trace-1");
     std::vector<persistence::TraceSpanRecord> spans;
     spans.push_back(MakeSpan("trace-1", "span-1", ""));
     spans.push_back(MakeSpan("trace-1", "span-2", "span-1"));
 
-    bool ok = repo->SaveTraceBatch(summary, spans, nullptr, nullptr);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, nullptr);
     EXPECT_TRUE(ok);
 
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 1);
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 2);
 }
 
-TEST_F(SqliteTraceRepositoryTest, SaveTraceBatchPersistsSummaryFields)
+TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicPersistsSummaryFields)
 {
     persistence::TraceSummary summary = MakeSummary("trace-1");
     std::vector<persistence::TraceSpanRecord> spans;
     spans.push_back(MakeSpan("trace-1", "span-1", ""));
 
-    bool ok = repo->SaveTraceBatch(summary, spans, nullptr, nullptr);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, nullptr);
     EXPECT_TRUE(ok);
 
     auto row = QuerySummary("trace-1");
@@ -153,7 +153,7 @@ TEST_F(SqliteTraceRepositoryTest, SaveTraceBatchPersistsSummaryFields)
     EXPECT_EQ(row->risk_level, summary.risk_level);
 }
 
-TEST_F(SqliteTraceRepositoryTest, SaveTraceBatchWithAnalysis)
+TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicWithAnalysis)
 {
     persistence::TraceSummary summary = MakeSummary("trace-2");
     std::vector<persistence::TraceSpanRecord> spans;
@@ -167,13 +167,13 @@ TEST_F(SqliteTraceRepositoryTest, SaveTraceBatchWithAnalysis)
     analysis.solution = "solution";
     analysis.confidence = 0.5;
 
-    bool ok = repo->SaveTraceBatch(summary, spans, &analysis, nullptr);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, &analysis, nullptr);
     EXPECT_TRUE(ok);
 
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 1);
 }
 
-TEST_F(SqliteTraceRepositoryTest, SaveTraceBatchWithPromptDebug)
+TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicWithPromptDebug)
 {
     persistence::TraceSummary summary = MakeSummary("trace-3");
     std::vector<persistence::TraceSpanRecord> spans;
@@ -188,19 +188,19 @@ TEST_F(SqliteTraceRepositoryTest, SaveTraceBatchWithPromptDebug)
     prompt.total_tokens = 685;
     prompt.timestamp = "2026-01-09 10:00:00";
 
-    bool ok = repo->SaveTraceBatch(summary, spans, nullptr, &prompt);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, &prompt);
     EXPECT_TRUE(ok);
 
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM prompt_debug;"), 1);
 }
 
-TEST_F(SqliteTraceRepositoryTest, SaveTraceBatchRejectsOrphanSpan)
+TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicRejectsOrphanSpan)
 {
     persistence::TraceSummary summary = MakeSummary("trace-4");
     std::vector<persistence::TraceSpanRecord> spans;
     spans.push_back(MakeSpan("trace-4", "span-1", ""));
 
-    bool ok = repo->SaveTraceBatch(summary, spans, nullptr, nullptr);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, nullptr);
     EXPECT_TRUE(ok);
 
     // 直接写入不存在 trace_summary 的 span，应触发外键失败并返回 false
@@ -209,7 +209,7 @@ TEST_F(SqliteTraceRepositoryTest, SaveTraceBatchRejectsOrphanSpan)
     std::vector<persistence::TraceSpanRecord> bad_spans;
     bad_spans.push_back(MakeSpan("missing-trace", "span-x", ""));
 
-    bool bad = repo->SaveTraceBatch(summary, bad_spans, nullptr, nullptr);
+    bool bad = repo->SaveSingleTraceAtomic(summary, bad_spans, nullptr, nullptr);
     EXPECT_FALSE(bad);
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 1);
 }

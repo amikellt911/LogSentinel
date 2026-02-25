@@ -13,3 +13,8 @@
 - [x] 增加批量保存接口占位
 - [x] 实现 SaveTraceBatch 事务骨架
 - [x] 移除 summary 的 raw_payload 与 tags，转移到 analysis
+- [x] 重命名 TraceRepository 五个保存接口为 Single/Atomic 语义
+- [x] 同步 SqliteTraceRepository 头文件与实现函数名
+- [x] 同步 TraceSessionManager 调用点与 SqliteTraceRepository 相关测试
+- [x] 编译并运行 SqliteTraceRepository 相关测试验证改名无回归
+- [x] 追加本次命名重构 dev-log 记录

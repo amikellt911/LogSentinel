@@ -126,14 +126,14 @@ SqliteTraceRepository::~SqliteTraceRepository()
     }
 }
 
-bool SqliteTraceRepository::SaveTraceSummary(const TraceSummary& summary)
+bool SqliteTraceRepository::SaveSingleTraceSummary(const TraceSummary& summary)
 {
     // 仅占位，后续接入 SQLite 写入逻辑。
     (void)summary;
     return false;
 }
 
-bool SqliteTraceRepository::SaveTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans)
+bool SqliteTraceRepository::SaveSingleTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans)
 {
     // 仅占位，后续接入 SQLite 写入逻辑。
     (void)trace_id;
@@ -141,21 +141,21 @@ bool SqliteTraceRepository::SaveTraceSpans(const std::string& trace_id, const st
     return false;
 }
 
-bool SqliteTraceRepository::SaveTraceAnalysis(const TraceAnalysisRecord& analysis)
+bool SqliteTraceRepository::SaveSingleTraceAnalysis(const TraceAnalysisRecord& analysis)
 {
     // 仅占位，后续接入 SQLite 写入逻辑。
     (void)analysis;
     return false;
 }
 
-bool SqliteTraceRepository::SavePromptDebug(const PromptDebugRecord& record)
+bool SqliteTraceRepository::SaveSinglePromptDebug(const PromptDebugRecord& record)
 {
     // 仅占位，后续接入 SQLite 写入逻辑。
     (void)record;
     return false;
 }
 
-bool SqliteTraceRepository::SaveTraceBatch(const TraceSummary& summary,
+bool SqliteTraceRepository::SaveSingleTraceAtomic(const TraceSummary& summary,
                                            const std::vector<TraceSpanRecord>& spans,
                                            const TraceAnalysisRecord* analysis,
                                            const PromptDebugRecord* prompt_debug)
