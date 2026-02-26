@@ -7,16 +7,19 @@
 #include "ai/AiProvider.h"  // 引入AI抽象接口
 #include "ai/GeminiApiAi.h"
 #include "ai/MockAI.h"
+#include "ai/MockTraceAi.h"
 #include <MiniMuduo/net/TcpConnection.h>
 #include <memory> // For std::unique_ptr
 #include "notification/WebhookNotifier.h"
 #include "persistence/SqliteConfigRepository.h"
+#include "persistence/SqliteTraceRepository.h"
 #include "http/Router.h"
 #include "handlers/LogHandler.h"
 #include "handlers/DashboardHandler.h"
 #include "handlers/HistoryHandler.h"
 #include "handlers/ConfigHandler.h"
 #include "core/LogBatcher.h"
+#include "core/TraceSessionManager.h"
 #include "util/DevSubprocessManager.h"
 #include <filesystem>
 #include <optional>
@@ -110,9 +113,11 @@ int main(int argc, char* argv[])
     }
 
     std::shared_ptr<SqliteLogRepository> persistence;
+    std::shared_ptr<SqliteTraceRepository> trace_repo;
     try
     {
         persistence = std::make_shared<SqliteLogRepository>(db_path);
+        trace_repo = std::make_shared<SqliteTraceRepository>(db_path);
     }
     catch (const std::exception &e)
     {
@@ -146,6 +151,18 @@ int main(int argc, char* argv[])
         urls.push_back("http://127.0.0.1:9999/webhook");
     }
     std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(urls);
+    std::shared_ptr<TraceAiProvider> trace_ai;
+    if (auto_start_proxy) {
+        // Trace 链路默认只在开发依赖已就绪时启用 AI，避免代理未启动导致分析异常影响主流程。
+        trace_ai = std::make_shared<MockTraceAi>();
+    }
+    std::shared_ptr<TraceSessionManager> trace_session_manager = std::make_shared<TraceSessionManager>(
+        &tpool,
+        trace_repo.get(),
+        trace_ai.get(),
+        /*capacity*/100,
+        /*token_limit*/0,
+        notifier.get());
     
     std::shared_ptr<Router> router = std::make_shared<Router>();
 
@@ -169,10 +186,13 @@ int main(int argc, char* argv[])
     //所以需要加上mutable或shared_ptr,因为他是指针，在const中，让他不会改变指向，但是可以改变值
     //LogHandler handler(&tpool,persistence,ai_client, notifier);
     // 注入 config_repo
-    auto handler = std::make_shared<LogHandler>(&tpool,persistence,batcher);
+    auto handler = std::make_shared<LogHandler>(&tpool, persistence, batcher, trace_session_manager.get());
 
     router->add("POST", "/logs", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         handler->handlePost(req, resp, conn);
+    });
+    router->add("POST", "/logs/spans", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        handler->handleTracePost(req, resp, conn);
     });
     router->add("GET", "/results/*", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         handler->handleGetResult(req, resp, conn);

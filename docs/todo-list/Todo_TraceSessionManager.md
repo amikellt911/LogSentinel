@@ -38,3 +38,9 @@
 - [x] 移除 WebhookNotifier 中的 risk_level 过滤，保持发送层纯适配
 - [x] 编译并运行 TraceSessionManager/LogBatcher 相关测试验证无回归
 - [x] 追加本次 Trace 告警触发链路 dev-log 记录
+- [x] 设计并实现 `/logs/spans` 入站处理骨架（LogHandler + TraceSessionManager）
+- [x] 在 `main.cpp` 注入 Trace 聚合依赖并注册 `/logs/spans` 路由
+- [x] 编译并执行最小回归测试，确认链路改动无编译回归
+- [x] 追加本轮 `/logs/spans` 链路打通 dev-log 记录
+- [x] 在 `LogHandler` 增加 Trace 字段白名单，自动吸收顶层未知字段到 `attributes`
+- [x] 验证“显式 attributes 优先、未知字段补充”的入站行为并完成构建回归

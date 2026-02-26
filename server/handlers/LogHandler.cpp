@@ -1,25 +1,250 @@
 #include "handlers/LogHandler.h"
-#include "threadpool/ThreadPool.h"
-#include "persistence/SqliteLogRepository.h"
-#include "ai/AiProvider.h"
-#include "notification/INotifier.h"
-#include "core/AnalysisTask.h"
-#include <nlohmann/json.hpp>
-#include "LogHandler.h"
 #include "core/LogBatcher.h"
+#include "core/AnalysisTask.h"
+#include "core/TraceSessionManager.h"
 #include "MiniMuduo/net/EventLoop.h"
+#include "persistence/SqliteLogRepository.h"
+#include "threadpool/ThreadPool.h"
+#include <algorithm>
+#include <cctype>
+#include <unordered_set>
+#include <nlohmann/json.hpp>
 
-// // 辅助函数：统一设置 CORS 头
-// static void addCorsHeaders(HttpResponse* resp) {
-//     resp->setHeader("Access-Control-Allow-Origin", "*");
-//     resp->setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-//     resp->setHeader("Access-Control-Allow-Headers", "Content-Type");
-// }
+namespace
+{
+std::string toLowerCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
 
-LogHandler::LogHandler(ThreadPool *tpool, std::shared_ptr<SqliteLogRepository> repo, std::shared_ptr<LogBatcher> batcher)
-    :tpool_(tpool),
-    repo_(repo),
-    batcher_(batcher)
+std::string JsonValueToAttributeString(const nlohmann::json& value)
+{
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    return value.dump();
+}
+
+bool IsKnownTraceSpanField(const std::string& key)
+{
+    static const std::unordered_set<std::string> known_fields = {
+        "trace_key",
+        "trace_id",
+        "span_id",
+        "parent_span_id",
+        "start_time_ms",
+        "end_time_ms",
+        "name",
+        "service_name",
+        "status",
+        "kind",
+        "trace_end",
+        "attributes"
+    };
+    return known_fields.find(key) != known_fields.end();
+}
+
+void CollectUnknownTopLevelAttributes(const nlohmann::json& body,
+                                      std::unordered_map<std::string, std::string>* attributes)
+{
+    for (auto it = body.begin(); it != body.end(); ++it) {
+        if (IsKnownTraceSpanField(it.key())) {
+            continue;
+        }
+        // 顶层未知字段统一收敛到 attributes，目的是让客户端新增指标时服务端无需立刻改协议。
+        // 这里用 emplace 不覆盖已存在键，确保显式 attributes 的值优先级更高，避免歧义覆盖。
+        attributes->emplace(it.key(), JsonValueToAttributeString(it.value()));
+    }
+}
+
+bool ParseRequiredUint(const nlohmann::json& body, const char* field, size_t* out, std::string* error)
+{
+    if (!body.contains(field)) {
+        *error = std::string("Missing required field: ") + field;
+        return false;
+    }
+    const nlohmann::json& value = body.at(field);
+    if (!value.is_number_integer() && !value.is_number_unsigned()) {
+        *error = std::string("Field must be integer: ") + field;
+        return false;
+    }
+    const int64_t parsed = value.get<int64_t>();
+    if (parsed < 0) {
+        *error = std::string("Field must be non-negative: ") + field;
+        return false;
+    }
+    *out = static_cast<size_t>(parsed);
+    return true;
+}
+
+bool ParseOptionalUint(const nlohmann::json& body, const char* field, std::optional<size_t>* out, std::string* error)
+{
+    if (!body.contains(field) || body.at(field).is_null()) {
+        return true;
+    }
+    size_t value = 0;
+    if (!ParseRequiredUint(body, field, &value, error)) {
+        return false;
+    }
+    *out = value;
+    return true;
+}
+
+bool ParseRequiredInt64(const nlohmann::json& body, const char* field, int64_t* out, std::string* error)
+{
+    if (!body.contains(field)) {
+        *error = std::string("Missing required field: ") + field;
+        return false;
+    }
+    const nlohmann::json& value = body.at(field);
+    if (!value.is_number_integer() && !value.is_number_unsigned()) {
+        *error = std::string("Field must be integer: ") + field;
+        return false;
+    }
+    *out = value.get<int64_t>();
+    return true;
+}
+
+bool ParseOptionalInt64(const nlohmann::json& body, const char* field, std::optional<int64_t>* out, std::string* error)
+{
+    if (!body.contains(field) || body.at(field).is_null()) {
+        return true;
+    }
+    int64_t value = 0;
+    if (!ParseRequiredInt64(body, field, &value, error)) {
+        return false;
+    }
+    *out = value;
+    return true;
+}
+
+bool ParseRequiredString(const nlohmann::json& body, const char* field, std::string* out, std::string* error)
+{
+    if (!body.contains(field)) {
+        *error = std::string("Missing required field: ") + field;
+        return false;
+    }
+    const nlohmann::json& value = body.at(field);
+    if (!value.is_string()) {
+        *error = std::string("Field must be string: ") + field;
+        return false;
+    }
+    *out = value.get<std::string>();
+    return true;
+}
+
+bool ParseOptionalBool(const nlohmann::json& body, const char* field, std::optional<bool>* out, std::string* error)
+{
+    if (!body.contains(field) || body.at(field).is_null()) {
+        return true;
+    }
+    const nlohmann::json& value = body.at(field);
+    if (!value.is_boolean()) {
+        *error = std::string("Field must be bool: ") + field;
+        return false;
+    }
+    *out = value.get<bool>();
+    return true;
+}
+
+bool ParseOptionalStatus(const nlohmann::json& body, std::optional<SpanEvent::Status>* status, std::string* error)
+{
+    if (!body.contains("status") || body.at("status").is_null()) {
+        return true;
+    }
+    const nlohmann::json& value = body.at("status");
+    if (!value.is_string()) {
+        *error = "Field must be string: status";
+        return false;
+    }
+
+    const std::string lower = toLowerCopy(value.get<std::string>());
+    if (lower == "unset") {
+        *status = SpanEvent::Status::Unset;
+        return true;
+    }
+    if (lower == "ok") {
+        *status = SpanEvent::Status::Ok;
+        return true;
+    }
+    if (lower == "error") {
+        *status = SpanEvent::Status::Error;
+        return true;
+    }
+
+    *error = "Invalid status, expected one of: UNSET/OK/ERROR";
+    return false;
+}
+
+bool ParseOptionalKind(const nlohmann::json& body, std::optional<SpanEvent::Kind>* kind, std::string* error)
+{
+    if (!body.contains("kind") || body.at("kind").is_null()) {
+        return true;
+    }
+    const nlohmann::json& value = body.at("kind");
+    if (!value.is_string()) {
+        *error = "Field must be string: kind";
+        return false;
+    }
+
+    const std::string lower = toLowerCopy(value.get<std::string>());
+    if (lower == "internal") {
+        *kind = SpanEvent::Kind::Internal;
+        return true;
+    }
+    if (lower == "server") {
+        *kind = SpanEvent::Kind::Server;
+        return true;
+    }
+    if (lower == "client") {
+        *kind = SpanEvent::Kind::Client;
+        return true;
+    }
+    if (lower == "producer") {
+        *kind = SpanEvent::Kind::Producer;
+        return true;
+    }
+    if (lower == "consumer") {
+        *kind = SpanEvent::Kind::Consumer;
+        return true;
+    }
+
+    *error = "Invalid kind, expected one of: INTERNAL/SERVER/CLIENT/PRODUCER/CONSUMER";
+    return false;
+}
+
+bool ParseOptionalAttributes(const nlohmann::json& body,
+                             std::unordered_map<std::string, std::string>* attributes,
+                             std::string* error)
+{
+    if (!body.contains("attributes") || body.at("attributes").is_null()) {
+        return true;
+    }
+    const nlohmann::json& value = body.at("attributes");
+    if (!value.is_object()) {
+        *error = "Field must be object: attributes";
+        return false;
+    }
+
+    for (auto it = value.begin(); it != value.end(); ++it) {
+        // 统一转字符串是为了让 TraceSessionManager 的最小模型稳定，后续再按类型升级。
+        (*attributes)[it.key()] = JsonValueToAttributeString(it.value());
+    }
+    return true;
+}
+} // namespace
+
+LogHandler::LogHandler(ThreadPool *tpool,
+                       std::shared_ptr<SqliteLogRepository> repo,
+                       std::shared_ptr<LogBatcher> batcher,
+                       TraceSessionManager* trace_session_manager)
+    : tpool_(tpool),
+      batcher_(batcher),
+      repo_(repo),
+      trace_session_manager_(trace_session_manager)
 {
 }
 
@@ -49,6 +274,85 @@ void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const Mi
         resp->body_ = "{\"error\": \"Server is overloaded\"}";
     }
 }
+
+void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
+{
+    (void)conn;
+    resp->setHeader("Content-Type", "application/json");
+    resp->addCorsHeaders();
+
+    if (!trace_session_manager_) {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
+        resp->body_ = "{\"error\": \"Trace pipeline is unavailable\"}";
+        return;
+    }
+
+    nlohmann::json body;
+    try {
+        body = nlohmann::json::parse(req.body_);
+    } catch (const nlohmann::json::parse_error&) {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
+        resp->body_ = "{\"error\": \"Invalid JSON body\"}";
+        return;
+    }
+
+    if (!body.is_object()) {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
+        resp->body_ = "{\"error\": \"Body must be a JSON object\"}";
+        return;
+    }
+
+    SpanEvent span;
+    std::string error;
+    if (body.contains("trace_key")) {
+        if (!ParseRequiredUint(body, "trace_key", &span.trace_key, &error)) {
+            resp->setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
+            resp->body_ = nlohmann::json{{"error", error}}.dump();
+            return;
+        }
+    } else if (body.contains("trace_id")) {
+        // 兼容 trace_id 别名是为了降低接入方切换成本，避免首版就要求全量改字段名。
+        if (!ParseRequiredUint(body, "trace_id", &span.trace_key, &error)) {
+            resp->setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
+            resp->body_ = nlohmann::json{{"error", error}}.dump();
+            return;
+        }
+    } else {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
+        resp->body_ = "{\"error\": \"Missing required field: trace_key\"}";
+        return;
+    }
+
+    if (!ParseRequiredUint(body, "span_id", &span.span_id, &error) ||
+        !ParseRequiredInt64(body, "start_time_ms", &span.start_time_ms, &error) ||
+        !ParseRequiredString(body, "name", &span.name, &error) ||
+        !ParseRequiredString(body, "service_name", &span.service_name, &error) ||
+        !ParseOptionalUint(body, "parent_span_id", &span.parent_span_id, &error) ||
+        !ParseOptionalInt64(body, "end_time_ms", &span.end_time, &error) ||
+        !ParseOptionalBool(body, "trace_end", &span.trace_end, &error) ||
+        !ParseOptionalStatus(body, &span.status, &error) ||
+        !ParseOptionalKind(body, &span.kind, &error) ||
+        !ParseOptionalAttributes(body, &span.attributes, &error)) {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
+        resp->body_ = nlohmann::json{{"error", error}}.dump();
+        return;
+    }
+    CollectUnknownTopLevelAttributes(body, &span.attributes);
+
+    if (!trace_session_manager_->Push(span)) {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
+        resp->body_ = "{\"error\": \"Trace pipeline is overloaded\"}";
+        return;
+    }
+
+    resp->setStatusCode(HttpResponse::HttpStatusCode::k202Acceptd);
+    resp->body_ = nlohmann::json{
+        {"accepted", true},
+        {"trace_key", span.trace_key},
+        {"span_id", span.span_id}
+    }.dump();
+}
+
 void LogHandler::handleGetResult(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
 {
     std::string trace_id = req.path().substr(9);

@@ -133,3 +133,59 @@
 - 若在 notifier 内做 risk 过滤，后续新增通知渠道时容易忘记同步规则，出现同一事件不同渠道行为不一致。
 - 若不在发送前判断落库成功，发生数据库失败时会造成“外部告警有记录、系统内无记录”的排障混乱。
 - 引入新构造参数时不做默认值，会放大测试改动范围并降低重构效率。
+
+---
+
+## 追加记录：打通 `/logs/spans` Trace 入站骨架链路
+
+## Git Commit Message
+`feat(handler): 新增logs/spans入口并接入TraceSessionManager`
+
+## Modification
+- `server/handlers/LogHandler.h`
+- `server/handlers/LogHandler.cpp`
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 入站 Handler 层应该只做“协议解析 + 参数校验 + 调用领域接口”，不要在这里夹带风险过滤、通知策略等业务规则，否则后续测试会非常难写。
+- 主程序注入 `TraceSessionManager` 时先把 AI 依赖做成可选，是为了保证基础落库链路可用，避免开发环境没拉起代理就把整条链路搞成不可用。
+
+### Function Explanation
+- `handleTracePost(...)`：负责解析 `/logs/spans` 的 JSON，请求体转为 `SpanEvent` 后调用 `TraceSessionManager::Push(...)`。
+- `ParseOptionalAttributes(...)`：把 `attributes` 对象统一收敛为 `map<string,string>`，先保证数据可达，后续再考虑强类型字段升级。
+- `router->add("POST", "/logs/spans", ...)`：注册新的 trace span 入站路由，保持和原 `/logs` 链路并行，便于灰度迁移。
+
+### Pitfalls
+- 如果把 `risk_level` 判断放在 Handler，会形成“入口层知道太多业务”的反向耦合，后续改告警策略要改 HTTP 层代码。
+- 如果 `trace_key/span_id/start_time_ms` 不做必填校验，后续聚合阶段会出现难排查的脏数据和父子关系异常。
+- 如果在 `main.cpp` 里直接强依赖 Trace AI 且不做开关，开发环境缺少 proxy 时会把整个 trace 入站流程打断。
+
+---
+
+## 追加记录：未知顶层字段自动归档到 attributes
+
+## Git Commit Message
+`feat(handler): 支持trace入站未知字段自动归档attributes`
+
+## Modification
+- `server/handlers/LogHandler.cpp`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 入站协议的“已知字段”与“扩展字段”必须分层处理：已知字段走强校验，扩展字段走容错归档，这样既稳又可扩展。
+- 当客户端会持续加指标时，服务端直接拒绝未知字段会让迭代成本变高；先归档再治理是更稳妥的演进路径。
+
+### Function Explanation
+- `IsKnownTraceSpanField(...)`：维护 trace span 顶层字段白名单，用于识别哪些字段属于固定协议。
+- `CollectUnknownTopLevelAttributes(...)`：遍历请求体顶层 key，把不在白名单中的字段自动收敛到 `span.attributes`。
+- `JsonValueToAttributeString(...)`：将任意 JSON 值统一转成字符串，保证 `attributes` 存储模型稳定。
+
+### Pitfalls
+- 不做白名单而直接全量归档会把必填字段和扩展字段混在一起，后续排查会非常困难。
+- 归档时若直接覆盖同名键，会破坏调用方显式传入 `attributes` 的优先级，导致结果不确定。
+- 若不统一值类型，后续序列化/落库阶段会出现字段类型漂移，影响查询与展示一致性。
