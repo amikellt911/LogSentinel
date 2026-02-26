@@ -1,6 +1,7 @@
 #pragma once
 #include "INotifier.h"
 #include <memory>
+#include <vector>
 namespace cpr{
     class Session;
 }
@@ -8,6 +9,7 @@ class WebhookNotifier:public INotifier
 {
     public:
         void notify(const std::string& trace_id,const nlohmann::json& content) override;
+        void notifyTraceAlert(const TraceAlertEvent& event) override;
         //使用string，而非sqlite初始化，因为这样会构成强依赖，notifier强依赖于persistence，
         //导致如果想要更改依赖变得困难，我之后也许会通过config.yaml来初始化，这样会造成麻烦，
         //不如都转成string初始化，解耦

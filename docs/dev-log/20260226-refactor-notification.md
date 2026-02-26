@@ -50,3 +50,32 @@
 - 如果直接在 `INotifier` 里定义复杂业务结构，接口头会变重，后续任何字段调整都可能放大编译影响面。
 - 如果先传 JSON 字符串再解析，容易出现字段拼写漂移，且缺少编译期约束。
 - 若 `risk_level` 同时来源于多个结构体，必须提前约定优先级，否则通知内容会出现前后不一致。
+
+---
+
+## 追加记录：实现 TraceAlertEvent 的 webhook 发送能力
+
+## Git Commit Message
+`feat(notification): 支持TraceAlertEvent结构化webhook推送`
+
+## Modification
+- `server/notification/INotifier.h`
+- `server/notification/WebhookNotifier.h`
+- `server/notification/WebhookNotifier.cpp`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 先在接口层传“结构体”，再在发送层 `dump()` 成字符串，可以把业务语义和协议细节分开，后续改字段更稳。
+- webhook 的响应码建议按 `2xx` 判成功，不要只盯 `200`，否则部分正常网关会被误判为失败。
+
+### Function Explanation
+- `notifyTraceAlert(const TraceAlertEvent&)`：通知抽象层新增的 trace 事件入口，用于承接 Trace 聚合链路输出。
+- `buildTraceAlertPayload(...)`：把领域结构映射为统一 JSON 契约（`schema_version/event_type/event_id/sent_at_ms/source/data`）。
+- `postJsonToWebhookUrls(...)`：抽出的公共发送逻辑，复用在旧 `notify` 和新 `notifyTraceAlert`，减少重复代码。
+
+### Pitfalls
+- 如果每个通知函数都各自写一套 Post 循环，后续超时、重试、日志策略很容易出现行为分叉。
+- `event_id` 若不包含 `trace_id` 与发送时刻，网关侧做幂等去重会非常困难。
+- 只加接口不编译全工程，纯虚函数变更很容易在其他模块实例化时才暴露编译错误。
