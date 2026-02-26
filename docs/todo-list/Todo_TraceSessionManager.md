@@ -33,3 +33,8 @@
 - [x] 补齐 `Push/Dispatch` 公共接口占位
 - [x] 将新文件加入 `core_module` 的 CMake 构建列表
 - [x] 复核文件命名、路径与编译依赖是否一致
+- [x] 将 Trace 告警 risk_level 过滤逻辑上移到 TraceSessionManager（仅 critical）
+- [x] 在 TraceSessionManager 接入 notifier 并在落库成功后发送 TraceAlertEvent
+- [x] 移除 WebhookNotifier 中的 risk_level 过滤，保持发送层纯适配
+- [x] 编译并运行 TraceSessionManager/LogBatcher 相关测试验证无回归
+- [x] 追加本次 Trace 告警触发链路 dev-log 记录

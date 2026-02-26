@@ -11,3 +11,4 @@
 - [x] 保持旧 notify 兼容并抽取公共 webhook 发送逻辑
 - [x] 编译验证通知模块改动无回归
 - [x] 追加本次 TraceAlertEvent 发送实现 dev-log 记录
+- [x] 将 risk_level 过滤策略迁移到 TraceSessionManager，WebhookNotifier 仅负责发送

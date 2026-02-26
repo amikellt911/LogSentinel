@@ -2,9 +2,22 @@
 #include "threadpool/ThreadPool.h"
 #include "ai/TraceAiProvider.h"
 #include "persistence/TraceRepository.h"
+#include "notification/INotifier.h"
 #include <algorithm>
+#include <cctype>
 #include <limits>
 #include <nlohmann/json.hpp>
+
+namespace
+{
+std::string toLowerCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+}
 
 TraceSession::TraceSession(size_t capacity)
     : capacity(capacity)
@@ -16,10 +29,12 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
                                          TraceRepository* trace_repo,
                                          TraceAiProvider* trace_ai,
                                          size_t capacity,
-                                         size_t token_limit)
+                                         size_t token_limit,
+                                         INotifier* notifier)
     : thread_pool_(thread_pool)
     , trace_repo_(trace_repo)
     , trace_ai_(trace_ai)
+    , notifier_(notifier)
     , capacity_(capacity)
     , token_limit_(token_limit)
 {
@@ -105,7 +120,8 @@ void TraceSessionManager::Dispatch(size_t trace_key)
     TraceSessionManager* manager = this;
     TraceRepository* trace_repo = trace_repo_;
     TraceAiProvider* trace_ai = trace_ai_;
-    thread_pool_->submit([manager, trace_repo, trace_ai, session_shared]() {
+    INotifier* notifier = notifier_;
+    thread_pool_->submit([manager, trace_repo, trace_ai, notifier, session_shared]() {
         if (!manager || !trace_repo) {
             return;
         }
@@ -127,7 +143,30 @@ void TraceSessionManager::Dispatch(size_t trace_key)
             analysis_ptr = &analysis_record;
         }
 
-        trace_repo->SaveSingleTraceAtomic(summary, span_records, analysis_ptr, nullptr);
+        bool saved = trace_repo->SaveSingleTraceAtomic(summary, span_records, analysis_ptr, nullptr);
+        if (!saved || !notifier || !analysis_ptr) {
+            return;
+        }
+
+        const std::string risk_level = toLowerCopy(analysis_ptr->risk_level);
+        // 告警策略放在聚合调度层，当前仅对 critical 发通知，避免 notifier 混入业务策略判断。
+        if (risk_level != "critical") {
+            return;
+        }
+
+        TraceAlertEvent event;
+        event.trace_id = summary.trace_id;
+        event.service_name = summary.service_name;
+        event.start_time_ms = summary.start_time_ms;
+        event.duration_ms = summary.duration_ms;
+        event.span_count = summary.span_count;
+        event.token_count = summary.token_count;
+        event.risk_level = analysis_ptr->risk_level;
+        event.summary = analysis_ptr->summary;
+        event.root_cause = analysis_ptr->root_cause;
+        event.solution = analysis_ptr->solution;
+        event.confidence = analysis_ptr->confidence;
+        notifier->notifyTraceAlert(event);
     });
 }
 

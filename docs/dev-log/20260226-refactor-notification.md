@@ -79,3 +79,57 @@
 - 如果每个通知函数都各自写一套 Post 循环，后续超时、重试、日志策略很容易出现行为分叉。
 - `event_id` 若不包含 `trace_id` 与发送时刻，网关侧做幂等去重会非常困难。
 - 只加接口不编译全工程，纯虚函数变更很容易在其他模块实例化时才暴露编译错误。
+
+---
+
+## 追加记录：TraceAlertEvent 仅 critical 触发发送
+
+## Git Commit Message
+`feat(notification): 限制trace告警仅critical等级发送`
+
+## Modification
+- `server/notification/WebhookNotifier.cpp`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 告警系统第一版必须先控噪，宁可先漏掉低等级，也不要让通道被信息洪水淹没。
+- 风险等级判断尽量做成独立函数，后续从“硬编码阈值”升级到“配置化阈值”时改动最小。
+
+### Function Explanation
+- `shouldSendTraceAlert(...)`：封装告警门槛策略，当前版本规则是仅 `critical` 返回 true。
+- `toLowerCopy(...)`：统一风险等级大小写，避免上游传 `CRITICAL` 时被门槛误判。
+
+### Pitfalls
+- 如果直接在发送函数里散落字符串比较，后续阈值策略扩展会出现逻辑分叉。
+- 若大小写不统一处理，不同 AI Provider 的输出风格会导致告警行为不稳定。
+- 过滤逻辑没有单点入口时，很难在日志中排查“为什么某条告警没有发”。
+
+---
+
+## 追加记录：将 Trace 告警过滤策略上移到 TraceSessionManager
+
+## Git Commit Message
+`refactor(core): 将trace告警阈值判断上移到聚合调度层`
+
+## Modification
+- `server/core/TraceSessionManager.h`
+- `server/core/TraceSessionManager.cpp`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- “是否该发送告警”属于业务策略，应该放在业务编排层（TraceSessionManager），而不是放在通知适配层（WebhookNotifier）。
+- 把阈值判断留在发送层会导致多渠道实现（webhook/企业机器人）策略分叉，后续很难统一维护。
+
+### Function Explanation
+- `TraceSessionManager(..., INotifier* notifier = nullptr)`：通过可选依赖注入 notifier，让聚合链路能在不影响单测构造的前提下接入通知。
+- `SaveSingleTraceAtomic(...)` 返回值：先确认落库成功，再决定是否发送通知，避免出现“通知已发但数据未落库”的不一致。
+- `notifyTraceAlert(const TraceAlertEvent&)`：Trace 层只在满足阈值时触发，通知层只负责序列化和发送。
+
+### Pitfalls
+- 若在 notifier 内做 risk 过滤，后续新增通知渠道时容易忘记同步规则，出现同一事件不同渠道行为不一致。
+- 若不在发送前判断落库成功，发生数据库失败时会造成“外部告警有记录、系统内无记录”的排障混乱。
+- 引入新构造参数时不做默认值，会放大测试改动范围并降低重构效率。

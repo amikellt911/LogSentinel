@@ -16,6 +16,7 @@
 class ThreadPool;
 class TraceRepository;
 class TraceAiProvider;
+class INotifier;
 
 struct SpanEvent
 {
@@ -82,7 +83,8 @@ public:
                                  TraceRepository* trace_repo,
                                  TraceAiProvider* trace_ai,
                                  size_t capacity,
-                                 size_t token_limit);
+                                 size_t token_limit,
+                                 INotifier* notifier = nullptr);
     ~TraceSessionManager();
 
     size_t size() const;
@@ -97,6 +99,7 @@ private:
     ThreadPool* thread_pool_ = nullptr;
     TraceRepository* trace_repo_ = nullptr;
     TraceAiProvider* trace_ai_ = nullptr;
+    INotifier* notifier_ = nullptr;
     size_t capacity_ = 0;
     size_t token_limit_ = 0;
     TokenEstimator token_estimator_;
