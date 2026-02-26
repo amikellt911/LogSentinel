@@ -244,8 +244,7 @@ void LogBatcher::processBatch(std::vector<AnalysisTask> &&batch, SystemConfigPtr
         // 8. 保存微观分析结果 (带 batch_id)
         repo_->saveAnalysisResultBatch(items, batch_id);
 
-        // 9. 发送通知 (网络)
-        //notifier_->notifyReport(global_summary_text, items);
+        // 9. 当前批处理链路不再直接发送批次通知，通知能力收敛到 Trace 聚合链路实现。
     }
     catch (const std::exception &e)
     {
