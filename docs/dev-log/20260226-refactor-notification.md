@@ -24,3 +24,29 @@
 - 只删实现不删接口声明会导致“接口仍承诺能力，但实现已缺失”的编译错误或行为不一致。
 - 只删 `INotifier` 不同步 `WebhookNotifier` 的 `override` 会直接触发签名不匹配编译失败。
 - 删除接口后不做至少一次全量编译，容易把错误留到后续 unrelated 改动里才暴露，排查成本更高。
+
+---
+
+## 追加记录：新增通知域模型 TraceAlertEvent
+
+## Git Commit Message
+`feat(notification): 新增TraceAlertEvent通知数据结构`
+
+## Modification
+- `server/notification/NotifyTypes.h`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 通知层最好先定义“领域事件结构体”，再由具体渠道做序列化，这样业务代码不会被 JSON 细节反向污染。
+- 字段优先保留“低争议核心信息”（trace 标识、时序、风险、摘要），能先跑通链路，再增量扩展字段。
+
+### Function Explanation
+- `size_t`：表达计数类字段（如 `span_count`、`token_count`）更符合语义，避免负数参与逻辑。
+- `int64_t`：用于毫秒时间戳和时长，避免 32 位整数在长时间运行后溢出。
+
+### Pitfalls
+- 如果直接在 `INotifier` 里定义复杂业务结构，接口头会变重，后续任何字段调整都可能放大编译影响面。
+- 如果先传 JSON 字符串再解析，容易出现字段拼写漂移，且缺少编译期约束。
+- 若 `risk_level` 同时来源于多个结构体，必须提前约定优先级，否则通知内容会出现前后不一致。
