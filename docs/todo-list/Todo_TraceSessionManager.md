@@ -48,3 +48,9 @@
 - [x] 执行冒烟脚本并记录结果
 - [x] 为 `smoke_trace_spans.py` 每个函数补充中文注释，解释作用与设计原因
 - [x] 为关键调用点（`subprocess`/`requests`/`sqlite3`）补充中文注释，降低 Python 阅读门槛
+- [x] 将 `smoke_trace_spans.py` 升级为 `basic/advanced` 双模式入口（`--mode`）
+- [x] advanced 模式接入 `--auto-start-deps` 与 `trace_analysis` 校验，并补充进程提前退出防误判逻辑
+- [x] 分别执行 basic/advanced 模式并记录结果（advanced 因环境缺少 fastapi 失败）
+- [x] 增强 advanced 失败时诊断信息输出（服务日志片段 + DB 快照 + proxy/webhook 探测）
+- [x] 修复冒烟脚本 SQL 兼容问题（使用 `rowid` 代替不存在的 `id` 列）
+- [x] 复跑 advanced 并确认通过（analysis risk=critical）

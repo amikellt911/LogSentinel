@@ -69,7 +69,7 @@
 ### 3. 任务后复盘
 
 任务完成后，必须在 `docs/dev-log` 目录生成一个 `YYYYMMDD-type-scope.md` 文件（例如 `20251225-feat-logger.md`），内容包括（**非代码变更可跳过 dev-log**）：
-- **Dev-log 合并**：新增 dev-log 前先检查 `git status`；若已存在 dev-log，必须追加到同一文件，不得新建重复文件。
+- **Dev-log 合并**：新增 dev-log 前先检查 `git status`和目前系统时间日期；若已存在 dev-log且日期一致，必须追加到同一文件，不得新建重复文件。
 
 - **Git Commit Message**：
   - 必须遵循 **Conventional Commits** 格式（`type(scope): description`）。
