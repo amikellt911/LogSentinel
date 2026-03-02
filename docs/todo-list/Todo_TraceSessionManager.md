@@ -44,3 +44,7 @@
 - [x] 追加本轮 `/logs/spans` 链路打通 dev-log 记录
 - [x] 在 `LogHandler` 增加 Trace 字段白名单，自动吸收顶层未知字段到 `attributes`
 - [x] 验证“显式 attributes 优先、未知字段补充”的入站行为并完成构建回归
+- [x] 新增 `requests` 版本的 `/logs/spans` 最小冒烟脚本（启动服务、发送 2 个 span、验证落库）
+- [x] 执行冒烟脚本并记录结果
+- [x] 为 `smoke_trace_spans.py` 每个函数补充中文注释，解释作用与设计原因
+- [x] 为关键调用点（`subprocess`/`requests`/`sqlite3`）补充中文注释，降低 Python 阅读门槛

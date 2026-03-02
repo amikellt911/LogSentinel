@@ -189,3 +189,57 @@
 - 不做白名单而直接全量归档会把必填字段和扩展字段混在一起，后续排查会非常困难。
 - 归档时若直接覆盖同名键，会破坏调用方显式传入 `attributes` 的优先级，导致结果不确定。
 - 若不统一值类型，后续序列化/落库阶段会出现字段类型漂移，影响查询与展示一致性。
+
+---
+
+## 追加记录：新增 requests 版 Trace 最小冒烟脚本
+
+## Git Commit Message
+`test(trace): 新增logs/spans最小冒烟脚本并验证落库链路`
+
+## Modification
+- `server/tests/smoke_trace_spans.py`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 冒烟脚本的目标不是覆盖所有边界，而是快速回答“主链路是否活着”，所以用最短路径验证接收、分发、落库即可。
+- 端到端测试最好使用独立端口和临时数据库，避免测试过程污染本地开发数据，降低排障噪音。
+
+### Function Explanation
+- `subprocess.Popen(...)`：在脚本里拉起后端进程，模拟真实部署时“先起服务再发请求”的流程。
+- `requests.post(...)`：向 `/logs/spans` 发送两条同 trace 的 span，请求成功码为 `202`。
+- `sqlite3.connect(...)` + `SELECT`：直接校验 `trace_summary` 与 `trace_span` 的落库结果，并检查父子关系是否正确。
+
+### Pitfalls
+- 只 `sleep` 固定秒数容易出现偶发误判，建议轮询数据库条件直到超时，兼容异步线程池写入时延。
+- 不带 `trace_end=true` 可能不会触发分发，导致“请求成功但查不到数据”的假失败。
+- 测试结束不清理 `db/-wal/-shm` 文件会影响下一次冒烟结果，造成历史状态干扰。
+
+---
+
+## 追加记录：增强冒烟脚本可读性（函数级与调用级注释）
+
+## Git Commit Message
+`docs(test): 补充trace冒烟脚本中文注释并解释关键调用`
+
+## Modification
+- `server/tests/smoke_trace_spans.py`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 测试脚本不仅要“能跑”，还要“能读懂”；尤其是端到端脚本，未来排障时阅读成本通常高于编写成本。
+- 对初学者不熟悉的库调用（如 `requests`、`sqlite3`、`subprocess`）在调用点补“为什么这么用”的注释，比只写函数名更有帮助。
+
+### Function Explanation
+- `requests.get/post`：分别用于服务探活与业务请求发送；`json=payload` 会自动完成 JSON 序列化和请求头设置。
+- `sqlite3.connect + cursor.execute + fetchone`：用于最小化地验证数据库状态，确认链路是否真正落库。
+- `subprocess.Popen/terminate/kill`：用于拉起与回收被测服务进程，确保脚本可重复执行且不残留进程。
+
+### Pitfalls
+- 只写“做了什么”而不写“为什么这么做”，后续维护者很难判断是否可以安全修改脚本行为。
+- 缺少参数/返回说明会导致函数误用，尤其是超时参数在 CI 与本地环境中的语义可能不同。
+- 错误路径缺少日志说明时，冒烟失败会退化成“黑盒失败”，排障效率会显著下降。
