@@ -140,7 +140,7 @@ Provide your analysis in a structured format."""
         log_text = (await request.body()).decode('utf-8')
         # 注意: analyze() 仅接收来自 C++ 的原始文本，因此无法在此提取 api_key/model。
         # 我们使用默认的 Provider 配置。
-        result = provider.analyze(log_text=log_text, prompt=default_prompt)
+        result = provider.analyze_trace(log_text=log_text, prompt=default_prompt)
         return {"provider": provider_name, "analysis": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"分析过程中发生错误: {e}")
