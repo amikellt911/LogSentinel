@@ -125,3 +125,28 @@
 ### Pitfalls
 - 如果 workflow 只写冒烟而不写单测，很多逻辑回归会在更后阶段才暴露，定位成本明显更高。
 - 没有 `--output-on-failure` 时，CI 失败日志信息不足，复盘会来回翻找上下文。
+
+---
+
+## 追加记录：输出测试资产台账并给出保留/优化/下线建议
+
+## Git Commit Message
+`docs(test): 新增测试资产台账并梳理保留优化下线策略`
+
+## Modification
+- `docs/TEST_ASSET_LEDGER.md`
+- `docs/todo-list/Todo_TestAssets.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 在测试体系进入“多脚本并存”阶段时，先做资产台账再继续加测试，能避免重复投入和历史包袱扩大。
+- “下线候选”不等于立刻删除，建议先做软下线（标记 deprecated + 保留一轮）再清理。
+
+### Function Explanation
+- `ctest -N`：只列出已注册测试，不执行。适合做测试资产盘点时核对“哪些真的在跑”。
+- `gtest_discover_tests(...)`：自动发现 GoogleTest 用例；如果同时再 `add_test` 同一目标，列表里可能出现重复注册。
+
+### Pitfalls
+- 没有台账时，最常见问题是“同一风险点被多份脚本重复覆盖”，导致维护成本上升但质量收益有限。
+- 历史脚本若依赖旧二进制或旧表结构，继续留在目录中会误导后续同学判断真实测试覆盖情况。
