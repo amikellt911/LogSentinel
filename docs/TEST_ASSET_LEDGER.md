@@ -18,7 +18,6 @@
 - `smoke_trace_spans.py`（basic/advanced 双模式）
 
 2. **可用但需要优化层（建议重构，不建议直接删除）**
-- `TraceSessionManager_test.cpp`（与 unit 存在职责重叠）
 - `TraceSessionManager_integration_test.cpp`（覆盖有效，但依赖较重）
 - CMake 重复注册问题已清理（仅保留 `gtest_discover_tests`）
 
@@ -43,7 +42,7 @@
 | `SqliteLogRepository_test.cpp` | 仓储测试 | 已接入 CTest | 保留 | 维持 |
 | `LogBatcher_test.cpp` | 单测 | 已接入 CTest | 保留 | 维持 |
 | `TraceSessionManager_unit_test.cpp` | 核心单测 | 已接入 CTest，12/12 通过 | 强保留 | 作为主防线 |
-| `TraceSessionManager_test.cpp` | 早期基础测 | 与 unit 测职责重叠 | 优化 | 合并到 unit 后下线 |
+| `legacy/TraceSessionManager_test.cpp` | 历史基础测 | 与 unit 测职责重叠，已迁移 legacy 且移出 CTest | 下线候选（已软下线迁移） | 保留对照后择机删除 |
 | `TraceSessionManager_integration_test.cpp` | 集成测 | 覆盖广但依赖重 | 保留+优化 | 标记为 integration 分组 |
 | `SqliteTraceRepository_test.cpp` | 仓储核心测试 | 已接入 CTest | 强保留 | 继续补边界 |
 | `SqliteConfigRepository_test.cpp` | 仓储测试 | 已接入 CTest | 保留 | 维持 |
@@ -82,8 +81,8 @@
 - 为下线候选脚本加“DEPRECATED”头注释，先软下线一轮
 
 ## 5.2 下一步执行（中风险）
-- 合并 `TraceSessionManager_test.cpp` 到 `TraceSessionManager_unit_test.cpp`
 - 重写 `legacy/run_tests.py` 为统一 Python 测试入口（可按 `--suite` 跑）
+- 收敛 `TraceSessionManager_integration_test` 中与现实现状不一致的断言（risk_level、missing-parent、cycle 场景）
 
 ## 5.3 最后执行（高风险/需环境）
 - 重写 `legacy/integration_gemini_test.py` 以匹配当前 Trace 表结构与链路
@@ -100,6 +99,7 @@
 ## 7. 本轮执行进度（2026-03-03）
 
 - 已完成：`legacy/run_tests.py`、`legacy/test_httpserver.py`、`legacy/integration_gemini_test.py`、`legacy/test_mvp1.py`、`legacy/test_mvp2.1_gemini.py` 的软下线标注并迁移到 `legacy/` 目录。
+- 已完成：`TraceSessionManager_test.cpp` 迁移到 `legacy/` 并从 CTest 移除，避免与 `unit` 套件重复维护。
 - 已完成：清理 CMake 的 CTest 重复注册（移除 `add_test`，保留 `gtest_discover_tests`）。
 - 软下线仅做“禁默认入口 + 给替代方案提示”，尚未执行物理删除。
 

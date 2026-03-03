@@ -167,10 +167,6 @@ add_executable(test_logbatcher
   tests/LogBatcher_test.cpp
 )
 
-add_executable(test_trace_session_manager
-  tests/TraceSessionManager_test.cpp
-)
-
 add_executable(test_trace_session_manager_unit
   tests/TraceSessionManager_unit_test.cpp
 )
@@ -210,10 +206,6 @@ target_link_libraries(test_logbatcher PRIVATE
 GTest::gtest_main
 core_module
 )
-target_link_libraries(test_trace_session_manager PRIVATE
-GTest::gtest_main
-core_module
-)
 target_link_libraries(test_trace_session_manager_unit PRIVATE
 GTest::gtest_main
 core_module
@@ -237,7 +229,6 @@ gtest_discover_tests(test_util_traceidgenerate)
 gtest_discover_tests(test_threadpool)
 gtest_discover_tests(test_sqlite)
 gtest_discover_tests(test_logbatcher)
-gtest_discover_tests(test_trace_session_manager)
 gtest_discover_tests(test_trace_session_manager_unit)
 gtest_discover_tests(test_trace_session_manager_integration)
 gtest_discover_tests(test_sqlite_trace_repo)

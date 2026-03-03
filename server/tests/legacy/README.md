@@ -20,3 +20,4 @@
 - `integration_gemini_test.py`
 - `test_mvp1.py`
 - `test_mvp2.1_gemini.py`
+- `TraceSessionManager_test.cpp`

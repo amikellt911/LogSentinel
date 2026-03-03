@@ -270,3 +270,31 @@
 ### Pitfalls
 - 清理 CMake 注册方式后如果不同时更新 CI 命令，`ctest -R` 可能匹配不到任何测试，出现“CI 绿但实际没跑”的假象。
 - 只改代码不改文档中的示例命令，会让团队成员继续使用过期命令并误判环境异常。
+
+---
+
+## 追加记录：迁移 TraceSessionManager 早期基础测试到 legacy 并退出 CTest
+
+## Git Commit Message
+`chore(test): 迁移重复TraceSessionManager基础测试到legacy并移出CTest`
+
+## Modification
+- `server/tests/legacy/TraceSessionManager_test.cpp`
+- `server/tests/legacy/README.md`
+- `server/CMakeLists.txt`
+- `docs/TEST_ASSET_LEDGER.md`
+- `docs/todo-list/Todo_TestAssets.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 当两套测试覆盖同一职责时，优先保留语义更完整、可维护性更高的一套（本次保留 unit），可以显著降低后续迭代心智负担。
+- 测试迁移后要先验证“主防线是否仍可跑通”，避免在整理过程中把真正的质量门禁搞丢。
+
+### Function Explanation
+- `legacy/TraceSessionManager_test.cpp`：保留历史对照，不再作为默认回归入口参与 CTest 调度。
+- `ctest -R "^TraceSessionManagerUnitTest\\."`：作为当前 TraceSessionManager 的主回归入口，验证 12 条 unit 用例稳定通过。
+
+### Pitfalls
+- 迁移重复测试后，集成测试可能暴露“旧断言与现实现状不一致”的遗留问题；这类问题应单独收敛，不应和目录治理混在一次改动里。
+- 若不把迁移信息同步到台账，后续成员会误以为“测试被删除”，而不是“测试被有意降级为 legacy”。

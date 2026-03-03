@@ -1,3 +1,13 @@
+/*
+DEPRECATED（软下线中）：
+- 原因：该文件与 `TraceSessionManager_unit_test.cpp` 在职责上高度重叠，
+  继续双维护会增加回归成本与评审负担。
+- 当前状态：保留在 legacy 目录仅作历史对照，不纳入默认 CTest/CI。
+- 替代方案：
+  1) Trace 核心单测：`cd server/build && ctest -R "^TraceSessionManagerUnitTest\\." --output-on-failure`
+  2) Trace 集成验证：`cd server/build && ctest -R "^TraceSessionManagerIntegrationTest\\." --output-on-failure`
+*/
+
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include "core/TraceSessionManager.h"
