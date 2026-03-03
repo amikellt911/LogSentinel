@@ -54,3 +54,5 @@
 - [x] 增强 advanced 失败时诊断信息输出（服务日志片段 + DB 快照 + proxy/webhook 探测）
 - [x] 修复冒烟脚本 SQL 兼容问题（使用 `rowid` 代替不存在的 `id` 列）
 - [x] 复跑 advanced 并确认通过（analysis risk=critical）
+- [x] 新增 `TraceSessionManager` GoogleTest 占位测试文件，先锁定核心测试点清单
+- [x] 将占位测试目标接入 CMake/CTest，保证本地与 CI 可见

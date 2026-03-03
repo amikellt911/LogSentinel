@@ -171,6 +171,10 @@ add_executable(test_trace_session_manager
   tests/TraceSessionManager_test.cpp
 )
 
+add_executable(test_trace_session_manager_placeholder
+  tests/TraceSessionManager_placeholder_test.cpp
+)
+
 add_executable(test_trace_session_manager_integration
   tests/TraceSessionManager_integration_test.cpp
 )
@@ -210,6 +214,10 @@ target_link_libraries(test_trace_session_manager PRIVATE
 GTest::gtest_main
 core_module
 )
+target_link_libraries(test_trace_session_manager_placeholder PRIVATE
+GTest::gtest_main
+core_module
+)
 target_link_libraries(test_trace_session_manager_integration PRIVATE
 GTest::gtest_main
 core_module
@@ -230,6 +238,7 @@ add_test(NAME test_threadpool COMMAND test_threadpool)
 add_test(NAME test_sqlite COMMAND test_sqlite)
 add_test(NAME test_logbatcher COMMAND test_logbatcher)
 add_test(NAME test_trace_session_manager COMMAND test_trace_session_manager)
+add_test(NAME test_trace_session_manager_placeholder COMMAND test_trace_session_manager_placeholder)
 add_test(NAME test_trace_session_manager_integration COMMAND test_trace_session_manager_integration)
 add_test(NAME test_sqlite_trace_repo COMMAND test_sqlite_trace_repo)
 add_test(NAME test_config_repo COMMAND test_config_repo)
@@ -240,6 +249,7 @@ gtest_discover_tests(test_threadpool)
 gtest_discover_tests(test_sqlite)
 gtest_discover_tests(test_logbatcher)
 gtest_discover_tests(test_trace_session_manager)
+gtest_discover_tests(test_trace_session_manager_placeholder)
 gtest_discover_tests(test_trace_session_manager_integration)
 gtest_discover_tests(test_sqlite_trace_repo)
 gtest_discover_tests(test_config_repo)
