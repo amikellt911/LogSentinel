@@ -5,7 +5,7 @@ DEPRECATED（软下线中）：
 - 当前状态：保留为历史示例，不纳入默认 CI。
 - 替代方案：
   1) 端到端冒烟：`python server/tests/smoke_trace_spans.py --mode advanced`
-  2) 单元测试门禁：`ctest -R test_trace_session_manager_unit --output-on-failure`
+  2) 单元测试门禁：`ctest -R "^TraceSessionManagerUnitTest\." --output-on-failure`
 """
 
 import requests

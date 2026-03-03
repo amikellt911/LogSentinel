@@ -20,7 +20,7 @@
 2. **可用但需要优化层（建议重构，不建议直接删除）**
 - `TraceSessionManager_test.cpp`（与 unit 存在职责重叠）
 - `TraceSessionManager_integration_test.cpp`（覆盖有效，但依赖较重）
-- CMake 中 `add_test + gtest_discover_tests` 并存，存在重复注册
+- CMake 重复注册问题已清理（仅保留 `gtest_discover_tests`）
 
 3. **历史遗留层（建议下线或改造成 manual）**
 - `legacy/run_tests.py`
@@ -68,7 +68,7 @@
   - `smoke-basic`：PR/main 上执行
   - `smoke-advanced`：仅手动触发
 - `unit.yml`
-  - 当前执行：`ctest -R test_trace_session_manager_unit --output-on-failure`
+  - 当前执行：`ctest -R "^TraceSessionManagerUnitTest\." --output-on-failure`
 
 ### 现状评价
 - 主链路已具备“单测 + 冒烟”最小闭环。
@@ -83,7 +83,6 @@
 
 ## 5.2 下一步执行（中风险）
 - 合并 `TraceSessionManager_test.cpp` 到 `TraceSessionManager_unit_test.cpp`
-- 清理 CMake 中重复测试注册策略（保留一种可维护方案）
 - 重写 `legacy/run_tests.py` 为统一 Python 测试入口（可按 `--suite` 跑）
 
 ## 5.3 最后执行（高风险/需环境）
@@ -101,6 +100,7 @@
 ## 7. 本轮执行进度（2026-03-03）
 
 - 已完成：`legacy/run_tests.py`、`legacy/test_httpserver.py`、`legacy/integration_gemini_test.py`、`legacy/test_mvp1.py`、`legacy/test_mvp2.1_gemini.py` 的软下线标注并迁移到 `legacy/` 目录。
+- 已完成：清理 CMake 的 CTest 重复注册（移除 `add_test`，保留 `gtest_discover_tests`）。
 - 软下线仅做“禁默认入口 + 给替代方案提示”，尚未执行物理删除。
 
 ---

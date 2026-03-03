@@ -231,18 +231,7 @@ GTest::gtest_main
 persistence_module
 )
 
-#给vscode的C++扩展的CTest.
-add_test(NAME test_http_context COMMAND test_http_context)
-add_test(NAME test_util_traceidgenerate COMMAND test_util_traceidgenerate)
-add_test(NAME test_threadpool COMMAND test_threadpool)
-add_test(NAME test_sqlite COMMAND test_sqlite)
-add_test(NAME test_logbatcher COMMAND test_logbatcher)
-add_test(NAME test_trace_session_manager COMMAND test_trace_session_manager)
-add_test(NAME test_trace_session_manager_unit COMMAND test_trace_session_manager_unit)
-add_test(NAME test_trace_session_manager_integration COMMAND test_trace_session_manager_integration)
-add_test(NAME test_sqlite_trace_repo COMMAND test_sqlite_trace_repo)
-add_test(NAME test_config_repo COMMAND test_config_repo)
-
+# 统一使用 gtest_discover_tests 注册，避免与 add_test 重复注册导致同一测试二进制被 CTest 跑两次。
 gtest_discover_tests(test_http_context)
 gtest_discover_tests(test_util_traceidgenerate)
 gtest_discover_tests(test_threadpool)

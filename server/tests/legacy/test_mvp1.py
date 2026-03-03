@@ -5,7 +5,7 @@ DEPRECATED（软下线中）：
 - 当前状态：保留文件用于历史 MVP 对照，不纳入默认 CI。
 - 替代方案：
   1) 现行主链路冒烟：`python server/tests/smoke_trace_spans.py --mode basic|advanced`
-  2) Trace 单测：`cd server/build && ctest -R test_trace_session_manager_unit --output-on-failure`
+  2) Trace 单测：`cd server/build && ctest -R "^TraceSessionManagerUnitTest\." --output-on-failure`
 """
 
 import unittest

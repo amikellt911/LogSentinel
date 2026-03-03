@@ -5,7 +5,7 @@ DEPRECATED（软下线中）：
 - 当前状态：保留文件仅用于历史参考，不纳入默认 CI，也不建议作为日常回归入口。
 - 替代方案：
   1) 基础/增强冒烟：`python server/tests/smoke_trace_spans.py --mode basic|advanced`
-  2) C++ 单元测试：`cd server/build && ctest -R test_trace_session_manager_unit --output-on-failure`
+  2) C++ 单元测试：`cd server/build && ctest -R "^TraceSessionManagerUnitTest\." --output-on-failure`
 """
 
 # tests/runner.py (新建文件)

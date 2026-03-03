@@ -12,7 +12,7 @@
 
 建议替代入口：
 - Trace 冒烟测试：`python server/tests/smoke_trace_spans.py --mode basic|advanced`
-- Trace 核心单测：`cd server/build && ctest -R test_trace_session_manager_unit --output-on-failure`
+- Trace 核心单测：`cd server/build && ctest -R "^TraceSessionManagerUnitTest\." --output-on-failure`
 
 目录内脚本（软下线中）：
 - `run_tests.py`

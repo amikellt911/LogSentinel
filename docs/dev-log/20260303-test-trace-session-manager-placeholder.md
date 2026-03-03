@@ -119,7 +119,7 @@
 - 在 CI 里先跑稳定、耗时短的核心单测，可以更早阻断回归，减少后续排障成本。
 
 ### Function Explanation
-- `ctest -R test_trace_session_manager_unit`：通过正则筛选执行指定测试目标，避免一次跑全量测试拉长反馈时间。
+- `ctest -R "^TraceSessionManagerUnitTest\\."`：通过正则筛选执行指定测试套件，避免一次跑全量测试拉长反馈时间。
 - `workflow_dispatch`：允许手动触发，便于你在未发 PR 时先验证 CI 配置是否正确。
 
 ### Pitfalls
@@ -238,3 +238,35 @@
 ### Pitfalls
 - 如果只迁移文件不改 AGENTS 指南，后续自动化协作可能继续引用旧路径。
 - 旧报告文档若长期保留错误路径，会误导后续排障同学走回头路。
+
+---
+
+## 追加记录：清理 CTest 重复注册并同步 unit workflow 匹配规则
+
+## Git Commit Message
+`test(cmake): 清理CTest重复注册并同步unit筛选规则`
+
+## Modification
+- `server/CMakeLists.txt`
+- `.github/workflows/unit.yml`
+- `docs/TEST_ASSET_LEDGER.md`
+- `docs/todo-list/Todo_TestAssets.md`
+- `docs/dev-log/20260303-test-trace-session-manager-placeholder.md`
+- `server/tests/legacy/README.md`
+- `server/tests/legacy/run_tests.py`
+- `server/tests/legacy/test_mvp1.py`
+- `server/tests/legacy/test_mvp2.1_gemini.py`
+
+## Learning Tips
+
+### Newbie Tips
+- 同一 gtest 目标同时走 `add_test` 和 `gtest_discover_tests`，会造成重复执行，测试变慢且报告可读性下降。
+- 清理重复注册后，CTest 的筛选表达式应改为按“用例名模式”匹配，而不是二进制目标名。
+
+### Function Explanation
+- `gtest_discover_tests(...)`：把 GoogleTest 用例按测试项注册到 CTest，便于按用例粒度筛选运行。
+- `ctest -R "^TraceSessionManagerUnitTest\\."`：匹配 `TraceSessionManagerUnitTest.*` 全部用例，稳定覆盖整个单测套件。
+
+### Pitfalls
+- 清理 CMake 注册方式后如果不同时更新 CI 命令，`ctest -R` 可能匹配不到任何测试，出现“CI 绿但实际没跑”的假象。
+- 只改代码不改文档中的示例命令，会让团队成员继续使用过期命令并误判环境异常。

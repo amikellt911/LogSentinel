@@ -25,4 +25,4 @@ jobs:
       - name: 运行 TraceSessionManager 单元测试
         run: |
           cd server/build
-          ctest -R test_trace_session_manager_unit --output-on-failure
+          ctest -R "^TraceSessionManagerUnitTest\\." --output-on-failure
