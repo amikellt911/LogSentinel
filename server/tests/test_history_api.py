@@ -3,7 +3,7 @@ import time
 import json
 import sys
 
-# 默认端口 8081 (配合 run_tests.py)，也可以通过环境变量覆盖
+# 默认端口 8081（历史上配合 legacy/run_tests.py 使用），也可以通过环境变量覆盖。
 SERVER_URL = "http://127.0.0.1:8081"
 
 def seed_test_data(count=25):
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     try:
         requests.get(f"{SERVER_URL}/dashboard")
     except:
-        print(f"❌ 无法连接到 {SERVER_URL}，请检查 run_tests.py 是否正确启动了服务器。")
+        print(f"❌ 无法连接到 {SERVER_URL}，请检查服务是否已启动（可用 smoke_trace_spans.py 或 legacy/run_tests.py 启动）。")
         exit(1)
 
     if seed_test_data(25):

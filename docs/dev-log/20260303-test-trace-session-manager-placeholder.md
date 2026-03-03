@@ -150,3 +150,91 @@
 ### Pitfalls
 - 没有台账时，最常见问题是“同一风险点被多份脚本重复覆盖”，导致维护成本上升但质量收益有限。
 - 历史脚本若依赖旧二进制或旧表结构，继续留在目录中会误导后续同学判断真实测试覆盖情况。
+
+---
+
+## 追加记录：对历史测试脚本执行软下线标注
+
+## Git Commit Message
+`chore(test): 软下线历史测试脚本并补充替代入口说明`
+
+## Modification
+- `server/tests/legacy/run_tests.py`
+- `server/tests/legacy/test_httpserver.py`
+- `server/tests/legacy/integration_gemini_test.py`
+- `server/tests/legacy/test_mvp1.py`
+- `server/tests/legacy/test_mvp2.1_gemini.py`
+- `docs/TEST_ASSET_LEDGER.md`
+- `docs/todo-list/Todo_TestAssets.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 软下线比“直接删除”更稳：先阻止误用，再观察一轮是否仍有隐性依赖，能降低回归风险。
+- 对历史脚本写清替代入口（例如 smoke/ctest 命令）能减少团队迁移成本，避免“知道废弃但不知道用什么替代”。
+
+### Function Explanation
+- `DEPRECATED` 头注释：用于声明脚本生命周期状态，告诉团队“这份脚本为什么不再建议使用”以及“应该改用什么”。
+- “软下线”：文件仍保留，但从默认执行路径中退出，不再作为 CI 或日常回归入口。
+
+### Pitfalls
+- 只说“别用这个脚本”但不给替代命令，会导致团队继续私下复用旧脚本，治理失败。
+- 在未盘点引用关系前直接删文件，容易触发文档/脚本链路断裂，后续排查成本更高。
+
+---
+
+## 追加记录：将软下线脚本集中迁移到 legacy 目录
+
+## Git Commit Message
+`chore(test): 将软下线脚本迁移到legacy目录统一管理`
+
+## Modification
+- `server/tests/legacy/README.md`
+- `server/tests/legacy/run_tests.py`
+- `server/tests/legacy/test_httpserver.py`
+- `server/tests/legacy/integration_gemini_test.py`
+- `server/tests/legacy/test_mvp1.py`
+- `server/tests/legacy/test_mvp2.1_gemini.py`
+- `docs/TEST_ASSET_LEDGER.md`
+- `docs/todo-list/Todo_TestAssets.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 把历史脚本集中到 `legacy/` 是一种“可逆治理”策略：既不立即删除历史信息，也能显著降低新同学误用概率。
+- 目录结构本身就是约束，文件在主目录还是 `legacy/` 会直接影响团队默认选择。
+
+### Function Explanation
+- `legacy/README.md`：统一说明此目录的定位、替代入口和脚本清单，降低维护者理解成本。
+- 软下线迁移：属于“路径层面的治理”，不改脚本行为，只改变默认可见性和入口优先级。
+
+### Pitfalls
+- 只迁移文件但不更新台账与文档引用，会造成“路径找不到”的二次混乱。
+- 未给替代入口就做目录迁移，会让使用者继续在主目录创建新旧脚本副本，治理失败。
+
+---
+
+## 追加记录：补齐 legacy 迁移后的路径引用
+
+## Git Commit Message
+`docs(test): 修正legacy迁移后的文档与说明路径引用`
+
+## Modification
+- `AGENTS.md`
+- `server/http/README.md`
+- `Mvp2结项.md`
+- `server/tests/test_history_api.py`
+
+## Learning Tips
+
+### Newbie Tips
+- 文件迁移后，最容易漏的是“文档里的示例命令和路径”，这类问题不会编译报错，但会直接影响团队执行效率。
+- 迁移脚本时把“替代入口”同步写到规范文档里，能减少口口相传造成的偏差。
+
+### Function Explanation
+- 路径引用修正：属于“可用性修复”，目标是让读文档的人按命令一步就能跑通，不被历史路径卡住。
+- legacy 目录策略：通过路径层面的弱约束，把历史脚本从默认路径移开，降低误触发概率。
+
+### Pitfalls
+- 如果只迁移文件不改 AGENTS 指南，后续自动化协作可能继续引用旧路径。
+- 旧报告文档若长期保留错误路径，会误导后续排障同学走回头路。

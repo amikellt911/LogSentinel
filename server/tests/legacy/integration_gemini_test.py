@@ -1,3 +1,13 @@
+"""
+DEPRECATED（软下线中）：
+- 原因：该脚本依赖旧数据库表结构（如 `analysis_results`）和固定本地路径，环境耦合强，
+  与当前 Trace 存储模型存在偏差，直接复用会增加误判成本。
+- 当前状态：保留用于历史参考，不纳入默认 CI。
+- 替代方案：
+  1) 统一冒烟入口：`python server/tests/smoke_trace_spans.py --mode advanced`
+  2) 若需要 Gemini 真集成，请基于现行 Trace 表结构重写新脚本后再接入。
+"""
+
 import requests
 import sqlite3
 import time

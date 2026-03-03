@@ -23,11 +23,11 @@
 - CMake 中 `add_test + gtest_discover_tests` 并存，存在重复注册
 
 3. **历史遗留层（建议下线或改造成 manual）**
-- `run_tests.py`
-- `test_mvp1.py`
-- `test_mvp2.1_gemini.py`
-- `integration_gemini_test.py`
-- `test_httpserver.py`
+- `legacy/run_tests.py`
+- `legacy/test_mvp1.py`
+- `legacy/test_mvp2.1_gemini.py`
+- `legacy/integration_gemini_test.py`
+- `legacy/test_httpserver.py`
 
 > 说明：本次先做“台账决策”，不在这一轮直接删文件；下线动作建议分批执行，避免误伤。
 
@@ -54,12 +54,12 @@
 |---|---|---|---|---|
 | `smoke_trace_spans.py` | 冒烟测试 | 双模式，当前主冒烟入口 | 强保留 | 继续作为 smoke 主脚本 |
 | `mock_webhook_server.py` | 测试辅助服务 | 被 advanced smoke 依赖 | 保留 | 维持 |
-| `run_tests.py` | 旧集成入口 | 注释/流程与当前架构不一致 | 下线候选 | 重写或废弃 |
+| `legacy/run_tests.py` | 旧集成入口 | 注释/流程与当前架构不一致 | 下线候选（已软下线标注） | 重写或废弃 |
 | `test_history_api.py` | API集成脚本 | 仍可用，但耦合旧入口 | 优化 | 并入统一 python test runner |
-| `test_httpserver.py` | 手工验证脚本 | 多为早期路由验证脚本 | 下线候选 | 改名为 `manual_*` 或迁移 |
-| `integration_gemini_test.py` | 外部依赖集成 | 强依赖环境与旧表结构假设 | 下线候选 | 重写为新 Trace 链路版 |
-| `test_mvp1.py` | 历史脚本 | 依赖已不再构建的二进制 | 下线候选 | 归档/删除 |
-| `test_mvp2.1_gemini.py` | 历史脚本 | 仅发送请求，断言不足 | 下线候选 | 删除或改为示例 |
+| `legacy/test_httpserver.py` | 手工验证脚本 | 多为早期路由验证脚本 | 下线候选（已软下线标注） | 改名为 `manual_*` 或迁移 |
+| `legacy/integration_gemini_test.py` | 外部依赖集成 | 强依赖环境与旧表结构假设 | 下线候选（已软下线标注） | 重写为新 Trace 链路版 |
+| `legacy/test_mvp1.py` | 历史脚本 | 依赖已不再构建的二进制 | 下线候选（已软下线标注） | 归档/删除 |
+| `legacy/test_mvp2.1_gemini.py` | 历史脚本 | 仅发送请求，断言不足 | 下线候选（已软下线标注） | 删除或改为示例 |
 
 ## 4. CI 覆盖现状
 
@@ -84,11 +84,11 @@
 ## 5.2 下一步执行（中风险）
 - 合并 `TraceSessionManager_test.cpp` 到 `TraceSessionManager_unit_test.cpp`
 - 清理 CMake 中重复测试注册策略（保留一种可维护方案）
-- 重写 `run_tests.py` 为统一 Python 测试入口（可按 `--suite` 跑）
+- 重写 `legacy/run_tests.py` 为统一 Python 测试入口（可按 `--suite` 跑）
 
 ## 5.3 最后执行（高风险/需环境）
-- 重写 `integration_gemini_test.py` 以匹配当前 Trace 表结构与链路
-- 清理 `test_mvp1.py`、`test_mvp2.1_gemini.py` 等历史遗留脚本
+- 重写 `legacy/integration_gemini_test.py` 以匹配当前 Trace 表结构与链路
+- 清理 `legacy/test_mvp1.py`、`legacy/test_mvp2.1_gemini.py` 等历史遗留脚本
 
 ## 6. 建议的后续节奏
 
@@ -97,6 +97,11 @@
 3. 每次下线前必须先确认：
 - 是否仍被文档/脚本/workflow 引用
 - 是否有替代测试覆盖同一风险点
+
+## 7. 本轮执行进度（2026-03-03）
+
+- 已完成：`legacy/run_tests.py`、`legacy/test_httpserver.py`、`legacy/integration_gemini_test.py`、`legacy/test_mvp1.py`、`legacy/test_mvp2.1_gemini.py` 的软下线标注并迁移到 `legacy/` 目录。
+- 软下线仅做“禁默认入口 + 给替代方案提示”，尚未执行物理删除。
 
 ---
 

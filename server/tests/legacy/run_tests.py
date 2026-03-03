@@ -1,3 +1,13 @@
+"""
+DEPRECATED（软下线中）：
+- 原因：该脚本依赖旧测试编排思路，和当前 `smoke_trace_spans.py` + CI workflow 存在职责重叠，
+  且维护状态不稳定，继续作为默认入口会误导测试执行方式。
+- 当前状态：保留文件仅用于历史参考，不纳入默认 CI，也不建议作为日常回归入口。
+- 替代方案：
+  1) 基础/增强冒烟：`python server/tests/smoke_trace_spans.py --mode basic|advanced`
+  2) C++ 单元测试：`cd server/build && ctest -R test_trace_session_manager_unit --output-on-failure`
+"""
+
 # tests/runner.py (新建文件)
 import subprocess
 import time

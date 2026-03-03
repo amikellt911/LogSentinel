@@ -38,7 +38,8 @@
 - C++ 单元测试使用 GoogleTest，并通过 CMake/CTest 接入。
 - 运行全部 C++ 测试：`cd server/build && ctest`。
 - 运行单个测试二进制：`./test_http_context`（或其他 `test_*` 可执行文件）。
-- Python 集成测试位于 `server/tests/*.py`，`python server/tests/run_tests.py` 会启动服务并执行 API 校验。
+- Python 集成测试位于 `server/tests/*.py`；历史入口 `run_tests.py` 已迁移到 `server/tests/legacy/`。
+- 当前推荐的主入口是 `python server/tests/smoke_trace_spans.py --mode basic|advanced`。
 
 ## 提交与 PR 规范
 
