@@ -100,3 +100,28 @@
 ### Pitfalls
 - “缺失 parent”在当前实现里是“作为 root 遍历 + 保留原始 parent_id 落库”并存，测试断言必须与实际策略一致，否则会出现语义错判。
 - 如果只测 happy path，会遗漏“落库失败但仍通知”等高风险一致性问题，这类问题上线后排查成本很高。
+
+---
+
+## 追加记录：新增 unit workflow 自动执行核心单元测试
+
+## Git Commit Message
+`ci(test): 新增unit工作流执行TraceSessionManager单测`
+
+## Modification
+- `.github/workflows/unit.yml`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 单元测试与冒烟测试分开建 workflow，失败定位会更快：单测失败优先看代码逻辑，冒烟失败优先看链路依赖。
+- 在 CI 里先跑稳定、耗时短的核心单测，可以更早阻断回归，减少后续排障成本。
+
+### Function Explanation
+- `ctest -R test_trace_session_manager_unit`：通过正则筛选执行指定测试目标，避免一次跑全量测试拉长反馈时间。
+- `workflow_dispatch`：允许手动触发，便于你在未发 PR 时先验证 CI 配置是否正确。
+
+### Pitfalls
+- 如果 workflow 只写冒烟而不写单测，很多逻辑回归会在更后阶段才暴露，定位成本明显更高。
+- 没有 `--output-on-failure` 时，CI 失败日志信息不足，复盘会来回翻找上下文。
