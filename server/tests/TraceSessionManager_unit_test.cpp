@@ -1,13 +1,18 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <functional>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "ai/TraceAiProvider.h"
 #include "core/TraceSessionManager.h"
 #include "notification/INotifier.h"
 #include "persistence/TraceRepository.h"
+#include "threadpool/ThreadPool.h"
 
 namespace
 {
@@ -16,11 +21,11 @@ namespace
 class FakeTraceRepository : public TraceRepository
 {
 public:
-    bool save_summary_called = false;
-    bool save_spans_called = false;
-    bool save_analysis_called = false;
-    bool save_prompt_called = false;
-    bool save_atomic_called = false;
+    std::atomic<bool> save_summary_called{false};
+    std::atomic<bool> save_spans_called{false};
+    std::atomic<bool> save_analysis_called{false};
+    std::atomic<bool> save_prompt_called{false};
+    std::atomic<bool> save_atomic_called{false};
 
     bool save_atomic_return = true;
 
@@ -31,30 +36,30 @@ public:
 
     bool SaveSingleTraceSummary(const TraceSummary& summary) override
     {
-        save_summary_called = true;
         last_summary = summary;
+        save_summary_called.store(true, std::memory_order_release);
         return true;
     }
 
     bool SaveSingleTraceSpans(const std::string&,
                               const std::vector<TraceSpanRecord>& spans) override
     {
-        save_spans_called = true;
         last_spans = spans;
+        save_spans_called.store(true, std::memory_order_release);
         return true;
     }
 
     bool SaveSingleTraceAnalysis(const TraceAnalysisRecord& analysis) override
     {
-        save_analysis_called = true;
         last_analysis = analysis;
+        save_analysis_called.store(true, std::memory_order_release);
         return true;
     }
 
     bool SaveSinglePromptDebug(const PromptDebugRecord& record) override
     {
-        save_prompt_called = true;
         last_prompt_debug = record;
+        save_prompt_called.store(true, std::memory_order_release);
         return true;
     }
 
@@ -63,7 +68,6 @@ public:
                                const TraceAnalysisRecord* analysis,
                                const PromptDebugRecord* prompt_debug) override
     {
-        save_atomic_called = true;
         last_summary = summary;
         last_spans = spans;
         if (analysis) {
@@ -76,6 +80,7 @@ public:
         } else {
             last_prompt_debug.reset();
         }
+        save_atomic_called.store(true, std::memory_order_release);
         return save_atomic_return;
     }
 };
@@ -90,13 +95,13 @@ public:
         .root_cause = "stub-root-cause",
         .solution = "stub-solution",
     };
-    bool called = false;
+    std::atomic<bool> called{false};
     std::string last_payload;
 
     LogAnalysisResult AnalyzeTrace(const std::string& trace_payload) override
     {
-        called = true;
         last_payload = trace_payload;
+        called.store(true, std::memory_order_release);
         return result;
     }
 };
@@ -105,23 +110,23 @@ public:
 class SpyNotifier : public INotifier
 {
 public:
-    bool notify_called = false;
-    bool notify_trace_alert_called = false;
+    std::atomic<bool> notify_called{false};
+    std::atomic<bool> notify_trace_alert_called{false};
     std::string last_trace_id;
     nlohmann::json last_content;
     TraceAlertEvent last_event;
 
     void notify(const std::string& trace_id, const nlohmann::json& content) override
     {
-        notify_called = true;
         last_trace_id = trace_id;
         last_content = content;
+        notify_called.store(true, std::memory_order_release);
     }
 
     void notifyTraceAlert(const TraceAlertEvent& event) override
     {
-        notify_trace_alert_called = true;
         last_event = event;
+        notify_trace_alert_called.store(true, std::memory_order_release);
     }
 };
 } // namespace
@@ -139,76 +144,223 @@ protected:
         span.service_name = "placeholder-service";
         return span;
     }
+
+    bool WaitUntil(const std::function<bool()>& predicate, int timeout_ms = 1000)
+    {
+        // predicate 就是“条件函数”：当它返回 true 时说明异步状态已满足。
+        // 这里统一短轮询，是为了避免每个用例都写重复等待逻辑，也避免固定 sleep 带来的慢和不稳定。
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (predicate()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return predicate();
+    }
 };
 
 TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenTraceEndIsTrue)
 {
-    // 先保留空实现占位，目的是先锁定“显式结束触发分发”这个核心行为，避免后续补测时遗漏。
-    GTEST_SKIP() << "TODO: 补充 trace_end=true 时的分发断言。";
+    // 目的：验证 trace_end=true 时，Push 会触发立即分发，而不是继续滞留在内存会话中。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(11, 101, 1000);
+    span.trace_end = true;
+
+    ASSERT_TRUE(manager.Push(span));
+    // 这里断言落库被触发，是为了证明 trace_end 的“立即分发语义”生效，而不是仅把数据留在内存会话里。
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    EXPECT_EQ(manager.size(), 0u);
+    EXPECT_EQ(repo.last_summary.trace_id, "11");
+    EXPECT_EQ(repo.last_spans.size(), 1u);
+
+    pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenCapacityReached)
 {
-    // 该用例用于覆盖容量阈值触发路径，提前占位可以防止后续只测 happy path 导致回归漏检。
-    GTEST_SKIP() << "TODO: 补充 capacity 达到上限后的分发断言。";
+    // 目的：验证会话到达容量上限时会触发分发，防止单条 trace 无限制膨胀占用内存。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/2, /*token_limit*/0);
+
+    SpanEvent span1 = MakeSpan(22, 201, 1000);
+    SpanEvent span2 = MakeSpan(22, 202, 1100);
+
+    ASSERT_TRUE(manager.Push(span1));
+    ASSERT_TRUE(manager.Push(span2));
+
+    // 容量阈值是当前“软背压”核心触发条件之一，这里验证到达上限后会主动分发，避免 session 无界增长。
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    EXPECT_EQ(manager.size(), 0u);
+    EXPECT_EQ(repo.last_summary.trace_id, "22");
+    EXPECT_EQ(repo.last_spans.size(), 2u);
+
+    pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenTokenLimitReached)
 {
+    // 目的：预留 token_limit 触发分发的用例。
+    // 现状：TokenEstimator 还在占位实现（固定返回 0），当前无法稳定触发该路径，所以先保留 skip。
     // token_limit 是软背压的关键入口，先占位能提醒我们后续必须验证阈值触发是否稳定。
     GTEST_SKIP() << "TODO: 补充 token_limit 触发分发的断言。";
 }
 
 TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenDuplicateSpanIdAppears)
 {
-    // 重复 span_id 是真实生产中高频脏数据场景，先占位避免后续遗漏异常路径测试。
-    GTEST_SKIP() << "TODO: 补充 duplicate span_id 触发分发的断言。";
+    // 目的：验证重复 span_id 会触发提前分发，避免脏数据持续污染当前会话。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(33, 301, 1000);
+
+    ASSERT_TRUE(manager.Push(span));
+    ASSERT_TRUE(manager.Push(span));
+
+    // 重复 span_id 触发提前分发，是为了尽快“截断脏数据会话”，这里验证该保护逻辑不会被后续改动破坏。
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    EXPECT_EQ(manager.size(), 0u);
+    EXPECT_EQ(repo.last_summary.trace_id, "33");
+    EXPECT_EQ(repo.last_spans.size(), 1u);
+    EXPECT_EQ(repo.last_spans.front().span_id, "301");
+
+    pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchBuildsCorrectTraceTreeAndOrder)
 {
+    // 目的：预留“树构建 + 序列化顺序”验证点，后续补充更细粒度断言。
     // 聚合正确性是 TraceSessionManager 的核心价值，先占位明确后续要验证父子关系与遍历顺序。
     GTEST_SKIP() << "TODO: 补充 trace 树构建与 DFS 顺序断言。";
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchHandlesMissingParentAsRoot)
 {
+    // 目的：预留缺失父节点容错验证，确认 orphan span 会按 root 处理。
     // 缺失父节点是上游乱序或数据缺失的常见情况，先占位保证后续验证容错策略。
     GTEST_SKIP() << "TODO: 补充缺失 parent_span_id 时的 root 降级断言。";
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchMarksCycleAsAnomalyWithoutInfiniteLoop)
 {
+    // 目的：预留环路保护验证，确保异常数据不会导致递归死循环。
     // 环路数据会引发递归风险，先占位是为了后续明确验证“检测到环且不死循环”。
     GTEST_SKIP() << "TODO: 补充 cycle anomaly 的序列化断言。";
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchPersistsSummaryAndSpansToRepository)
 {
-    // 该用例聚焦 manager 到 repository 的契约，先占位保证后续会验证落库参数映射完整性。
-    GTEST_SKIP() << "TODO: 补充 SaveSingleTraceAtomic 的调用参数断言。";
+    // 目的：验证 manager 组装出的 summary/spans 是否按契约映射到 repository。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent root = MakeSpan(44, 401, 1000);
+    root.name = "root-op";
+    root.service_name = "order-service";
+    root.end_time = 1300;
+    root.status = SpanEvent::Status::Ok;
+
+    SpanEvent child = MakeSpan(44, 402, 1100);
+    child.parent_span_id = 401;
+    child.name = "child-op";
+    child.service_name = "order-service";
+    child.end_time = 1200;
+    child.status = SpanEvent::Status::Error;
+    child.trace_end = true;
+
+    ASSERT_TRUE(manager.Push(root));
+    ASSERT_TRUE(manager.Push(child));
+
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    // 这里覆盖 summary/spans 字段映射，是为了防止未来字段重构时“编译通过但语义错位”。
+    EXPECT_EQ(repo.last_summary.trace_id, "44");
+    EXPECT_EQ(repo.last_summary.service_name, "order-service");
+    EXPECT_EQ(repo.last_summary.span_count, 2u);
+    EXPECT_EQ(repo.last_summary.start_time_ms, 1000);
+    EXPECT_EQ(repo.last_summary.duration_ms, 300);
+
+    ASSERT_EQ(repo.last_spans.size(), 2u);
+    EXPECT_EQ(repo.last_spans[0].span_id, "401");
+    EXPECT_FALSE(repo.last_spans[0].parent_id.has_value());
+    EXPECT_EQ(repo.last_spans[0].status, "OK");
+
+    EXPECT_EQ(repo.last_spans[1].span_id, "402");
+    ASSERT_TRUE(repo.last_spans[1].parent_id.has_value());
+    EXPECT_EQ(repo.last_spans[1].parent_id.value(), "401");
+    EXPECT_EQ(repo.last_spans[1].status, "ERROR");
+
+    pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchSkipsAnalysisWhenAiProviderIsNull)
 {
-    // 空 AI 依赖是最小部署形态，先占位防止后续实现把可选依赖错误变成必选依赖。
-    GTEST_SKIP() << "TODO: 补充 trace_ai=nullptr 时 analysis 为空的断言。";
+    // 目的：验证 AI 依赖为空时仍可落库基础 trace 数据，确保最小部署模式可用。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(55, 501, 1000);
+    span.trace_end = true;
+
+    ASSERT_TRUE(manager.Push(span));
+
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    // trace_ai 为空是允许的最小部署模式，这里断言 analysis 指针为空，避免把可选依赖误变成强依赖。
+    EXPECT_FALSE(repo.last_analysis.has_value());
+    EXPECT_EQ(repo.last_summary.trace_id, "55");
+    EXPECT_EQ(repo.last_spans.size(), 1u);
+
+    pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk)
 {
-    // 告警策略要求只发 critical，先占位可避免未来策略改动时误发大量低风险通知。
-    GTEST_SKIP() << "TODO: 补充 risk_level 过滤与 notifyTraceAlert 调用断言。";
+    // 目的：验证告警策略只对 critical 发送通知，避免 warning/info 造成噪音告警。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    StubTraceAi ai;
+    SpyNotifier notifier;
+    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0, &notifier);
+
+    SpanEvent critical_span = MakeSpan(66, 601, 1000);
+    critical_span.trace_end = true;
+    ai.result.risk_level = RiskLevel::CRITICAL;
+    ASSERT_TRUE(manager.Push(critical_span));
+    ASSERT_TRUE(WaitUntil([&notifier]() {
+        return notifier.notify_trace_alert_called.load(std::memory_order_acquire);
+    }));
+    EXPECT_EQ(notifier.last_event.trace_id, "66");
+    EXPECT_EQ(notifier.last_event.risk_level, "critical");
+
+    // 第二段改为 non-critical，验证策略过滤是否生效。这里重置标记是为了避免第一次调用结果污染第二次断言。
+    notifier.notify_trace_alert_called.store(false, std::memory_order_release);
+    ai.result.risk_level = RiskLevel::WARNING;
+
+    SpanEvent warning_span = MakeSpan(67, 602, 1100);
+    warning_span.trace_end = true;
+    ASSERT_TRUE(manager.Push(warning_span));
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.last_summary.trace_id == "67"; }));
+    EXPECT_FALSE(notifier.notify_trace_alert_called.load(std::memory_order_acquire));
+
+    pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchDoesNotNotifyWhenSaveFails)
 {
+    // 目的：预留失败路径验证，后续补“落库失败时必须不通知”的一致性断言。
     // 先落库后通知是为了保证可追溯性，先占位确保失败路径不会产生“通知成功但无数据”不一致。
     GTEST_SKIP() << "TODO: 补充 save 失败时不发通知的断言。";
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchReturnsSafelyWhenThreadPoolIsNull)
 {
+    // 目的：预留空线程池健壮性验证，确保在最小构造或异常配置下不会崩溃。
     // 无线程池时应安全返回，先占位用于保障最小构造下不会崩溃。
     GTEST_SKIP() << "TODO: 补充 thread_pool=nullptr 时的健壮性断言。";
 }

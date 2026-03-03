@@ -57,3 +57,4 @@
 - [x] 新增 `TraceSessionManager` GoogleTest 占位测试文件，先锁定核心测试点清单
 - [x] 将占位测试目标接入 CMake/CTest，保证本地与 CI 可见
 - [x] 在 `TraceSessionManager_unit_test` 内新增 Fake/Stub/Spy 测试替身类，支撑后续隔离单元测试
+- [x] 在 `TraceSessionManager_unit_test` 先落地 6 条真实断言（分发触发、落库映射、AI 可选、critical 通知）
