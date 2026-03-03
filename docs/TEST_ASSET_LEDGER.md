@@ -68,6 +68,9 @@
   - `smoke-advanced`：仅手动触发
 - `unit.yml`
   - 当前执行：`ctest -R "^TraceSessionManagerUnitTest\." --output-on-failure`
+- `integration.yml`
+  - 当前执行：`ctest -R "^TraceSessionManagerIntegrationTest\." --output-on-failure`
+  - 触发策略：手动触发（`workflow_dispatch`）
 
 ### 现状评价
 - 主链路已具备“单测 + 冒烟”最小闭环。

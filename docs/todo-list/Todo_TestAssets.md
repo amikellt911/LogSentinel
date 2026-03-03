@@ -8,4 +8,5 @@
 - [x] 将软下线脚本统一迁移到 `server/tests/legacy/`，降低主目录误用概率
 - [x] 清理 CTest 重复注册（移除 `add_test` 与 `gtest_discover_tests` 并存）
 - [x] 将 `TraceSessionManager_test.cpp` 迁移到 `legacy/` 并从 CTest 移除，统一以 unit 为主防线
+- [x] 新增 `integration.yml`（手动触发）执行 `TraceSessionManagerIntegrationTest` 套件
 - [x] 追加今日 dev-log，记录本次测试资产梳理结论

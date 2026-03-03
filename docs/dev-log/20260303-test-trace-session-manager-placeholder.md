@@ -349,3 +349,29 @@
 ### Pitfalls
 - 如果团队默认认为“所有异常都应落库”，会在排障时错误聚焦 `trace_span`，忽略 payload 中的 `anomalies`。
 - 缺少“记录位置”注释时，新成员容易把“现有语义”误改成“自认为的语义”，引入不必要行为变更。
+
+---
+
+## 追加记录：新增 integration workflow（手动触发）
+
+## Git Commit Message
+`ci(test): 新增integration工作流执行TraceSessionManager集成测试`
+
+## Modification
+- `.github/workflows/integration.yml`
+- `docs/TEST_ASSET_LEDGER.md`
+- `docs/todo-list/Todo_TestAssets.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 把 integration 从 unit/smoke 中独立出来，可以避免 PR 阶段被重测试拖慢，同时保留“需要时一键验证”的能力。
+- 集成测试更依赖环境状态，先用手动触发比默认强制触发更稳，等稳定后再考虑升级到定时/PR 必跑。
+
+### Function Explanation
+- `workflow_dispatch`：在 Actions 页面手动点击触发，适合重测试或排障场景。
+- `ctest -R "^TraceSessionManagerIntegrationTest\\."`：只执行 TraceSessionManager 集成测试套件，控制执行范围与耗时。
+
+### Pitfalls
+- 如果 integration 也默认跟 unit 同级必跑，PR 反馈时间会明显变长，团队容易绕过测试。
+- 没有独立 workflow 时，集成测试失败会和其它测试日志混在一起，定位成本更高。
