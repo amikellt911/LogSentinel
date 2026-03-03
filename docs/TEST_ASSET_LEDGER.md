@@ -54,7 +54,7 @@
 | `smoke_trace_spans.py` | 冒烟测试 | 双模式，当前主冒烟入口 | 强保留 | 继续作为 smoke 主脚本 |
 | `mock_webhook_server.py` | 测试辅助服务 | 被 advanced smoke 依赖 | 保留 | 维持 |
 | `legacy/run_tests.py` | 旧集成入口 | 注释/流程与当前架构不一致 | 下线候选（已软下线标注） | 重写或废弃 |
-| `test_history_api.py` | API集成脚本 | 仍可用，但耦合旧入口 | 优化 | 并入统一 python test runner |
+| `legacy/test_history_api.py` | API集成脚本 | 历史分页验证脚本，耦合旧入口 | 下线候选（已软下线迁移） | 统一重写后再接回主目录 |
 | `legacy/test_httpserver.py` | 手工验证脚本 | 多为早期路由验证脚本 | 下线候选（已软下线标注） | 改名为 `manual_*` 或迁移 |
 | `legacy/integration_gemini_test.py` | 外部依赖集成 | 强依赖环境与旧表结构假设 | 下线候选（已软下线标注） | 重写为新 Trace 链路版 |
 | `legacy/test_mvp1.py` | 历史脚本 | 依赖已不再构建的二进制 | 下线候选（已软下线标注） | 归档/删除 |
@@ -102,6 +102,7 @@
 ## 7. 本轮执行进度（2026-03-03）
 
 - 已完成：`legacy/run_tests.py`、`legacy/test_httpserver.py`、`legacy/integration_gemini_test.py`、`legacy/test_mvp1.py`、`legacy/test_mvp2.1_gemini.py` 的软下线标注并迁移到 `legacy/` 目录。
+- 已完成：`test_history_api.py` 迁移到 `legacy/` 并加软下线标注，避免与主链路测试入口混用。
 - 已完成：`TraceSessionManager_test.cpp` 迁移到 `legacy/` 并从 CTest 移除，避免与 `unit` 套件重复维护。
 - 已完成：清理 CMake 的 CTest 重复注册（移除 `add_test`，保留 `gtest_discover_tests`）。
 - 软下线仅做“禁默认入口 + 给替代方案提示”，尚未执行物理删除。

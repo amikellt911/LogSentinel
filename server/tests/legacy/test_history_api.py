@@ -1,3 +1,12 @@
+"""
+DEPRECATED（软下线中）：
+- 原因：该脚本用于历史分页接口手工验证，依赖旧测试入口编排，不适合作为当前默认回归门禁。
+- 当前状态：迁移至 legacy 目录，仅保留为历史参考，不纳入默认 CI。
+- 替代方案：
+  1) Trace 主链路冒烟：`python server/tests/smoke_trace_spans.py --mode basic|advanced`
+  2) Trace 核心单测：`cd server/build && ctest -R "^TraceSessionManagerUnitTest\\." --output-on-failure`
+"""
+
 import requests
 import time
 import json

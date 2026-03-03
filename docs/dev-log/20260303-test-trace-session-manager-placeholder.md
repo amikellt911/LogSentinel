@@ -375,3 +375,30 @@
 ### Pitfalls
 - 如果 integration 也默认跟 unit 同级必跑，PR 反馈时间会明显变长，团队容易绕过测试。
 - 没有独立 workflow 时，集成测试失败会和其它测试日志混在一起，定位成本更高。
+
+---
+
+## 追加记录：迁移 test_history_api.py 到 legacy 并软下线
+
+## Git Commit Message
+`chore(test): 迁移test_history_api到legacy并标注软下线`
+
+## Modification
+- `server/tests/legacy/test_history_api.py`
+- `server/tests/legacy/README.md`
+- `docs/TEST_ASSET_LEDGER.md`
+- `docs/todo-list/Todo_TestAssets.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 对“历史验证脚本”做目录迁移与状态标注，可以避免团队把它误当作当前回归门禁。
+- 脚本迁移后要同步更新资产台账，否则后续维护者会继续按旧路径找文件。
+
+### Function Explanation
+- `legacy/test_history_api.py`：保留分页验证历史脚本，不参与默认 CI；仅在回溯场景手动使用。
+- 软下线标注：通过文件头注释明确脚本定位和替代入口，降低误用概率。
+
+### Pitfalls
+- 若只移动文件不加 `DEPRECATED` 说明，后续成员仍可能把它当活跃测试入口继续扩写。
+- 若不更新 `legacy/README.md` 清单，资产治理会逐步失真。
