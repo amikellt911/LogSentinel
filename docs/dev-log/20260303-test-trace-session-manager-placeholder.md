@@ -74,3 +74,29 @@
 ### Pitfalls
 - `TokenEstimator` 当前返回 0，若直接写“token_limit 触发分发”断言会与现状不一致，需等估算逻辑接入后再补该用例。
 - 如果在保存入参前就把 `called` 标志置为 true，测试线程可能读到半成品数据，导致偶发不稳定断言。
+
+---
+
+## 追加记录：补齐剩余 6 条 unit 用例并全量通过
+
+## Git Commit Message
+`test(trace): 补齐TraceSessionManager剩余unit用例并验证12条全通过`
+
+## Modification
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 当某条路径受“占位实现”限制（例如 token 估算固定为 0）时，可以在测试内做最小可控注入，先验证流程分支是否正确，再等待真实实现替换。
+- 对于异步分发逻辑，先断言“任务被触发”，再断言“参数内容正确”，能更快定位是调度问题还是组装问题。
+
+### Function Explanation
+- `#define private public ... #undef private`：仅测试场景下用于访问私有成员做可控状态注入，避免为测试改生产接口。
+- `SerializeTrace(...)`：通过手工构造 `TraceIndex` 覆盖防环逻辑，验证 `anomalies` 输出与无死循环行为。
+- `save_atomic_return = false`：在 FakeRepo 中模拟落库失败，验证“保存失败不通知”的一致性策略。
+
+### Pitfalls
+- “缺失 parent”在当前实现里是“作为 root 遍历 + 保留原始 parent_id 落库”并存，测试断言必须与实际策略一致，否则会出现语义错判。
+- 如果只测 happy path，会遗漏“落库失败但仍通知”等高风险一致性问题，这类问题上线后排查成本很高。

@@ -9,10 +9,13 @@
 #include <vector>
 
 #include "ai/TraceAiProvider.h"
+#define private public
 #include "core/TraceSessionManager.h"
+#undef private
 #include "notification/INotifier.h"
 #include "persistence/TraceRepository.h"
 #include "threadpool/ThreadPool.h"
+#include <nlohmann/json.hpp>
 
 namespace
 {
@@ -204,10 +207,29 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenCapacityReached)
 
 TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenTokenLimitReached)
 {
-    // 目的：预留 token_limit 触发分发的用例。
-    // 现状：TokenEstimator 还在占位实现（固定返回 0），当前无法稳定触发该路径，所以先保留 skip。
-    // token_limit 是软背压的关键入口，先占位能提醒我们后续必须验证阈值触发是否稳定。
-    GTEST_SKIP() << "TODO: 补充 token_limit 触发分发的断言。";
+    // 目的：验证 token_limit 达到阈值时会触发分发。
+    // 说明：当前 TokenEstimator 仍是占位实现（总返回 0），这里通过测试内可控方式预置 token_count，
+    // 只为了验证阈值判断与分发路径本身，不改变生产代码行为。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/1);
+
+    SpanEvent span1 = MakeSpan(77, 701, 1000);
+    SpanEvent span2 = MakeSpan(77, 702, 1100);
+
+    ASSERT_TRUE(manager.Push(span1));
+    auto index_iter = manager.index_by_trace_.find(77);
+    ASSERT_NE(index_iter, manager.index_by_trace_.end());
+    ASSERT_LT(index_iter->second, manager.sessions_.size());
+    manager.sessions_[index_iter->second]->token_count = 1;
+
+    ASSERT_TRUE(manager.Push(span2));
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    EXPECT_EQ(manager.size(), 0u);
+    EXPECT_EQ(repo.last_summary.trace_id, "77");
+    EXPECT_EQ(repo.last_spans.size(), 2u);
+
+    pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenDuplicateSpanIdAppears)
@@ -234,23 +256,78 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenDuplicateSpanIdAppears)
 
 TEST_F(TraceSessionManagerUnitTest, DispatchBuildsCorrectTraceTreeAndOrder)
 {
-    // 目的：预留“树构建 + 序列化顺序”验证点，后续补充更细粒度断言。
-    // 聚合正确性是 TraceSessionManager 的核心价值，先占位明确后续要验证父子关系与遍历顺序。
-    GTEST_SKIP() << "TODO: 补充 trace 树构建与 DFS 顺序断言。";
+    // 目的：验证 root-child 关系构建后，子节点会按 start_time_ms 排序进入落库顺序。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent root = MakeSpan(88, 801, 1000);
+    SpanEvent child_late = MakeSpan(88, 803, 3000);
+    child_late.parent_span_id = 801;
+    SpanEvent child_early = MakeSpan(88, 802, 2000);
+    child_early.parent_span_id = 801;
+    child_early.trace_end = true;
+
+    ASSERT_TRUE(manager.Push(root));
+    ASSERT_TRUE(manager.Push(child_late));
+    ASSERT_TRUE(manager.Push(child_early));
+
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    ASSERT_EQ(repo.last_spans.size(), 3u);
+    EXPECT_EQ(repo.last_spans[0].span_id, "801");
+    EXPECT_EQ(repo.last_spans[1].span_id, "802");
+    EXPECT_EQ(repo.last_spans[2].span_id, "803");
+
+    pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchHandlesMissingParentAsRoot)
 {
-    // 目的：预留缺失父节点容错验证，确认 orphan span 会按 root 处理。
-    // 缺失父节点是上游乱序或数据缺失的常见情况，先占位保证后续验证容错策略。
-    GTEST_SKIP() << "TODO: 补充缺失 parent_span_id 时的 root 降级断言。";
+    // 目的：验证 parent_span_id 指向不存在节点时，该 span 不会丢失，仍能参与分发并落库。
+    // 说明：当前实现会把该节点当作 root 参与遍历，但保留原始 parent_id 以便排障定位上游数据问题。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent orphan = MakeSpan(99, 901, 1000);
+    orphan.parent_span_id = 9999;
+    orphan.trace_end = true;
+
+    ASSERT_TRUE(manager.Push(orphan));
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    ASSERT_EQ(repo.last_spans.size(), 1u);
+    EXPECT_EQ(repo.last_spans[0].span_id, "901");
+    ASSERT_TRUE(repo.last_spans[0].parent_id.has_value());
+    EXPECT_EQ(repo.last_spans[0].parent_id.value(), "9999");
+
+    pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchMarksCycleAsAnomalyWithoutInfiniteLoop)
 {
-    // 目的：预留环路保护验证，确保异常数据不会导致递归死循环。
-    // 环路数据会引发递归风险，先占位是为了后续明确验证“检测到环且不死循环”。
-    GTEST_SKIP() << "TODO: 补充 cycle anomaly 的序列化断言。";
+    // 目的：直接验证序列化层的防环逻辑，确保出现环时不会无限递归并会写入 anomalies。
+    TraceSessionManager manager(nullptr, nullptr, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span_a = MakeSpan(100, 1001, 1000);
+    SpanEvent span_b = MakeSpan(100, 1002, 1100);
+
+    TraceSessionManager::TraceIndex index;
+    index.span_map[1001] = &span_a;
+    index.span_map[1002] = &span_b;
+    index.children[1001] = {1002};
+    index.children[1002] = {1001};
+    index.roots = {1001};
+
+    std::vector<const SpanEvent*> order;
+    const std::string payload = manager.SerializeTrace(index, &order);
+    const nlohmann::json parsed = nlohmann::json::parse(payload);
+
+    EXPECT_TRUE(parsed.contains("anomalies"));
+    ASSERT_TRUE(parsed["anomalies"].is_array());
+    EXPECT_FALSE(parsed["anomalies"].empty());
+    ASSERT_EQ(order.size(), 2u);
+    EXPECT_EQ(order[0]->span_id, 1001u);
+    EXPECT_EQ(order[1]->span_id, 1002u);
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchPersistsSummaryAndSpansToRepository)
@@ -353,14 +430,35 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
 
 TEST_F(TraceSessionManagerUnitTest, DispatchDoesNotNotifyWhenSaveFails)
 {
-    // 目的：预留失败路径验证，后续补“落库失败时必须不通知”的一致性断言。
-    // 先落库后通知是为了保证可追溯性，先占位确保失败路径不会产生“通知成功但无数据”不一致。
-    GTEST_SKIP() << "TODO: 补充 save 失败时不发通知的断言。";
+    // 目的：验证“先落库后通知”策略：当落库失败时，即使风险等级是 critical 也不应发送通知。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    repo.save_atomic_return = false;
+    StubTraceAi ai;
+    ai.result.risk_level = RiskLevel::CRITICAL;
+    SpyNotifier notifier;
+    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0, &notifier);
+
+    SpanEvent span = MakeSpan(111, 1101, 1000);
+    span.trace_end = true;
+    ASSERT_TRUE(manager.Push(span));
+
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    EXPECT_FALSE(notifier.notify_trace_alert_called.load(std::memory_order_acquire));
+
+    pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, DispatchReturnsSafelyWhenThreadPoolIsNull)
 {
-    // 目的：预留空线程池健壮性验证，确保在最小构造或异常配置下不会崩溃。
-    // 无线程池时应安全返回，先占位用于保障最小构造下不会崩溃。
-    GTEST_SKIP() << "TODO: 补充 thread_pool=nullptr 时的健壮性断言。";
+    // 目的：验证 thread_pool 为空时 Dispatch 仅回收会话并安全返回，不应触发任何异步落库。
+    FakeTraceRepository repo;
+    TraceSessionManager manager(nullptr, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(122, 1201, 1000);
+    span.trace_end = true;
+
+    ASSERT_TRUE(manager.Push(span));
+    EXPECT_EQ(manager.size(), 0u);
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
 }

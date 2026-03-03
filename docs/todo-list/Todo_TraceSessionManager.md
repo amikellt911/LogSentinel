@@ -58,3 +58,4 @@
 - [x] 将占位测试目标接入 CMake/CTest，保证本地与 CI 可见
 - [x] 在 `TraceSessionManager_unit_test` 内新增 Fake/Stub/Spy 测试替身类，支撑后续隔离单元测试
 - [x] 在 `TraceSessionManager_unit_test` 先落地 6 条真实断言（分发触发、落库映射、AI 可选、critical 通知）
+- [x] 补齐剩余 6 条 `TraceSessionManager_unit_test` 用例并跑通（12/12 passed）
