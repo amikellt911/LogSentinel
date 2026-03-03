@@ -298,3 +298,54 @@
 ### Pitfalls
 - 迁移重复测试后，集成测试可能暴露“旧断言与现实现状不一致”的遗留问题；这类问题应单独收敛，不应和目录治理混在一次改动里。
 - 若不把迁移信息同步到台账，后续成员会误以为“测试被删除”，而不是“测试被有意降级为 legacy”。
+
+---
+
+## 追加记录：收敛 TraceSessionManager 集成测试与现实现状不一致断言
+
+## Git Commit Message
+`test(trace): 修正TraceSessionManager集成测试旧断言并验证全量通过`
+
+## Modification
+- `server/tests/TraceSessionManager_integration_test.cpp`
+- `docs/todo-list/Todo_TraceSessionManager_IntegrationTest.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 测试失败不一定是代码坏了，也可能是“测试期望落后于实现演进”；这两者要分开处理，避免误修业务逻辑。
+- 对集成测试优先断言“稳定语义”而非“易变细节”，能减少环境差异导致的脆弱失败。
+
+### Function Explanation
+- `PersistsSummarySpanAndAnalysisFields`：risk_level 改为“非空”断言，避免被 MockTraceAi 动态风险等级影响。
+- `MarksCycleAsAnomaly`：按当前实现验证“全环无 root 时 summary 保留、trace_span 不写入”的现状行为。
+- `TreatsMissingParentAsRoot`：改为断言“遍历按 root 处理但落库保留 parent_id”的当前策略。
+
+### Pitfalls
+- 将集成测试写死为固定 `risk_level`（如 `unknown`）会导致 AI/mock 行为变化后频繁误报。
+- 在一个任务里同时做“目录治理 + 行为修复”容易把问题归因混淆，建议像本次这样分步收敛并单独回归验证。
+
+---
+
+## 追加记录：补充 cycle anomalies 记录位置注释
+
+## Git Commit Message
+`docs(core): 补充TraceSessionManager环路异常记录位置注释`
+
+## Modification
+- `server/core/TraceSessionManager.cpp`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 当异常信息“只在 payload 里流转、不落库”时，必须在关键代码处写明，否则后续排障容易误以为数据库丢数据。
+- 注释不仅解释“做了什么”，还要解释“去哪儿看结果”，这能显著降低跨人协作沟通成本。
+
+### Function Explanation
+- `output["anomalies"]`：当前用于记录序列化阶段检测到的环路异常，随 `trace_payload` 继续流转到 AI 分析链路。
+- `trace_payload`：TraceSessionManager 传给 `TraceAiProvider::AnalyzeTrace` 的输入载体，包含 spans 与 anomalies。
+
+### Pitfalls
+- 如果团队默认认为“所有异常都应落库”，会在排障时错误聚焦 `trace_span`，忽略 payload 中的 `anomalies`。
+- 缺少“记录位置”注释时，新成员容易把“现有语义”误改成“自认为的语义”，引入不必要行为变更。

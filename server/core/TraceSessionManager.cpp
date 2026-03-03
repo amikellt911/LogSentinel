@@ -129,6 +129,8 @@ void TraceSessionManager::Dispatch(size_t trace_key)
         TraceSessionManager::TraceIndex index = manager->BuildTraceIndex(*session_shared);
         std::vector<const SpanEvent*> order;
         std::string trace_payload = manager->SerializeTrace(index, &order);
+        // 说明：SerializeTrace 在检测到环时会把异常写入 payload.anomalies。
+        // 这份异常信息当前只通过 trace_payload 传给 AI 分析链路，不会单独落到 trace_span 表中。
 
         TraceRepository::TraceSummary summary =
             manager->BuildTraceSummary(*session_shared, order);
@@ -316,6 +318,10 @@ std::string TraceSessionManager::SerializeTrace(const TraceIndex& index, std::ve
         }
     }
     if (has_cycle) {
+        // 记录位置（第一处）：
+        // 1) 异常会写入当前序列化结果 output["anomalies"]，并随 trace_payload 继续流转。
+        // 2) 当前实现不单独持久化 anomalies 表，因此排障时应优先看 AI 输入/日志中的 payload 内容。
+        //因为有环所以没有root所以就是dfs根本不会跑，导致order为空，ai无法具有分析性
         nlohmann::json anomalies = nlohmann::json::array();
         for (size_t span_id : cycle_spans) {
             nlohmann::json item;
