@@ -140,11 +140,36 @@ void TraceSessionManager::Dispatch(size_t trace_key)
         TraceRepository::TraceAnalysisRecord analysis_record;
         TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
         if (trace_ai) {
-            LogAnalysisResult analysis = trace_ai->AnalyzeTrace(trace_payload);
-            analysis_record = manager->BuildAnalysisRecord(summary.trace_id, analysis);
-            analysis_ptr = &analysis_record;
+            try {
+                LogAnalysisResult analysis = trace_ai->AnalyzeTrace(trace_payload);
+                analysis_record = manager->BuildAnalysisRecord(summary.trace_id, analysis);
+                analysis_ptr = &analysis_record;
+            } catch (const std::exception& e) {
+                // AI 调用失败时写入失败态 analysis，保证“失败可见”，便于后续在业务侧触发重试。
+                analysis_record.trace_id = summary.trace_id;
+                analysis_record.risk_level = "unknown";
+                analysis_record.summary = "AI_ANALYSIS_FAILED";
+                analysis_record.root_cause = e.what();
+                analysis_record.solution = "请检查 AI 代理与模型服务状态，稍后重试该 trace 的分析。";
+                analysis_record.confidence = 0.0;
+                analysis_ptr = &analysis_record;
+            } catch (...) {
+                // 非标准异常同样写入失败态，避免出现“无分析记录”的黑盒状态。
+                analysis_record.trace_id = summary.trace_id;
+                analysis_record.risk_level = "unknown";
+                analysis_record.summary = "AI_ANALYSIS_FAILED";
+                analysis_record.root_cause = "Unknown non-std exception";
+                analysis_record.solution = "请检查 AI 代理与模型服务状态，稍后重试该 trace 的分析。";
+                analysis_record.confidence = 0.0;
+                analysis_ptr = &analysis_record;
+            }
         }
 
+        // prompt_debug 现状说明：
+        // 1) 持久层已具备 prompt_debug 表与 SaveSinglePromptDebug/Atomic 写入能力；
+        // 2) 当前先不在主链路写入（传 nullptr），避免在 MVP 阶段引入额外字段组装复杂度；
+        // 3) 后续做“分析重试”时，优先把当次 trace_payload 作为 input_json 落到 prompt_debug，
+        //    这样可直接重放请求，不需要再次从 trace_span 重新组装树结构。
         bool saved = trace_repo->SaveSingleTraceAtomic(summary, span_records, analysis_ptr, nullptr);
         if (!saved || !notifier || !analysis_ptr) {
             return;

@@ -172,3 +172,49 @@ Function Explanation:
 
 Pitfalls:
 - 仅增加 `--trace-ai-timeout-ms` 不够；如果 `db-timeout` 仍是 10 秒，测试会在 AI 返回前失败。
+
+---
+
+追加记录（Trace AI 异常兜底不阻断主链路）:
+
+Git Commit Message:
+fix(core): trace ai异常时降级仅落基础链路避免任务中断
+
+Modification:
+- server/core/TraceSessionManager.cpp
+- docs/todo-list/Todo_TraceAiProvider.md
+
+Learning Tips:
+Newbie Tips:
+- 超时参数只是“等待上限”，不能保证外部调用一定成功；主业务链路仍需在调用点做 `try/catch` 兜底。
+- 把异常兜底放在调度层（TraceSessionManager）可以保护线程池任务不被未捕获异常打断。
+
+Function Explanation:
+- `try/catch`：用于捕获 AI 调用中的网络异常、协议解析异常，保证后续 `SaveSingleTraceAtomic` 仍执行。
+- `SaveSingleTraceAtomic(..., analysis_ptr, ...)`：当 `analysis_ptr == nullptr` 时只写 summary/span，保持单次事务写入。
+
+Pitfalls:
+- 仅在 `TraceProxyAi` 设置超时而不在上层捕获异常，仍会导致任务异常退出，出现“基础数据未落库”的假象。
+
+---
+
+追加记录（AI 异常失败态分析落库）:
+
+Git Commit Message:
+feat(core): ai异常时写入失败态trace_analysis便于后续重试
+
+Modification:
+- server/core/TraceSessionManager.cpp
+- docs/todo-list/Todo_TraceAiProvider.md
+
+Learning Tips:
+Newbie Tips:
+- “降级不丢状态”比“静默失败”更重要：即使 AI 失败，也应写一条可识别的失败态记录，方便前端提示和后续重试。
+- 失败态记录建议字段固定（例如 `summary=AI_ANALYSIS_FAILED`），便于查询和统计，不要每次拼不同文案。
+
+Function Explanation:
+- `catch (const std::exception& e)`：捕获标准异常并拿到 `e.what()` 作为失败根因。
+- `SaveSingleTraceAtomic(..., analysis_ptr, ...)`：当 `analysis_ptr` 指向失败态记录时，summary/span/analysis 会在同一事务中一次性落库。
+
+Pitfalls:
+- 如果 catch 后直接 `analysis_ptr = nullptr`，虽然主链路可用，但业务侧无法区分“未分析”还是“分析失败”。
