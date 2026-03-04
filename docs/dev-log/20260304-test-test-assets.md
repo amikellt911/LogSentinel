@@ -25,3 +25,25 @@ Function Explanation:
 Pitfalls:
 - 同仓库并发执行多个 `git` 命令可能触发 `.git/index.lock` 冲突；出现时先确认没有悬挂进程，再重试失败命令。
 - 台账如果不和 CMake 同步，会出现“文档说下线了但 CI 还在跑”的认知不一致问题。
+
+---
+
+追加记录（HttpContext 测试修复）:
+
+Git Commit Message:
+fix(http): 修复请求头大小写导致 HttpContext 测试异常
+
+Modification:
+- server/http/HttpRequest.h
+
+Learning Tips:
+Newbie Tips:
+- HTTP Header 名大小写不敏感，推荐在“写入和读取”两端都做同一套规范化（例如统一转小写）。
+- `unordered_map::at` 适合“必须存在”的场景；对于外部输入（如 HTTP 头）更适合先 `find` 再处理缺失分支。
+
+Function Explanation:
+- `std::transform`：对字符串逐字符转换，本次用于把查询 key 转为小写。
+- `std::tolower`：字符转小写，配合 `unsigned char` 转换可避免未定义行为风险。
+
+Pitfalls:
+- 只在解析时把 key 转小写，但读取时不转，会出现“存得进、取不到”的隐藏一致性问题。
