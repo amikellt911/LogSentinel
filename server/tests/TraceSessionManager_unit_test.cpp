@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <string>
 #include <thread>
@@ -461,4 +462,27 @@ TEST_F(TraceSessionManagerUnitTest, DispatchReturnsSafelyWhenThreadPoolIsNull)
     ASSERT_TRUE(manager.Push(span));
     EXPECT_EQ(manager.size(), 0u);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+}
+
+TEST_F(TraceSessionManagerUnitTest, SweepExpiredSessionsDispatchesIdleTraceWithoutTraceEnd)
+{
+    // 目的：验证没有 trace_end 的 session 也能被定时扫过期后分发，避免长尾 trace 永久滞留内存。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(133, 1301, 1000);
+    ASSERT_TRUE(manager.Push(span));
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+    EXPECT_EQ(manager.size(), 1u);
+
+    // 这里直接给一个足够大的 now_ms，避免测试依赖真实 sleep 时间，从而减少环境抖动。
+    manager.SweepExpiredSessions(std::numeric_limits<int64_t>::max() / 4, /*idle_timeout_ms*/1, /*max_dispatch_per_tick*/1);
+
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    EXPECT_EQ(manager.size(), 0u);
+    EXPECT_EQ(repo.last_summary.trace_id, "133");
+    EXPECT_EQ(repo.last_spans.size(), 1u);
+
+    pool.shutdown();
 }

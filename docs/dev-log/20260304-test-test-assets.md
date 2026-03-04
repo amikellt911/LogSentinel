@@ -218,3 +218,29 @@ Function Explanation:
 
 Pitfalls:
 - 如果 catch 后直接 `analysis_ptr = nullptr`，虽然主链路可用，但业务侧无法区分“未分析”还是“分析失败”。
+
+---
+
+追加记录（Trace 会话超时分发定时器）:
+
+Git Commit Message:
+feat(core): 增加trace会话超时巡检并触发自动分发
+
+Modification:
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- server/src/main.cpp
+- server/tests/TraceSessionManager_unit_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+
+Learning Tips:
+Newbie Tips:
+- 对于“可能永远收不到结束标记”的流式输入，必须有超时兜底，否则数据会一直卡在内存中看不到结果。
+- 现阶段优先用固定周期巡检（`runEvery`）比直接上时间轮更稳，先保证功能正确再考虑复杂优化。
+
+Function Explanation:
+- `EventLoop::runEvery(interval, cb)`：按固定周期执行回调；本次用于定时触发 `SweepExpiredSessions`。
+- `SweepExpiredSessions(now_ms, idle_timeout_ms, max_dispatch_per_tick)`：扫描超时未更新的 trace 会话并调用 `Dispatch`。
+
+Pitfalls:
+- 直接在遍历 `sessions_` 时调用 `Dispatch` 会改动容器导致迭代失效；应先收集 `trace_key`，再批量分发。

@@ -74,6 +74,9 @@ struct TraceSession
     std::unordered_set<size_t> span_ids;
     // duplicate_span_id 记录首个重复 span_id，便于后续告警或异常处理。
     std::optional<size_t> duplicate_span_id;
+    // 时间戳用于“超时分发”判定：trace 长时间未补齐时也能被强制刷盘。
+    int64_t created_at_ms = 0;
+    int64_t last_update_ms = 0;
 };
 
 class TraceSessionManager
@@ -90,6 +93,10 @@ public:
     size_t size() const;
     bool Push(const SpanEvent& span);
     void Dispatch(size_t trace_key);
+    // 由 EventLoop 定期调用，扫描长时间未更新的 session 并触发分发。
+    // now_ms 使用 steady_clock 毫秒时间戳，idle_timeout_ms<=0 表示关闭。
+    // max_dispatch_per_tick=0 表示不限制本轮分发数量。
+    void SweepExpiredSessions(int64_t now_ms, int64_t idle_timeout_ms, size_t max_dispatch_per_tick = 0);
 
 private:
     // 为了单元测试验证内部索引与序列化逻辑，开放特定测试友元访问，避免引入仅测试用途的公共接口。

@@ -61,3 +61,6 @@
 - [x] 补齐剩余 6 条 `TraceSessionManager_unit_test` 用例并跑通（12/12 passed）
 - [x] 在 `SerializeTrace/Dispatch` 补充 cycle anomalies 记录位置注释（payload 记录与当前不落库语义）
 - [x] 新增 GitHub Actions `unit.yml`，在 PR/main 上自动执行 `test_trace_session_manager_unit`
+- [x] 增加 TraceSession 定时扫过期分发（无 trace_end 的会话在 idle timeout 后强制 Dispatch）
+- [x] 在 `main.cpp` 使用 `EventLoop::runEvery` 接入 Trace 会话过期巡检定时器
+- [x] 补充单测覆盖超时分发路径并完成回归测试

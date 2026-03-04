@@ -5,6 +5,7 @@
 #include "notification/INotifier.h"
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <limits>
 #include <nlohmann/json.hpp>
 
@@ -16,6 +17,13 @@ std::string toLowerCopy(std::string value)
         return static_cast<char>(std::tolower(c));
     });
     return value;
+}
+
+int64_t NowSteadyMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
 }
 }
 
@@ -49,10 +57,13 @@ size_t TraceSessionManager::size() const
 
 bool TraceSessionManager::Push(const SpanEvent& span)
 {
+    const int64_t now_ms = NowSteadyMs();
     auto iter = index_by_trace_.find(span.trace_key);
     if (iter == index_by_trace_.end()) {
         auto session = std::make_unique<TraceSession>(capacity_);
         session->trace_key = span.trace_key;
+        session->created_at_ms = now_ms;
+        session->last_update_ms = now_ms;
         sessions_.push_back(std::move(session));
         index_by_trace_[span.trace_key] = sessions_.size() - 1;
         iter = index_by_trace_.find(span.trace_key);
@@ -71,6 +82,7 @@ bool TraceSessionManager::Push(const SpanEvent& span)
     // 先按到达顺序追加，后续聚合阶段再按 parent_id 重建结构。
     session.spans.push_back(span);
     session.token_count += token_estimator_.Estimate(span);
+    session.last_update_ms = now_ms;
 
     if (span.trace_end.has_value() && span.trace_end.value()) {
         Dispatch(session.trace_key);
@@ -89,6 +101,36 @@ bool TraceSessionManager::Push(const SpanEvent& span)
 
     // 当前仅做本地写入与分发占位，先返回成功；后续接入线程池/存储失败时再返回 false。
     return true;
+}
+
+void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
+                                               int64_t idle_timeout_ms,
+                                               size_t max_dispatch_per_tick)
+{
+    if (idle_timeout_ms <= 0 || sessions_.empty()) {
+        return;
+    }
+
+    std::vector<size_t> expired_trace_keys;
+    expired_trace_keys.reserve(sessions_.size());
+
+    for (const auto& session_ptr : sessions_) {
+        if (!session_ptr) {
+            continue;
+        }
+        const int64_t idle_ms = now_ms - session_ptr->last_update_ms;
+        if (idle_ms < idle_timeout_ms) {
+            continue;
+        }
+        expired_trace_keys.push_back(session_ptr->trace_key);
+        if (max_dispatch_per_tick > 0 && expired_trace_keys.size() >= max_dispatch_per_tick) {
+            break;
+        }
+    }
+
+    for (size_t trace_key : expired_trace_keys) {
+        Dispatch(trace_key);
+    }
 }
 
 void TraceSessionManager::Dispatch(size_t trace_key)

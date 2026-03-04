@@ -23,6 +23,7 @@
 #include "core/TraceSessionManager.h"
 #include "util/DevSubprocessManager.h"
 #include <filesystem>
+#include <chrono>
 #include <optional>
 #include <vector>
 
@@ -188,6 +189,14 @@ int main(int argc, char* argv[])
         /*capacity*/100,
         /*token_limit*/0,
         notifier.get());
+    const int64_t trace_idle_timeout_ms = 5000;
+    const double trace_sweep_interval_sec = 0.5;
+    const size_t trace_max_dispatch_per_tick = 64;
+    loop.runEvery(trace_sweep_interval_sec, [trace_session_manager, trace_idle_timeout_ms, trace_max_dispatch_per_tick]() {
+        const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        trace_session_manager->SweepExpiredSessions(now_ms, trace_idle_timeout_ms, trace_max_dispatch_per_tick);
+    });
     
     std::shared_ptr<Router> router = std::make_shared<Router>();
 
