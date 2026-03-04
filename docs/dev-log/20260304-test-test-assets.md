@@ -101,3 +101,27 @@ Function Explanation:
 Pitfalls:
 - Python 侧如果 `GeminiProvider.analyze_trace` 未实现，即使 C++ 侧能切到 `gemini`，运行时仍会返回 500。
 - 仅靠 `--trace-ai-provider gemini` 不能自动保证代理就绪；代理进程仍需手动启动或配合 `--auto-start-proxy`。
+
+---
+
+追加记录（Proxy 默认 Prompt 解耦）:
+
+Git Commit Message:
+refactor(ai-proxy): 拆分日志与trace默认prompt并收敛到schemas
+
+Modification:
+- server/ai/proxy/main.py
+- server/ai/proxy/schemas.py
+- docs/todo-list/Todo_TraceAiProvider.md
+
+Learning Tips:
+Newbie Tips:
+- 不同输入语义（单日志 vs Trace 树）应使用不同默认 Prompt，否则模型会按错误上下文分析，结果稳定性会明显下降。
+- Prompt 模板集中放在 `schemas.py` 这种“协议层”位置，比散落在路由函数里更利于维护。
+
+Function Explanation:
+- `provider.analyze(...)`：用于单日志语义分析。
+- `provider.analyze_trace(...)`：用于 trace 聚合语义分析。
+
+Pitfalls:
+- `/analyze/{provider}` 如果误调到 `analyze_trace`，会让单日志接口语义漂移且调试难度上升。

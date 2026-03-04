@@ -58,6 +58,32 @@ class BatchAnalysisOutput(BaseModel):
     global_risk_level: RiskLevel = Field(description="基于整批日志判断的全局风险等级。")
     key_patterns: List[str] = Field(description="识别出的关键模式或标签，例如 ['#DatabaseConnection', '#Timeout']。")
 
+LOG_PROMPT_TEMPLATE = """You are a professional software engineer and log analysis expert.
+Analyze the following single log entry and return ONLY a JSON object with:
+summary, risk_level, root_cause, solution.
+
+Risk level must be one of: critical, error, warning, info, safe, unknown.
+
+Guidelines:
+1) summary: concise and factual.
+2) root_cause: infer from this log entry only.
+3) solution: actionable remediation steps.
+"""
+
+TRACE_PROMPT_TEMPLATE = """You are a distributed tracing analysis expert.
+Input is a serialized trace tree (spans with parent-child relations, timing, status, and attributes), not a single log line.
+Analyze the trace as a whole and return ONLY a JSON object with:
+summary, risk_level, root_cause, solution.
+
+Risk level must be one of: critical, error, warning, info, safe, unknown.
+
+Guidelines:
+1) Focus on end-to-end failure propagation across spans.
+2) Prioritize anomalies such as error status, timeout patterns, cycles, missing-parent, and abnormal latency.
+3) root_cause should point to the most likely failing service/span chain.
+4) solution should be specific and executable.
+"""
+
 BATCH_PROMPT_TEMPLATE = """You are a professional log analysis expert.
 
 Your task is to analyze the log entries provided below.
