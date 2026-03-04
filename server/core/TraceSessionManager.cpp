@@ -38,14 +38,22 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
                                          TraceAiProvider* trace_ai,
                                          size_t capacity,
                                          size_t token_limit,
-                                         INotifier* notifier)
+                                         INotifier* notifier,
+                                         int64_t idle_timeout_ms,
+                                         int64_t wheel_tick_ms,
+                                         size_t wheel_size)
     : thread_pool_(thread_pool)
     , trace_repo_(trace_repo)
     , trace_ai_(trace_ai)
     , notifier_(notifier)
     , capacity_(capacity)
     , token_limit_(token_limit)
+    , wheel_size_(wheel_size > 0 ? wheel_size : 512)
+    , idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000)
+    , wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500)
 {
+    timeout_ticks_ = ComputeTimeoutTicks();
+    time_wheel_.resize(wheel_size_);
 }
 
 TraceSessionManager::~TraceSessionManager() = default;
@@ -64,6 +72,7 @@ bool TraceSessionManager::Push(const SpanEvent& span)
         session->trace_key = span.trace_key;
         session->created_at_ms = now_ms;
         session->last_update_ms = now_ms;
+        session->session_epoch = ++session_epoch_seq_;
         sessions_.push_back(std::move(session));
         index_by_trace_[span.trace_key] = sessions_.size() - 1;
         iter = index_by_trace_.find(span.trace_key);
@@ -97,7 +106,12 @@ bool TraceSessionManager::Push(const SpanEvent& span)
     if (session.capacity > 0 && session.spans.size() >= session.capacity) {
         // 达到容量上限即触发分发，避免单个 Trace 无限膨胀。
         Dispatch(session.trace_key);
+        return true;
     }
+
+    // 正常留在内存中的会话，需要更新“下一次超时计划”。
+    // 这里采用懒删除策略：不回删旧槽，只给会话 version+1 并插入新节点。
+    ScheduleTimeoutNode(session);
 
     // 当前仅做本地写入与分发占位，先返回成功；后续接入线程池/存储失败时再返回 false。
     return true;
@@ -107,29 +121,109 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
                                                int64_t idle_timeout_ms,
                                                size_t max_dispatch_per_tick)
 {
-    if (idle_timeout_ms <= 0 || sessions_.empty()) {
+    if (sessions_.empty()) {
         return;
     }
+    if (idle_timeout_ms > 0 && idle_timeout_ms != idle_timeout_ms_) {
+        // 运行中调整超时策略时重建时间轮，避免继续使用旧超时计划。
+        idle_timeout_ms_ = idle_timeout_ms;
+        timeout_ticks_ = ComputeTimeoutTicks();
+        RebuildTimeWheel();
+    }
+
+    if (last_tick_now_ms_ == 0) {
+        last_tick_now_ms_ = now_ms;
+    }
+    int64_t elapsed_ms = now_ms - last_tick_now_ms_;
+    uint64_t advance_ticks = 1;
+    if (elapsed_ms > 0 && wheel_tick_ms_ > 0) {
+        advance_ticks = static_cast<uint64_t>(elapsed_ms / wheel_tick_ms_);
+        if (advance_ticks == 0) {
+            advance_ticks = 1;
+        }
+    }
+    // 防止长时间阻塞后一次性补 tick 过多导致本轮回调卡死。
+    if (advance_ticks > wheel_size_) {
+        advance_ticks = wheel_size_;
+    }
+    last_tick_now_ms_ = now_ms;
 
     std::vector<size_t> expired_trace_keys;
-    expired_trace_keys.reserve(sessions_.size());
+    expired_trace_keys.reserve(max_dispatch_per_tick > 0 ? max_dispatch_per_tick : sessions_.size());
+    std::unordered_set<size_t> scheduled_once;
+    scheduled_once.reserve(expired_trace_keys.capacity() > 0 ? expired_trace_keys.capacity() : 8);
 
-    for (const auto& session_ptr : sessions_) {
-        if (!session_ptr) {
-            continue;
-        }
-        const int64_t idle_ms = now_ms - session_ptr->last_update_ms;
-        if (idle_ms < idle_timeout_ms) {
-            continue;
-        }
-        expired_trace_keys.push_back(session_ptr->trace_key);
-        if (max_dispatch_per_tick > 0 && expired_trace_keys.size() >= max_dispatch_per_tick) {
-            break;
+    for (uint64_t step = 0; step < advance_ticks; ++step) {
+        ++current_tick_;
+        const size_t slot = static_cast<size_t>(current_tick_ % wheel_size_);
+        std::vector<TimeWheelNode> bucket = std::move(time_wheel_[slot]);
+        time_wheel_[slot].clear();
+
+        for (auto& node : bucket) {
+            auto idx_iter = index_by_trace_.find(node.trace_key);
+            if (idx_iter == index_by_trace_.end()) {
+                // 会话已分发并从内存移除，旧节点自然失效。
+                continue;
+            }
+            TraceSession& session = *sessions_[idx_iter->second];
+            if (session.session_epoch != node.epoch || session.timer_version != node.version) {
+                // 非当前版本节点（旧计划）直接丢弃。
+                continue;
+            }
+            if (node.expire_tick > current_tick_) {
+                // 补 tick 场景下，如果还没到期，放回目标槽等待后续 tick。
+                time_wheel_[node.expire_tick % wheel_size_].push_back(node);
+                continue;
+            }
+            if (max_dispatch_per_tick > 0 && expired_trace_keys.size() >= max_dispatch_per_tick) {
+                // 本轮达到上限时，将当前有效节点顺延一 tick，避免被直接丢失。
+                node.expire_tick = current_tick_ + 1;
+                time_wheel_[node.expire_tick % wheel_size_].push_back(node);
+                continue;
+            }
+            if (scheduled_once.insert(node.trace_key).second) {
+                expired_trace_keys.push_back(node.trace_key);
+            }
         }
     }
 
     for (size_t trace_key : expired_trace_keys) {
         Dispatch(trace_key);
+    }
+}
+
+uint64_t TraceSessionManager::ComputeTimeoutTicks() const
+{
+    if (idle_timeout_ms_ <= 0 || wheel_tick_ms_ <= 0) {
+        return 1;
+    }
+    return static_cast<uint64_t>((idle_timeout_ms_ + wheel_tick_ms_ - 1) / wheel_tick_ms_);
+}
+
+void TraceSessionManager::ScheduleTimeoutNode(TraceSession& session)
+{
+    session.timer_version += 1;
+    const uint64_t expire_tick = current_tick_ + timeout_ticks_;
+    const size_t slot = static_cast<size_t>(expire_tick % wheel_size_);
+    TimeWheelNode node;
+    node.trace_key = session.trace_key;
+    node.version = session.timer_version;
+    node.epoch = session.session_epoch;
+    node.expire_tick = expire_tick;
+    time_wheel_[slot].push_back(std::move(node));
+}
+
+void TraceSessionManager::RebuildTimeWheel()
+{
+    for (auto& bucket : time_wheel_) {
+        bucket.clear();
+    }
+    for (auto& session_ptr : sessions_) {
+        if (!session_ptr) {
+            continue;
+        }
+        // 配置变更后统一重排超时节点，避免继续沿用旧超时参数。
+        ScheduleTimeoutNode(*session_ptr);
     }
 }
 

@@ -267,3 +267,29 @@ Function Explanation:
 
 Pitfalls:
 - 扫描间隔配置得远大于 idle 超时会让“理论超时”与“实际触发时间”偏差变大（例如超时 5s，但可能 5.8s 才触发）。
+
+---
+
+追加记录（Trace 会话从全量扫描切换到时间轮）:
+
+Git Commit Message:
+feat(core): 用时间轮替代trace会话全量超时扫描
+
+Modification:
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- server/src/main.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+
+Learning Tips:
+Newbie Tips:
+- 时间轮里“旧节点不删”并不等于泄漏，前提是要有版本号校验；槽位被扫到时会自然淘汰旧节点。
+- 只用 `trace_key` 做校验不够，trace_key 复用场景会误命中旧节点；增加 `session_epoch` 可以把旧会话和新会话彻底隔离。
+
+Function Explanation:
+- `timer_version`：每次会话续命（收到新 span）就递增，用来标识“当前唯一有效的超时计划”。
+- `session_epoch`：每次新建会话分配新 epoch，避免同 trace_key 复用时旧槽节点误触发。
+- `RebuildTimeWheel()`：当 idle_timeout 配置变更时，清空旧轮并按新参数重排会话超时节点。
+
+Pitfalls:
+- 在扫描槽位时直接修改主容器会踩迭代器失效坑；应先搬出当前槽再处理，再统一 Dispatch。

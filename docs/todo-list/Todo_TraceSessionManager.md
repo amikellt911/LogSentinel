@@ -65,3 +65,6 @@
 - [x] 在 `main.cpp` 使用 `EventLoop::runEvery` 接入 Trace 会话过期巡检定时器
 - [x] 补充单测覆盖超时分发路径并完成回归测试
 - [x] 增加命令行参数 `--trace-sweep-interval-ms` / `--trace-idle-timeout-ms` 控制定时扫配置
+- [x] 将线性全量扫描改为时间轮驱动（session version + epoch 懒删除）
+- [x] 保留 `SweepExpiredSessions` 对外接口，内部切换为按槽推进并支持补 tick
+- [x] 回归验证 `TraceSessionManager` 单测与集成测通过（20/20）

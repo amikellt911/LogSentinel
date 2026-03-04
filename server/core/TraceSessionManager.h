@@ -77,6 +77,10 @@ struct TraceSession
     // 时间戳用于“超时分发”判定：trace 长时间未补齐时也能被强制刷盘。
     int64_t created_at_ms = 0;
     int64_t last_update_ms = 0;
+    // timer_version 用于时间轮懒删除：每次“续命重排”就递增，旧槽节点会自然失效。
+    uint64_t timer_version = 0;
+    // session_epoch 用于防止 trace_key 复用误命中旧节点。
+    uint64_t session_epoch = 0;
 };
 
 class TraceSessionManager
@@ -87,7 +91,10 @@ public:
                                  TraceAiProvider* trace_ai,
                                  size_t capacity,
                                  size_t token_limit,
-                                 INotifier* notifier = nullptr);
+                                 INotifier* notifier = nullptr,
+                                 int64_t idle_timeout_ms = 5000,
+                                 int64_t wheel_tick_ms = 500,
+                                 size_t wheel_size = 512);
     ~TraceSessionManager();
 
     size_t size() const;
@@ -117,6 +124,14 @@ private:
         std::unordered_map<size_t, std::vector<size_t>> children;
         std::vector<size_t> roots;
     };
+    struct TimeWheelNode
+    {
+        // trace_key + version + epoch 共同定位“当前有效超时计划”。
+        size_t trace_key = 0;
+        uint64_t version = 0;
+        uint64_t epoch = 0;
+        uint64_t expire_tick = 0;
+    };
 
     // 构建 trace 的父子关系索引，后续用于树形遍历与序列化。
     TraceIndex BuildTraceIndex(const TraceSession& session);
@@ -129,8 +144,23 @@ private:
     std::vector<TraceRepository::TraceSpanRecord> BuildSpanRecords(const std::vector<const SpanEvent*>& order);
     TraceRepository::TraceAnalysisRecord BuildAnalysisRecord(const std::string& trace_id,
                                                              const LogAnalysisResult& analysis);
+    // 计算当前 idle_timeout 对应的 tick 数；至少返回 1，避免 0 tick 导致不触发。
+    uint64_t ComputeTimeoutTicks() const;
+    // 在时间轮中为会话安排最新超时节点（旧节点不删，靠 version/epoch 失效）。
+    void ScheduleTimeoutNode(TraceSession& session);
+    // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
+    void RebuildTimeWheel();
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。
     std::vector<std::unique_ptr<TraceSession>> sessions_;
     // 通过 trace_key 快速定位到 vector 下标，避免线性扫描带来的开销。
     std::unordered_map<size_t, size_t> index_by_trace_;
+    // 时间轮主状态：按槽位存储超时候选节点。
+    std::vector<std::vector<TimeWheelNode>> time_wheel_;
+    size_t wheel_size_ = 512;
+    int64_t idle_timeout_ms_ = 5000;
+    int64_t wheel_tick_ms_ = 500;
+    uint64_t timeout_ticks_ = 10;
+    uint64_t current_tick_ = 0;
+    int64_t last_tick_now_ms_ = 0;
+    uint64_t session_epoch_seq_ = 0;
 };

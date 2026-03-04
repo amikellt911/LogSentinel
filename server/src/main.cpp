@@ -203,7 +203,9 @@ int main(int argc, char* argv[])
         trace_ai.get(),
         /*capacity*/100,
         /*token_limit*/0,
-        notifier.get());
+        notifier.get(),
+        trace_idle_timeout_ms,
+        trace_sweep_interval_ms);
     const double trace_sweep_interval_sec = static_cast<double>(trace_sweep_interval_ms) / 1000.0;
     const size_t trace_max_dispatch_per_tick = 64;
     std::cout << "Trace session sweep enabled. sweep_interval_ms=" << trace_sweep_interval_ms
