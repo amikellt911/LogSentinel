@@ -71,14 +71,14 @@
   - `smoke-basic`：PR/main 上执行
   - `smoke-advanced`：仅手动触发
 - `unit.yml`
-  - 当前执行：`ctest -R "^TraceSessionManagerUnitTest\." --output-on-failure`
+  - 当前执行：`ctest -R "^(HttpContextTest|ThreadPoolTest|TraceSessionManagerUnitTest|SqliteTraceRepositoryTest)\." --output-on-failure`
 - `integration.yml`
   - 当前执行：`ctest -R "^TraceSessionManagerIntegrationTest\." --output-on-failure`
   - 触发策略：手动触发（`workflow_dispatch`）
 
 ### 现状评价
 - 主链路已具备“单测 + 冒烟”最小闭环。
-- 但 unit 覆盖仍偏窄（当前只跑 `TraceSessionManager`），其余 CTest 资产尚未纳入 CI 分层策略。
+- unit 已覆盖核心无外部依赖套件（HttpContext/ThreadPool/TraceSessionManagerUnit/SqliteTraceRepository）。
 
 ## 5. 优化与下线决策（建议）
 

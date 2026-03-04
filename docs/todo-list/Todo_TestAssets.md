@@ -15,3 +15,4 @@
 - [x] 将 `SqliteLogRepository_test.cpp` 迁移到 `legacy/` 并从 CTest 移除（Trace 替代）
 - [x] 将 `util_traceidgenerate_test.cpp` 迁移到 `legacy/` 并从 CTest 移除（待 ID 策略稳定后重写）
 - [x] 将 `LogBatcher_test.cpp` 迁移到 `legacy/` 并从 CTest 移除（非主链路）
+- [x] 扩展 `unit.yml` 覆盖 `HttpContext`、`ThreadPool`、`TraceSessionManagerUnit`、`SqliteTraceRepository` 四组核心单测

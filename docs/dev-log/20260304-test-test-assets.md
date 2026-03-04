@@ -47,3 +47,26 @@ Function Explanation:
 
 Pitfalls:
 - 只在解析时把 key 转小写，但读取时不转，会出现“存得进、取不到”的隐藏一致性问题。
+
+---
+
+追加记录（Unit CI 覆盖扩展）:
+
+Git Commit Message:
+test(ci): 扩展 unit 工作流覆盖核心单测套件
+
+Modification:
+- .github/workflows/unit.yml
+- docs/todo-list/Todo_TestAssets.md
+
+Learning Tips:
+Newbie Tips:
+- `ctest -R` 可以用正则一次选择多组测试，适合把“快且稳定”的套件收敛到 unit 阶段。
+- unit 阶段优先放无外部依赖测试，减少 CI 抖动和偶发失败。
+
+Function Explanation:
+- `ctest -R "<regex>"`：只运行测试名匹配正则的用例。
+- `|`：正则里的“或”，本次用于并行选择多个 Test Suite 前缀。
+
+Pitfalls:
+- 正则如果没加起止锚点，可能误匹配到不想跑的用例；本次使用 `^(A|B|C)\\.` 精确匹配测试套件前缀。
