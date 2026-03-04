@@ -1,3 +1,7 @@
+// DEPRECATED(2026-03-04): 该测试已从默认 CTest/CI 下线。
+// 原因：日志主链路已迁移到 Trace 聚合，旧 raw log 仓储测试不再作为主防线。
+// 替代：Trace 相关验证由 TraceSessionManager/SqliteTraceRepository 测试承担。
+
 #include <gtest/gtest.h>
 #include <persistence/SqliteLogRepository.h>
 

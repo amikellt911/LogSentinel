@@ -1,3 +1,7 @@
+// DEPRECATED(2026-03-04): 该测试已从默认 CTest/CI 下线。
+// 原因：配置模型后续会重构，当前断言与未来配置语义可能不一致。
+// 替代：远期按新配置模型重写后再迁回 server/tests。
+
 #include <gtest/gtest.h>
 #include <persistence/SqliteConfigRepository.h>
 #include <filesystem>

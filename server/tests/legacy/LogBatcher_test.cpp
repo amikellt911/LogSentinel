@@ -1,3 +1,7 @@
+// DEPRECATED(2026-03-04): 该测试已从默认 CTest/CI 下线。
+// 原因：当前核心链路已切换到 TraceSessionManager，LogBatcher 不再是主回归入口。
+// 替代：以 TraceSessionManager 单测/集成测 + smoke 作为主链路回归。
+
 #include <gtest/gtest.h>
 #include <memory>
 #include <filesystem>

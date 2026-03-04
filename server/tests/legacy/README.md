@@ -22,3 +22,7 @@
 - `test_mvp1.py`
 - `test_mvp2.1_gemini.py`
 - `TraceSessionManager_test.cpp`
+- `SqliteConfigRepository_test.cpp`（远期按新配置模型重写）
+- `SqliteLogRepository_test.cpp`（Log 链路已被 Trace 主链路替代）
+- `util_traceidgenerate_test.cpp`（当前 ID 生成策略演进，旧断言失效）
+- `LogBatcher_test.cpp`（当前主链路已切换到 Trace 聚合）

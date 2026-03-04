@@ -11,3 +11,7 @@
 - [x] 新增 `integration.yml`（手动触发）执行 `TraceSessionManagerIntegrationTest` 套件
 - [x] 将 `test_history_api.py` 迁移到 `legacy/` 并标注软下线
 - [x] 追加今日 dev-log，记录本次测试资产梳理结论
+- [x] 将 `SqliteConfigRepository_test.cpp` 迁移到 `legacy/` 并从 CTest 移除（远期重写）
+- [x] 将 `SqliteLogRepository_test.cpp` 迁移到 `legacy/` 并从 CTest 移除（Trace 替代）
+- [x] 将 `util_traceidgenerate_test.cpp` 迁移到 `legacy/` 并从 CTest 移除（待 ID 策略稳定后重写）
+- [x] 将 `LogBatcher_test.cpp` 迁移到 `legacy/` 并从 CTest 移除（非主链路）

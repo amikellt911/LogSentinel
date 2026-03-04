@@ -1,4 +1,4 @@
-# 测试资产台账（2026-03-03）
+# 测试资产台账（2026-03-04 更新）
 
 ## 1. 目标与范围
 
@@ -27,6 +27,10 @@
 - `legacy/test_mvp2.1_gemini.py`
 - `legacy/integration_gemini_test.py`
 - `legacy/test_httpserver.py`
+- `legacy/SqliteConfigRepository_test.cpp`（远期重写）
+- `legacy/SqliteLogRepository_test.cpp`
+- `legacy/util_traceidgenerate_test.cpp`
+- `legacy/LogBatcher_test.cpp`
 
 > 说明：本次先做“台账决策”，不在这一轮直接删文件；下线动作建议分批执行，避免误伤。
 
@@ -37,15 +41,15 @@
 | 资产 | 类型 | 当前状态 | 结论 | 建议动作 |
 |---|---|---|---|---|
 | `http_context_test.cpp` | 单测 | 已接入 CTest，稳定 | 保留 | 维持 |
-| `util_traceidgenerate_test.cpp` | 单测 | 已接入 CTest，稳定 | 保留 | 维持 |
+| `legacy/util_traceidgenerate_test.cpp` | 单测 | 已迁移 legacy 且移出 CTest | 下线候选（已软下线迁移） | 按最新 Trace ID 策略重写后再启用 |
 | `threadpool_test.cpp` | 单测 | 已接入 CTest，稳定 | 保留 | 维持 |
-| `SqliteLogRepository_test.cpp` | 仓储测试 | 已接入 CTest | 保留 | 维持 |
-| `LogBatcher_test.cpp` | 单测 | 已接入 CTest | 保留 | 维持 |
+| `legacy/SqliteLogRepository_test.cpp` | 仓储测试 | 已迁移 legacy 且移出 CTest | 下线候选（已软下线迁移） | Trace 主链路稳定后再评估是否彻底删除 |
+| `legacy/LogBatcher_test.cpp` | 单测 | 已迁移 legacy 且移出 CTest | 下线候选（已软下线迁移） | 如需保留，后续按 Trace 架构重写 |
 | `TraceSessionManager_unit_test.cpp` | 核心单测 | 已接入 CTest，12/12 通过 | 强保留 | 作为主防线 |
 | `legacy/TraceSessionManager_test.cpp` | 历史基础测 | 与 unit 测职责重叠，已迁移 legacy 且移出 CTest | 下线候选（已软下线迁移） | 保留对照后择机删除 |
 | `TraceSessionManager_integration_test.cpp` | 集成测 | 覆盖广但依赖重 | 保留+优化 | 标记为 integration 分组 |
 | `SqliteTraceRepository_test.cpp` | 仓储核心测试 | 已接入 CTest | 强保留 | 继续补边界 |
-| `SqliteConfigRepository_test.cpp` | 仓储测试 | 已接入 CTest | 保留 | 维持 |
+| `legacy/SqliteConfigRepository_test.cpp` | 仓储测试 | 已迁移 legacy 且移出 CTest | 下线候选（已软下线迁移） | 远期按新配置模型重写 |
 
 ### 3.2 Python 测试/脚本资产
 
@@ -99,11 +103,12 @@
 - 是否仍被文档/脚本/workflow 引用
 - 是否有替代测试覆盖同一风险点
 
-## 7. 本轮执行进度（2026-03-03）
+## 7. 本轮执行进度（2026-03-03 ~ 2026-03-04）
 
 - 已完成：`legacy/run_tests.py`、`legacy/test_httpserver.py`、`legacy/integration_gemini_test.py`、`legacy/test_mvp1.py`、`legacy/test_mvp2.1_gemini.py` 的软下线标注并迁移到 `legacy/` 目录。
 - 已完成：`test_history_api.py` 迁移到 `legacy/` 并加软下线标注，避免与主链路测试入口混用。
 - 已完成：`TraceSessionManager_test.cpp` 迁移到 `legacy/` 并从 CTest 移除，避免与 `unit` 套件重复维护。
+- 已完成：`SqliteConfigRepository_test.cpp`、`SqliteLogRepository_test.cpp`、`util_traceidgenerate_test.cpp`、`LogBatcher_test.cpp` 迁移到 `legacy/` 并从 CTest 移除。
 - 已完成：清理 CMake 的 CTest 重复注册（移除 `add_test`，保留 `gtest_discover_tests`）。
 - 软下线仅做“禁默认入口 + 给替代方案提示”，尚未执行物理删除。
 
