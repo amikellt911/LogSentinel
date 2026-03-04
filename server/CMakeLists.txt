@@ -78,6 +78,8 @@ add_library(ai_module STATIC
   ai/GeminiApiAi.cpp
   ai/AiTypes.h 
   ai/MockTraceAi.cpp
+  ai/TraceProxyAi.cpp
+  ai/TraceAiFactory.cpp
 )
 add_library(notification_module STATIC
   notification/WebhookNotifier.cpp

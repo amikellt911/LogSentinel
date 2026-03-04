@@ -84,9 +84,10 @@ class GeminiProvider(AIProvider):
 
     def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
         """
-        Trace 分析接口暂未单独实现，先占位以避免接口缺失。
+        Trace 分析：当前先复用单次 analyze 的结构化输出路径。
+        这样可以保证 C++ 侧拿到同一套字段（summary/risk_level/root_cause/solution）。
         """
-        raise NotImplementedError("GeminiProvider 的 Trace 分析尚未实现")
+        return self.analyze(log_text=trace_text, prompt=prompt, api_key=api_key, model=model)
 
     def chat(self, history: List[Dict[str, Any]], new_message: str) -> str:
         """

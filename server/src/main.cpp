@@ -7,7 +7,8 @@
 #include "ai/AiProvider.h"  // 引入AI抽象接口
 #include "ai/GeminiApiAi.h"
 #include "ai/MockAI.h"
-#include "ai/MockTraceAi.h"
+#include "ai/TraceAiBackend.h"
+#include "ai/TraceAiFactory.h"
 #include <MiniMuduo/net/TcpConnection.h>
 #include <memory> // For std::unique_ptr
 #include "notification/WebhookNotifier.h"
@@ -59,6 +60,10 @@ int main(int argc, char* argv[])
     int port = 8080;
     bool auto_start_proxy = false;
     bool auto_start_webhook_mock = false;
+    std::string trace_ai_provider = "mock";
+    std::string trace_ai_base_url = "http://127.0.0.1:8001";
+    int trace_ai_timeout_ms = 10000;
+    bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
     for (int i = 1; i < argc; ++i) {
@@ -74,6 +79,13 @@ int main(int argc, char* argv[])
             auto_start_proxy = true;
         } else if (arg == "--auto-start-webhook-mock") {
             auto_start_webhook_mock = true;
+        } else if (arg == "--trace-ai-provider" && i + 1 < argc) {
+            trace_ai_provider = argv[++i];
+            trace_ai_provider_explicit = true;
+        } else if (arg == "--trace-ai-base-url" && i + 1 < argc) {
+            trace_ai_base_url = argv[++i];
+        } else if (arg == "--trace-ai-timeout-ms" && i + 1 < argc) {
+            trace_ai_timeout_ms = std::stoi(argv[++i]);
         }
     }
 
@@ -152,9 +164,22 @@ int main(int argc, char* argv[])
     }
     std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(urls);
     std::shared_ptr<TraceAiProvider> trace_ai;
-    if (auto_start_proxy) {
-        // Trace 链路默认只在开发依赖已就绪时启用 AI，避免代理未启动导致分析异常影响主流程。
-        trace_ai = std::make_shared<MockTraceAi>();
+    const bool enable_trace_ai = auto_start_proxy || trace_ai_provider_explicit;
+    if (enable_trace_ai) {
+        TraceAiBackend backend = TraceAiBackend::Mock;
+        if (!TryParseTraceAiBackend(trace_ai_provider, &backend)) {
+            std::cerr << "Fatal Error: unsupported --trace-ai-provider '"
+                      << trace_ai_provider << "'. expected one of: mock|gemini" << std::endl;
+            return -1;
+        }
+        TraceAiFactoryOptions options;
+        options.base_url = trace_ai_base_url;
+        options.backend = backend;
+        options.timeout_ms = trace_ai_timeout_ms;
+        trace_ai = CreateTraceAiProvider(options);
+        std::cout << "Trace AI enabled via proxy. provider=" << trace_ai_provider
+                  << ", base_url=" << trace_ai_base_url
+                  << ", timeout_ms=" << trace_ai_timeout_ms << std::endl;
     }
     std::shared_ptr<TraceSessionManager> trace_session_manager = std::make_shared<TraceSessionManager>(
         &tpool,

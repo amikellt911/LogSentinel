@@ -70,3 +70,34 @@ Function Explanation:
 
 Pitfalls:
 - 正则如果没加起止锚点，可能误匹配到不想跑的用例；本次使用 `^(A|B|C)\\.` 精确匹配测试套件前缀。
+
+---
+
+追加记录（Trace AI provider 选择与 Gemini trace 补齐）:
+
+Git Commit Message:
+feat(ai): 增加 trace ai provider 选择并补齐 gemini trace 分析
+
+Modification:
+- server/ai/TraceAiBackend.h
+- server/ai/TraceProxyAi.h
+- server/ai/TraceProxyAi.cpp
+- server/ai/TraceAiFactory.h
+- server/ai/TraceAiFactory.cpp
+- server/src/main.cpp
+- server/CMakeLists.txt
+- server/ai/proxy/providers/gemini.py
+- docs/todo-list/Todo_TraceAiProvider.md
+
+Learning Tips:
+Newbie Tips:
+- 当多个后端共享同一协议时，优先做“统一执行实现 + backend 参数”，比每个后端单独写一份 C++ 类更省维护成本。
+- 工厂不是必须，但能把“创建策略”从 `main.cpp` 抽离，后续加 provider 时改动范围更小。
+
+Function Explanation:
+- `TryParseTraceAiBackend(...)`：把启动参数字符串解析为后端枚举，统一做入参校验。
+- `CreateTraceAiProvider(...)`：根据选项创建 `TraceAiProvider` 实例，当前返回统一的 `TraceProxyAi`。
+
+Pitfalls:
+- Python 侧如果 `GeminiProvider.analyze_trace` 未实现，即使 C++ 侧能切到 `gemini`，运行时仍会返回 500。
+- 仅靠 `--trace-ai-provider gemini` 不能自动保证代理就绪；代理进程仍需手动启动或配合 `--auto-start-proxy`。
