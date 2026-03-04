@@ -244,3 +244,26 @@ Function Explanation:
 
 Pitfalls:
 - 直接在遍历 `sessions_` 时调用 `Dispatch` 会改动容器导致迭代失效；应先收集 `trace_key`，再批量分发。
+
+---
+
+追加记录（Trace 会话定时扫参数化）:
+
+Git Commit Message:
+feat(core): 支持通过命令行配置trace会话巡检与空闲超时
+
+Modification:
+- server/src/main.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+
+Learning Tips:
+Newbie Tips:
+- 把定时参数做成命令行可配置，可以在不改代码的情况下快速调试“延迟 vs 吞吐”的平衡点。
+- 参数要做最小合法性校验（例如 >0），否则 0 或负值会导致定时器行为异常或静默失效。
+
+Function Explanation:
+- `--trace-sweep-interval-ms`：每隔多久执行一次 session 过期扫描。
+- `--trace-idle-timeout-ms`：会话多久没有新 span 就视为过期并触发分发。
+
+Pitfalls:
+- 扫描间隔配置得远大于 idle 超时会让“理论超时”与“实际触发时间”偏差变大（例如超时 5s，但可能 5.8s 才触发）。

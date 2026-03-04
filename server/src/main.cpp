@@ -64,6 +64,8 @@ int main(int argc, char* argv[])
     std::string trace_ai_provider = "mock";
     std::string trace_ai_base_url = "http://127.0.0.1:8001";
     int trace_ai_timeout_ms = 10000;
+    int trace_sweep_interval_ms = 500;
+    int trace_idle_timeout_ms = 5000;
     bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
@@ -87,7 +89,20 @@ int main(int argc, char* argv[])
             trace_ai_base_url = argv[++i];
         } else if (arg == "--trace-ai-timeout-ms" && i + 1 < argc) {
             trace_ai_timeout_ms = std::stoi(argv[++i]);
+        } else if (arg == "--trace-sweep-interval-ms" && i + 1 < argc) {
+            trace_sweep_interval_ms = std::stoi(argv[++i]);
+        } else if (arg == "--trace-idle-timeout-ms" && i + 1 < argc) {
+            trace_idle_timeout_ms = std::stoi(argv[++i]);
         }
+    }
+
+    if (trace_sweep_interval_ms <= 0) {
+        std::cerr << "Fatal Error: --trace-sweep-interval-ms must be > 0" << std::endl;
+        return -1;
+    }
+    if (trace_idle_timeout_ms <= 0) {
+        std::cerr << "Fatal Error: --trace-idle-timeout-ms must be > 0" << std::endl;
+        return -1;
     }
 
     DevSubprocessManager dev_process_manager;
@@ -189,9 +204,11 @@ int main(int argc, char* argv[])
         /*capacity*/100,
         /*token_limit*/0,
         notifier.get());
-    const int64_t trace_idle_timeout_ms = 5000;
-    const double trace_sweep_interval_sec = 0.5;
+    const double trace_sweep_interval_sec = static_cast<double>(trace_sweep_interval_ms) / 1000.0;
     const size_t trace_max_dispatch_per_tick = 64;
+    std::cout << "Trace session sweep enabled. sweep_interval_ms=" << trace_sweep_interval_ms
+              << ", idle_timeout_ms=" << trace_idle_timeout_ms
+              << ", max_dispatch_per_tick=" << trace_max_dispatch_per_tick << std::endl;
     loop.runEvery(trace_sweep_interval_sec, [trace_session_manager, trace_idle_timeout_ms, trace_max_dispatch_per_tick]() {
         const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
