@@ -125,3 +125,50 @@ Function Explanation:
 
 Pitfalls:
 - `/analyze/{provider}` 如果误调到 `analyze_trace`，会让单日志接口语义漂移且调试难度上升。
+
+---
+
+追加记录（新增 Gemini 端到端冒烟模式）:
+
+Git Commit Message:
+test(smoke): 新增 gemini-e2e 模式验证 trace 真分析全链路
+
+Modification:
+- server/tests/smoke_trace_spans.py
+- docs/todo-list/Todo_TraceAiProvider.md
+
+Learning Tips:
+Newbie Tips:
+- 真模型测试应与 mock 冒烟分层，避免把网络波动误判成主链路回归失败。
+- 冒烟脚本优先复用现有入口（通过 `--mode` 扩展），比新建多个脚本更容易维护。
+
+Function Explanation:
+- `wait_proxy_ready(...)`：在 gemini-e2e 启动前先探测 proxy/provider 可用性，减少无效后端启动时间。
+- `probe_proxy_and_webhook(...)`：失败时输出外部依赖探针信息，缩短排障路径。
+
+Pitfalls:
+- gemini-e2e 依赖真实 API Key 与网络环境，默认不应纳入 CI 强制门禁。
+- 真模型 `risk_level` 存在波动，不应在 e2e 中做“固定值等值断言”，应改为枚举合法性与字段完整性断言。
+
+---
+
+追加记录（修复 Gemini E2E 误报基础落库超时）:
+
+Git Commit Message:
+fix(test): gemini-e2e 按 ai 超时自动放宽等待窗口
+
+Modification:
+- server/tests/smoke_trace_spans.py
+- docs/todo-list/Todo_TraceAiProvider.md
+
+Learning Tips:
+Newbie Tips:
+- 当链路是“先调 AI 再落库”时，数据库等待时间必须至少覆盖 AI 超时窗口，否则会出现“实际在处理，但测试提前判失败”。
+- 真模型测试默认要用比 mock 更长的超时预算，否则稳定性会显著下降。
+
+Function Explanation:
+- `max(a, b)`：用于给超时设置保底值，避免配置过小导致误判。
+- `trace_ai_timeout_ms / 1000.0`：把毫秒参数转换为秒，用于与 `db-timeout`、`analysis-timeout` 对齐比较。
+
+Pitfalls:
+- 仅增加 `--trace-ai-timeout-ms` 不够；如果 `db-timeout` 仍是 10 秒，测试会在 AI 返回前失败。

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Trace 冒烟脚本（requests 版，双模式）
+Trace 冒烟脚本（requests 版，多模式）
 
 模式说明：
 1) basic：基础冒烟，仅验证 接收 -> 聚合触发 -> 落库 -> 父子关系
 2) advanced：增强冒烟，在 basic 基础上验证 AI 分析落库（trace_analysis）
+3) gemini-e2e：端到端验证 C++ -> Gemini Trace AI -> trace_analysis 落库
 
 设计原则：
 - 同一个脚本支持两层测试，减少重复代码，方便 CI 以两条命令分开执行。
@@ -38,24 +39,35 @@ def parse_args() -> argparse.Namespace:
     default_bin = server_dir / "build" / "LogSentinel"
     default_db = Path("/tmp") / f"logsentinel_trace_smoke_{int(time.time())}.db"
 
-    parser = argparse.ArgumentParser(description="Trace 冒烟脚本（basic/advanced）")
+    parser = argparse.ArgumentParser(description="Trace 冒烟脚本（basic/advanced/gemini-e2e）")
     parser.add_argument("--mode",
-                        choices=["basic", "advanced"],
+                        choices=["basic", "advanced", "gemini-e2e"],
                         default="basic",
-                        help="冒烟模式：basic=基础链路，advanced=基础+AI分析")
+                        help="冒烟模式：basic=基础链路，advanced=基础+mock分析，gemini-e2e=基础+Gemini真分析")
     parser.add_argument("--server-bin", default=str(default_bin), help="LogSentinel 可执行文件路径")
     parser.add_argument("--db", default=str(default_db), help="临时数据库路径")
     parser.add_argument("--port", type=int, default=18080, help="服务端口")
+    parser.add_argument("--proxy-url", default="http://127.0.0.1:8001", help="AI proxy 地址（gemini-e2e 模式）")
+    parser.add_argument("--trace-ai-timeout-ms",
+                        type=int,
+                        default=30000,
+                        help="后端 Trace AI 调用超时（毫秒，gemini-e2e 模式）")
     parser.add_argument("--ready-timeout", type=float, default=10.0, help="服务就绪等待超时（秒）")
     parser.add_argument("--db-timeout", type=float, default=10.0, help="基础落库等待超时（秒）")
-    parser.add_argument("--analysis-timeout", type=float, default=12.0, help="analysis 落库等待超时（秒，仅 advanced）")
+    parser.add_argument("--analysis-timeout", type=float, default=12.0, help="analysis 落库等待超时（秒，advanced/gemini-e2e）")
     parser.add_argument("--keep-artifacts",
                         action="store_true",
                         help="失败后保留临时数据库文件，便于排障")
     return parser.parse_args()
 
 
-def start_server(server_bin: Path, db_path: Path, port: int, enable_dev_deps: bool) -> subprocess.Popen:
+def start_server(server_bin: Path,
+                 db_path: Path,
+                 port: int,
+                 enable_dev_deps: bool,
+                 trace_ai_provider: Optional[str] = None,
+                 trace_ai_base_url: Optional[str] = None,
+                 trace_ai_timeout_ms: Optional[int] = None) -> subprocess.Popen:
     """
     启动 LogSentinel 进程并返回句柄。
 
@@ -69,6 +81,12 @@ def start_server(server_bin: Path, db_path: Path, port: int, enable_dev_deps: bo
     cmd = [str(server_bin), "--db", str(db_path), "--port", str(port)]
     if enable_dev_deps:
         cmd.append("--auto-start-deps")
+    if trace_ai_provider:
+        cmd.extend(["--trace-ai-provider", trace_ai_provider])
+    if trace_ai_base_url:
+        cmd.extend(["--trace-ai-base-url", trace_ai_base_url])
+    if trace_ai_timeout_ms and trace_ai_timeout_ms > 0:
+        cmd.extend(["--trace-ai-timeout-ms", str(trace_ai_timeout_ms)])
 
     print(f"[smoke] 启动服务: {' '.join(cmd)}")
     # 用 PIPE 捕获输出是为了失败时能拿到第一手日志，减少“黑盒失败”的排障成本。
@@ -130,10 +148,37 @@ def wait_webhook_mock_ready(timeout_sec: float) -> None:
     raise RuntimeError(f"webhook mock 未在 {timeout_sec}s 内就绪，最后错误: {last_error}")
 
 
+def wait_proxy_ready(proxy_url: str, timeout_sec: float, required_provider: Optional[str] = None) -> None:
+    """
+    轮询等待 AI proxy 可用；可选校验 provider 是否已注册。
+    """
+    deadline = time.time() + timeout_sec
+    last_error = None
+
+    while time.time() < deadline:
+        try:
+            resp = requests.get(f"{proxy_url}/", timeout=0.8)
+            if 200 <= resp.status_code < 300:
+                payload = resp.json()
+                if not required_provider:
+                    return
+                providers = payload.get("available_providers", [])
+                if required_provider in providers:
+                    return
+                last_error = RuntimeError(
+                    f"proxy 已启动但 provider 不可用: {required_provider}, available={providers}"
+                )
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+        time.sleep(0.2)
+
+    raise RuntimeError(f"proxy 未在 {timeout_sec}s 内就绪，最后错误: {last_error}")
+
+
 def build_span_payloads(mode: str,
                         trace_key: int,
                         root_span_id: int,
-                        child_span_id: int) -> Tuple[dict, dict, str]:
+                        child_span_id: int) -> Tuple[dict, dict, Optional[str]]:
     """
     构造 root/child 两条 span 以及期望风险等级。
 
@@ -145,6 +190,11 @@ def build_span_payloads(mode: str,
         root_name = "critical-root-span"
         child_name = "critical-child-span"
         expected_risk = "critical"
+    elif mode == "gemini-e2e":
+        # 关键词尽量明确，便于在真模型下稳定触发“非安全”分析结论。
+        root_name = "payment-timeout-root-error"
+        child_name = "db-connection-exception-child-error"
+        expected_risk = None
     else:
         root_name = "root-span"
         child_name = "child-span"
@@ -236,16 +286,16 @@ def wait_db_ready(db_path: Path, trace_id: str, timeout_sec: float) -> None:
     raise RuntimeError(f"数据库在 {timeout_sec}s 内未达到基础落库条件")
 
 
-def query_analysis_row(db_path: Path, trace_id: str) -> Optional[Tuple[str, str]]:
+def query_analysis_row(db_path: Path, trace_id: str) -> Optional[Tuple[str, str, str, str]]:
     """
-    查询 trace_analysis 最新一条记录的 risk_level 与 summary。
+    查询 trace_analysis 最新一条记录的 risk_level/summary/root_cause/solution。
     """
     conn = sqlite3.connect(str(db_path))
     try:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT risk_level, summary
+            SELECT risk_level, summary, root_cause, solution
             FROM trace_analysis
             WHERE trace_id = ?
             ORDER BY rowid DESC
@@ -256,7 +306,7 @@ def query_analysis_row(db_path: Path, trace_id: str) -> Optional[Tuple[str, str]
         row = cur.fetchone()
         if not row:
             return None
-        return str(row[0]), str(row[1])
+        return str(row[0]), str(row[1]), str(row[2]), str(row[3])
     finally:
         conn.close()
 
@@ -366,12 +416,12 @@ def print_db_snapshot(db_path: Path, trace_id: str) -> None:
         print(f"[smoke:debug] 数据库快照读取失败: {exc}")
 
 
-def probe_proxy_and_webhook() -> None:
+def probe_proxy_and_webhook(provider_name: str = "mock", check_webhook: bool = True, proxy_url: str = "http://127.0.0.1:8001") -> None:
     """
     在 advanced 失败时，额外探测 proxy 与 webhook 可用性。
     """
     try:
-        resp = requests.get("http://127.0.0.1:8001/", timeout=1.0)
+        resp = requests.get(f"{proxy_url}/", timeout=1.0)
         print(f"[smoke:debug] proxy / 状态: {resp.status_code}, body: {resp.text[:200]}")
     except requests.RequestException as exc:
         print(f"[smoke:debug] proxy / 探测失败: {exc}")
@@ -379,28 +429,29 @@ def probe_proxy_and_webhook() -> None:
     try:
         sample_payload = "{\"spans\":[{\"name\":\"critical-smoke-probe\"}]}"
         resp = requests.post(
-            "http://127.0.0.1:8001/analyze/trace/mock",
+            f"{proxy_url}/analyze/trace/{provider_name}",
             data=sample_payload,
             headers={"Content-Type": "text/plain"},
             timeout=2.0,
         )
-        print(f"[smoke:debug] proxy analyze/trace/mock 状态: {resp.status_code}, body: {resp.text[:300]}")
+        print(f"[smoke:debug] proxy analyze/trace/{provider_name} 状态: {resp.status_code}, body: {resp.text[:300]}")
     except requests.RequestException as exc:
-        print(f"[smoke:debug] proxy analyze/trace/mock 探测失败: {exc}")
+        print(f"[smoke:debug] proxy analyze/trace/{provider_name} 探测失败: {exc}")
 
-    try:
-        resp = requests.post("http://127.0.0.1:9999/webhook", json={"probe": "debug-check"}, timeout=1.0)
-        print(f"[smoke:debug] webhook /webhook 状态: {resp.status_code}, body: {resp.text[:200]}")
-    except requests.RequestException as exc:
-        print(f"[smoke:debug] webhook /webhook 探测失败: {exc}")
+    if check_webhook:
+        try:
+            resp = requests.post("http://127.0.0.1:9999/webhook", json={"probe": "debug-check"}, timeout=1.0)
+            print(f"[smoke:debug] webhook /webhook 状态: {resp.status_code}, body: {resp.text[:200]}")
+        except requests.RequestException as exc:
+            print(f"[smoke:debug] webhook /webhook 探测失败: {exc}")
 
 
-def wait_analysis_ready(db_path: Path, trace_id: str, timeout_sec: float) -> Tuple[str, str]:
+def wait_analysis_ready(db_path: Path, trace_id: str, timeout_sec: float) -> Tuple[str, str, str, str]:
     """
     advanced 模式轮询等待 AI 分析落库。
 
     返回：
-    - (risk_level, summary)
+    - (risk_level, summary, root_cause, solution)
     """
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
@@ -443,6 +494,28 @@ def run_flow(args: argparse.Namespace) -> int:
     """
     mode = args.mode
     enable_dev_deps = mode == "advanced"
+    enable_gemini_trace_ai = mode == "gemini-e2e"
+    # gemini-e2e 下，AI 调用通常明显慢于 mock。
+    # 如果仍沿用默认 10s 的基础落库等待，会在 AI 尚未返回时被误判为“数据库没落”。
+    effective_db_timeout = args.db_timeout
+    effective_analysis_timeout = args.analysis_timeout
+    if enable_gemini_trace_ai:
+        ai_timeout_sec = max(args.trace_ai_timeout_ms, 0) / 1000.0
+        recommended_db_timeout = max(15.0, ai_timeout_sec + 5.0)
+        recommended_analysis_timeout = max(20.0, ai_timeout_sec + 8.0)
+
+        if effective_db_timeout < recommended_db_timeout:
+            print(
+                "[smoke:gemini-e2e] 自动提升 db-timeout: "
+                f"{effective_db_timeout:.1f}s -> {recommended_db_timeout:.1f}s"
+            )
+            effective_db_timeout = recommended_db_timeout
+        if effective_analysis_timeout < recommended_analysis_timeout:
+            print(
+                "[smoke:gemini-e2e] 自动提升 analysis-timeout: "
+                f"{effective_analysis_timeout:.1f}s -> {recommended_analysis_timeout:.1f}s"
+            )
+            effective_analysis_timeout = recommended_analysis_timeout
 
     server_bin = Path(args.server_bin).resolve()
     db_path = Path(args.db).resolve()
@@ -456,7 +529,19 @@ def run_flow(args: argparse.Namespace) -> int:
 
     proc = None
     try:
-        proc = start_server(server_bin, db_path, args.port, enable_dev_deps)
+        if enable_gemini_trace_ai:
+            wait_proxy_ready(args.proxy_url, args.ready_timeout, required_provider="gemini")
+            print("[smoke:gemini-e2e] proxy(gemini) 已就绪")
+
+        proc = start_server(
+            server_bin,
+            db_path,
+            args.port,
+            enable_dev_deps,
+            trace_ai_provider="gemini" if enable_gemini_trace_ai else None,
+            trace_ai_base_url=args.proxy_url if enable_gemini_trace_ai else None,
+            trace_ai_timeout_ms=args.trace_ai_timeout_ms if enable_gemini_trace_ai else None,
+        )
         wait_server_ready(base_url, args.ready_timeout, proc)
         print(f"[smoke:{mode}] 服务已就绪")
 
@@ -470,7 +555,7 @@ def run_flow(args: argparse.Namespace) -> int:
         print(f"[smoke:{mode}] span2 accepted: {resp2}")
 
         trace_id = str(trace_key)
-        wait_db_ready(db_path, trace_id, args.db_timeout)
+        wait_db_ready(db_path, trace_id, effective_db_timeout)
 
         summary_count, span_count = query_db_counts(db_path, trace_id)
         if summary_count != 1:
@@ -484,13 +569,26 @@ def run_flow(args: argparse.Namespace) -> int:
                 f"父子关系异常: child={child_span_id}, parent_id={parent_id}, 期望={root_span_id}"
             )
 
-        if mode == "advanced":
-            risk_level, summary = wait_analysis_ready(db_path, trace_id, args.analysis_timeout)
-            print(f"[smoke:advanced] analysis risk={risk_level}, summary={summary}")
-            if risk_level.lower() != expected_risk:
-                raise RuntimeError(
-                    f"analysis 风险等级异常: {risk_level}（期望 {expected_risk}）"
-                )
+        if mode in ("advanced", "gemini-e2e"):
+            risk_level, summary, root_cause, solution = wait_analysis_ready(
+                db_path, trace_id, effective_analysis_timeout
+            )
+            print(f"[smoke:{mode}] analysis risk={risk_level}, summary={summary}")
+            if mode == "advanced":
+                if risk_level.lower() != expected_risk:
+                    raise RuntimeError(
+                        f"analysis 风险等级异常: {risk_level}（期望 {expected_risk}）"
+                    )
+            else:
+                valid_risks = {"critical", "error", "warning", "info", "safe", "unknown"}
+                if risk_level.lower() not in valid_risks:
+                    raise RuntimeError(f"analysis 风险等级非法: {risk_level}")
+                if not summary.strip():
+                    raise RuntimeError("analysis summary 为空")
+                if not root_cause.strip():
+                    raise RuntimeError("analysis root_cause 为空")
+                if not solution.strip():
+                    raise RuntimeError("analysis solution 为空")
 
         print(f"[smoke:{mode}] ✅ 通过")
         return 0
@@ -507,7 +605,9 @@ def run_flow(args: argparse.Namespace) -> int:
 
         print_db_snapshot(db_path, str(trace_key))
         if mode == "advanced":
-            probe_proxy_and_webhook()
+            probe_proxy_and_webhook(provider_name="mock", check_webhook=True, proxy_url=args.proxy_url)
+        elif mode == "gemini-e2e":
+            probe_proxy_and_webhook(provider_name="gemini", check_webhook=False, proxy_url=args.proxy_url)
         return 1
     finally:
         cleanup(proc, db_path, args.keep_artifacts)
