@@ -44,3 +44,27 @@ Function Explanation:
 Pitfalls:
 - 如果 `capacity` 太小，会先走容量分发路径，导致用例无法证明 token_limit 触发语义。
 - 如果接入 AI provider，测试会引入外部依赖抖动；本用例故意用 `trace_ai=nullptr` 聚焦 token 行为。
+
+---
+
+追加记录（ConfigRepository 高优先级事务与错误处理修复）:
+
+Git Commit Message:
+fix(persistence): 修复配置写入事务边界与提交错误检查
+
+Modification:
+- server/persistence/SqliteConfigRepository.cpp
+- docs/todo-list/Todo_ConfigRepository.md
+
+Learning Tips:
+Newbie Tips:
+- 事务一旦 `BEGIN` 成功，后续任何阶段（包括 `prepare`）失败都必须进入 `ROLLBACK` 路径，否则连接事务状态可能脏掉。
+- `sqlite3_step` 的返回码必须就地保存并检查，不能复用旧的 `rc` 变量，否则会把真实错误吞掉。
+
+Function Explanation:
+- `checkSqliteError(db, rc, context)`：统一把 SQLite 返回码转换为带上下文的异常，减少静默失败。
+- `sqlite3_clear_bindings(stmt)`：在复用 prepared statement 时清空上次绑定值，避免参数残留污染下一轮执行。
+
+Pitfalls:
+- `COMMIT` 不检查返回码会导致“看起来成功、实际未提交”的假成功状态，后续排障很难定位。
+- 在 `try` 外 `prepare` 并直接 `throw`，会绕过统一 `catch+ROLLBACK`，这是配置偶发锁表问题的常见来源。
