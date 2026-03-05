@@ -3,7 +3,6 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
-#include <limits>
 #include <optional>
 #include <string>
 #include <thread>
@@ -464,20 +463,34 @@ TEST_F(TraceSessionManagerUnitTest, DispatchReturnsSafelyWhenThreadPoolIsNull)
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
 }
 
-TEST_F(TraceSessionManagerUnitTest, SweepExpiredSessionsDispatchesIdleTraceWithoutTraceEnd)
+TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DispatchesSessionWithoutTraceEnd)
 {
-    // 目的：验证没有 trace_end 的 session 也能被定时扫过期后分发，避免长尾 trace 永久滞留内存。
+    // 目的：验证“无 trace_end + 到达 idle 超时”会触发分发。
+    // 这条用例专门覆盖时间轮最基础行为：不到期不分发，到期后分发。
     ThreadPool pool(1);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    TraceSessionManager manager(
+        &pool,
+        &repo,
+        nullptr,
+        /*capacity*/10,
+        /*token_limit*/0,
+        /*notifier*/nullptr,
+        /*idle_timeout_ms*/5000,
+        /*wheel_tick_ms*/500);
 
     SpanEvent span = MakeSpan(133, 1301, 1000);
     ASSERT_TRUE(manager.Push(span));
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
     EXPECT_EQ(manager.size(), 1u);
 
-    // 这里直接给一个足够大的 now_ms，避免测试依赖真实 sleep 时间，从而减少环境抖动。
-    manager.SweepExpiredSessions(std::numeric_limits<int64_t>::max() / 4, /*idle_timeout_ms*/1, /*max_dispatch_per_tick*/1);
+    // 第一次 sweep：仅推进到早期时间点，不应该提前触发分发。
+    manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+    EXPECT_EQ(manager.size(), 1u);
+
+    // 第二次 sweep：推进到超过 idle_timeout 的时间点，应该触发分发。
+    manager.SweepExpiredSessions(/*now_ms*/6000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
 
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     EXPECT_EQ(manager.size(), 0u);

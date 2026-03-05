@@ -293,3 +293,26 @@ Function Explanation:
 
 Pitfalls:
 - 在扫描槽位时直接修改主容器会踩迭代器失效坑；应先搬出当前槽再处理，再统一 Dispatch。
+
+---
+
+追加记录（时间轮基础行为单测）:
+
+Git Commit Message:
+test(core): 增加时间轮基础超时分发单测
+
+Modification:
+- server/tests/TraceSessionManager_unit_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+
+Learning Tips:
+Newbie Tips:
+- 时间相关逻辑单测尽量用“手动推进 now_ms”而不是 `sleep`，这样更稳、更快、CI 不抖。
+- 测超时行为时要覆盖两段断言：到期前不触发、到期后触发；只测后一段很容易漏掉“提前触发”回归。
+
+Function Explanation:
+- `SweepExpiredSessions(now_ms, ...)`：测试里由我们手动传入时间，模拟定时器 tick 推进。
+- `WaitUntil(...)`：等待异步 `Dispatch` 任务落到 fake repository，避免线程池调度导致的瞬时竞态。
+
+Pitfalls:
+- 若只在一个极大 `now_ms` 下断言通过，无法证明“不会提前触发”；需要先做一次到期前 sweep 断言 `false`。

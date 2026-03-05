@@ -68,3 +68,4 @@
 - [x] 将线性全量扫描改为时间轮驱动（session version + epoch 懒删除）
 - [x] 保留 `SweepExpiredSessions` 对外接口，内部切换为按槽推进并支持补 tick
 - [x] 回归验证 `TraceSessionManager` 单测与集成测通过（20/20）
+- [x] 新增时间轮基础行为单测：无 trace_end 时不到期不分发、到期后分发
