@@ -339,3 +339,51 @@ Function Explanation:
 
 Pitfalls:
 - trace_key 复用测试如果直接让老会话正常超时，会把问题掩盖掉；需要模拟“老会话已移除但旧节点残留”来击中 epoch 保护逻辑。
+
+---
+
+追加记录（时间轮超时分发集成测试）:
+
+Git Commit Message:
+test(integration): 增加无trace_end的idle超时落库集成用例
+
+Modification:
+- server/tests/TraceSessionManager_integration_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+
+Learning Tips:
+Newbie Tips:
+- 时间轮行为细节用单测测“时序精度”，集成测只测“最终会发生”，这样稳定性更高。
+- 集成测试里手动调用 `SweepExpiredSessions` 可以减少 `runEvery` 调度抖动带来的 flaky。
+
+Function Explanation:
+- `SweepExpiredSessions(now_ms, idle_timeout_ms, max_dispatch_per_tick)`：在测试里模拟定时心跳推进，触发超时会话分发。
+- `WaitForCount(...)`：轮询数据库计数，等待异步线程池任务完成落库。
+
+Pitfalls:
+- 直接用 `sleep` 盲等很容易在慢机器误报失败；应改为“轮询+超时窗口”的等待模型。
+- 这个用例故意不接 AI，以免外部依赖把“超时落库”主行为测试污染掉。
+
+---
+
+追加记录（补齐时间轮集成边界场景）:
+
+Git Commit Message:
+test(integration): 补齐时间轮续命与分发上限顺延集成用例
+
+Modification:
+- server/tests/TraceSessionManager_integration_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+
+Learning Tips:
+Newbie Tips:
+- “会超时”不代表“不会误超时”，高频续命场景必须单独测，否则线上会出现活跃 trace 被提前收口。
+- `max_dispatch_per_tick` 这种保护参数，必须验证“分批落库”而不是一次性清空，否则限流形同虚设。
+
+Function Explanation:
+- `QueryCount("SELECT COUNT(*) FROM trace_summary;")`：用于验证各阶段落库节奏，观察是否出现提前或超额分发。
+- `WaitForCount(sql, expected, timeout)`：用于等待异步线程池任务落库到预期数量。
+
+Pitfalls:
+- 如果 sweep 推进时间一次跳太大，会导致测试难以观测“每轮只放行 1 条”的节奏，最好按 tick 粒度推进。
+- 高频续命测试里 span_id 不能复用，否则会走“重复 span 提前分发”路径，污染用例结论。

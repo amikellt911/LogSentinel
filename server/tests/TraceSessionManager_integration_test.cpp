@@ -495,3 +495,170 @@ TEST_F(TraceSessionManagerIntegrationTest, HandlesOutOfOrderSpans)
 
     pool.shutdown();
 }
+
+TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnIdleTimeoutWithoutTraceEnd)
+{
+    ThreadPool pool(1);
+    SqliteTraceRepository repo(db_path);
+    // 这个用例只验证“超时触发基础落库”，不依赖 AI 返回结果，避免外部依赖导致抖动。
+    TraceSessionManager manager(&pool,
+                                &repo,
+                                /*trace_ai*/nullptr,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                /*notifier*/nullptr,
+                                /*idle_timeout_ms*/500,
+                                /*wheel_tick_ms*/100,
+                                /*wheel_size*/256);
+
+    auto now_steady_ms = []() -> int64_t {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
+
+    SpanEvent root = MakeSpan(8, 800, std::nullopt);
+    SpanEvent child = MakeSpan(8, 801, 800);
+
+    // 不设置 trace_end，强制走“空闲超时分发”路径。
+    EXPECT_TRUE(manager.Push(root));
+    EXPECT_TRUE(manager.Push(child));
+
+    // 初始时刻不应提前落库。
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 0);
+
+    // 测试中手动模拟 runEvery 周期调用，保证时序可控，不依赖 event loop 调度抖动。
+    bool dispatched = false;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+        manager.SweepExpiredSessions(now_steady_ms(),
+                                     /*idle_timeout_ms*/500,
+                                     /*max_dispatch_per_tick*/0);
+        if (QueryCount("SELECT COUNT(*) FROM trace_summary;") == 1) {
+            dispatched = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    EXPECT_TRUE(dispatched) << "3 秒内未触发 idle timeout 分发";
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(2)));
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+
+    // 已经分发完成后再次推进 sweep，不应重复写入。
+    manager.SweepExpiredSessions(now_steady_ms() + 1000,
+                                 /*idle_timeout_ms*/500,
+                                 /*max_dispatch_per_tick*/0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 1);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 2);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerIntegrationTest, FrequentUpdatesPreventEarlyTimeoutDispatch)
+{
+    ThreadPool pool(1);
+    SqliteTraceRepository repo(db_path);
+    TraceSessionManager manager(&pool,
+                                &repo,
+                                /*trace_ai*/nullptr,
+                                /*capacity*/32,
+                                /*token_limit*/0,
+                                /*notifier*/nullptr,
+                                /*idle_timeout_ms*/500,
+                                /*wheel_tick_ms*/100,
+                                /*wheel_size*/256);
+
+    auto now_steady_ms = []() -> int64_t {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
+
+    // 每 200ms 持续追加同一 trace 的新 span，模拟“活跃会话持续续命”。
+    // 由于小于 idle_timeout(500ms)，理论上不应被提前超时分发。
+    constexpr size_t trace_key = 9;
+    constexpr int total_spans = 8;
+    for (int i = 0; i < total_spans; ++i) {
+        SpanEvent span = MakeSpan(trace_key, static_cast<size_t>(900 + i), std::nullopt);
+        EXPECT_TRUE(manager.Push(span));
+
+        manager.SweepExpiredSessions(now_steady_ms(),
+                                     /*idle_timeout_ms*/500,
+                                     /*max_dispatch_per_tick*/0);
+        EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    // 停止流量后再等待超时，应该最终分发并落库。
+    bool dispatched = false;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+        manager.SweepExpiredSessions(now_steady_ms(),
+                                     /*idle_timeout_ms*/500,
+                                     /*max_dispatch_per_tick*/0);
+        if (QueryCount("SELECT COUNT(*) FROM trace_summary;") == 1) {
+            dispatched = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    EXPECT_TRUE(dispatched) << "停止续命后 3 秒内仍未触发超时分发";
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", total_spans, std::chrono::seconds(2)));
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerIntegrationTest, MaxDispatchPerTickDefersRemainingTimedOutSessions)
+{
+    ThreadPool pool(1);
+    SqliteTraceRepository repo(db_path);
+    TraceSessionManager manager(&pool,
+                                &repo,
+                                /*trace_ai*/nullptr,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                /*notifier*/nullptr,
+                                /*idle_timeout_ms*/400,
+                                /*wheel_tick_ms*/100,
+                                /*wheel_size*/256);
+
+    auto now_steady_ms = []() -> int64_t {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
+
+    // 构造 3 条 trace，让它们在同一轮达到超时条件。
+    EXPECT_TRUE(manager.Push(MakeSpan(10, 1000, std::nullopt)));
+    EXPECT_TRUE(manager.Push(MakeSpan(11, 1100, std::nullopt)));
+    EXPECT_TRUE(manager.Push(MakeSpan(12, 1200, std::nullopt)));
+
+    const int64_t base = now_steady_ms();
+
+    // 先推进到接近超时，不应提前落库。
+    manager.SweepExpiredSessions(base + 100, /*idle_timeout_ms*/400, /*max_dispatch_per_tick*/1);
+    manager.SweepExpiredSessions(base + 200, /*idle_timeout_ms*/400, /*max_dispatch_per_tick*/1);
+    manager.SweepExpiredSessions(base + 300, /*idle_timeout_ms*/400, /*max_dispatch_per_tick*/1);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
+
+    // 第 4 轮到期：因为上限=1，本轮只能分发 1 条。
+    manager.SweepExpiredSessions(base + 400, /*idle_timeout_ms*/400, /*max_dispatch_per_tick*/1);
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(2)));
+
+    // 后续每轮再放行 1 条，验证顺延策略生效。
+    manager.SweepExpiredSessions(base + 500, /*idle_timeout_ms*/400, /*max_dispatch_per_tick*/1);
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 2, std::chrono::seconds(2)));
+
+    manager.SweepExpiredSessions(base + 600, /*idle_timeout_ms*/400, /*max_dispatch_per_tick*/1);
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 3, std::chrono::seconds(2)));
+
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 3, std::chrono::seconds(2)));
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+
+    pool.shutdown();
+}
