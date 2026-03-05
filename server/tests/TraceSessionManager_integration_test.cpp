@@ -326,6 +326,48 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnCapacityAndStoresParentId
     pool.shutdown();
 }
 
+TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTokenLimitWithoutTraceEnd)
+{
+    ThreadPool pool(1);
+    SqliteTraceRepository repo(db_path);
+    // 这个用例只验证 token 阈值触发分发，不接 AI，避免外部依赖导致干扰。
+    TokenEstimator estimator;
+
+    SpanEvent span1 = MakeSpan(13, 1300, std::nullopt);
+    span1.name = "token-root";
+    span1.service_name = "svc";
+    span1.attributes["env"] = "prod";
+
+    SpanEvent span2 = MakeSpan(13, 1301, 1300);
+    span2.name = "token-child";
+    span2.service_name = "svc";
+    span2.attributes["error_code"] = "DB_CONN_TIMEOUT";
+
+    const size_t token_limit = estimator.Estimate(span1) + estimator.Estimate(span2);
+    ASSERT_GT(token_limit, 0u);
+
+    // capacity 设大，确保不会被容量路径抢先触发。
+    TraceSessionManager manager(&pool,
+                                &repo,
+                                /*trace_ai*/nullptr,
+                                /*capacity*/100,
+                                token_limit);
+
+    EXPECT_TRUE(manager.Push(span1));
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
+
+    EXPECT_TRUE(manager.Push(span2));
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+
+    auto summary = QuerySummary("13");
+    ASSERT_TRUE(summary.has_value());
+    EXPECT_GE(static_cast<size_t>(summary->span_count), 2u);
+
+    pool.shutdown();
+}
+
 TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnDuplicateSpanId)
 {
     ThreadPool pool(1);

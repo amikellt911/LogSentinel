@@ -73,3 +73,4 @@
 - [x] 新增时间轮集成用例：无 trace_end 时通过 idle timeout 触发落库（手动 sweep 轮询）
 - [x] 补齐时间轮集成场景：高频续命防提前超时、每轮分发上限顺延
 - [x] 将 TokenEstimator 从占位实现升级为最小可用字符估算，并回归 token_limit 分发单测
+- [x] 新增 token_limit 集成用例：无 trace_end 时按估算 token 累计触发分发

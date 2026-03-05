@@ -20,3 +20,27 @@ Function Explanation:
 Pitfalls:
 - 单测如果硬编码具体 token 数值，后续调口径会导致大量无意义回归；更稳的是断言“阈值触发行为”是否正确。
 - token_limit 用例如果通过手工改内部状态（例如直接改 `token_count`）会掩盖真实估算链路问题，容易出现线上和测试口径不一致。
+
+---
+
+追加记录（token_limit 集成测试补齐）:
+
+Git Commit Message:
+test(integration): 增加token阈值触发分发集成用例
+
+Modification:
+- server/tests/TraceSessionManager_integration_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+
+Learning Tips:
+Newbie Tips:
+- token_limit 行为除了单测，还要补“真实线程池 + 真实 SQLite”的集成验证，才能确认触发链路没有被异步流程吞掉。
+- 集成测试中 token_limit 建议由 `TokenEstimator` 动态计算，不要写死常量，避免估算口径调整后测试大面积失效。
+
+Function Explanation:
+- `TokenEstimator estimator; estimator.Estimate(span)`：在测试里复用生产口径得到阈值，确保行为断言和线上一致。
+- `WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, timeout)`：轮询等待异步落库完成，避免固定 sleep 带来的抖动。
+
+Pitfalls:
+- 如果 `capacity` 太小，会先走容量分发路径，导致用例无法证明 token_limit 触发语义。
+- 如果接入 AI provider，测试会引入外部依赖抖动；本用例故意用 `trace_ai=nullptr` 聚焦 token 行为。
