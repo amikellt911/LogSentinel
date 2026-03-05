@@ -316,3 +316,26 @@ Function Explanation:
 
 Pitfalls:
 - 若只在一个极大 `now_ms` 下断言通过，无法证明“不会提前触发”；需要先做一次到期前 sweep 断言 `false`。
+
+---
+
+追加记录（补齐时间轮关键行为单测）:
+
+Git Commit Message:
+test(core): 补齐时间轮关键边界行为单测覆盖
+
+Modification:
+- server/tests/TraceSessionManager_unit_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+
+Learning Tips:
+Newbie Tips:
+- 时间轮测试最怕“看起来过了，实际漏边界”，所以要覆盖续命、复用、限流、重建这四类高风险路径。
+- Fake Repository 仅用 `called=true` 不够，边界测试需要记录调用次数和 trace_id，才能断言“分发次数正确且不串台”。
+
+Function Explanation:
+- `save_atomic_count`：记录分发落库次数，用于验证“每轮上限”和“不重复分发”。
+- `saved_trace_ids`：记录被分发 trace_id，用于验证顺延后最终两条 trace 都被处理。
+
+Pitfalls:
+- trace_key 复用测试如果直接让老会话正常超时，会把问题掩盖掉；需要模拟“老会话已移除但旧节点残留”来击中 epoch 保护逻辑。

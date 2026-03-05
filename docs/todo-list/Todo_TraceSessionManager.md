@@ -69,3 +69,4 @@
 - [x] 保留 `SweepExpiredSessions` 对外接口，内部切换为按槽推进并支持补 tick
 - [x] 回归验证 `TraceSessionManager` 单测与集成测通过（20/20）
 - [x] 新增时间轮基础行为单测：无 trace_end 时不到期不分发、到期后分发
+- [x] 补齐时间轮关键行为单测（续命防提前触发、trace_key复用隔离、每轮上限顺延、防重复分发、超时变更重建）

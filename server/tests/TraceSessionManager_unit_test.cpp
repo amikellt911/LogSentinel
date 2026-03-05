@@ -3,7 +3,9 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -29,6 +31,9 @@ public:
     std::atomic<bool> save_analysis_called{false};
     std::atomic<bool> save_prompt_called{false};
     std::atomic<bool> save_atomic_called{false};
+    std::atomic<int> save_atomic_count{0};
+    std::vector<std::string> saved_trace_ids;
+    mutable std::mutex saved_trace_ids_mutex;
 
     bool save_atomic_return = true;
 
@@ -84,6 +89,11 @@ public:
             last_prompt_debug.reset();
         }
         save_atomic_called.store(true, std::memory_order_release);
+        save_atomic_count.fetch_add(1, std::memory_order_acq_rel);
+        {
+            std::lock_guard<std::mutex> lock(saved_trace_ids_mutex);
+            saved_trace_ids.push_back(summary.trace_id);
+        }
         return save_atomic_return;
     }
 };
@@ -496,6 +506,207 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DispatchesSessionWithoutTraceEn
     EXPECT_EQ(manager.size(), 0u);
     EXPECT_EQ(repo.last_summary.trace_id, "133");
     EXPECT_EQ(repo.last_spans.size(), 1u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, SweepTimeout_ReschedulePreventsEarlyDispatch)
+{
+    // 目的：验证同一 trace 续命后，旧超时计划不会提前触发分发。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(
+        &pool,
+        &repo,
+        nullptr,
+        /*capacity*/10,
+        /*token_limit*/0,
+        /*notifier*/nullptr,
+        /*idle_timeout_ms*/5000,
+        /*wheel_tick_ms*/500);
+
+    SpanEvent span1 = MakeSpan(201, 2001, 1000);
+    ASSERT_TRUE(manager.Push(span1));
+
+    manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+
+    // 续命：同 trace 新 span 进入后会重排超时计划。
+    SpanEvent span2 = MakeSpan(201, 2002, 1100);
+    ASSERT_TRUE(manager.Push(span2));
+
+    // 推到旧计划到期点：不应该触发（旧节点应被 version 校验淘汰）。
+    manager.SweepExpiredSessions(/*now_ms*/5500, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+    EXPECT_EQ(manager.size(), 1u);
+
+    // 推到新计划到期点：此时才应该触发分发。
+    manager.SweepExpiredSessions(/*now_ms*/6000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(repo.last_summary.trace_id, "201");
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, SweepTimeout_TraceKeyReuseDoesNotTriggerNewSessionByOldNode)
+{
+    // 目的：验证 trace_key 复用时，旧会话的轮子节点不会误命中新会话（epoch 防串台）。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(
+        &pool,
+        &repo,
+        nullptr,
+        /*capacity*/10,
+        /*token_limit*/0,
+        /*notifier*/nullptr,
+        /*idle_timeout_ms*/5000,
+        /*wheel_tick_ms*/500);
+
+    SpanEvent old_span = MakeSpan(301, 3001, 1000);
+    ASSERT_TRUE(manager.Push(old_span));
+
+    // 先推进一个 tick，让后续新会话和旧会话落在不同到期 tick。
+    manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+
+    // 模拟“老会话已被其他路径分发并移除”，但旧轮子节点还残留在槽里。
+    manager.sessions_.clear();
+    manager.index_by_trace_.clear();
+
+    SpanEvent new_span = MakeSpan(301, 3002, 1200);
+    ASSERT_TRUE(manager.Push(new_span));
+    EXPECT_EQ(manager.size(), 1u);
+
+    // 扫到老节点的到期 tick：不应误分发新会话。
+    manager.SweepExpiredSessions(/*now_ms*/5500, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+    EXPECT_EQ(manager.size(), 1u);
+
+    // 扫到新会话的到期 tick：才应该触发分发。
+    manager.SweepExpiredSessions(/*now_ms*/6000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(repo.last_summary.trace_id, "301");
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, SweepTimeout_MaxDispatchPerTickDefersRemainingSessions)
+{
+    // 目的：验证单轮分发上限生效，未处理节点会顺延而不是丢失。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(
+        &pool,
+        &repo,
+        nullptr,
+        /*capacity*/10,
+        /*token_limit*/0,
+        /*notifier*/nullptr,
+        /*idle_timeout_ms*/5000,
+        /*wheel_tick_ms*/500);
+
+    ASSERT_TRUE(manager.Push(MakeSpan(401, 4001, 1000)));
+    ASSERT_TRUE(manager.Push(MakeSpan(402, 4002, 1000)));
+
+    manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 0);
+
+    // 同一轮到期两条 trace，但上限是 1，只应分发一条。
+    manager.SweepExpiredSessions(/*now_ms*/6000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_count.load(std::memory_order_acquire) >= 1; }));
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 1);
+
+    // 下一轮应把被顺延的那条补分发。
+    manager.SweepExpiredSessions(/*now_ms*/6500, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_count.load(std::memory_order_acquire) >= 2; }));
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 2);
+
+    std::set<std::string> trace_ids;
+    {
+        std::lock_guard<std::mutex> lock(repo.saved_trace_ids_mutex);
+        trace_ids.insert(repo.saved_trace_ids.begin(), repo.saved_trace_ids.end());
+    }
+    EXPECT_EQ(trace_ids.count("401"), 1u);
+    EXPECT_EQ(trace_ids.count("402"), 1u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DeduplicatesSameTraceInSingleSweep)
+{
+    // 目的：验证同一槽里出现同 trace 的重复有效节点时，只会分发一次。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(
+        &pool,
+        &repo,
+        nullptr,
+        /*capacity*/10,
+        /*token_limit*/0,
+        /*notifier*/nullptr,
+        /*idle_timeout_ms*/5000,
+        /*wheel_tick_ms*/500);
+
+    ASSERT_TRUE(manager.Push(MakeSpan(501, 5001, 1000)));
+    ASSERT_EQ(manager.size(), 1u);
+    auto idx_iter = manager.index_by_trace_.find(501);
+    ASSERT_NE(idx_iter, manager.index_by_trace_.end());
+    TraceSession& session = *manager.sessions_[idx_iter->second];
+    const uint64_t expire_tick = manager.current_tick_ + manager.timeout_ticks_;
+    const size_t slot = static_cast<size_t>(expire_tick % manager.wheel_size_);
+
+    // 人工塞一个“同 trace + 同 version + 同 epoch”的重复节点，模拟异常重复入槽。
+    TraceSessionManager::TimeWheelNode duplicate;
+    duplicate.trace_key = session.trace_key;
+    duplicate.version = session.timer_version;
+    duplicate.epoch = session.session_epoch;
+    duplicate.expire_tick = expire_tick;
+    manager.time_wheel_[slot].push_back(duplicate);
+
+    manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 0);
+
+    manager.SweepExpiredSessions(/*now_ms*/6000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_count.load(std::memory_order_acquire) >= 1; }));
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(repo.last_summary.trace_id, "501");
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, SweepTimeout_RebuildOnIdleTimeoutChangeUsesNewSchedule)
+{
+    // 目的：验证动态修改 idle_timeout 后，重建时间轮并按新超时策略触发分发。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(
+        &pool,
+        &repo,
+        nullptr,
+        /*capacity*/10,
+        /*token_limit*/0,
+        /*notifier*/nullptr,
+        /*idle_timeout_ms*/5000,
+        /*wheel_tick_ms*/500);
+
+    ASSERT_TRUE(manager.Push(MakeSpan(601, 6001, 1000)));
+
+    manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 0);
+
+    // 将 idle_timeout 下调为 1000ms，会触发重建并采用新的 timeout_ticks。
+    manager.SweepExpiredSessions(/*now_ms*/1500, /*idle_timeout_ms*/1000, /*max_dispatch_per_tick*/1);
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 0);
+    EXPECT_EQ(manager.size(), 1u);
+
+    // 再推进一个 tick，按新超时应到期分发。
+    manager.SweepExpiredSessions(/*now_ms*/2000, /*idle_timeout_ms*/1000, /*max_dispatch_per_tick*/1);
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_count.load(std::memory_order_acquire) >= 1; }));
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(repo.last_summary.trace_id, "601");
 
     pool.shutdown();
 }
