@@ -218,26 +218,39 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenCapacityReached)
 TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenTokenLimitReached)
 {
     // 目的：验证 token_limit 达到阈值时会触发分发。
-    // 说明：当前 TokenEstimator 仍是占位实现（总返回 0），这里通过测试内可控方式预置 token_count，
-    // 只为了验证阈值判断与分发路径本身，不改变生产代码行为。
+    // 说明：这里直接复用真实 TokenEstimator 估算值，验证“累计 token 达阈值 -> 自动分发”。
+    // 这样可以保证测试跟线上口径一致，避免依赖手工篡改内部状态。
     ThreadPool pool(1);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/1);
 
     SpanEvent span1 = MakeSpan(77, 701, 1000);
+    span1.name = "s1";
+    span1.service_name = "svc";
     SpanEvent span2 = MakeSpan(77, 702, 1100);
+    span2.name = "s2";
+    span2.service_name = "svc";
+    span2.attributes["env"] = "prod";
+
+    TokenEstimator estimator;
+    const size_t first_tokens = estimator.Estimate(span1);
+    const size_t second_tokens = estimator.Estimate(span2);
+    ASSERT_GT(first_tokens, 0u);
+    ASSERT_GT(second_tokens, 0u);
+
+    // 阈值设为“两条 span 估算之和”，确保第一条不触发、第二条触发。
+    const size_t token_limit = first_tokens + second_tokens;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, token_limit);
 
     ASSERT_TRUE(manager.Push(span1));
-    auto index_iter = manager.index_by_trace_.find(77);
-    ASSERT_NE(index_iter, manager.index_by_trace_.end());
-    ASSERT_LT(index_iter->second, manager.sessions_.size());
-    manager.sessions_[index_iter->second]->token_count = 1;
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+    EXPECT_EQ(manager.size(), 1u);
 
     ASSERT_TRUE(manager.Push(span2));
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     EXPECT_EQ(manager.size(), 0u);
     EXPECT_EQ(repo.last_summary.trace_id, "77");
     EXPECT_EQ(repo.last_spans.size(), 2u);
+    EXPECT_GE(repo.last_summary.token_count, token_limit);
 
     pool.shutdown();
 }
