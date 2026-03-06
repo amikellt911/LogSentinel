@@ -59,6 +59,14 @@ struct SpanEvent
 
 struct TraceSession
 {
+    enum class LifecycleState
+    {
+        // 仍处于 span 收集阶段，时间轮语义是“等后续 span 是否继续到达”。
+        Collecting,
+        // 业务上已经 ready，但由于下游拥堵暂未成功投递，后续应走重试投递语义。
+        ReadyRetryLater
+    };
+
     // capacity 作为每条 Trace 的最大 span 容量，用于触发提前分发。
     explicit TraceSession(size_t capacity);
     // 先用 size_t 作为 trace_id 的紧凑标识，减少基础结构的负担，后续再视需求调整为原始 ID。
@@ -81,11 +89,33 @@ struct TraceSession
     uint64_t timer_version = 0;
     // session_epoch 用于防止 trace_key 复用误命中旧节点。
     uint64_t session_epoch = 0;
+    // lifecycle_state 用来区分“仍在收集”和“已 ready 但等待重投”，避免复用同一套超时语义。
+    LifecycleState lifecycle_state = LifecycleState::Collecting;
 };
 
 class TraceSessionManager
 {
 public:
+    enum class PushResult
+    {
+        // 正常收下当前 span，请求层可以返回 202。
+        Accepted,
+        // 入口因过载拒绝当前请求，请求层应返回 503/429 并提示稍后重试。
+        RejectedOverload,
+        // 当前 span 已收下，但 ready trace 暂未成功投递，下游会在服务端内部延后重试。
+        AcceptedDeferred
+    };
+
+    enum class OverloadState
+    {
+        // 所有指标都处于安全区，请求按正常路径放行。
+        Normal,
+        // 已进入过载区，优先拒绝新 trace，尽量保留老 trace 的完整性。
+        Overload,
+        // 已接近硬上限，连老 trace 也允许拒绝，优先保护进程存活。
+        Critical
+    };
+
     explicit TraceSessionManager(ThreadPool* thread_pool,
                                  TraceRepository* trace_repo,
                                  TraceAiProvider* trace_ai,
@@ -98,7 +128,7 @@ public:
     ~TraceSessionManager();
 
     size_t size() const;
-    bool Push(const SpanEvent& span);
+    PushResult Push(const SpanEvent& span);
     void Dispatch(size_t trace_key);
     // 由 EventLoop 定期调用，扫描长时间未更新的 session 并触发分发。
     // now_ms 使用 steady_clock 毫秒时间戳，idle_timeout_ms<=0 表示关闭。
@@ -163,4 +193,6 @@ private:
     uint64_t current_tick_ = 0;
     int64_t last_tick_now_ms_ = 0;
     uint64_t session_epoch_seq_ = 0;
+    // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
+    OverloadState overload_state_ = OverloadState::Normal;
 };

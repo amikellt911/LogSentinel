@@ -63,7 +63,7 @@ size_t TraceSessionManager::size() const
     return sessions_.size();
 }
 
-bool TraceSessionManager::Push(const SpanEvent& span)
+TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
 {
     const int64_t now_ms = NowSteadyMs();
     auto iter = index_by_trace_.find(span.trace_key);
@@ -85,7 +85,7 @@ bool TraceSessionManager::Push(const SpanEvent& span)
             session.duplicate_span_id = span.span_id;
         }
         Dispatch(session.trace_key);
-        return true;
+        return PushResult::Accepted;
     }
 
     // 先按到达顺序追加，后续聚合阶段再按 parent_id 重建结构。
@@ -95,26 +95,26 @@ bool TraceSessionManager::Push(const SpanEvent& span)
 
     if (span.trace_end.has_value() && span.trace_end.value()) {
         Dispatch(session.trace_key);
-        return true;
+        return PushResult::Accepted;
     }
 
     if (token_limit_ > 0 && session.token_count >= token_limit_) {
         Dispatch(session.trace_key);
-        return true;
+        return PushResult::Accepted;
     }
 
     if (session.capacity > 0 && session.spans.size() >= session.capacity) {
         // 达到容量上限即触发分发，避免单个 Trace 无限膨胀。
         Dispatch(session.trace_key);
-        return true;
+        return PushResult::Accepted;
     }
 
     // 正常留在内存中的会话，需要更新“下一次超时计划”。
     // 这里采用懒删除策略：不回删旧槽，只给会话 version+1 并插入新节点。
     ScheduleTimeoutNode(session);
 
-    // 当前仅做本地写入与分发占位，先返回成功；后续接入线程池/存储失败时再返回 false。
-    return true;
+    // 当前仅做本地写入与分发占位，先返回成功；后续接入背压分支后再细分 AcceptedDeferred/RejectedOverload。
+    return PushResult::Accepted;
 }
 
 void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,

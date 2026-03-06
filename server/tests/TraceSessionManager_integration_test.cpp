@@ -291,7 +291,7 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTraceEndAndPersistsAnalys
     span.trace_end = true;
 
     // 依赖 AI Proxy 已启动，否则分析阶段会失败导致等待超时。
-    EXPECT_TRUE(manager.Push(span));
+    EXPECT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
     // 等待异步任务完成并落库，避免线程池尚未消费导致测试误判。
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
@@ -312,8 +312,8 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnCapacityAndStoresParentId
     SpanEvent child = MakeSpan(2, 201, 200);
 
     // 这里不设置 trace_end，验证容量触发的分发路径是否可用。
-    EXPECT_TRUE(manager.Push(root));
-    EXPECT_TRUE(manager.Push(child));
+    EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
@@ -353,10 +353,10 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTokenLimitWithoutTraceEnd
                                 /*capacity*/100,
                                 token_limit);
 
-    EXPECT_TRUE(manager.Push(span1));
+    EXPECT_EQ(manager.Push(span1), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
 
-    EXPECT_TRUE(manager.Push(span2));
+    EXPECT_EQ(manager.Push(span2), TraceSessionManager::PushResult::Accepted);
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
@@ -376,11 +376,11 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnDuplicateSpanId)
     TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent root = MakeSpan(3, 300, std::nullopt);
-    EXPECT_TRUE(manager.Push(root));
+    EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
 
     // 重复 span_id 会触发提前分发。
     SpanEvent dup = MakeSpan(3, 300, std::nullopt);
-    EXPECT_TRUE(manager.Push(dup));
+    EXPECT_EQ(manager.Push(dup), TraceSessionManager::PushResult::Accepted);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 1, std::chrono::seconds(3)));
@@ -410,9 +410,9 @@ TEST_F(TraceSessionManagerIntegrationTest, PersistsSummarySpanAndAnalysisFields)
     child.end_time = 1200;
     child.status = SpanEvent::Status::Error;
 
-    EXPECT_TRUE(manager.Push(root));
+    EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
     child.trace_end = true;
-    EXPECT_TRUE(manager.Push(child));
+    EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
@@ -471,8 +471,8 @@ TEST_F(TraceSessionManagerIntegrationTest, MarksCycleAsAnomaly)
     span_b.attributes["seed"] = "cycle";
     span_b.trace_end = true;
 
-    EXPECT_TRUE(manager.Push(span_a));
-    EXPECT_TRUE(manager.Push(span_b));
+    EXPECT_EQ(manager.Push(span_a), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.Push(span_b), TraceSessionManager::PushResult::Accepted);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     // 当前实现在“全环且无 root”时，序列化遍历顺序为空，因此不会写入 trace_span。
@@ -497,7 +497,7 @@ TEST_F(TraceSessionManagerIntegrationTest, TreatsMissingParentAsRoot)
     SpanEvent orphan = MakeSpan(6, 600, 999);
     orphan.trace_end = true;
 
-    EXPECT_TRUE(manager.Push(orphan));
+    EXPECT_EQ(manager.Push(orphan), TraceSessionManager::PushResult::Accepted);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 1, std::chrono::seconds(3)));
@@ -523,8 +523,8 @@ TEST_F(TraceSessionManagerIntegrationTest, HandlesOutOfOrderSpans)
     SpanEvent root = MakeSpan(7, 700, std::nullopt);
     root.trace_end = true;
 
-    EXPECT_TRUE(manager.Push(child));
-    EXPECT_TRUE(manager.Push(root));
+    EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
@@ -563,8 +563,8 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnIdleTimeoutWithoutTraceEn
     SpanEvent child = MakeSpan(8, 801, 800);
 
     // 不设置 trace_end，强制走“空闲超时分发”路径。
-    EXPECT_TRUE(manager.Push(root));
-    EXPECT_TRUE(manager.Push(child));
+    EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
 
     // 初始时刻不应提前落库。
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
@@ -625,7 +625,7 @@ TEST_F(TraceSessionManagerIntegrationTest, FrequentUpdatesPreventEarlyTimeoutDis
     constexpr int total_spans = 8;
     for (int i = 0; i < total_spans; ++i) {
         SpanEvent span = MakeSpan(trace_key, static_cast<size_t>(900 + i), std::nullopt);
-        EXPECT_TRUE(manager.Push(span));
+        EXPECT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
         manager.SweepExpiredSessions(now_steady_ms(),
                                      /*idle_timeout_ms*/500,
@@ -676,9 +676,9 @@ TEST_F(TraceSessionManagerIntegrationTest, MaxDispatchPerTickDefersRemainingTime
     };
 
     // 构造 3 条 trace，让它们在同一轮达到超时条件。
-    EXPECT_TRUE(manager.Push(MakeSpan(10, 1000, std::nullopt)));
-    EXPECT_TRUE(manager.Push(MakeSpan(11, 1100, std::nullopt)));
-    EXPECT_TRUE(manager.Push(MakeSpan(12, 1200, std::nullopt)));
+    EXPECT_EQ(manager.Push(MakeSpan(10, 1000, std::nullopt)), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.Push(MakeSpan(11, 1100, std::nullopt)), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.Push(MakeSpan(12, 1200, std::nullopt)), TraceSessionManager::PushResult::Accepted);
 
     const int64_t base = now_steady_ms();
 

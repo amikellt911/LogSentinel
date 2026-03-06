@@ -45,3 +45,33 @@ Function Explanation:
 Pitfalls:
 - 误把 `kernel_worker_threads` 当成 `pending_tasks` 的容量基数，会把“消费速度”和“队列容量”两个概念混在一起。
 - 误把 `kernel_io_buffer` 直接当作 Trace 聚合内存上限，会把网络 IO 缓冲和业务对象堆内存混为一谈。
+
+---
+
+追加记录（状态枚举收口第一刀）:
+
+Git Commit Message:
+refactor(trace): 收口背压状态枚举并升级 Push 返回语义
+
+Modification:
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- server/handlers/LogHandler.cpp
+- server/tests/TraceSessionManager_unit_test.cpp
+- server/tests/TraceSessionManager_integration_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+- docs/dev-log/20260306-docs-trace-backpressure.md
+
+Learning Tips:
+Newbie Tips:
+- 当一个接口后续注定会承载多种业务结果时，尽早把 `bool` 升级成枚举，比后面到处补注释靠谱得多。
+- “先把状态名和语义钉死，再往里填判断逻辑”能显著减少并发状态机开发时的返工。
+
+Function Explanation:
+- `TraceSession::LifecycleState`：区分“还在收集 span”和“ready 但等待重投”两种 session 语义，避免继续共用同一套 timeout 含义。
+- `TraceSessionManager::PushResult`：为 `LogHandler` 提供明确返回语义，后续可承接 `Accepted / RejectedOverload / AcceptedDeferred`。
+- `TraceSessionManager::OverloadState`：为后续多指标水位驱动的系统门禁状态预留统一表达。
+
+Pitfalls:
+- 只改头文件枚举不改调用点，编译会直接炸；尤其测试里大量 `ASSERT_TRUE(manager.Push(...))` 需要同步迁移。
+- 当前只是把返回值和状态枚举立住，实际背压判断还没接入；如果现在就误以为 overload 生效了，会把排障方向带偏。

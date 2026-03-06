@@ -339,7 +339,8 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
     }
     CollectUnknownTopLevelAttributes(body, &span.attributes);
 
-    if (!trace_session_manager_->Push(span)) {
+    const TraceSessionManager::PushResult push_result = trace_session_manager_->Push(span);
+    if (push_result == TraceSessionManager::PushResult::RejectedOverload) {
         resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
         resp->body_ = "{\"error\": \"Trace pipeline is overloaded\"}";
         return;

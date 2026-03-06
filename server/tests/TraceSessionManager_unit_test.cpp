@@ -183,7 +183,7 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenTraceEndIsTrue)
     SpanEvent span = MakeSpan(11, 101, 1000);
     span.trace_end = true;
 
-    ASSERT_TRUE(manager.Push(span));
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
     // 这里断言落库被触发，是为了证明 trace_end 的“立即分发语义”生效，而不是仅把数据留在内存会话里。
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     EXPECT_EQ(manager.size(), 0u);
@@ -203,8 +203,8 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenCapacityReached)
     SpanEvent span1 = MakeSpan(22, 201, 1000);
     SpanEvent span2 = MakeSpan(22, 202, 1100);
 
-    ASSERT_TRUE(manager.Push(span1));
-    ASSERT_TRUE(manager.Push(span2));
+    ASSERT_EQ(manager.Push(span1), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(span2), TraceSessionManager::PushResult::Accepted);
 
     // 容量阈值是当前“软背压”核心触发条件之一，这里验证到达上限后会主动分发，避免 session 无界增长。
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
@@ -241,11 +241,11 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenTokenLimitReached)
     const size_t token_limit = first_tokens + second_tokens;
     TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, token_limit);
 
-    ASSERT_TRUE(manager.Push(span1));
+    ASSERT_EQ(manager.Push(span1), TraceSessionManager::PushResult::Accepted);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
     EXPECT_EQ(manager.size(), 1u);
 
-    ASSERT_TRUE(manager.Push(span2));
+    ASSERT_EQ(manager.Push(span2), TraceSessionManager::PushResult::Accepted);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     EXPECT_EQ(manager.size(), 0u);
     EXPECT_EQ(repo.last_summary.trace_id, "77");
@@ -264,8 +264,8 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenDuplicateSpanIdAppears)
 
     SpanEvent span = MakeSpan(33, 301, 1000);
 
-    ASSERT_TRUE(manager.Push(span));
-    ASSERT_TRUE(manager.Push(span));
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
     // 重复 span_id 触发提前分发，是为了尽快“截断脏数据会话”，这里验证该保护逻辑不会被后续改动破坏。
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
@@ -291,9 +291,9 @@ TEST_F(TraceSessionManagerUnitTest, DispatchBuildsCorrectTraceTreeAndOrder)
     child_early.parent_span_id = 801;
     child_early.trace_end = true;
 
-    ASSERT_TRUE(manager.Push(root));
-    ASSERT_TRUE(manager.Push(child_late));
-    ASSERT_TRUE(manager.Push(child_early));
+    ASSERT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(child_late), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(child_early), TraceSessionManager::PushResult::Accepted);
 
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     ASSERT_EQ(repo.last_spans.size(), 3u);
@@ -316,7 +316,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchHandlesMissingParentAsRoot)
     orphan.parent_span_id = 9999;
     orphan.trace_end = true;
 
-    ASSERT_TRUE(manager.Push(orphan));
+    ASSERT_EQ(manager.Push(orphan), TraceSessionManager::PushResult::Accepted);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     ASSERT_EQ(repo.last_spans.size(), 1u);
     EXPECT_EQ(repo.last_spans[0].span_id, "901");
@@ -374,8 +374,8 @@ TEST_F(TraceSessionManagerUnitTest, DispatchPersistsSummaryAndSpansToRepository)
     child.status = SpanEvent::Status::Error;
     child.trace_end = true;
 
-    ASSERT_TRUE(manager.Push(root));
-    ASSERT_TRUE(manager.Push(child));
+    ASSERT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
 
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     // 这里覆盖 summary/spans 字段映射，是为了防止未来字段重构时“编译通过但语义错位”。
@@ -408,7 +408,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSkipsAnalysisWhenAiProviderIsNull)
     SpanEvent span = MakeSpan(55, 501, 1000);
     span.trace_end = true;
 
-    ASSERT_TRUE(manager.Push(span));
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     // trace_ai 为空是允许的最小部署模式，这里断言 analysis 指针为空，避免把可选依赖误变成强依赖。
@@ -431,7 +431,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
     SpanEvent critical_span = MakeSpan(66, 601, 1000);
     critical_span.trace_end = true;
     ai.result.risk_level = RiskLevel::CRITICAL;
-    ASSERT_TRUE(manager.Push(critical_span));
+    ASSERT_EQ(manager.Push(critical_span), TraceSessionManager::PushResult::Accepted);
     ASSERT_TRUE(WaitUntil([&notifier]() {
         return notifier.notify_trace_alert_called.load(std::memory_order_acquire);
     }));
@@ -444,7 +444,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
 
     SpanEvent warning_span = MakeSpan(67, 602, 1100);
     warning_span.trace_end = true;
-    ASSERT_TRUE(manager.Push(warning_span));
+    ASSERT_EQ(manager.Push(warning_span), TraceSessionManager::PushResult::Accepted);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.last_summary.trace_id == "67"; }));
     EXPECT_FALSE(notifier.notify_trace_alert_called.load(std::memory_order_acquire));
 
@@ -464,7 +464,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchDoesNotNotifyWhenSaveFails)
 
     SpanEvent span = MakeSpan(111, 1101, 1000);
     span.trace_end = true;
-    ASSERT_TRUE(manager.Push(span));
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     EXPECT_FALSE(notifier.notify_trace_alert_called.load(std::memory_order_acquire));
@@ -481,7 +481,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchReturnsSafelyWhenThreadPoolIsNull)
     SpanEvent span = MakeSpan(122, 1201, 1000);
     span.trace_end = true;
 
-    ASSERT_TRUE(manager.Push(span));
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(manager.size(), 0u);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
 }
@@ -503,7 +503,7 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DispatchesSessionWithoutTraceEn
         /*wheel_tick_ms*/500);
 
     SpanEvent span = MakeSpan(133, 1301, 1000);
-    ASSERT_TRUE(manager.Push(span));
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
     EXPECT_EQ(manager.size(), 1u);
 
@@ -539,14 +539,14 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_ReschedulePreventsEarlyDispatch
         /*wheel_tick_ms*/500);
 
     SpanEvent span1 = MakeSpan(201, 2001, 1000);
-    ASSERT_TRUE(manager.Push(span1));
+    ASSERT_EQ(manager.Push(span1), TraceSessionManager::PushResult::Accepted);
 
     manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
 
     // 续命：同 trace 新 span 进入后会重排超时计划。
     SpanEvent span2 = MakeSpan(201, 2002, 1100);
-    ASSERT_TRUE(manager.Push(span2));
+    ASSERT_EQ(manager.Push(span2), TraceSessionManager::PushResult::Accepted);
 
     // 推到旧计划到期点：不应该触发（旧节点应被 version 校验淘汰）。
     manager.SweepExpiredSessions(/*now_ms*/5500, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
@@ -578,7 +578,7 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_TraceKeyReuseDoesNotTriggerNewS
         /*wheel_tick_ms*/500);
 
     SpanEvent old_span = MakeSpan(301, 3001, 1000);
-    ASSERT_TRUE(manager.Push(old_span));
+    ASSERT_EQ(manager.Push(old_span), TraceSessionManager::PushResult::Accepted);
 
     // 先推进一个 tick，让后续新会话和旧会话落在不同到期 tick。
     manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
@@ -589,7 +589,7 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_TraceKeyReuseDoesNotTriggerNewS
     manager.index_by_trace_.clear();
 
     SpanEvent new_span = MakeSpan(301, 3002, 1200);
-    ASSERT_TRUE(manager.Push(new_span));
+    ASSERT_EQ(manager.Push(new_span), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(manager.size(), 1u);
 
     // 扫到老节点的到期 tick：不应误分发新会话。
@@ -621,8 +621,8 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_MaxDispatchPerTickDefersRemaini
         /*idle_timeout_ms*/5000,
         /*wheel_tick_ms*/500);
 
-    ASSERT_TRUE(manager.Push(MakeSpan(401, 4001, 1000)));
-    ASSERT_TRUE(manager.Push(MakeSpan(402, 4002, 1000)));
+    ASSERT_EQ(manager.Push(MakeSpan(401, 4001, 1000)), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(MakeSpan(402, 4002, 1000)), TraceSessionManager::PushResult::Accepted);
 
     manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
     EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 0);
@@ -663,7 +663,7 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DeduplicatesSameTraceInSingleSw
         /*idle_timeout_ms*/5000,
         /*wheel_tick_ms*/500);
 
-    ASSERT_TRUE(manager.Push(MakeSpan(501, 5001, 1000)));
+    ASSERT_EQ(manager.Push(MakeSpan(501, 5001, 1000)), TraceSessionManager::PushResult::Accepted);
     ASSERT_EQ(manager.size(), 1u);
     auto idx_iter = manager.index_by_trace_.find(501);
     ASSERT_NE(idx_iter, manager.index_by_trace_.end());
@@ -705,7 +705,7 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_RebuildOnIdleTimeoutChangeUsesN
         /*idle_timeout_ms*/5000,
         /*wheel_tick_ms*/500);
 
-    ASSERT_TRUE(manager.Push(MakeSpan(601, 6001, 1000)));
+    ASSERT_EQ(manager.Push(MakeSpan(601, 6001, 1000)), TraceSessionManager::PushResult::Accepted);
 
     manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
     EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 0);
