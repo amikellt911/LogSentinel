@@ -486,6 +486,31 @@ TEST_F(TraceSessionManagerUnitTest, DispatchReturnsSafelyWhenThreadPoolIsNull)
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
 }
 
+TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredAndRollsBackWhenSubmitFails)
+{
+    // 目的：验证 ready trace 在 submit 失败时不会蒸发，而是回滚回 manager 并标记为待重投状态。
+    ThreadPool pool(1, /*max_queue_size*/0);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(123, 12301, 1000);
+    span.trace_end = true;
+
+    EXPECT_EQ(manager.Push(span), TraceSessionManager::PushResult::AcceptedDeferred);
+    EXPECT_EQ(manager.size(), 1u);
+    EXPECT_EQ(manager.active_sessions_, 1u);
+    EXPECT_EQ(manager.total_buffered_spans_, 1u);
+    auto iter = manager.index_by_trace_.find(123);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_LT(iter->second, manager.sessions_.size());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state,
+              TraceSession::LifecycleState::ReadyRetryLater);
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+
+    pool.shutdown();
+}
+
 TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DispatchesSessionWithoutTraceEnd)
 {
     // 目的：验证“无 trace_end + 到达 idle 超时”会触发分发。

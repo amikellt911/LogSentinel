@@ -131,7 +131,7 @@ public:
 
     size_t size() const;
     PushResult Push(const SpanEvent& span);
-    void Dispatch(size_t trace_key);
+    bool Dispatch(size_t trace_key);
     // 由 EventLoop 定期调用，扫描长时间未更新的 session 并触发分发。
     // now_ms 使用 steady_clock 毫秒时间戳，idle_timeout_ms<=0 表示关闭。
     // max_dispatch_per_tick=0 表示不限制本轮分发数量。
@@ -192,6 +192,8 @@ private:
     bool ShouldRejectIncomingTrace(bool trace_exists) const;
     // 在时间轮中为会话安排最新超时节点（旧节点不删，靠 version/epoch 失效）。
     void ScheduleTimeoutNode(TraceSession& session);
+    // ready trace 投递失败后，安排一个更短的“尽快重试”时点，避免继续沿用收集超时语义。
+    void ScheduleRetryNode(TraceSession& session);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
     void RebuildTimeWheel();
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。

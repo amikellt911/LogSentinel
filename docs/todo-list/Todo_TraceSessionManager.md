@@ -79,9 +79,9 @@
 - [x] 将 `Push` 返回值从裸 `bool` 升级为可表达接收/拒绝/延后投递的状态枚举
 - [x] 在 `TraceSessionManager` 增加实时积压计数（`active_sessions` / `total_buffered_spans`）
 - [x] 在 `Push` 中接入新老 Trace 区分准入策略（普通过载保老 Trace，极限过载全拒）
-- [ ] 改造 `Dispatch`，补齐 `ThreadPool::submit` 失败时的 session 回滚与计数回补
+- [x] 改造 `Dispatch`，补齐 `ThreadPool::submit` 失败时的 session 回滚与计数回补
 - [ ] 将“收集超时”和“ready 后重试投递”拆成两套语义，避免复用同一时间轮含义
-- [ ] 增加最小 ready 重试队列/延迟重投机制，避免 submit 失败后原地打桩重试
+- [x] 增加最小 ready 重试队列/延迟重投机制，避免 submit 失败后原地打桩重试
 - [ ] 在 `LogHandler::handleTracePost` 中按新的 `Push` 状态返回 `202` 或 `503/429`
 - [ ] 为过载拒绝响应补充 `Retry-After` 与可读错误体，保持客户端协议清晰
 - [ ] 补齐背压核心单测：新 Trace 拒绝、老 Trace 放行、submit 失败不丢、恢复不抖动

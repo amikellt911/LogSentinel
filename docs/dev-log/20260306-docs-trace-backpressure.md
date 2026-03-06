@@ -130,3 +130,31 @@ Function Explanation:
 Pitfalls:
 - 在匿名命名空间里返回类的私有嵌套类型，容易撞上可见性/访问控制问题；这类 helper 更适合做成类内静态私有函数。
 - 只有当 hard limit 或线程池容量会运行时变化时，watermark 才需要重算；否则在热路径里现算就是纯重复劳动。
+
+---
+
+追加记录（submit 失败回滚与最小延迟重投）:
+
+Git Commit Message:
+fix(trace): submit失败时回滚session并返回accepteddeferred
+
+Modification:
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- server/tests/TraceSessionManager_unit_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+- docs/dev-log/20260306-docs-trace-backpressure.md
+
+Learning Tips:
+Newbie Tips:
+- 一旦请求层已经准备返回 `202`，后台异步提交失败就不能简单丢数据；最少也要回滚到内存态，保持“已接收即由服务端负责”的语义成立。
+- `std::function` 要求可拷贝时，直接把 `unique_ptr` 塞进任务里会很别扭；如果还要支持 submit 失败回滚，可以先用“可拷贝 holder 持有 unique_ptr”的方式过渡。
+
+Function Explanation:
+- `TraceSessionManager::Dispatch(...) -> bool`：现在会显式告诉上层“这次 ready trace 是否真的成功投进线程池”。
+- `PushResult::AcceptedDeferred`：表示当前 span 已经被服务端接收，但 ready trace 因 submit 失败暂时留在服务端内部延后重试。
+- `ScheduleRetryNode(...)`：为 `ReadyRetryLater` 会话安排一个更短的重试时点，避免 submit 失败后立刻原地再撞线程池。
+
+Pitfalls:
+- 如果先把 `unique_ptr<TraceSession>` 直接 move 成 owning `shared_ptr` 再调用 `submit`，一旦 submit 失败就很难无损拿回所有权做回滚。
+- 当前最小实现虽然已经区分了 `ReadyRetryLater` 语义，但底层仍借用了同一套时间轮基础设施；后续若重试策略更复杂，再考虑独立重试容器会更清晰。
