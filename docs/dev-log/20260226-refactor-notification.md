@@ -1,0 +1,245 @@
+# 20260226 refactor-notification
+
+## Git Commit Message
+`refactor(notification): 移除notifyReport并收敛INotifier依赖边界`
+
+## Modification
+- `server/notification/INotifier.h`
+- `server/notification/WebhookNotifier.h`
+- `server/notification/WebhookNotifier.cpp`
+- `server/core/LogBatcher.cpp`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 抽象接口文件应该尽量只暴露能力，不要直接引入下层实现或业务聚合结构，否则会出现“上层依赖下层”的反向耦合。
+- 没有真实调用的接口要尽早删除，避免后续新功能继续围绕无效抽象扩展，导致重构成本持续上升。
+
+### Function Explanation
+- `virtual void notify(...) = 0;`：纯虚函数定义了通知能力的最小契约，让调用方只依赖接口，不依赖具体实现。
+- `rg -n "notifyReport\(" ...`：用全局检索确认接口删除后没有遗漏调用点，这是删除公共接口时最关键的回归检查手段。
+
+### Pitfalls
+- 只删实现不删接口声明会导致“接口仍承诺能力，但实现已缺失”的编译错误或行为不一致。
+- 只删 `INotifier` 不同步 `WebhookNotifier` 的 `override` 会直接触发签名不匹配编译失败。
+- 删除接口后不做至少一次全量编译，容易把错误留到后续 unrelated 改动里才暴露，排查成本更高。
+
+---
+
+## 追加记录：新增通知域模型 TraceAlertEvent
+
+## Git Commit Message
+`feat(notification): 新增TraceAlertEvent通知数据结构`
+
+## Modification
+- `server/notification/NotifyTypes.h`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 通知层最好先定义“领域事件结构体”，再由具体渠道做序列化，这样业务代码不会被 JSON 细节反向污染。
+- 字段优先保留“低争议核心信息”（trace 标识、时序、风险、摘要），能先跑通链路，再增量扩展字段。
+
+### Function Explanation
+- `size_t`：表达计数类字段（如 `span_count`、`token_count`）更符合语义，避免负数参与逻辑。
+- `int64_t`：用于毫秒时间戳和时长，避免 32 位整数在长时间运行后溢出。
+
+### Pitfalls
+- 如果直接在 `INotifier` 里定义复杂业务结构，接口头会变重，后续任何字段调整都可能放大编译影响面。
+- 如果先传 JSON 字符串再解析，容易出现字段拼写漂移，且缺少编译期约束。
+- 若 `risk_level` 同时来源于多个结构体，必须提前约定优先级，否则通知内容会出现前后不一致。
+
+---
+
+## 追加记录：实现 TraceAlertEvent 的 webhook 发送能力
+
+## Git Commit Message
+`feat(notification): 支持TraceAlertEvent结构化webhook推送`
+
+## Modification
+- `server/notification/INotifier.h`
+- `server/notification/WebhookNotifier.h`
+- `server/notification/WebhookNotifier.cpp`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 先在接口层传“结构体”，再在发送层 `dump()` 成字符串，可以把业务语义和协议细节分开，后续改字段更稳。
+- webhook 的响应码建议按 `2xx` 判成功，不要只盯 `200`，否则部分正常网关会被误判为失败。
+
+### Function Explanation
+- `notifyTraceAlert(const TraceAlertEvent&)`：通知抽象层新增的 trace 事件入口，用于承接 Trace 聚合链路输出。
+- `buildTraceAlertPayload(...)`：把领域结构映射为统一 JSON 契约（`schema_version/event_type/event_id/sent_at_ms/source/data`）。
+- `postJsonToWebhookUrls(...)`：抽出的公共发送逻辑，复用在旧 `notify` 和新 `notifyTraceAlert`，减少重复代码。
+
+### Pitfalls
+- 如果每个通知函数都各自写一套 Post 循环，后续超时、重试、日志策略很容易出现行为分叉。
+- `event_id` 若不包含 `trace_id` 与发送时刻，网关侧做幂等去重会非常困难。
+- 只加接口不编译全工程，纯虚函数变更很容易在其他模块实例化时才暴露编译错误。
+
+---
+
+## 追加记录：TraceAlertEvent 仅 critical 触发发送
+
+## Git Commit Message
+`feat(notification): 限制trace告警仅critical等级发送`
+
+## Modification
+- `server/notification/WebhookNotifier.cpp`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 告警系统第一版必须先控噪，宁可先漏掉低等级，也不要让通道被信息洪水淹没。
+- 风险等级判断尽量做成独立函数，后续从“硬编码阈值”升级到“配置化阈值”时改动最小。
+
+### Function Explanation
+- `shouldSendTraceAlert(...)`：封装告警门槛策略，当前版本规则是仅 `critical` 返回 true。
+- `toLowerCopy(...)`：统一风险等级大小写，避免上游传 `CRITICAL` 时被门槛误判。
+
+### Pitfalls
+- 如果直接在发送函数里散落字符串比较，后续阈值策略扩展会出现逻辑分叉。
+- 若大小写不统一处理，不同 AI Provider 的输出风格会导致告警行为不稳定。
+- 过滤逻辑没有单点入口时，很难在日志中排查“为什么某条告警没有发”。
+
+---
+
+## 追加记录：将 Trace 告警过滤策略上移到 TraceSessionManager
+
+## Git Commit Message
+`refactor(core): 将trace告警阈值判断上移到聚合调度层`
+
+## Modification
+- `server/core/TraceSessionManager.h`
+- `server/core/TraceSessionManager.cpp`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- “是否该发送告警”属于业务策略，应该放在业务编排层（TraceSessionManager），而不是放在通知适配层（WebhookNotifier）。
+- 把阈值判断留在发送层会导致多渠道实现（webhook/企业机器人）策略分叉，后续很难统一维护。
+
+### Function Explanation
+- `TraceSessionManager(..., INotifier* notifier = nullptr)`：通过可选依赖注入 notifier，让聚合链路能在不影响单测构造的前提下接入通知。
+- `SaveSingleTraceAtomic(...)` 返回值：先确认落库成功，再决定是否发送通知，避免出现“通知已发但数据未落库”的不一致。
+- `notifyTraceAlert(const TraceAlertEvent&)`：Trace 层只在满足阈值时触发，通知层只负责序列化和发送。
+
+### Pitfalls
+- 若在 notifier 内做 risk 过滤，后续新增通知渠道时容易忘记同步规则，出现同一事件不同渠道行为不一致。
+- 若不在发送前判断落库成功，发生数据库失败时会造成“外部告警有记录、系统内无记录”的排障混乱。
+- 引入新构造参数时不做默认值，会放大测试改动范围并降低重构效率。
+
+---
+
+## 追加记录：打通 `/logs/spans` Trace 入站骨架链路
+
+## Git Commit Message
+`feat(handler): 新增logs/spans入口并接入TraceSessionManager`
+
+## Modification
+- `server/handlers/LogHandler.h`
+- `server/handlers/LogHandler.cpp`
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 入站 Handler 层应该只做“协议解析 + 参数校验 + 调用领域接口”，不要在这里夹带风险过滤、通知策略等业务规则，否则后续测试会非常难写。
+- 主程序注入 `TraceSessionManager` 时先把 AI 依赖做成可选，是为了保证基础落库链路可用，避免开发环境没拉起代理就把整条链路搞成不可用。
+
+### Function Explanation
+- `handleTracePost(...)`：负责解析 `/logs/spans` 的 JSON，请求体转为 `SpanEvent` 后调用 `TraceSessionManager::Push(...)`。
+- `ParseOptionalAttributes(...)`：把 `attributes` 对象统一收敛为 `map<string,string>`，先保证数据可达，后续再考虑强类型字段升级。
+- `router->add("POST", "/logs/spans", ...)`：注册新的 trace span 入站路由，保持和原 `/logs` 链路并行，便于灰度迁移。
+
+### Pitfalls
+- 如果把 `risk_level` 判断放在 Handler，会形成“入口层知道太多业务”的反向耦合，后续改告警策略要改 HTTP 层代码。
+- 如果 `trace_key/span_id/start_time_ms` 不做必填校验，后续聚合阶段会出现难排查的脏数据和父子关系异常。
+- 如果在 `main.cpp` 里直接强依赖 Trace AI 且不做开关，开发环境缺少 proxy 时会把整个 trace 入站流程打断。
+
+---
+
+## 追加记录：未知顶层字段自动归档到 attributes
+
+## Git Commit Message
+`feat(handler): 支持trace入站未知字段自动归档attributes`
+
+## Modification
+- `server/handlers/LogHandler.cpp`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 入站协议的“已知字段”与“扩展字段”必须分层处理：已知字段走强校验，扩展字段走容错归档，这样既稳又可扩展。
+- 当客户端会持续加指标时，服务端直接拒绝未知字段会让迭代成本变高；先归档再治理是更稳妥的演进路径。
+
+### Function Explanation
+- `IsKnownTraceSpanField(...)`：维护 trace span 顶层字段白名单，用于识别哪些字段属于固定协议。
+- `CollectUnknownTopLevelAttributes(...)`：遍历请求体顶层 key，把不在白名单中的字段自动收敛到 `span.attributes`。
+- `JsonValueToAttributeString(...)`：将任意 JSON 值统一转成字符串，保证 `attributes` 存储模型稳定。
+
+### Pitfalls
+- 不做白名单而直接全量归档会把必填字段和扩展字段混在一起，后续排查会非常困难。
+- 归档时若直接覆盖同名键，会破坏调用方显式传入 `attributes` 的优先级，导致结果不确定。
+- 若不统一值类型，后续序列化/落库阶段会出现字段类型漂移，影响查询与展示一致性。
+
+---
+
+## 追加记录：新增 requests 版 Trace 最小冒烟脚本
+
+## Git Commit Message
+`test(trace): 新增logs/spans最小冒烟脚本并验证落库链路`
+
+## Modification
+- `server/tests/smoke_trace_spans.py`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 冒烟脚本的目标不是覆盖所有边界，而是快速回答“主链路是否活着”，所以用最短路径验证接收、分发、落库即可。
+- 端到端测试最好使用独立端口和临时数据库，避免测试过程污染本地开发数据，降低排障噪音。
+
+### Function Explanation
+- `subprocess.Popen(...)`：在脚本里拉起后端进程，模拟真实部署时“先起服务再发请求”的流程。
+- `requests.post(...)`：向 `/logs/spans` 发送两条同 trace 的 span，请求成功码为 `202`。
+- `sqlite3.connect(...)` + `SELECT`：直接校验 `trace_summary` 与 `trace_span` 的落库结果，并检查父子关系是否正确。
+
+### Pitfalls
+- 只 `sleep` 固定秒数容易出现偶发误判，建议轮询数据库条件直到超时，兼容异步线程池写入时延。
+- 不带 `trace_end=true` 可能不会触发分发，导致“请求成功但查不到数据”的假失败。
+- 测试结束不清理 `db/-wal/-shm` 文件会影响下一次冒烟结果，造成历史状态干扰。
+
+---
+
+## 追加记录：增强冒烟脚本可读性（函数级与调用级注释）
+
+## Git Commit Message
+`docs(test): 补充trace冒烟脚本中文注释并解释关键调用`
+
+## Modification
+- `server/tests/smoke_trace_spans.py`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+## Learning Tips
+
+### Newbie Tips
+- 测试脚本不仅要“能跑”，还要“能读懂”；尤其是端到端脚本，未来排障时阅读成本通常高于编写成本。
+- 对初学者不熟悉的库调用（如 `requests`、`sqlite3`、`subprocess`）在调用点补“为什么这么用”的注释，比只写函数名更有帮助。
+
+### Function Explanation
+- `requests.get/post`：分别用于服务探活与业务请求发送；`json=payload` 会自动完成 JSON 序列化和请求头设置。
+- `sqlite3.connect + cursor.execute + fetchone`：用于最小化地验证数据库状态，确认链路是否真正落库。
+- `subprocess.Popen/terminate/kill`：用于拉起与回收被测服务进程，确保脚本可重复执行且不残留进程。
+
+### Pitfalls
+- 只写“做了什么”而不写“为什么这么做”，后续维护者很难判断是否可以安全修改脚本行为。
+- 缺少参数/返回说明会导致函数误用，尤其是超时参数在 CI 与本地环境中的语义可能不同。
+- 错误路径缺少日志说明时，冒烟失败会退化成“黑盒失败”，排障效率会显著下降。

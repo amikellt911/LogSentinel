@@ -1,0 +1,76 @@
+# Todo_TraceSessionManager
+
+- [x] 确认 core 模块新增类的命名与职责范围
+- [x] 明确 TraceSessionManager 的最小数据结构与占位职责
+- [x] 新建 `TraceSessionManager` 头文件与实现文件
+- [x] 完成 `TraceSession` 与容器的基础定义
+- [x] 提供最小可用的访问接口占位
+- [x] 新增 `SpanEvent` 占位结构体
+- [x] 补齐 `SpanEvent` 核心字段占位
+- [x] 增加 `SpanEvent` 扩展字段容器占位
+- [x] 增加 `SpanEvent` 状态字段占位
+- [x] 增加 `SpanEvent` kind 字段占位
+- [x] 完成 `TraceSession` 的基础容器与去重占位
+- [x] 完成 `Push` 的最小写入与去重逻辑
+- [x] 增加 TraceSession 容量构造与预分配占位
+- [x] 增加容量上限触发分发的占位逻辑
+- [x] TraceSessionManager 构造注入线程池指针
+- [x] 完成 `Dispatch` 的最小回收与占位逻辑
+- [x] 完成 `Dispatch` 的线程池占位分发
+- [x] 增加聚合索引与序列化的私有方法占位
+- [x] 补充 TraceIndex 与 DFS 顺序缓存的占位定义
+- [x] 完成 BuildTraceIndex 的最小实现
+- [x] 完成 BuildDfsOrder 的非递归遍历与防环逻辑
+- [x] 完成 SerializeTrace 的 JSON 序列化占位实现
+- [x] 合并 DFS 与序列化，顺带产出顺序缓存
+- [x] 在序列化中增加防环与 children 排序
+- [x] 增加显式结束标志并接入提前分发逻辑
+- [x] 增加 TraceSessionManager 的核心单测覆盖
+- [x] 增加 token 上限配置占位
+- [x] 增加 TokenEstimator 占位与 token 计数累加
+- [x] 增加 TraceAiProvider 与 MockTraceAi 占位接口
+- [x] Dispatch 组装 summary/spans/analysis 占位流程
+- [x] 补齐 `Push/Dispatch` 公共接口占位
+- [x] 将新文件加入 `core_module` 的 CMake 构建列表
+- [x] 复核文件命名、路径与编译依赖是否一致
+- [x] 将 Trace 告警 risk_level 过滤逻辑上移到 TraceSessionManager（仅 critical）
+- [x] 在 TraceSessionManager 接入 notifier 并在落库成功后发送 TraceAlertEvent
+- [x] 移除 WebhookNotifier 中的 risk_level 过滤，保持发送层纯适配
+- [x] 编译并运行 TraceSessionManager/LogBatcher 相关测试验证无回归
+- [x] 追加本次 Trace 告警触发链路 dev-log 记录
+- [x] 设计并实现 `/logs/spans` 入站处理骨架（LogHandler + TraceSessionManager）
+- [x] 在 `main.cpp` 注入 Trace 聚合依赖并注册 `/logs/spans` 路由
+- [x] 编译并执行最小回归测试，确认链路改动无编译回归
+- [x] 追加本轮 `/logs/spans` 链路打通 dev-log 记录
+- [x] 在 `LogHandler` 增加 Trace 字段白名单，自动吸收顶层未知字段到 `attributes`
+- [x] 验证“显式 attributes 优先、未知字段补充”的入站行为并完成构建回归
+- [x] 新增 `requests` 版本的 `/logs/spans` 最小冒烟脚本（启动服务、发送 2 个 span、验证落库）
+- [x] 执行冒烟脚本并记录结果
+- [x] 为 `smoke_trace_spans.py` 每个函数补充中文注释，解释作用与设计原因
+- [x] 为关键调用点（`subprocess`/`requests`/`sqlite3`）补充中文注释，降低 Python 阅读门槛
+- [x] 将 `smoke_trace_spans.py` 升级为 `basic/advanced` 双模式入口（`--mode`）
+- [x] advanced 模式接入 `--auto-start-deps` 与 `trace_analysis` 校验，并补充进程提前退出防误判逻辑
+- [x] 分别执行 basic/advanced 模式并记录结果（advanced 因环境缺少 fastapi 失败）
+- [x] 增强 advanced 失败时诊断信息输出（服务日志片段 + DB 快照 + proxy/webhook 探测）
+- [x] 修复冒烟脚本 SQL 兼容问题（使用 `rowid` 代替不存在的 `id` 列）
+- [x] 复跑 advanced 并确认通过（analysis risk=critical）
+- [x] 新增 `TraceSessionManager` GoogleTest 占位测试文件，先锁定核心测试点清单
+- [x] 将占位测试目标接入 CMake/CTest，保证本地与 CI 可见
+- [x] 在 `TraceSessionManager_unit_test` 内新增 Fake/Stub/Spy 测试替身类，支撑后续隔离单元测试
+- [x] 在 `TraceSessionManager_unit_test` 先落地 6 条真实断言（分发触发、落库映射、AI 可选、critical 通知）
+- [x] 补齐剩余 6 条 `TraceSessionManager_unit_test` 用例并跑通（12/12 passed）
+- [x] 在 `SerializeTrace/Dispatch` 补充 cycle anomalies 记录位置注释（payload 记录与当前不落库语义）
+- [x] 新增 GitHub Actions `unit.yml`，在 PR/main 上自动执行 `test_trace_session_manager_unit`
+- [x] 增加 TraceSession 定时扫过期分发（无 trace_end 的会话在 idle timeout 后强制 Dispatch）
+- [x] 在 `main.cpp` 使用 `EventLoop::runEvery` 接入 Trace 会话过期巡检定时器
+- [x] 补充单测覆盖超时分发路径并完成回归测试
+- [x] 增加命令行参数 `--trace-sweep-interval-ms` / `--trace-idle-timeout-ms` 控制定时扫配置
+- [x] 将线性全量扫描改为时间轮驱动（session version + epoch 懒删除）
+- [x] 保留 `SweepExpiredSessions` 对外接口，内部切换为按槽推进并支持补 tick
+- [x] 回归验证 `TraceSessionManager` 单测与集成测通过（20/20）
+- [x] 新增时间轮基础行为单测：无 trace_end 时不到期不分发、到期后分发
+- [x] 补齐时间轮关键行为单测（续命防提前触发、trace_key复用隔离、每轮上限顺延、防重复分发、超时变更重建）
+- [x] 新增时间轮集成用例：无 trace_end 时通过 idle timeout 触发落库（手动 sweep 轮询）
+- [x] 补齐时间轮集成场景：高频续命防提前超时、每轮分发上限顺延
+- [x] 将 TokenEstimator 从占位实现升级为最小可用字符估算，并回归 token_limit 分发单测
+- [x] 新增 token_limit 集成用例：无 trace_end 时按估算 token 累计触发分发
