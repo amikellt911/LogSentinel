@@ -117,7 +117,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('max_disk_usage_gb', '1', '最大磁盘占用GB'),
             ('http_port', '8080', 'HTTP服务端口'),
             ('ai_auto_degrade', '0', '自动降级开关'),
-            ('ai_fallback_model', 'local-mock', '降级模型名称'),
+            ('ai_fallback_model', 'mock', '降级模型名称'),
             ('ai_circuit_breaker', '1', '熔断机制开关'),
             ('ai_failure_threshold', '5', '熔断触发阈值'),
             ('ai_cooldown_seconds', '60', '熔断冷却时间s'),

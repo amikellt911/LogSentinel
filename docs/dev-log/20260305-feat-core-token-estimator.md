@@ -96,3 +96,30 @@ Function Explanation:
 Pitfalls:
 - 如果只改后端不改前端，UI 会继续把展示值当真值使用，联调时会出现“保存后又变回来”的错觉。
 - 这次前端 `npm run build` 失败是仓库中既有的 TypeScript 问题，不是本次 provider/language 标准化引入的新错误。
+
+---
+
+追加记录（补齐配置枚举标准化剩余字段）:
+
+Git Commit Message:
+refactor(config): 统一fallback与通知渠道字段的canonical取值
+
+Modification:
+- server/persistence/ConfigTypes.h
+- server/persistence/SqliteConfigRepository.cpp
+- client/src/stores/system.ts
+- client/src/views/Settings.vue
+- docs/todo-list/Todo_ConfigRepository.md
+
+Learning Tips:
+Newbie Tips:
+- 枚举字段一旦决定 canonical 值，就尽量整组一起收口，不然 provider 是小写、threshold 是标题大小写，联调时会越来越乱。
+- `fallbackModel` 这种“看起来像自由字符串、实际常拿来填默认枚举值”的字段，也要早点统一默认值，不然文案会把真实语义带偏。
+
+Function Explanation:
+- `WebhookConfig.vendor`：前端内部统一改为 `dingtalk/lark/slack/custom`。
+- `WebhookConfig.threshold`：前端内部统一改为 `critical/error/warning`，展示文案仍由 UI 标签负责。
+
+Pitfalls:
+- 这次只统一了配置页相关 canonical 值，没有顺手重构所有业务风险等级展示；历史/Trace 列表里标题大小写显示逻辑保持不变。
+- 前端 `npm run build` 如仍失败，优先看仓库里原有的 TypeScript 旧错误，不要误判成这次 vendor/threshold 小写化造成的。

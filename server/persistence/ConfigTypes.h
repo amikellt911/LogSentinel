@@ -42,7 +42,7 @@ struct AppConfig {
 
     // 高可用与容灾
     bool ai_auto_degrade = false;
-    std::string ai_fallback_model = "local-mock";
+    std::string ai_fallback_model = "mock";
     bool ai_circuit_breaker = true;
     int ai_failure_threshold = 5;
     int ai_cooldown_seconds = 60;
@@ -117,9 +117,9 @@ struct PromptConfig {
 struct AlertChannel {
     int id = 0;
     std::string name;
-    std::string provider; // "DingTalk", "Slack"
+    std::string provider; // "dingtalk", "lark", "slack", "custom"
     std::string webhook_url;
-    std::string alert_threshold; // "Critical", "Warning"
+    std::string alert_threshold; // "critical", "error", "warning"
     std::string msg_template;
     bool is_active = false;
 
