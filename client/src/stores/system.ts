@@ -39,15 +39,15 @@ export interface PromptConfig {
 export interface WebhookConfig {
   id: string | number
   name: string
-  vendor: 'DingTalk' | 'Lark' | 'Slack' | 'Custom'
+  vendor: 'dingtalk' | 'lark' | 'slack' | 'custom'
   url: string
-  threshold: 'Critical' | 'Error' | 'Warning'
+  threshold: 'critical' | 'error' | 'warning'
   template: string
   enabled: boolean
 }
 
 export interface AISettings {
-    provider: 'OpenAI' | 'Gemini' | 'Local-Mock' | 'Azure'
+    provider: 'openai' | 'gemini' | 'mock' | 'azure'
     modelName: string
     apiKey: string
     language: 'en' | 'zh'
@@ -166,13 +166,13 @@ export const useSystemStore = defineStore('system', () => {
       httpPort: 8080
     } as GeneralSettings,
     ai: {
-      provider: 'Local-Mock',
+      provider: 'mock',
       modelName: 'gpt-4-turbo',
       apiKey: '',
       language: 'en',
       maxBatchSize: 50,
       autoDegrade: false,
-      fallbackModel: 'local-mock',
+      fallbackModel: 'mock',
       circuitBreaker: true,
       failureThreshold: 5,
       cooldownSeconds: 60,
@@ -192,9 +192,9 @@ export const useSystemStore = defineStore('system', () => {
         {
           id: 'c1',
           name: 'Ops Team (DingTalk)',
-          vendor: 'DingTalk',
+          vendor: 'dingtalk',
           url: 'https://oapi.dingtalk.com/robot/send?access_token=...',
-          threshold: 'Error',
+          threshold: 'error',
           template: '{"msgtype": "text", "text": {"content": "Alert: {{summary}}"}}',
           enabled: true
         }
@@ -525,13 +525,13 @@ export const useSystemStore = defineStore('system', () => {
           httpPort: parseInt(data.config['http_port'] || '8080')
         },
         ai: {
-          provider: (data.config['ai_provider'] || 'Local-Mock') as any,
+          provider: ((data.config['ai_provider'] || 'mock') as string).toLowerCase() as any,
           modelName: data.config['ai_model'] || 'gpt-4-turbo',
           apiKey: data.config['ai_api_key'] || '',
           language: (data.config['ai_language'] || 'en') as any,
           maxBatchSize: parseInt(data.config['kernel_max_batch'] || '50'),
           autoDegrade: toBool(data.config['ai_auto_degrade'], false),
-          fallbackModel: data.config['ai_fallback_model'] || 'local-mock',
+          fallbackModel: data.config['ai_fallback_model'] || 'mock',
           circuitBreaker: toBool(data.config['ai_circuit_breaker'], true), // Default true
           failureThreshold: parseInt(data.config['ai_failure_threshold'] || '5'),
           cooldownSeconds: parseInt(data.config['ai_cooldown_seconds'] || '60'),
@@ -550,9 +550,9 @@ export const useSystemStore = defineStore('system', () => {
           channels: data.channels.map(c => ({
             id: c.id,
             name: c.name,
-            vendor: (c.provider || 'Custom') as any,
+            vendor: ((c.provider || 'custom') as string).toLowerCase() as any,
             url: c.webhook_url,
-            threshold: (c.alert_threshold || 'Error') as any,
+            threshold: ((c.alert_threshold || 'error') as string).toLowerCase() as any,
             template: c.msg_template,
             enabled: !!c.is_active
           }))

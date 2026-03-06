@@ -1,6 +1,8 @@
 #pragma once
 #include<string>
 #include<unordered_map>
+#include<algorithm>
+#include<cctype>
 struct HttpRequest{
         void reset()
         {
@@ -27,7 +29,15 @@ struct HttpRequest{
 
         const std::string getHeader(std::string key) const
         {
-            return headers_.at(key);
+            // 解析阶段会把 header key 统一转小写，这里读取也做同样标准化，避免大小写不一致导致取值失败。
+            std::transform(key.begin(), key.end(), key.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            auto it = headers_.find(key);
+            if (it == headers_.end())
+            {
+                return "";
+            }
+            return it->second;
         }
 
         void setTraceId(std::string id){

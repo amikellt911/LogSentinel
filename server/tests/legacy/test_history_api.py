@@ -1,9 +1,18 @@
+"""
+DEPRECATED（软下线中）：
+- 原因：该脚本用于历史分页接口手工验证，依赖旧测试入口编排，不适合作为当前默认回归门禁。
+- 当前状态：迁移至 legacy 目录，仅保留为历史参考，不纳入默认 CI。
+- 替代方案：
+  1) Trace 主链路冒烟：`python server/tests/smoke_trace_spans.py --mode basic|advanced`
+  2) Trace 核心单测：`cd server/build && ctest -R "^TraceSessionManagerUnitTest\\." --output-on-failure`
+"""
+
 import requests
 import time
 import json
 import sys
 
-# 默认端口 8081 (配合 run_tests.py)，也可以通过环境变量覆盖
+# 默认端口 8081（历史上配合 legacy/run_tests.py 使用），也可以通过环境变量覆盖。
 SERVER_URL = "http://127.0.0.1:8081"
 
 def seed_test_data(count=25):
@@ -80,7 +89,7 @@ if __name__ == "__main__":
     try:
         requests.get(f"{SERVER_URL}/dashboard")
     except:
-        print(f"❌ 无法连接到 {SERVER_URL}，请检查 run_tests.py 是否正确启动了服务器。")
+        print(f"❌ 无法连接到 {SERVER_URL}，请检查服务是否已启动（可用 smoke_trace_spans.py 或 legacy/run_tests.py 启动）。")
         exit(1)
 
     if seed_test_data(25):

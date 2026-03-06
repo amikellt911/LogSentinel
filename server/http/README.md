@@ -62,7 +62,7 @@ HttpContext 的解析函数通过 `const char*` 指针进行操作,除了赋值 
 
 ### 4.2 集成测试
 
-通过 `tests/test_httpserver.py` (requests 库) 测试 HttpServer,覆盖了以下场景:
+历史上通过 `tests/legacy/test_httpserver.py` (requests 库) 做过 HttpServer 集成验证（该脚本已软下线，保留在 legacy 目录用于回溯）,覆盖了以下场景:
 
 - 正常请求
 - 404 错误

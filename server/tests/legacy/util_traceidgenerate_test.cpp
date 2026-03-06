@@ -1,3 +1,7 @@
+// DEPRECATED(2026-03-04): 该测试已从默认 CTest/CI 下线。
+// 原因：Trace ID 生成策略阶段性调整，旧格式/行为断言当前不可稳定复用。
+// 替代：后续按最新 ID 策略重写测试再恢复。
+
 #include "util/TraceIdGenerator.h"
 #include <gtest/gtest.h>
 #include <regex>

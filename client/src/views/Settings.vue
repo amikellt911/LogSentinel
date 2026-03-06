@@ -74,10 +74,10 @@
                   <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
                      <el-form-item :label="$t('settings.ai.provider')">
                        <el-select v-model="systemStore.settings.ai.provider" class="w-full">
-                         <el-option label="OpenAI (GPT-4o)" value="OpenAI" />
-                         <el-option label="Google Gemini Pro" value="Gemini" />
-                         <el-option label="Azure OpenAI Service" value="Azure" />
-                         <el-option label="Local Mock (Dev)" value="Local-Mock" />
+                         <el-option label="OpenAI (GPT-4o)" value="openai" />
+                         <el-option label="Google Gemini Pro" value="gemini" />
+                         <el-option label="Azure OpenAI Service" value="azure" />
+                         <el-option label="Local Mock (Dev)" value="mock" />
                        </el-select>
                      </el-form-item>
 
@@ -114,7 +114,7 @@
                             <el-switch v-model="systemStore.settings.ai.autoDegrade" inline-prompt :active-text="$t('settings.ai.enableDegrade')" />
                          </div>
                          <el-form-item :label="$t('settings.ai.fallbackModel')" class="mb-0">
-                            <el-input v-model="systemStore.settings.ai.fallbackModel" :disabled="!systemStore.settings.ai.autoDegrade" placeholder="e.g. local-mock" />
+                            <el-input v-model="systemStore.settings.ai.fallbackModel" :disabled="!systemStore.settings.ai.autoDegrade" placeholder="e.g. mock" />
                          </el-form-item>
                       </div>
 
@@ -250,10 +250,10 @@
                       <div class="grid grid-cols-2 gap-6">
                          <el-form-item :label="$t('settings.integration.vendor')">
                             <el-select v-model="selectedChannel.vendor" class="w-full" @change="onVendorChange(selectedChannel)">
-                               <el-option label="DingTalk (钉钉)" value="DingTalk" />
-                               <el-option label="Lark / Feishu (飞书)" value="Lark" />
-                               <el-option label="Slack" value="Slack" />
-                               <el-option label="Custom (Webhook)" value="Custom" />
+                               <el-option label="DingTalk (钉钉)" value="dingtalk" />
+                               <el-option label="Lark / Feishu (飞书)" value="lark" />
+                               <el-option label="Slack" value="slack" />
+                               <el-option label="Custom (Webhook)" value="custom" />
                             </el-select>
                          </el-form-item>
 
@@ -272,9 +272,9 @@
                       <el-form-item :label="$t('settings.integration.threshold')">
                           <div class="w-full flex items-center gap-4">
                               <el-radio-group v-model="selectedChannel.threshold" class="custom-radio-group" :class="thresholdClass(selectedChannel.threshold)">
-                                 <el-radio-button label="Critical">{{ $t('settings.integration.critical') }}</el-radio-button>
-                                 <el-radio-button label="Error">{{ $t('settings.integration.error') }}</el-radio-button>
-                                 <el-radio-button label="Warning">{{ $t('settings.integration.warning') }}</el-radio-button>
+                                 <el-radio-button label="critical">{{ $t('settings.integration.critical') }}</el-radio-button>
+                                 <el-radio-button label="error">{{ $t('settings.integration.error') }}</el-radio-button>
+                                 <el-radio-button label="warning">{{ $t('settings.integration.warning') }}</el-radio-button>
                               </el-radio-group>
                               <div class="text-xs text-gray-500 italic flex-1">
                                   {{ $t('settings.integration.hint') }}
@@ -482,11 +482,11 @@ function isPromptActive(prompt: PromptConfig) {
  function addNewChannel() {
     const newId = 'c' + Date.now()
     systemStore.settings.integration.channels.push({
-       id: newId,
-       name: 'New Channel',
-       vendor: 'Custom',
+      id: newId,
+      name: 'New Channel',
+       vendor: 'custom',
        url: '',
-       threshold: 'Error',
+       threshold: 'error',
        template: '{}',
        enabled: false
     })
@@ -507,15 +507,15 @@ function isPromptActive(prompt: PromptConfig) {
     }
  }
 
- function onVendorChange(channel: WebhookConfig) {
-    switch(channel.vendor) {
-       case 'DingTalk':
+function onVendorChange(channel: WebhookConfig) {
+   switch(channel.vendor) {
+       case 'dingtalk':
           channel.template = '{"msgtype": "text", "text": {"content": "Alert: {{summary}}"}}'
           break
-       case 'Slack':
+       case 'slack':
           channel.template = '{"text": "Alert: {{summary}}"}}'
           break
-       case 'Lark':
+       case 'lark':
           channel.template = '{"msg_type": "text", "content": {"text": "Alert: {{summary}}"}}'
           break
        default:
@@ -523,10 +523,10 @@ function isPromptActive(prompt: PromptConfig) {
     }
  }
 
- function thresholdClass(level: string) {
-     if (level === 'Critical') return 'is-critical'
-     if (level === 'Error') return 'is-error'
-     if (level === 'Warning') return 'is-warning'
+function thresholdClass(level: string) {
+     if (level === 'critical') return 'is-critical'
+     if (level === 'error') return 'is-error'
+     if (level === 'warning') return 'is-warning'
      return ''
  }
 

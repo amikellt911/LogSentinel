@@ -101,30 +101,6 @@
         />
       </div>
 
-      <!-- Tag 标签搜索 -->
-      <div class="flex flex-col gap-1">
-        <label class="text-gray-400 text-xs font-bold uppercase">{{ $t('traceExplorer.search.tags') }}</label>
-        <el-select
-          v-model="searchCriteria.tags"
-          :placeholder="$t('traceExplorer.search.tagPlaceholder')"
-          size="small"
-          clearable
-          multiple
-          filterable
-          allow-create
-          default-first-option
-          collapse-tags
-          class="w-48"
-        >
-          <el-option
-            v-for="tag in commonTags"
-            :key="tag"
-            :label="`#${tag}`"
-            :value="tag"
-          />
-        </el-select>
-      </div>
-
       <!-- 操作按钮 -->
       <div class="flex gap-2 ml-auto">
         <el-button size="small" @click="handleReset">
@@ -165,23 +141,8 @@ const searchCriteria = reactive<TraceSearchCriteria>({
   service_name: '',
   time_range: '24h',
   risk_level: [],
-  min_duration: undefined,
-  tags: []
+  min_duration: undefined
 })
-
-// 常用标签（用于快捷选择）
-const commonTags = ref([
-  '认证',
-  '安全',
-  'SQL注入',
-  '登录',
-  '数据库',
-  '性能',
-  '内存',
-  '网络',
-  '异常',
-  '超时'
-])
 
 // 自定义时间范围
 const customTimeStart = ref<string>('')
@@ -209,7 +170,6 @@ function handleReset() {
   searchCriteria.time_range = '24h'
   searchCriteria.risk_level = []
   searchCriteria.min_duration = undefined
-  searchCriteria.tags = []
   customTimeStart.value = ''
   customTimeEnd.value = ''
   emit('reset')

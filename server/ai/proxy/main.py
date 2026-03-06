@@ -35,7 +35,15 @@ load_dotenv(dotenv_path=dotenv_path)
 from ai.proxy.providers.base import AIProvider
 from ai.proxy.providers.gemini import GeminiProvider
 from ai.proxy.providers.mock import MockProvider
-from ai.proxy.schemas import BatchRequestSchema,ChatRequest,SummarizeRequest,BATCH_PROMPT_TEMPLATE,SUMMARIZE_PROMPT_TEMPLATE
+from ai.proxy.schemas import (
+    BatchRequestSchema,
+    ChatRequest,
+    SummarizeRequest,
+    LOG_PROMPT_TEMPLATE,
+    TRACE_PROMPT_TEMPLATE,
+    BATCH_PROMPT_TEMPLATE,
+    SUMMARIZE_PROMPT_TEMPLATE,
+)
 
 
 # --- 应用设置 ---
@@ -90,26 +98,25 @@ async def analyze_log(provider_name: str, request: Request):
 
     try:
         log_text = (await request.body()).decode('utf-8')
-        # 优化的 Prompt：明确分析要求和风险等级判断标准
-        default_prompt = """You are a professional software engineer and log analysis expert. Analyze the following log entry and provide:
+        # 当前接口接收纯文本，动态配置（api_key/model/prompt）由批量接口承载。
+        result = provider.analyze(log_text=log_text, prompt=LOG_PROMPT_TEMPLATE)
+        return {"provider": provider_name, "analysis": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"分析过程中发生错误: {e}")
 
-1. A concise summary of the error or issue
-2. Risk level assessment:
-   - 'critical': System crashes, data loss, security vulnerabilities, critical service failures
-   - 'error': Performance degradation, non-critical errors, warnings that may escalate
-   - 'warning': Informational messages, minor warnings, expected errors
-   - 'info': Normal operational logs, state changes, heartbeats
-   - 'safe': Verified safe operations
-   - 'unknown': Unintelligible logs, binary data, or insufficient context to determine risk
-3. Root cause analysis based on the log content
-4. Actionable solution or remediation steps
+@app.post("/analyze/trace/{provider_name}")
+async def analyze_trace(provider_name: str, request: Request):
+    """
+    Trace 聚合结果分析端点。
+    当前接收 text/plain 的序列化 trace payload。
+    """
+    provider = providers.get(provider_name)
+    if not provider:
+        raise HTTPException(status_code=404, detail=f"未找到或未配置 Provider '{provider_name}'。")
 
-Provide your analysis in a structured format."""
-        
-        # 注意: analyze() 仅接收来自 C++ 的原始文本，因此无法在此提取 api_key/model。
-        # 我们使用默认的 Provider 配置。
-        result = provider.analyze(log_text=log_text, prompt=default_prompt)
-        
+    try:
+        trace_text = (await request.body()).decode('utf-8')
+        result = provider.analyze_trace(trace_text=trace_text, prompt=TRACE_PROMPT_TEMPLATE)
         return {"provider": provider_name, "analysis": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"分析过程中发生错误: {e}")

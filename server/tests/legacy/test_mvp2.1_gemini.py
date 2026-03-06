@@ -1,3 +1,13 @@
+"""
+DEPRECATED（软下线中）：
+- 原因：该脚本主要用于历史 MVP2.1 手工发送示例，断言覆盖不足（只发请求、不校验完整链路结果），
+  已不适合作为当前质量门禁。
+- 当前状态：保留为历史示例，不纳入默认 CI。
+- 替代方案：
+  1) 端到端冒烟：`python server/tests/smoke_trace_spans.py --mode advanced`
+  2) 单元测试门禁：`ctest -R "^TraceSessionManagerUnitTest\." --output-on-failure`
+"""
+
 import requests
 import json
 

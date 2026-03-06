@@ -94,7 +94,6 @@ export interface TraceSearchCriteria {
   risk_level?: string[] // 风险等级（多选）
   min_duration?: number // 最小耗时（ms）
   max_duration?: number // 最大耗时（ms）
-  tags?: string[] // 标签（多选，支持搜索特定问题类型）
 }
 
 /**

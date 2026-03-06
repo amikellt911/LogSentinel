@@ -108,16 +108,16 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             INSERT OR IGNORE INTO app_config (config_key, config_value, description) VALUES 
-            ('ai_provider', 'openai', 'AI服务商类型'),
+            ('ai_provider', 'mock', 'AI服务商类型'),
             ('ai_model', 'gpt-4-turbo', '模型名称'),
             ('ai_api_key', '', 'API密钥'),
-            ('ai_language', 'English', '解析语言'),
+            ('ai_language', 'en', '解析语言'),
             ('app_language', 'en', '界面语言'),
             ('log_retention_days', '7', '日志保留天数'),
             ('max_disk_usage_gb', '1', '最大磁盘占用GB'),
             ('http_port', '8080', 'HTTP服务端口'),
             ('ai_auto_degrade', '0', '自动降级开关'),
-            ('ai_fallback_model', 'local-mock', '降级模型名称'),
+            ('ai_fallback_model', 'mock', '降级模型名称'),
             ('ai_circuit_breaker', '1', '熔断机制开关'),
             ('ai_failure_threshold', '5', '熔断触发阈值'),
             ('ai_cooldown_seconds', '60', '熔断冷却时间s'),
@@ -212,16 +212,17 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
         for (auto &[key, val] : mp)
         {
             const std::string& effective_val = val;
-
             sqlite3_bind_text(stmt.get(), 1, effective_val.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(stmt.get(), 2, key.c_str(), -1, SQLITE_STATIC);
 
-            if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
-                checkSqliteError(db_, rc, "Failed to execute updateAppConfig");
+            const int step_rc = sqlite3_step(stmt.get());
+            if (step_rc != SQLITE_DONE) {
+                checkSqliteError(db_, step_rc, "Failed to execute updateAppConfig");
             }
 
             ApplyConfigValue(configClone, key, effective_val);
             sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
         }
 
         // 更新快照
@@ -236,7 +237,8 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
             current_snapshot_ = new_snap;
         }
 
-        sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+        checkSqliteError(db_, rc, "Failed to commit transaction");
     }
     catch (...)
     {
@@ -256,38 +258,39 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
     }
 
     auto new_prompts = prompts_input;
-    sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
 
     const char* sql_insert = "INSERT INTO prompts (name, content, is_active) VALUES (?, ?, ?);";
     const char* sql_update = "UPDATE prompts SET name=?, content=?, is_active=? WHERE id=?;";
 
-    sqlite3_stmt* stmt_insert = nullptr;
-    sqlite3_stmt* stmt_update = nullptr;
-
-    int rc = sqlite3_prepare_v2(db_, sql_insert, -1, &stmt_insert, nullptr);
-    if (rc != SQLITE_OK) throw std::runtime_error("Prep Insert Failed for prompts");
-
-    rc = sqlite3_prepare_v2(db_, sql_update, -1, &stmt_update, nullptr);
-    if (rc != SQLITE_OK) throw std::runtime_error("Prep Update Failed for prompts");
-
-    StmtPtr ptr_insert(stmt_insert);
-    StmtPtr ptr_update(stmt_update);
-
-    std::vector<int> active_ids;
-
+    int rc = SQLITE_OK;
     try {
+        rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
+        checkSqliteError(db_, rc, "Failed to begin transaction for prompts");
+
+        sqlite3_stmt* stmt_insert_raw = nullptr;
+        rc = sqlite3_prepare_v2(db_, sql_insert, -1, &stmt_insert_raw, nullptr);
+        checkSqliteError(db_, rc, "Prep Insert Failed for prompts");
+        StmtPtr stmt_insert(stmt_insert_raw);
+
+        sqlite3_stmt* stmt_update_raw = nullptr;
+        rc = sqlite3_prepare_v2(db_, sql_update, -1, &stmt_update_raw, nullptr);
+        checkSqliteError(db_, rc, "Prep Update Failed for prompts");
+        StmtPtr stmt_update(stmt_update_raw);
+
+        std::vector<int> active_ids;
+
         for (auto& item : new_prompts) {
             sqlite3_stmt* curr_stmt = nullptr;
 
             if (item.id > 0) {
-                curr_stmt = stmt_update;
+                curr_stmt = stmt_update.get();
                 sqlite3_bind_text(curr_stmt, 1, item.name.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_text(curr_stmt, 2, item.content.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_int(curr_stmt, 3, item.is_active ? 1 : 0);
                 sqlite3_bind_int(curr_stmt, 4, item.id);
                 active_ids.push_back(item.id);
             } else {
-                curr_stmt = stmt_insert;
+                curr_stmt = stmt_insert.get();
                 sqlite3_bind_text(curr_stmt, 1, item.name.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_text(curr_stmt, 2, item.content.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_int(curr_stmt, 3, item.is_active ? 1 : 0);
@@ -334,7 +337,8 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
             current_snapshot_ = new_snap;
         }
 
-        sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+        checkSqliteError(db_, rc, "Failed to commit transaction for prompts");
     } catch (...) {
         sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
         throw;
@@ -353,16 +357,18 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
 
     auto new_channels_cache = channels_input;
 
-    sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
-
     sqlite3_stmt* stmt_insert = nullptr;
     sqlite3_stmt* stmt_update = nullptr;
 
     const char* sql_insert = "INSERT INTO alert_channels (name, provider, webhook_url, alert_threshold, msg_template, is_active) VALUES (?, ?, ?, ?, ?, ?);";
     const char* sql_update = "UPDATE alert_channels SET name=?, provider=?, webhook_url=?, alert_threshold=?, msg_template=?, is_active=? WHERE id=?;";
 
+    int rc = SQLITE_OK;
     try {
-        int rc = sqlite3_prepare_v2(db_, sql_insert, -1, &stmt_insert, nullptr);
+        rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
+        checkSqliteError(db_, rc, "Failed to begin transaction for channels");
+
+        rc = sqlite3_prepare_v2(db_, sql_insert, -1, &stmt_insert, nullptr);
         if(rc != SQLITE_OK) throw std::runtime_error("Prep Insert Failed");
         
         rc = sqlite3_prepare_v2(db_, sql_update, -1, &stmt_update, nullptr);
@@ -430,7 +436,8 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
             current_snapshot_ = new_snap;
         }
 
-        sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+        checkSqliteError(db_, rc, "Failed to commit transaction for channels");
     } catch (...) {
         sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
         throw;

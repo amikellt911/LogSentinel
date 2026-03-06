@@ -82,6 +82,13 @@ class GeminiProvider(AIProvider):
             # 返回一个符合 JSON 结构的错误信息，以免前端解析失败
             return '{"summary": "Error calling AI", "risk_level": "critical", "root_cause": "API Error", "solution": "Check logs"}'
 
+    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
+        """
+        Trace 分析：当前先复用单次 analyze 的结构化输出路径。
+        这样可以保证 C++ 侧拿到同一套字段（summary/risk_level/root_cause/solution）。
+        """
+        return self.analyze(log_text=trace_text, prompt=prompt, api_key=api_key, model=model)
+
     def chat(self, history: List[Dict[str, Any]], new_message: str) -> str:
         """
         实现多轮对话功能。

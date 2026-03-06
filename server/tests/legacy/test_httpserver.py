@@ -1,3 +1,13 @@
+"""
+DEPRECATED（软下线中）：
+- 原因：该脚本主要覆盖早期 `/log` 路由的手工验证场景，与当前主链路（`/logs/spans`）和
+  现有 C++ 单测/冒烟测试目标不一致，继续作为常规测试入口价值有限。
+- 当前状态：保留文件用于历史回溯，不纳入默认 CI。
+- 替代方案：
+  1) Trace 主链路冒烟：`python server/tests/smoke_trace_spans.py --mode basic|advanced`
+  2) HTTP 解析核心单测：`cd server/build && ctest -R HttpContextTest --output-on-failure`
+"""
+
 import requests
 import socket
 import time

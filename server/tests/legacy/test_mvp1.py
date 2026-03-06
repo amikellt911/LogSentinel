@@ -1,3 +1,12 @@
+"""
+DEPRECATED（软下线中）：
+- 原因：该脚本依赖历史二进制 `build/testServerPoolSqliteMockAI`，而该目标已不在当前构建链路中，
+  直接运行会造成“文件不存在”或“链路语义过时”的误判。
+- 当前状态：保留文件用于历史 MVP 对照，不纳入默认 CI。
+- 替代方案：
+  1) 现行主链路冒烟：`python server/tests/smoke_trace_spans.py --mode basic|advanced`
+  2) Trace 单测：`cd server/build && ctest -R "^TraceSessionManagerUnitTest\." --output-on-failure`
+"""
 
 import unittest
 import requests
