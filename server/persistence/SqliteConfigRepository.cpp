@@ -2,59 +2,19 @@
 #include <filesystem>
 #include <iostream>
 #include <sstream>
-#include <algorithm>
-#include <cctype>
 #include "persistence/SqliteHelper.h"
 
 using namespace persistence;
-
-static std::string ToLowerCopy(std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return value;
-}
-
-static std::string NormalizeAiProviderValue(const std::string& raw)
-{
-    const std::string lower = ToLowerCopy(raw);
-    if (lower == "local-mock" || lower == "local_mock" || lower == "mock") {
-        return "mock";
-    }
-    if (lower == "gemini" || lower == "google-gemini" || lower == "google gemini") {
-        return "gemini";
-    }
-    if (lower == "openai") {
-        return "openai";
-    }
-    if (lower == "azure" || lower == "azure-openai" || lower == "azure openai") {
-        return "azure";
-    }
-    return lower;
-}
-
-static std::string NormalizeAiLanguageValue(const std::string& raw)
-{
-    const std::string lower = ToLowerCopy(raw);
-    if (lower == "en" || lower == "english") {
-        return "en";
-    }
-    if (lower == "zh" || lower == "chinese" || lower == "中文") {
-        return "zh";
-    }
-    return lower;
-}
 
 // 辅助函数：将 DB 字符串值应用到 AppConfig 结构体
 static void ApplyConfigValue(AppConfig &config, const std::string &key, const std::string &val)
 {
     try
     {
-        if (key == "ai_provider") config.ai_provider = NormalizeAiProviderValue(val);
+        if (key == "ai_provider") config.ai_provider = val;
         else if (key == "ai_model") config.ai_model = val;
         else if (key == "ai_api_key") config.ai_api_key = val;
-        else if (key == "ai_language") config.ai_language = NormalizeAiLanguageValue(val);
+        else if (key == "ai_language") config.ai_language = val;
         else if (key == "app_language") config.app_language = val;
         else if (key == "kernel_io_buffer") config.kernel_io_buffer = val;
         else if (key == "kernel_worker_threads") config.kernel_worker_threads = std::stoi(val);
@@ -251,13 +211,7 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
     {
         for (auto &[key, val] : mp)
         {
-            std::string effective_val = val;
-            if (key == "ai_provider") {
-                effective_val = NormalizeAiProviderValue(val);
-            } else if (key == "ai_language") {
-                effective_val = NormalizeAiLanguageValue(val);
-            }
-
+            const std::string& effective_val = val;
             sqlite3_bind_text(stmt.get(), 1, effective_val.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(stmt.get(), 2, key.c_str(), -1, SQLITE_STATIC);
 
