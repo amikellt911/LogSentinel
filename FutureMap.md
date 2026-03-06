@@ -18,6 +18,31 @@
 ### SQLite/B-Tree 迁移到 RocksDB/LSM-Tree
 ### 线程池任务队列升级为无锁 MPSC Ring Buffer
 
+### 高性能指标监控系统（TLS 分散-汇总）
+- []目标：实现“高频指标统计不拖慢主链路”，用于 QPS、字节吞吐、错误数、处理延迟等实时指标。
+- []核心思路：写路径 `thread_local` 零竞争，读路径定时汇总（Gather），避免全局原子计数热点。
+- []适用场景：高并发 Reactor 线程模型下，指标采集频率远高于普通业务日志写入频率。
+
+#### 设计草案
+Step 1: Scatter（分散写入）
+业务线程只更新本线程局部指标，不加锁、不跨核写共享变量。
+
+Step 2: Registry（线程局部指标注册）
+通过 RAII 在 TLS 初始化时把本线程指标节点注册到全局 registry（例如 `std::vector<MetricsNode*>`，由轻量锁保护注册过程）。
+
+Step 3: Gather（定时汇总）
+在主事件循环中使用时间轮（TraceSessionManager的抽出）和定时器配合（`runEvery` / `timerfd`）每秒触发：
+遍历 registry 汇总各线程指标，计算 QPS、吞吐、错误率、P50/P95 延迟（后续可扩展）。
+汇总完成后执行“窗口重置”或“差分计算”。
+
+Step 4: Export（输出）
+先输出到内存快照与 `/dashboard`；后续按需追加 SQLite 持久化、Webhook 或 Prometheus exporter。
+
+#### 预期收益
+- 写路径零锁竞争：避免全局原子热点导致的 cache line bouncing。
+- 统计实时且低损耗：汇总路径集中在定时回调，业务线程开销接近常数。
+- 对简历/面试有明确技术亮点：可解释“为何不用全局原子计数器”。
+
 ## 可能增强点（占位）
 ### 增强点一（待补充）
 ### 增强点二（待补充）
