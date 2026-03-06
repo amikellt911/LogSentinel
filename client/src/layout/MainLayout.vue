@@ -132,7 +132,7 @@ const currentRouteName = computed(() => {
 function handleToggle(val: string | number | boolean) {
   // Validation Logic
   if (val === true) {
-    if (systemStore.settings.ai.provider !== 'Local-Mock' && !systemStore.settings.ai.apiKey) {
+    if (systemStore.settings.ai.provider !== 'mock' && !systemStore.settings.ai.apiKey) {
       ElMessage.error(t('settings.ai.apiKeyPlaceholder'))
       // Reset switch asynchronously to avoid flicker issue or immediate revert
       setTimeout(() => {

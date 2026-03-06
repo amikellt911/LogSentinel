@@ -68,3 +68,31 @@ Function Explanation:
 Pitfalls:
 - `COMMIT` 不检查返回码会导致“看起来成功、实际未提交”的假成功状态，后续排障很难定位。
 - 在 `try` 外 `prepare` 并直接 `throw`，会绕过统一 `catch+ROLLBACK`，这是配置偶发锁表问题的常见来源。
+
+---
+
+追加记录（配置枚举值标准化）:
+
+Git Commit Message:
+refactor(config): 统一ai provider与language的存储值和前端取值
+
+Modification:
+- server/persistence/ConfigTypes.h
+- server/persistence/SqliteConfigRepository.cpp
+- client/src/stores/system.ts
+- client/src/views/Settings.vue
+- client/src/layout/MainLayout.vue
+- docs/todo-list/Todo_ConfigRepository.md
+
+Learning Tips:
+Newbie Tips:
+- 配置项的“存储值”和“展示文案”最好分开：数据库/API 存稳定机器值，前端下拉框负责展示友好文案。
+- 这种枚举标准化第一版直接用硬编码映射就够了，不需要为了几项枚举上复杂配置系统。
+
+Function Explanation:
+- `NormalizeAiProviderValue(...)`：把 `Local-Mock/Gemini/OpenAI/Azure` 等历史或展示值统一收敛为 `mock/gemini/openai/azure`。
+- `NormalizeAiLanguageValue(...)`：把 `English/中文/en/zh` 统一收敛为 `en/zh`。
+
+Pitfalls:
+- 如果只改后端不改前端，UI 会继续把展示值当真值使用，联调时会出现“保存后又变回来”的错觉。
+- 这次前端 `npm run build` 失败是仓库中既有的 TypeScript 问题，不是本次 provider/language 标准化引入的新错误。

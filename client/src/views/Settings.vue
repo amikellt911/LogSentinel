@@ -74,10 +74,10 @@
                   <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
                      <el-form-item :label="$t('settings.ai.provider')">
                        <el-select v-model="systemStore.settings.ai.provider" class="w-full">
-                         <el-option label="OpenAI (GPT-4o)" value="OpenAI" />
-                         <el-option label="Google Gemini Pro" value="Gemini" />
-                         <el-option label="Azure OpenAI Service" value="Azure" />
-                         <el-option label="Local Mock (Dev)" value="Local-Mock" />
+                         <el-option label="OpenAI (GPT-4o)" value="openai" />
+                         <el-option label="Google Gemini Pro" value="gemini" />
+                         <el-option label="Azure OpenAI Service" value="azure" />
+                         <el-option label="Local Mock (Dev)" value="mock" />
                        </el-select>
                      </el-form-item>
 

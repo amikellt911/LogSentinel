@@ -27,10 +27,10 @@ struct HistoryPage {
 // 1. 通用配置 (对应 app_config 表)
 struct AppConfig {
     // AI 设置
-    std::string ai_provider = "openai";
+    std::string ai_provider = "mock";
     std::string ai_model = "gpt-4-turbo";
     std::string ai_api_key = "";
-    std::string ai_language = "English";
+    std::string ai_language = "en";
     std::string app_language = "en"; // Application UI Language
 
     // 日志存储策略

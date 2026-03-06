@@ -47,7 +47,7 @@ export interface WebhookConfig {
 }
 
 export interface AISettings {
-    provider: 'OpenAI' | 'Gemini' | 'Local-Mock' | 'Azure'
+    provider: 'openai' | 'gemini' | 'mock' | 'azure'
     modelName: string
     apiKey: string
     language: 'en' | 'zh'
@@ -166,7 +166,7 @@ export const useSystemStore = defineStore('system', () => {
       httpPort: 8080
     } as GeneralSettings,
     ai: {
-      provider: 'Local-Mock',
+      provider: 'mock',
       modelName: 'gpt-4-turbo',
       apiKey: '',
       language: 'en',
@@ -525,7 +525,7 @@ export const useSystemStore = defineStore('system', () => {
           httpPort: parseInt(data.config['http_port'] || '8080')
         },
         ai: {
-          provider: (data.config['ai_provider'] || 'Local-Mock') as any,
+          provider: ((data.config['ai_provider'] || 'mock') as string).toLowerCase() as any,
           modelName: data.config['ai_model'] || 'gpt-4-turbo',
           apiKey: data.config['ai_api_key'] || '',
           language: (data.config['ai_language'] || 'en') as any,
