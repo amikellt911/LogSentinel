@@ -124,7 +124,9 @@ public:
                                  INotifier* notifier = nullptr,
                                  int64_t idle_timeout_ms = 5000,
                                  int64_t wheel_tick_ms = 500,
-                                 size_t wheel_size = 512);
+                                 size_t wheel_size = 512,
+                                 size_t buffered_span_hard_limit = 4096,
+                                 size_t active_session_hard_limit = 1024);
     ~TraceSessionManager();
 
     size_t size() const;
@@ -162,6 +164,12 @@ private:
         uint64_t epoch = 0;
         uint64_t expire_tick = 0;
     };
+    struct Watermark
+    {
+        size_t low = 0;
+        size_t high = 0;
+        size_t critical = 0;
+    };
 
     // 构建 trace 的父子关系索引，后续用于树形遍历与序列化。
     TraceIndex BuildTraceIndex(const TraceSession& session);
@@ -176,6 +184,12 @@ private:
                                                              const LogAnalysisResult& analysis);
     // 计算当前 idle_timeout 对应的 tick 数；至少返回 1，避免 0 tick 导致不触发。
     uint64_t ComputeTimeoutTicks() const;
+    // 按 hard limit 预计算 low/high/critical 三档阈值，构造期缓存后供准入门禁直接读取。
+    static Watermark BuildWatermark(size_t hard_limit);
+    // 基于当前积压指标刷新 overload_state_，统一收口新老 trace 的准入门禁状态。
+    void RefreshOverloadState();
+    // 当前请求是否应该在入口被拒绝：Overload 拒新 trace，Critical 新老都拒。
+    bool ShouldRejectIncomingTrace(bool trace_exists) const;
     // 在时间轮中为会话安排最新超时节点（旧节点不删，靠 version/epoch 失效）。
     void ScheduleTimeoutNode(TraceSession& session);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
@@ -193,6 +207,16 @@ private:
     uint64_t current_tick_ = 0;
     int64_t last_tick_now_ms_ = 0;
     uint64_t session_epoch_seq_ = 0;
+    // active_sessions_ 与 total_buffered_spans_ 直接反映入口聚合态积压，用于实时背压门禁。
+    size_t active_sessions_ = 0;
+    size_t total_buffered_spans_ = 0;
+    // 第一版先硬编码接入，后续再迁移到配置层；这里存每个指标自己的硬上限基数。
+    size_t buffered_span_hard_limit_ = 4096;
+    size_t active_session_hard_limit_ = 1024;
+    // watermark_ 在构造期预计算，避免每次 Push/Dispatch 都重复按比例换算阈值。
+    Watermark buffered_span_watermark_;
+    Watermark active_session_watermark_;
+    Watermark pending_task_watermark_;
     // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
     OverloadState overload_state_ = OverloadState::Normal;
 };

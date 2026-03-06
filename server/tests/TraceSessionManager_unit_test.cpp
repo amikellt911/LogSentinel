@@ -723,3 +723,78 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_RebuildOnIdleTimeoutChangeUsesN
 
     pool.shutdown();
 }
+
+TEST_F(TraceSessionManagerUnitTest, PushRejectsNewTraceButAllowsExistingTraceWhenOverload)
+{
+    // 目的：验证进入 overload 后只拒绝新 trace，已在内存中的老 trace 仍尽量放行，避免聚合被截断。
+    ThreadPool pool(1, /*max_queue_size*/100);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool,
+                                &repo,
+                                nullptr,
+                                /*capacity*/100,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/10,
+                                /*active_session_hard_limit*/10);
+
+    for (size_t i = 0; i < 7; ++i) {
+        ASSERT_EQ(manager.Push(MakeSpan(701, 7001 + i, 1000 + static_cast<int64_t>(i))),
+                  TraceSessionManager::PushResult::Accepted);
+    }
+
+    EXPECT_EQ(manager.overload_state_, TraceSessionManager::OverloadState::Overload);
+    EXPECT_EQ(manager.total_buffered_spans_, 7u);
+    EXPECT_EQ(manager.active_sessions_, 1u);
+
+    EXPECT_EQ(manager.Push(MakeSpan(702, 7101, 2000)),
+              TraceSessionManager::PushResult::RejectedOverload);
+    EXPECT_EQ(manager.total_buffered_spans_, 7u);
+    EXPECT_EQ(manager.active_sessions_, 1u);
+
+    EXPECT_EQ(manager.Push(MakeSpan(701, 7008, 2001)),
+              TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.total_buffered_spans_, 8u);
+    EXPECT_EQ(manager.active_sessions_, 1u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, PushRejectsExistingTraceWhenCritical)
+{
+    // 目的：验证进入 critical 后连老 trace 也允许拒绝，优先保住进程，不继续用完整性换 OOM 风险。
+    ThreadPool pool(1, /*max_queue_size*/100);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool,
+                                &repo,
+                                nullptr,
+                                /*capacity*/100,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/10,
+                                /*active_session_hard_limit*/10);
+
+    for (size_t i = 0; i < 9; ++i) {
+        ASSERT_EQ(manager.Push(MakeSpan(801, 8001 + i, 1000 + static_cast<int64_t>(i))),
+                  TraceSessionManager::PushResult::Accepted);
+    }
+
+    EXPECT_EQ(manager.overload_state_, TraceSessionManager::OverloadState::Critical);
+    EXPECT_EQ(manager.total_buffered_spans_, 9u);
+    EXPECT_EQ(manager.active_sessions_, 1u);
+
+    EXPECT_EQ(manager.Push(MakeSpan(801, 8010, 2000)),
+              TraceSessionManager::PushResult::RejectedOverload);
+    EXPECT_EQ(manager.Push(MakeSpan(802, 8201, 2001)),
+              TraceSessionManager::PushResult::RejectedOverload);
+    EXPECT_EQ(manager.total_buffered_spans_, 9u);
+    EXPECT_EQ(manager.active_sessions_, 1u);
+
+    pool.shutdown();
+}

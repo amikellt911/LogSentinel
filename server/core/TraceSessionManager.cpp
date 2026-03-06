@@ -25,6 +25,7 @@ int64_t NowSteadyMs()
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
 }
+
 }
 
 TraceSession::TraceSession(size_t capacity)
@@ -41,7 +42,9 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
                                          INotifier* notifier,
                                          int64_t idle_timeout_ms,
                                          int64_t wheel_tick_ms,
-                                         size_t wheel_size)
+                                         size_t wheel_size,
+                                         size_t buffered_span_hard_limit,
+                                         size_t active_session_hard_limit)
     : thread_pool_(thread_pool)
     , trace_repo_(trace_repo)
     , trace_ai_(trace_ai)
@@ -51,12 +54,30 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
     , wheel_size_(wheel_size > 0 ? wheel_size : 512)
     , idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000)
     , wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500)
+    , buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096)
+    , active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
     time_wheel_.resize(wheel_size_);
+    buffered_span_watermark_ = BuildWatermark(buffered_span_hard_limit_);
+    active_session_watermark_ = BuildWatermark(active_session_hard_limit_);
+    const size_t pending_task_hard_limit =
+        thread_pool_ ? std::max<size_t>(1, thread_pool_->maxQueueSize()) : 1;
+    pending_task_watermark_ = BuildWatermark(pending_task_hard_limit);
 }
 
 TraceSessionManager::~TraceSessionManager() = default;
+
+TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_limit)
+{
+    const size_t safe_hard_limit = std::max<size_t>(hard_limit, 1);
+    Watermark mark;
+    mark.low = std::max<size_t>(1, safe_hard_limit * 55 / 100);
+    mark.high = std::max(mark.low, std::max<size_t>(1, safe_hard_limit * 75 / 100));
+    mark.critical = std::max(mark.high, std::max<size_t>(1, safe_hard_limit * 90 / 100));
+    mark.critical = std::min(mark.critical, safe_hard_limit);
+    return mark;
+}
 
 size_t TraceSessionManager::size() const
 {
@@ -67,6 +88,12 @@ TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
 {
     const int64_t now_ms = NowSteadyMs();
     auto iter = index_by_trace_.find(span.trace_key);
+    const bool trace_exists = (iter != index_by_trace_.end());
+    RefreshOverloadState();
+    if (ShouldRejectIncomingTrace(trace_exists)) {
+        return PushResult::RejectedOverload;
+    }
+
     if (iter == index_by_trace_.end()) {
         auto session = std::make_unique<TraceSession>(capacity_);
         session->trace_key = span.trace_key;
@@ -75,6 +102,7 @@ TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
         session->session_epoch = ++session_epoch_seq_;
         sessions_.push_back(std::move(session));
         index_by_trace_[span.trace_key] = sessions_.size() - 1;
+        active_sessions_ += 1;
         iter = index_by_trace_.find(span.trace_key);
     }
 
@@ -90,8 +118,10 @@ TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
 
     // 先按到达顺序追加，后续聚合阶段再按 parent_id 重建结构。
     session.spans.push_back(span);
+    total_buffered_spans_ += 1;
     session.token_count += token_estimator_.Estimate(span);
     session.last_update_ms = now_ms;
+    session.lifecycle_state = TraceSession::LifecycleState::Collecting;
 
     if (span.trace_end.has_value() && span.trace_end.value()) {
         Dispatch(session.trace_key);
@@ -112,6 +142,7 @@ TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
     // 正常留在内存中的会话，需要更新“下一次超时计划”。
     // 这里采用懒删除策略：不回删旧槽，只给会话 version+1 并插入新节点。
     ScheduleTimeoutNode(session);
+    RefreshOverloadState();
 
     // 当前仅做本地写入与分发占位，先返回成功；后续接入背压分支后再细分 AcceptedDeferred/RejectedOverload。
     return PushResult::Accepted;
@@ -236,6 +267,7 @@ void TraceSessionManager::Dispatch(size_t trace_key)
 
     const size_t index = iter->second;
     std::unique_ptr<TraceSession> session = std::move(sessions_[index]);
+    const size_t span_count = session ? session->spans.size() : 0;
     index_by_trace_.erase(iter);
 
     if (index < sessions_.size() - 1) {
@@ -246,6 +278,15 @@ void TraceSessionManager::Dispatch(size_t trace_key)
     } else {
         sessions_.pop_back();
     }
+    if (active_sessions_ > 0) {
+        active_sessions_ -= 1;
+    }
+    if (total_buffered_spans_ >= span_count) {
+        total_buffered_spans_ -= span_count;
+    } else {
+        total_buffered_spans_ = 0;
+    }
+    RefreshOverloadState();
 
     if (!thread_pool_) {
         return;
@@ -331,6 +372,49 @@ void TraceSessionManager::Dispatch(size_t trace_key)
         event.confidence = analysis_ptr->confidence;
         notifier->notifyTraceAlert(event);
     });
+}
+
+void TraceSessionManager::RefreshOverloadState()
+{
+    const size_t pending_tasks = thread_pool_ ? thread_pool_->pendingTasks() : 0;
+
+    const bool hit_critical =
+        total_buffered_spans_ >= buffered_span_watermark_.critical ||
+        active_sessions_ >= active_session_watermark_.critical ||
+        pending_tasks >= pending_task_watermark_.critical;
+    const bool hit_high =
+        total_buffered_spans_ >= buffered_span_watermark_.high ||
+        active_sessions_ >= active_session_watermark_.high ||
+        pending_tasks >= pending_task_watermark_.high;
+    const bool back_to_low =
+        total_buffered_spans_ <= buffered_span_watermark_.low &&
+        active_sessions_ <= active_session_watermark_.low &&
+        pending_tasks <= pending_task_watermark_.low;
+
+    if (hit_critical) {
+        overload_state_ = OverloadState::Critical;
+        return;
+    }
+    if (overload_state_ == OverloadState::Normal) {
+        overload_state_ = hit_high ? OverloadState::Overload : OverloadState::Normal;
+        return;
+    }
+    if (back_to_low) {
+        overload_state_ = OverloadState::Normal;
+        return;
+    }
+    overload_state_ = hit_high ? OverloadState::Overload : OverloadState::Overload;
+}
+
+bool TraceSessionManager::ShouldRejectIncomingTrace(bool trace_exists) const
+{
+    if (overload_state_ == OverloadState::Normal) {
+        return false;
+    }
+    if (overload_state_ == OverloadState::Critical) {
+        return true;
+    }
+    return !trace_exists;
 }
 
 TraceSessionManager::TraceIndex TraceSessionManager::BuildTraceIndex(const TraceSession& session)

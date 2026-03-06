@@ -75,3 +75,58 @@ Function Explanation:
 Pitfalls:
 - 只改头文件枚举不改调用点，编译会直接炸；尤其测试里大量 `ASSERT_TRUE(manager.Push(...))` 需要同步迁移。
 - 当前只是把返回值和状态枚举立住，实际背压判断还没接入；如果现在就误以为 overload 生效了，会把排障方向带偏。
+
+---
+
+追加记录（准入门禁与新老 Trace 区分放行）:
+
+Git Commit Message:
+feat(trace): 接入三档水位准入门禁并区分新老trace放行
+
+Modification:
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- server/threadpool/ThreadPool.h
+- server/tests/TraceSessionManager_unit_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+- docs/dev-log/20260306-docs-trace-backpressure.md
+
+Learning Tips:
+Newbie Tips:
+- `pending_tasks` 的 100% 基数应该取线程池队列容量，不是 worker 线程数；线程数决定的是消化速度，不是桶有多大。
+- 第一版背压阈值完全可以先硬编码，但每个指标都要有自己的 hard limit，别偷懒共用一个魔法数字。
+
+Function Explanation:
+- `ThreadPool::maxQueueSize()`：暴露线程池任务队列硬上限，供 Trace 背压计算 `pending_tasks` 水位基数。
+- `TraceSessionManager::RefreshOverloadState()`：根据 `total_buffered_spans / active_sessions / pending_tasks` 三个指标统一刷新 `Normal / Overload / Critical`。
+- `TraceSessionManager::ShouldRejectIncomingTrace(...)`：把“Overload 拒新 trace、Critical 新老都拒”的门禁规则集中收口，避免散在 `Push` 里写一坨分支。
+
+Pitfalls:
+- 入口门禁要在“新建 session 之前”判断，否则你明明想拒绝新 trace，却先把 session 和计数建出来，账会直接脏掉。
+- `Dispatch` 从内存移除 session 时如果不顺手更新实时计数，overload 状态会一直卡高，后续请求会被假性拒绝。
+- 当前这一步只做了准入门禁，`submit` 失败回滚和 ready 重试还没接；如果线程池提交失败，仍然需要下一刀补齐兜底逻辑。
+
+---
+
+追加记录（watermark 预计算缓存）:
+
+Git Commit Message:
+refactor(trace): 将背压水位阈值改为构造期预计算缓存
+
+Modification:
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- docs/dev-log/20260306-docs-trace-backpressure.md
+
+Learning Tips:
+Newbie Tips:
+- 如果阈值在运行期不会变化，就不要在热路径里反复从比例换算成绝对值；直接构造期缓存，热路径只做比较。
+- 优化热路径时先盯“会不会重复做纯函数计算”，这种地方虽然不致命，但属于白给的开销。
+
+Function Explanation:
+- `TraceSessionManager::BuildWatermark(...)`：把 hard limit 换算成 `low/high/critical` 三档阈值，当前只在构造阶段调用。
+- `buffered_span_watermark_ / active_session_watermark_ / pending_task_watermark_`：缓存后的固定阈值，供 `RefreshOverloadState()` 直接读取。
+
+Pitfalls:
+- 在匿名命名空间里返回类的私有嵌套类型，容易撞上可见性/访问控制问题；这类 helper 更适合做成类内静态私有函数。
+- 只有当 hard limit 或线程池容量会运行时变化时，watermark 才需要重算；否则在热路径里现算就是纯重复劳动。

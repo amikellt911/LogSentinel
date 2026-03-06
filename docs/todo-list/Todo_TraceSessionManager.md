@@ -75,10 +75,10 @@
 - [x] 将 TokenEstimator 从占位实现升级为最小可用字符估算，并回归 token_limit 分发单测
 - [x] 新增 token_limit 集成用例：无 trace_end 时按估算 token 累计触发分发
 - [x] 收口 Trace 背压的最小状态语义（collecting / ready_retry_later / overload_state）
-- [ ] 为 Trace 背压确定第一版硬编码阈值与三档水位（low / high / critical）
-- [ ] 将 `Push` 返回值从裸 `bool` 升级为可表达接收/拒绝/延后投递的状态枚举
-- [ ] 在 `TraceSessionManager` 增加实时积压计数（`active_sessions` / `total_buffered_spans`）
-- [ ] 在 `Push` 中接入新老 Trace 区分准入策略（普通过载保老 Trace，极限过载全拒）
+- [x] 为 Trace 背压确定第一版硬编码阈值与三档水位（low / high / critical）
+- [x] 将 `Push` 返回值从裸 `bool` 升级为可表达接收/拒绝/延后投递的状态枚举
+- [x] 在 `TraceSessionManager` 增加实时积压计数（`active_sessions` / `total_buffered_spans`）
+- [x] 在 `Push` 中接入新老 Trace 区分准入策略（普通过载保老 Trace，极限过载全拒）
 - [ ] 改造 `Dispatch`，补齐 `ThreadPool::submit` 失败时的 session 回滚与计数回补
 - [ ] 将“收集超时”和“ready 后重试投递”拆成两套语义，避免复用同一时间轮含义
 - [ ] 增加最小 ready 重试队列/延迟重投机制，避免 submit 失败后原地打桩重试
