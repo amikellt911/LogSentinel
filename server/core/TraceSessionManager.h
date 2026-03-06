@@ -194,6 +194,8 @@ private:
     void ScheduleTimeoutNode(TraceSession& session);
     // ready trace 投递失败后，安排一个更短的“尽快重试”时点，避免继续沿用收集超时语义。
     void ScheduleRetryNode(TraceSession& session);
+    // 按会话当前生命周期选择调度语义：Collecting 走收集超时，ReadyRetryLater 走快速重投。
+    void ScheduleSessionNode(TraceSession& session);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
     void RebuildTimeWheel();
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。

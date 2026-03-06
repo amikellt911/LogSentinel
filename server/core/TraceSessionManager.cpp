@@ -139,9 +139,9 @@ TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
         return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
     }
 
-    // 正常留在内存中的会话，需要更新“下一次超时计划”。
+    // collecting 会话继续按“等待后续 span”语义重排超时计划。
     // 这里采用懒删除策略：不回删旧槽，只给会话 version+1 并插入新节点。
-    ScheduleTimeoutNode(session);
+    ScheduleSessionNode(session);
     RefreshOverloadState();
 
     // 当前仅做本地写入与分发占位，先返回成功；后续接入背压分支后再细分 AcceptedDeferred/RejectedOverload。
@@ -257,6 +257,15 @@ void TraceSessionManager::ScheduleRetryNode(TraceSession& session)
     time_wheel_[slot].push_back(std::move(node));
 }
 
+void TraceSessionManager::ScheduleSessionNode(TraceSession& session)
+{
+    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater) {
+        ScheduleRetryNode(session);
+        return;
+    }
+    ScheduleTimeoutNode(session);
+}
+
 void TraceSessionManager::RebuildTimeWheel()
 {
     for (auto& bucket : time_wheel_) {
@@ -266,8 +275,8 @@ void TraceSessionManager::RebuildTimeWheel()
         if (!session_ptr) {
             continue;
         }
-        // 配置变更后统一重排超时节点，避免继续沿用旧超时参数。
-        ScheduleTimeoutNode(*session_ptr);
+        // collecting 和 retry_later 的时间语义不同，重建时必须按当前生命周期分别重排。
+        ScheduleSessionNode(*session_ptr);
     }
 }
 
@@ -398,7 +407,7 @@ bool TraceSessionManager::Dispatch(size_t trace_key)
         index_by_trace_[trace_key] = sessions_.size() - 1;
         active_sessions_ += 1;
         total_buffered_spans_ += span_count;
-        ScheduleRetryNode(*sessions_.back());
+        ScheduleSessionNode(*sessions_.back());
         RefreshOverloadState();
         return false;
     }

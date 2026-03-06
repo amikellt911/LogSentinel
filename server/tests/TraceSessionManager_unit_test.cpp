@@ -511,6 +511,50 @@ TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredAndRollsBackWhenS
     pool.shutdown();
 }
 
+TEST_F(TraceSessionManagerUnitTest, RebuildTimeWheelKeepsReadyRetryLaterOnRetrySchedule)
+{
+    // 目的：验证 ReadyRetryLater 会话在重建时间轮后仍走“快速重投”语义，而不是退回普通 idle timeout。
+    ThreadPool pool(1, /*max_queue_size*/0);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(
+        &pool,
+        &repo,
+        nullptr,
+        /*capacity*/10,
+        /*token_limit*/0,
+        /*notifier*/nullptr,
+        /*idle_timeout_ms*/5000,
+        /*wheel_tick_ms*/500);
+
+    SpanEvent span = MakeSpan(124, 12401, 1000);
+    span.trace_end = true;
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::AcceptedDeferred);
+
+    auto idx_iter = manager.index_by_trace_.find(124);
+    ASSERT_NE(idx_iter, manager.index_by_trace_.end());
+    ASSERT_LT(idx_iter->second, manager.sessions_.size());
+    TraceSession& session = *manager.sessions_[idx_iter->second];
+    ASSERT_EQ(session.lifecycle_state, TraceSession::LifecycleState::ReadyRetryLater);
+
+    manager.RebuildTimeWheel();
+
+    const uint64_t expected_retry_tick = manager.current_tick_ + 1;
+    const size_t expected_slot = static_cast<size_t>(expected_retry_tick % manager.wheel_size_);
+    bool found_retry_node = false;
+    for (const auto& node : manager.time_wheel_[expected_slot]) {
+        if (node.trace_key == session.trace_key &&
+            node.version == session.timer_version &&
+            node.epoch == session.session_epoch &&
+            node.expire_tick == expected_retry_tick) {
+            found_retry_node = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_retry_node);
+
+    pool.shutdown();
+}
+
 TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DispatchesSessionWithoutTraceEnd)
 {
     // 目的：验证“无 trace_end + 到达 idle 超时”会触发分发。

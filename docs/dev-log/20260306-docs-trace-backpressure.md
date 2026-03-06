@@ -183,3 +183,30 @@ Function Explanation:
 Pitfalls:
 - `AcceptedDeferred` 不应该回成 `503`，因为这条数据已经被服务端接住了；如果这时再让客户端重试，反而可能制造重复 span。
 - 只靠 HTTP 状态码不补 body 细节，后续排查“为什么同样是 202，但一条很快落库、一条延后处理”会很难受。
+
+---
+
+追加记录（按生命周期重排时间轮）:
+
+Git Commit Message:
+refactor(trace): 按session生命周期重排收集超时与重投计划
+
+Modification:
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- server/tests/TraceSessionManager_unit_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+- docs/dev-log/20260306-docs-trace-backpressure.md
+
+Learning Tips:
+Newbie Tips:
+- “共用一个容器”不等于“共用一个语义”。就算底层还是同一个时间轮，调度入口也应该先按状态分流，别把所有会话都当成 collecting。
+- 重建调度结构时最容易把状态语义洗掉，所以这种路径一定要补专门单测，不然回归时很难第一时间发现。
+
+Function Explanation:
+- `ScheduleSessionNode(...)`：现在是统一入口，会根据 `LifecycleState` 决定走 `ScheduleTimeoutNode(...)` 还是 `ScheduleRetryNode(...)`。
+- `RebuildTimeWheel()`：不再把所有 session 一律按 idle timeout 重新挂回时间轮，而是保留 `ReadyRetryLater` 的快速重投语义。
+
+Pitfalls:
+- 如果 `RebuildTimeWheel()` 只会调用 `ScheduleTimeoutNode(...)`，那配置变化或重建后，`ReadyRetryLater` 会话会被错误地拖回普通收集超时路径。
+- 当前实现已经把“收集超时”和“重投计划”在调度入口层面分开，但底层仍共用 `TimeWheelNode` 结构；后续若重试策略复杂化，再考虑完全拆容器更自然。
