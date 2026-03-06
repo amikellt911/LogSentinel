@@ -158,3 +158,28 @@ Function Explanation:
 Pitfalls:
 - 如果先把 `unique_ptr<TraceSession>` 直接 move 成 owning `shared_ptr` 再调用 `submit`，一旦 submit 失败就很难无损拿回所有权做回滚。
 - 当前最小实现虽然已经区分了 `ReadyRetryLater` 语义，但底层仍借用了同一套时间轮基础设施；后续若重试策略更复杂，再考虑独立重试容器会更清晰。
+
+---
+
+追加记录（Trace HTTP 返回语义收口）:
+
+Git Commit Message:
+refactor(trace): 细化handletracepost对push结果的http映射
+
+Modification:
+- server/handlers/LogHandler.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+- docs/dev-log/20260306-docs-trace-backpressure.md
+
+Learning Tips:
+Newbie Tips:
+- `202 Accepted` 不等于“后台已经处理完成”，它只表示“服务端接收了这笔事并承担后续处理责任”。
+- 如果服务端已经能区分“正常 accepted”和“accepted 但内部延后投递”，最好在响应体里显式说清楚，别把客户端调试逼成猜谜游戏。
+
+Function Explanation:
+- `PushResult::RejectedOverload`：现在映射为 `503`，并补 `Retry-After: 1` 与结构化错误体。
+- `PushResult::AcceptedDeferred`：现在仍返回 `202`，但响应体会带 `deferred=true` 和提示信息，说明服务端内部会稍后重投。
+
+Pitfalls:
+- `AcceptedDeferred` 不应该回成 `503`，因为这条数据已经被服务端接住了；如果这时再让客户端重试，反而可能制造重复 span。
+- 只靠 HTTP 状态码不补 body 细节，后续排查“为什么同样是 202，但一条很快落库、一条延后处理”会很难受。
