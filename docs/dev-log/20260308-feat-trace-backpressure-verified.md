@@ -116,3 +116,33 @@ test(trace): 补齐 retry backoff 的时点行为测试
 - 重新编译 `test_trace_session_manager_unit` 通过。
 - 重新执行 `ctest -R "^TraceSessionManagerUnitTest\\.(RetryDelayBackoffGrowsOnRepeatedSubmitFailure|RetryBackoffDoesNotRetryBeforeNextRetryTick)$" --output-on-failure`，2 个 retry 相关用例全部通过。
 - 确认新用例 `TraceSessionManagerUnitTest.RetryBackoffDoesNotRetryBeforeNextRetryTick` 已进入 CTest 注册列表。
+
+---
+
+test(handler): 补齐 `/logs/spans` 的 HTTP 协议响应单测
+
+## Modification
+- **server/tests/LogHandler_test.cpp**:
+    - 新增 `LogHandlerTracePostTest`，直接手搓 `HttpRequest/HttpResponse` 调 `handleTracePost(...)`，不走真 HTTP server。
+    - 覆盖 `trace_session_manager_ == nullptr` 的 503 unavailable 响应。
+    - 覆盖 `RejectedUnavailable` 的 503 unavailable 响应。
+    - 覆盖 `RejectedOverload` 的 `503 + Retry-After: 1` 协议契约。
+    - 覆盖 `AcceptedDeferred` 的 `202 + deferred=true` 响应体语义。
+- **server/CMakeLists.txt**:
+    - 新增 `test_log_handler` 测试目标并接入 `gtest_discover_tests`。
+
+## Learning Tips
+- **Newbie Tips**:
+    - 业务状态机测对了，不代表接口契约就稳了。客户端最终看到的是 HTTP 状态码、响应头和 JSON body，不是 `PushResult`。
+    - 这种 handler 单测没必要起真 server，直接构造 `HttpRequest/HttpResponse` 调函数更快，定位也更准。
+- **Function Explanation**:
+    - `LogHandler::handleTracePost(...)`: 这一层本质是“协议翻译器”，把 manager 的内部状态翻译成 HTTP 说法。
+    - `Retry-After`: 用来告诉调用方“你现在被拒了，建议多久后再试”，哪怕客户端未必听话，这个协议也得说清楚。
+- **Pitfalls**:
+    - 如果只测 `TraceSessionManager`，后面别人很容易把 `Retry-After` 或 `deferred=true` 手滑删掉，单元测试还全绿，看着就像没事一样。
+    - overload 用例别靠并发压测去碰运气，直接用很小的 `active_session_hard_limit` 人工把 manager 顶进 high 水位更稳。
+
+## Validation
+- 重新编译 `test_log_handler` 通过。
+- 重新执行 `ctest -R "^LogHandlerTracePostTest\\." --output-on-failure`，4 条 `/logs/spans` 协议单测全部通过。
+- 重新执行 `ctest -R "^(TraceSessionManagerUnitTest|TraceSessionManagerIntegrationTest|LogHandlerTracePostTest)\\." --output-on-failure`，41 个相关测试全部通过。
