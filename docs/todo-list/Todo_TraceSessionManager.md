@@ -84,6 +84,6 @@
 - [x] 增加最小 ready 重试队列/延迟重投机制，避免 submit 失败后原地打桩重试
 - [x] 在 `LogHandler::handleTracePost` 中按新的 `Push` 状态返回 `202` 或 `503/429`
 - [x] 为过载拒绝响应补充 `Retry-After` 与可读错误体，保持客户端协议清晰
-- [ ] 补齐背压核心单测：新 Trace 拒绝、老 Trace 放行、submit 失败不丢、恢复不抖动
-- [ ] 完成背压改造后的构建与 TraceSessionManager 相关回归验证
-- [ ] 追加本轮 Trace 背压实现 dev-log 记录
+- [x] 补齐背压核心单测：新 Trace 拒绝、老 Trace 放行、submit 失败不丢、恢复不抖动
+- [x] 完成背压改造后的构建与 TraceSessionManager 相关回归验证
+- [x] 追加本轮 Trace 背压实现 dev-log 记录

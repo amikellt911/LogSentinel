@@ -69,7 +69,7 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
 TraceSessionManager::~TraceSessionManager() = default;
 
 TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_limit)
-{
+{9
     const size_t safe_hard_limit = std::max<size_t>(hard_limit, 1);
     Watermark mark;
     mark.low = std::max<size_t>(1, safe_hard_limit * 55 / 100);
@@ -352,7 +352,7 @@ bool TraceSessionManager::Dispatch(size_t trace_key)
                 analysis_record.trace_id = summary.trace_id;
                 analysis_record.risk_level = "unknown";
                 analysis_record.summary = "AI_ANALYSIS_FAILED";
-                analysis_record.root_cause = e.what();
+   00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000             analysis_record.root_cause = e.what();
                 analysis_record.solution = "请检查 AI 代理与模型服务状态，稍后重试该 trace 的分析。";
                 analysis_record.confidence = 0.0;
                 analysis_ptr = &analysis_record;

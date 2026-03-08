@@ -867,3 +867,60 @@ TEST_F(TraceSessionManagerUnitTest, PushRejectsExistingTraceWhenCritical)
 
     pool.shutdown();
 }
+
+TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredWhenSubmitFails)
+{
+    // 目的：验证当 ready trace 准备分发但线程池队列满（submit 失败）时，
+    // 会话必须被退回到 manager 队列并标记为 ReadyRetryLater，保证数据不因分发失败而蒸发。
+    ThreadPool pool(1, 10);
+    FakeTraceRepository repo;
+    // 设 capacity 为 1，token_limit 为 0，这样推一个 span 就会立刻触发 Dispatch。
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/1, /*token_limit*/0);
+
+    // 模拟线程池已关闭，导致 submit 必定返回 false。
+    pool.shutdown();
+
+    SpanEvent span = MakeSpan(901, 9001, 1000);
+    // Push 内部会调 Dispatch(901)，Dispatch 调 submit 失败后应将 Trace 重新挂载回 sessions_。
+    TraceSessionManager::PushResult result = manager.Push(span);
+
+    // 语义验证：返回 AcceptedDeferred 表示服务端已收下但在延后重试。
+    EXPECT_EQ(result, TraceSessionManager::PushResult::AcceptedDeferred);
+    
+    // 结构验证：trace 还在内存中，且状态转为 ReadyRetryLater。
+    EXPECT_EQ(manager.size(), 1u);
+    auto iter = manager.index_by_trace_.find(901);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state, 
+              TraceSession::LifecycleState::ReadyRetryLater);
+}
+
+TEST_F(TraceSessionManagerUnitTest, BackpressureRecoversWhenWatermarkDropsBelowLow)
+{
+    // 目的：验证背压状态机的“迟滞回线”逻辑，即进入 Overload 后需跌破 Low 水位（0.55）才恢复。
+    ThreadPool pool(1, 100);
+    FakeTraceRepository repo;
+    // Hard limit = 100 -> Low = 55, High = 75, Critical = 90
+    TraceSessionManager manager(&pool, &repo, nullptr, 100, 0, nullptr, 5000, 500, 512, 100);
+
+    // 1. 达到 High 水位 (76 > 75) 触发 Overload。
+    for (size_t i = 0; i < 76; ++i) {
+        manager.Push(MakeSpan(1001, 10000 + i, 1000));
+    }
+    EXPECT_EQ(manager.overload_state_, TraceSessionManager::OverloadState::Overload);
+
+    // 2. 此时拒绝新 Trace。
+    EXPECT_EQ(manager.Push(MakeSpan(1002, 20000, 1000)), 
+              TraceSessionManager::PushResult::RejectedOverload);
+
+    // 3. 释放部分数据，使水位跌破 Low (55)。
+    // 这里我们直接 Dispatch 掉 Trace 1001，使 total_buffered_spans_ 归零。
+    manager.Dispatch(1001);
+    
+    // 4. 验证状态机恢复，且新 Trace 现在能被接收。
+    EXPECT_EQ(manager.overload_state_, TraceSessionManager::OverloadState::Normal);
+    EXPECT_EQ(manager.Push(MakeSpan(1002, 20000, 1000)), 
+              TraceSessionManager::PushResult::Accepted);
+    
+    pool.shutdown();
+}
