@@ -90,3 +90,29 @@ refactor(trace): 为 ready retry 会话增加失败计数与指数退避
 - 重新编译 `test_trace_session_manager_unit` 与 `test_trace_session_manager_integration` 通过。
 - 重新执行 `ctest -R "^(TraceSessionManagerUnitTest|TraceSessionManagerIntegrationTest)\\." --output-on-failure`，36 个测试全部通过。
 - 确认新用例 `TraceSessionManagerUnitTest.RetryDelayBackoffGrowsOnRepeatedSubmitFailure` 已进入 CTest 注册列表并执行通过。
+
+---
+
+test(trace): 补齐 retry backoff 的时点行为测试
+
+## Modification
+- **server/tests/TraceSessionManager_unit_test.cpp**:
+    - 新增 `RetryBackoffDoesNotRetryBeforeNextRetryTick`，使用 `ThreadPool(1, 0)` 稳定制造 `submit` 失败。
+    - 断言第一次失败后 `retry_count=1 / next_retry_tick=1`。
+    - 断言 tick 走到 `1` 时允许第二次尝试，并把退避拉长到 `next_retry_tick=3`。
+    - 断言 tick 走到 `2` 时不会提前重试，`retry_count` 保持不变。
+    - 断言 tick 走到 `3` 时才发生第三次尝试，并继续把 `next_retry_tick` 推远。
+
+## Learning Tips
+- **Newbie Tips**:
+    - 测退避别只测字段有没有变化，最值钱的是测“没到时间绝对不该重试”这种行为边界。
+    - `max_queue_size=0` 比 `shutdown()` 更适合测 backoff，因为它表达的是“线程池对象还活着，但每次 submit 都失败”。
+- **Function Explanation**:
+    - `RetryBackoffDoesNotRetryBeforeNextRetryTick`: 锁住 `ReadyRetryLater` 会话的时间门禁语义，避免回归成“每 tick 原地撞一次”。
+- **Pitfalls**:
+    - 如果在 build 完成前先跑 `ctest`，新用例可能还没进入 CTest 注册列表；最终结果要以重新 link 后的二次回归为准。
+
+## Validation
+- 重新编译 `test_trace_session_manager_unit` 通过。
+- 重新执行 `ctest -R "^TraceSessionManagerUnitTest\\.(RetryDelayBackoffGrowsOnRepeatedSubmitFailure|RetryBackoffDoesNotRetryBeforeNextRetryTick)$" --output-on-failure`，2 个 retry 相关用例全部通过。
+- 确认新用例 `TraceSessionManagerUnitTest.RetryBackoffDoesNotRetryBeforeNextRetryTick` 已进入 CTest 注册列表。
