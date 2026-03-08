@@ -25,6 +25,7 @@ int64_t NowSteadyMs()
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
 }
+
 }
 
 TraceSession::TraceSession(size_t capacity)
@@ -41,7 +42,9 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
                                          INotifier* notifier,
                                          int64_t idle_timeout_ms,
                                          int64_t wheel_tick_ms,
-                                         size_t wheel_size)
+                                         size_t wheel_size,
+                                         size_t buffered_span_hard_limit,
+                                         size_t active_session_hard_limit)
     : thread_pool_(thread_pool)
     , trace_repo_(trace_repo)
     , trace_ai_(trace_ai)
@@ -51,22 +54,46 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
     , wheel_size_(wheel_size > 0 ? wheel_size : 512)
     , idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000)
     , wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500)
+    , buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096)
+    , active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
     time_wheel_.resize(wheel_size_);
+    buffered_span_watermark_ = BuildWatermark(buffered_span_hard_limit_);
+    active_session_watermark_ = BuildWatermark(active_session_hard_limit_);
+    const size_t pending_task_hard_limit =
+        thread_pool_ ? std::max<size_t>(1, thread_pool_->maxQueueSize()) : 1;
+    pending_task_watermark_ = BuildWatermark(pending_task_hard_limit);
 }
 
 TraceSessionManager::~TraceSessionManager() = default;
+
+TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_limit)
+{
+    const size_t safe_hard_limit = std::max<size_t>(hard_limit, 1);
+    Watermark mark;
+    mark.low = std::max<size_t>(1, safe_hard_limit * 55 / 100);
+    mark.high = std::max(mark.low, std::max<size_t>(1, safe_hard_limit * 75 / 100));
+    mark.critical = std::max(mark.high, std::max<size_t>(1, safe_hard_limit * 90 / 100));
+    mark.critical = std::min(mark.critical, safe_hard_limit);
+    return mark;
+}
 
 size_t TraceSessionManager::size() const
 {
     return sessions_.size();
 }
 
-bool TraceSessionManager::Push(const SpanEvent& span)
+TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
 {
     const int64_t now_ms = NowSteadyMs();
     auto iter = index_by_trace_.find(span.trace_key);
+    const bool trace_exists = (iter != index_by_trace_.end());
+    RefreshOverloadState();
+    if (ShouldRejectIncomingTrace(trace_exists)) {
+        return PushResult::RejectedOverload;
+    }
+
     if (iter == index_by_trace_.end()) {
         auto session = std::make_unique<TraceSession>(capacity_);
         session->trace_key = span.trace_key;
@@ -75,6 +102,7 @@ bool TraceSessionManager::Push(const SpanEvent& span)
         session->session_epoch = ++session_epoch_seq_;
         sessions_.push_back(std::move(session));
         index_by_trace_[span.trace_key] = sessions_.size() - 1;
+        active_sessions_ += 1;
         iter = index_by_trace_.find(span.trace_key);
     }
 
@@ -84,37 +112,40 @@ bool TraceSessionManager::Push(const SpanEvent& span)
         if (!session.duplicate_span_id.has_value()) {
             session.duplicate_span_id = span.span_id;
         }
-        Dispatch(session.trace_key);
-        return true;
+        const bool dispatched = Dispatch(session.trace_key);
+        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
     }
 
     // 先按到达顺序追加，后续聚合阶段再按 parent_id 重建结构。
     session.spans.push_back(span);
+    total_buffered_spans_ += 1;
     session.token_count += token_estimator_.Estimate(span);
     session.last_update_ms = now_ms;
+    session.lifecycle_state = TraceSession::LifecycleState::Collecting;
 
     if (span.trace_end.has_value() && span.trace_end.value()) {
-        Dispatch(session.trace_key);
-        return true;
+        const bool dispatched = Dispatch(session.trace_key);
+        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
     }
 
     if (token_limit_ > 0 && session.token_count >= token_limit_) {
-        Dispatch(session.trace_key);
-        return true;
+        const bool dispatched = Dispatch(session.trace_key);
+        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
     }
 
     if (session.capacity > 0 && session.spans.size() >= session.capacity) {
         // 达到容量上限即触发分发，避免单个 Trace 无限膨胀。
-        Dispatch(session.trace_key);
-        return true;
+        const bool dispatched = Dispatch(session.trace_key);
+        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
     }
 
-    // 正常留在内存中的会话，需要更新“下一次超时计划”。
+    // collecting 会话继续按“等待后续 span”语义重排超时计划。
     // 这里采用懒删除策略：不回删旧槽，只给会话 version+1 并插入新节点。
-    ScheduleTimeoutNode(session);
+    ScheduleSessionNode(session);
+    RefreshOverloadState();
 
-    // 当前仅做本地写入与分发占位，先返回成功；后续接入线程池/存储失败时再返回 false。
-    return true;
+    // 当前仅做本地写入与分发占位，先返回成功；后续接入背压分支后再细分 AcceptedDeferred/RejectedOverload。
+    return PushResult::Accepted;
 }
 
 void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
@@ -213,6 +244,28 @@ void TraceSessionManager::ScheduleTimeoutNode(TraceSession& session)
     time_wheel_[slot].push_back(std::move(node));
 }
 
+void TraceSessionManager::ScheduleRetryNode(TraceSession& session)
+{
+    session.timer_version += 1;
+    const uint64_t retry_tick = current_tick_ + 1;
+    const size_t slot = static_cast<size_t>(retry_tick % wheel_size_);
+    TimeWheelNode node;
+    node.trace_key = session.trace_key;
+    node.version = session.timer_version;
+    node.epoch = session.session_epoch;
+    node.expire_tick = retry_tick;
+    time_wheel_[slot].push_back(std::move(node));
+}
+
+void TraceSessionManager::ScheduleSessionNode(TraceSession& session)
+{
+    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater) {
+        ScheduleRetryNode(session);
+        return;
+    }
+    ScheduleTimeoutNode(session);
+}
+
 void TraceSessionManager::RebuildTimeWheel()
 {
     for (auto& bucket : time_wheel_) {
@@ -222,20 +275,21 @@ void TraceSessionManager::RebuildTimeWheel()
         if (!session_ptr) {
             continue;
         }
-        // 配置变更后统一重排超时节点，避免继续沿用旧超时参数。
-        ScheduleTimeoutNode(*session_ptr);
+        // collecting 和 retry_later 的时间语义不同，重建时必须按当前生命周期分别重排。
+        ScheduleSessionNode(*session_ptr);
     }
 }
 
-void TraceSessionManager::Dispatch(size_t trace_key)
+bool TraceSessionManager::Dispatch(size_t trace_key)
 {
     auto iter = index_by_trace_.find(trace_key);
     if (iter == index_by_trace_.end()) {
-        return;
+        return true;
     }
 
     const size_t index = iter->second;
     std::unique_ptr<TraceSession> session = std::move(sessions_[index]);
+    const size_t span_count = session ? session->spans.size() : 0;
     index_by_trace_.erase(iter);
 
     if (index < sessions_.size() - 1) {
@@ -246,30 +300,43 @@ void TraceSessionManager::Dispatch(size_t trace_key)
     } else {
         sessions_.pop_back();
     }
+    if (active_sessions_ > 0) {
+        active_sessions_ -= 1;
+    }
+    if (total_buffered_spans_ >= span_count) {
+        total_buffered_spans_ -= span_count;
+    } else {
+        total_buffered_spans_ = 0;
+    }
+    RefreshOverloadState();
 
     if (!thread_pool_) {
-        return;
+        return true;
     }
 
-    // ThreadPool 的任务类型是 std::function，要求可拷贝，因此先转为 shared_ptr 以便捕获。
-    std::shared_ptr<TraceSession> session_shared = std::move(session);
+    // ThreadPool 的任务类型是 std::function，要求可拷贝。
+    // 这里用 shared_ptr<unique_ptr<...>> 做一层 holder：
+    // 1) submit 成功时，任务副本共同持有这份 unique_ptr；
+    // 2) submit 失败时，当前线程还能把 unique_ptr 原样拿回来做回滚。
+    auto session_holder = std::make_shared<std::unique_ptr<TraceSession>>(std::move(session));
     TraceSessionManager* manager = this;
     TraceRepository* trace_repo = trace_repo_;
     TraceAiProvider* trace_ai = trace_ai_;
     INotifier* notifier = notifier_;
-    thread_pool_->submit([manager, trace_repo, trace_ai, notifier, session_shared]() {
-        if (!manager || !trace_repo) {
+    if (!thread_pool_->submit([manager, trace_repo, trace_ai, notifier, session_holder]() {
+        if (!manager || !trace_repo || !session_holder || !(*session_holder)) {
             return;
         }
+        TraceSession& owned_session = *(*session_holder);
 
-        TraceSessionManager::TraceIndex index = manager->BuildTraceIndex(*session_shared);
+        TraceSessionManager::TraceIndex index = manager->BuildTraceIndex(owned_session);
         std::vector<const SpanEvent*> order;
         std::string trace_payload = manager->SerializeTrace(index, &order);
         // 说明：SerializeTrace 在检测到环时会把异常写入 payload.anomalies。
         // 这份异常信息当前只通过 trace_payload 传给 AI 分析链路，不会单独落到 trace_span 表中。
 
         TraceRepository::TraceSummary summary =
-            manager->BuildTraceSummary(*session_shared, order);
+            manager->BuildTraceSummary(owned_session, order);
         std::vector<TraceRepository::TraceSpanRecord> span_records =
             manager->BuildSpanRecords(order);
 
@@ -330,7 +397,64 @@ void TraceSessionManager::Dispatch(size_t trace_key)
         event.solution = analysis_ptr->solution;
         event.confidence = analysis_ptr->confidence;
         notifier->notifyTraceAlert(event);
-    });
+    })) {
+        // submit 失败时说明 ready trace 还没真正进入下游执行队列，这时候必须把会话塞回 manager，
+        // 否则客户端已经拿到 202，但服务端内部却把 trace 蒸发了。
+        std::unique_ptr<TraceSession> restored_session = std::move(*session_holder);
+        restored_session->lifecycle_state = TraceSession::LifecycleState::ReadyRetryLater;
+        restored_session->last_update_ms = NowSteadyMs();
+        sessions_.push_back(std::move(restored_session));
+        index_by_trace_[trace_key] = sessions_.size() - 1;
+        active_sessions_ += 1;
+        total_buffered_spans_ += span_count;
+        ScheduleSessionNode(*sessions_.back());
+        RefreshOverloadState();
+        return false;
+    }
+    return true;
+}
+
+void TraceSessionManager::RefreshOverloadState()
+{
+    const size_t pending_tasks = thread_pool_ ? thread_pool_->pendingTasks() : 0;
+
+    const bool hit_critical =
+        total_buffered_spans_ >= buffered_span_watermark_.critical ||
+        active_sessions_ >= active_session_watermark_.critical ||
+        pending_tasks >= pending_task_watermark_.critical;
+    const bool hit_high =
+        total_buffered_spans_ >= buffered_span_watermark_.high ||
+        active_sessions_ >= active_session_watermark_.high ||
+        pending_tasks >= pending_task_watermark_.high;
+    const bool back_to_low =
+        total_buffered_spans_ <= buffered_span_watermark_.low &&
+        active_sessions_ <= active_session_watermark_.low &&
+        pending_tasks <= pending_task_watermark_.low;
+
+    if (hit_critical) {
+        overload_state_ = OverloadState::Critical;
+        return;
+    }
+    if (overload_state_ == OverloadState::Normal) {
+        overload_state_ = hit_high ? OverloadState::Overload : OverloadState::Normal;
+        return;
+    }
+    if (back_to_low) {
+        overload_state_ = OverloadState::Normal;
+        return;
+    }
+    overload_state_ = hit_high ? OverloadState::Overload : OverloadState::Overload;
+}
+
+bool TraceSessionManager::ShouldRejectIncomingTrace(bool trace_exists) const
+{
+    if (overload_state_ == OverloadState::Normal) {
+        return false;
+    }
+    if (overload_state_ == OverloadState::Critical) {
+        return true;
+    }
+    return !trace_exists;
 }
 
 TraceSessionManager::TraceIndex TraceSessionManager::BuildTraceIndex(const TraceSession& session)

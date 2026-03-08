@@ -339,18 +339,30 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
     }
     CollectUnknownTopLevelAttributes(body, &span.attributes);
 
-    if (!trace_session_manager_->Push(span)) {
+    const TraceSessionManager::PushResult push_result = trace_session_manager_->Push(span);
+    if (push_result == TraceSessionManager::PushResult::RejectedOverload) {
         resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-        resp->body_ = "{\"error\": \"Trace pipeline is overloaded\"}";
+        resp->setHeader("Retry-After", "1");
+        resp->body_ = nlohmann::json{
+            {"accepted", false},
+            {"error", "Trace pipeline is overloaded"},
+            {"retry_after_seconds", 1}
+        }.dump();
         return;
     }
 
     resp->setStatusCode(HttpResponse::HttpStatusCode::k202Acceptd);
-    resp->body_ = nlohmann::json{
+    nlohmann::json response_body{
         {"accepted", true},
         {"trace_key", span.trace_key},
         {"span_id", span.span_id}
-    }.dump();
+    };
+    if (push_result == TraceSessionManager::PushResult::AcceptedDeferred) {
+        // 这里明确告诉调用方：数据已经被服务端接住，但由于下游暂时拥堵，内部会稍后重投。
+        response_body["deferred"] = true;
+        response_body["message"] = "Trace accepted; internal dispatch deferred";
+    }
+    resp->body_ = response_body.dump();
 }
 
 void LogHandler::handleGetResult(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)

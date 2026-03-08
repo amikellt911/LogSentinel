@@ -59,6 +59,14 @@ struct SpanEvent
 
 struct TraceSession
 {
+    enum class LifecycleState
+    {
+        // 仍处于 span 收集阶段，时间轮语义是“等后续 span 是否继续到达”。
+        Collecting,
+        // 业务上已经 ready，但由于下游拥堵暂未成功投递，后续应走重试投递语义。
+        ReadyRetryLater
+    };
+
     // capacity 作为每条 Trace 的最大 span 容量，用于触发提前分发。
     explicit TraceSession(size_t capacity);
     // 先用 size_t 作为 trace_id 的紧凑标识，减少基础结构的负担，后续再视需求调整为原始 ID。
@@ -81,11 +89,33 @@ struct TraceSession
     uint64_t timer_version = 0;
     // session_epoch 用于防止 trace_key 复用误命中旧节点。
     uint64_t session_epoch = 0;
+    // lifecycle_state 用来区分“仍在收集”和“已 ready 但等待重投”，避免复用同一套超时语义。
+    LifecycleState lifecycle_state = LifecycleState::Collecting;
 };
 
 class TraceSessionManager
 {
 public:
+    enum class PushResult
+    {
+        // 正常收下当前 span，请求层可以返回 202。
+        Accepted,
+        // 入口因过载拒绝当前请求，请求层应返回 503/429 并提示稍后重试。
+        RejectedOverload,
+        // 当前 span 已收下，但 ready trace 暂未成功投递，下游会在服务端内部延后重试。
+        AcceptedDeferred
+    };
+
+    enum class OverloadState
+    {
+        // 所有指标都处于安全区，请求按正常路径放行。
+        Normal,
+        // 已进入过载区，优先拒绝新 trace，尽量保留老 trace 的完整性。
+        Overload,
+        // 已接近硬上限，连老 trace 也允许拒绝，优先保护进程存活。
+        Critical
+    };
+
     explicit TraceSessionManager(ThreadPool* thread_pool,
                                  TraceRepository* trace_repo,
                                  TraceAiProvider* trace_ai,
@@ -94,12 +124,14 @@ public:
                                  INotifier* notifier = nullptr,
                                  int64_t idle_timeout_ms = 5000,
                                  int64_t wheel_tick_ms = 500,
-                                 size_t wheel_size = 512);
+                                 size_t wheel_size = 512,
+                                 size_t buffered_span_hard_limit = 4096,
+                                 size_t active_session_hard_limit = 1024);
     ~TraceSessionManager();
 
     size_t size() const;
-    bool Push(const SpanEvent& span);
-    void Dispatch(size_t trace_key);
+    PushResult Push(const SpanEvent& span);
+    bool Dispatch(size_t trace_key);
     // 由 EventLoop 定期调用，扫描长时间未更新的 session 并触发分发。
     // now_ms 使用 steady_clock 毫秒时间戳，idle_timeout_ms<=0 表示关闭。
     // max_dispatch_per_tick=0 表示不限制本轮分发数量。
@@ -132,6 +164,12 @@ private:
         uint64_t epoch = 0;
         uint64_t expire_tick = 0;
     };
+    struct Watermark
+    {
+        size_t low = 0;
+        size_t high = 0;
+        size_t critical = 0;
+    };
 
     // 构建 trace 的父子关系索引，后续用于树形遍历与序列化。
     TraceIndex BuildTraceIndex(const TraceSession& session);
@@ -146,8 +184,18 @@ private:
                                                              const LogAnalysisResult& analysis);
     // 计算当前 idle_timeout 对应的 tick 数；至少返回 1，避免 0 tick 导致不触发。
     uint64_t ComputeTimeoutTicks() const;
+    // 按 hard limit 预计算 low/high/critical 三档阈值，构造期缓存后供准入门禁直接读取。
+    static Watermark BuildWatermark(size_t hard_limit);
+    // 基于当前积压指标刷新 overload_state_，统一收口新老 trace 的准入门禁状态。
+    void RefreshOverloadState();
+    // 当前请求是否应该在入口被拒绝：Overload 拒新 trace，Critical 新老都拒。
+    bool ShouldRejectIncomingTrace(bool trace_exists) const;
     // 在时间轮中为会话安排最新超时节点（旧节点不删，靠 version/epoch 失效）。
     void ScheduleTimeoutNode(TraceSession& session);
+    // ready trace 投递失败后，安排一个更短的“尽快重试”时点，避免继续沿用收集超时语义。
+    void ScheduleRetryNode(TraceSession& session);
+    // 按会话当前生命周期选择调度语义：Collecting 走收集超时，ReadyRetryLater 走快速重投。
+    void ScheduleSessionNode(TraceSession& session);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
     void RebuildTimeWheel();
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。
@@ -163,4 +211,16 @@ private:
     uint64_t current_tick_ = 0;
     int64_t last_tick_now_ms_ = 0;
     uint64_t session_epoch_seq_ = 0;
+    // active_sessions_ 与 total_buffered_spans_ 直接反映入口聚合态积压，用于实时背压门禁。
+    size_t active_sessions_ = 0;
+    size_t total_buffered_spans_ = 0;
+    // 第一版先硬编码接入，后续再迁移到配置层；这里存每个指标自己的硬上限基数。
+    size_t buffered_span_hard_limit_ = 4096;
+    size_t active_session_hard_limit_ = 1024;
+    // watermark_ 在构造期预计算，避免每次 Push/Dispatch 都重复按比例换算阈值。
+    Watermark buffered_span_watermark_;
+    Watermark active_session_watermark_;
+    Watermark pending_task_watermark_;
+    // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
+    OverloadState overload_state_ = OverloadState::Normal;
 };

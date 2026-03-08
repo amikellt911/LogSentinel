@@ -27,6 +27,9 @@ class ThreadPool{
             std::lock_guard<std::mutex> lock(taskMutex_);
             return tasks_.size();
         }
+        size_t maxQueueSize() const{
+            return max_queue_size_;
+        }
     private:
         void working();
         std::vector<std::thread> works_;
