@@ -340,6 +340,14 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
     CollectUnknownTopLevelAttributes(body, &span.attributes);
 
     const TraceSessionManager::PushResult push_result = trace_session_manager_->Push(span);
+    if (push_result == TraceSessionManager::PushResult::RejectedUnavailable) {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
+        resp->body_ = nlohmann::json{
+            {"accepted", false},
+            {"error", "Trace pipeline is unavailable"}
+        }.dump();
+        return;
+    }
     if (push_result == TraceSessionManager::PushResult::RejectedOverload) {
         resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
         resp->setHeader("Retry-After", "1");

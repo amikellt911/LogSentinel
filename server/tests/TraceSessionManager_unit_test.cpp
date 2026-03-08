@@ -472,16 +472,16 @@ TEST_F(TraceSessionManagerUnitTest, DispatchDoesNotNotifyWhenSaveFails)
     pool.shutdown();
 }
 
-TEST_F(TraceSessionManagerUnitTest, DispatchReturnsSafelyWhenThreadPoolIsNull)
+TEST_F(TraceSessionManagerUnitTest, PushRejectsWhenThreadPoolIsNull)
 {
-    // 目的：验证 thread_pool 为空时 Dispatch 仅回收会话并安全返回，不应触发任何异步落库。
+    // 目的：验证 thread_pool 为空时直接拒绝请求，而不是误报 accepted 后把 trace 静默丢掉。
     FakeTraceRepository repo;
     TraceSessionManager manager(nullptr, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(122, 1201, 1000);
     span.trace_end = true;
 
-    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::RejectedUnavailable);
     EXPECT_EQ(manager.size(), 0u);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
 }

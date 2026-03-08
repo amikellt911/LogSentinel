@@ -102,6 +102,8 @@ public:
         Accepted,
         // 入口因过载拒绝当前请求，请求层应返回 503/429 并提示稍后重试。
         RejectedOverload,
+        // 核心异步依赖缺失（如线程池不可用），请求层应返回 503，避免误报 accepted。
+        RejectedUnavailable,
         // 当前 span 已收下，但 ready trace 暂未成功投递，下游会在服务端内部延后重试。
         AcceptedDeferred
     };

@@ -86,6 +86,10 @@ size_t TraceSessionManager::size() const
 
 TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
 {
+    // 线程池是 trace 异步分发链路的硬依赖；缺失时直接拒绝，避免后续误报 accepted 后又静默丢数据。
+    if (!thread_pool_) {
+        return PushResult::RejectedUnavailable;
+    }
     const int64_t now_ms = NowSteadyMs();
     auto iter = index_by_trace_.find(span.trace_key);
     const bool trace_exists = (iter != index_by_trace_.end());
@@ -282,6 +286,10 @@ void TraceSessionManager::RebuildTimeWheel()
 
 bool TraceSessionManager::Dispatch(size_t trace_key)
 {
+    // 双保险：正常路径已在 Push 入口拒绝无线程池情况；这里继续防御，避免未来别的路径直接调 Dispatch 时删掉 session。
+    if (!thread_pool_) {
+        return false;
+    }
     auto iter = index_by_trace_.find(trace_key);
     if (iter == index_by_trace_.end()) {
         return true;
@@ -309,10 +317,6 @@ bool TraceSessionManager::Dispatch(size_t trace_key)
         total_buffered_spans_ = 0;
     }
     RefreshOverloadState();
-
-    if (!thread_pool_) {
-        return true;
-    }
 
     // ThreadPool 的任务类型是 std::function，要求可拷贝。
     // 这里用 shared_ptr<unique_ptr<...>> 做一层 holder：
