@@ -506,7 +506,39 @@ TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredAndRollsBackWhenS
     ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
     EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state,
               TraceSession::LifecycleState::ReadyRetryLater);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 1u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 1u);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, RetryDelayBackoffGrowsOnRepeatedSubmitFailure)
+{
+    // 目的：验证 ready retry 会话连续失败时会增加 retry_count，并把 next_retry_tick 往后推，而不是每 tick 原地打桩。
+    ThreadPool pool(1, /*max_queue_size*/0);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(124, 12401, 1000);
+    span.trace_end = true;
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::AcceptedDeferred);
+
+    auto iter = manager.index_by_trace_.find(124);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 1u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 1u);
+
+    manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+
+    iter = manager.index_by_trace_.find(124);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state,
+              TraceSession::LifecycleState::ReadyRetryLater);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 2u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 3u);
 
     pool.shutdown();
 }

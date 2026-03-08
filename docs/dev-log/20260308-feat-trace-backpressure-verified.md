@@ -56,3 +56,37 @@ fix(trace): 修正无线程池时误报 accepted 的静默丢数据问题
 - 重新编译 `LogSentinel`、`test_trace_session_manager_unit`、`test_trace_session_manager_integration` 均通过。
 - 重新执行 `ctest -R "^(TraceSessionManagerUnitTest|TraceSessionManagerIntegrationTest)\\." --output-on-failure`，35 个测试全部通过。
 - 确认旧用例名 `DispatchReturnsSafelyWhenThreadPoolIsNull` 已替换为 `PushRejectsWhenThreadPoolIsNull`，当前行为与测试语义一致。
+
+---
+
+refactor(trace): 为 ready retry 会话增加失败计数与指数退避
+
+## Modification
+- **server/core/TraceSessionManager.h**:
+    - 在 `TraceSession` 中新增 `retry_count` 与 `next_retry_tick`，把重试状态挂在会话本身，而不是散在时间轮逻辑里硬算。
+    - 增加 `ComputeRetryDelayTicks(...)` 声明，统一收口退避 tick 计算。
+- **server/core/TraceSessionManager.cpp**:
+    - 在 `Push` 收到新 span 时清空 `retry_count/next_retry_tick`，让会话回到纯 collecting 语义。
+    - 在 `Dispatch` 的 submit 失败回滚路径中递增 `retry_count`，并基于指数退避计算新的 `next_retry_tick`。
+    - 将 `ScheduleRetryNode(...)` 改为优先使用 `session.next_retry_tick`，不再固定 `current_tick + 1`。
+    - 在 `SweepExpiredSessions(...)` 中增加 `ReadyRetryLater` 的二次判断，确保未到 `next_retry_tick` 的会话不会提前重撞线程池。
+- **server/tests/TraceSessionManager_unit_test.cpp**:
+    - 扩展 `PushReturnsAcceptedDeferredAndRollsBackWhenSubmitFails`，补充首轮失败后 `retry_count=1`、`next_retry_tick=1` 的断言。
+    - 新增 `RetryDelayBackoffGrowsOnRepeatedSubmitFailure`，验证第二次失败后会退避到更远的 tick，而不是继续每 tick 原地撞。
+
+## Learning Tips
+- **Newbie Tips**:
+    - 收集态的控制和重试态的控制不是一回事。`Collecting` 关心的是“等不等后续 span”，`ReadyRetryLater` 关心的是“多久再试一次投递”。
+    - 指数退避不一定要一步到位搞很复杂，先有 `retry_count + next_retry_tick` 这两个状态，后面才有资格继续调策略。
+- **Function Explanation**:
+    - `retry_count`: 连续 submit 失败次数，只在失败回滚时增加；新 span 到来时清零。
+    - `next_retry_tick`: 下一次最早允许重试投递的 tick，`ScheduleRetryNode(...)` 只负责按这个时间挂槽。
+    - `ComputeRetryDelayTicks(...)`: 当前采用最小指数退避，按 `1/2/4/8/16 tick` 增长并封顶。
+- **Pitfalls**:
+    - 如果 `ReadyRetryLater` 只靠 `LifecycleState` 不带具体时点，最终还是会退化成“每个 tick 都来撞一次”的假重试。
+    - `ctest` 若在 build 完成前先跑，测试数量和用例名可能还是旧缓存；最终结果要以 build 完成后的二次回归为准。
+
+## Validation
+- 重新编译 `test_trace_session_manager_unit` 与 `test_trace_session_manager_integration` 通过。
+- 重新执行 `ctest -R "^(TraceSessionManagerUnitTest|TraceSessionManagerIntegrationTest)\\." --output-on-failure`，36 个测试全部通过。
+- 确认新用例 `TraceSessionManagerUnitTest.RetryDelayBackoffGrowsOnRepeatedSubmitFailure` 已进入 CTest 注册列表并执行通过。

@@ -91,6 +91,10 @@ struct TraceSession
     uint64_t session_epoch = 0;
     // lifecycle_state 用来区分“仍在收集”和“已 ready 但等待重投”，避免复用同一套超时语义。
     LifecycleState lifecycle_state = LifecycleState::Collecting;
+    // retry_count 只统计连续 submit 失败次数，用于计算指数退避的下次重试间隔。
+    size_t retry_count = 0;
+    // next_retry_tick 表示 ready trace 下一次最早允许重试投递的 tick。
+    uint64_t next_retry_tick = 0;
 };
 
 class TraceSessionManager
@@ -188,6 +192,8 @@ private:
     uint64_t ComputeTimeoutTicks() const;
     // 按 hard limit 预计算 low/high/critical 三档阈值，构造期缓存后供准入门禁直接读取。
     static Watermark BuildWatermark(size_t hard_limit);
+    // 根据连续失败次数计算退避 tick，避免 ready retry 会话固定每 tick 原地撞线程池。
+    static uint64_t ComputeRetryDelayTicks(size_t retry_count);
     // 基于当前积压指标刷新 overload_state_，统一收口新老 trace 的准入门禁状态。
     void RefreshOverloadState();
     // 当前请求是否应该在入口被拒绝：Overload 拒新 trace，Critical 新老都拒。
