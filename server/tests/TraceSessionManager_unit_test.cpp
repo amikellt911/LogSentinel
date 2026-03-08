@@ -506,7 +506,84 @@ TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredAndRollsBackWhenS
     ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
     EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state,
               TraceSession::LifecycleState::ReadyRetryLater);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 1u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 1u);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, RetryDelayBackoffGrowsOnRepeatedSubmitFailure)
+{
+    // 目的：验证 ready retry 会话连续失败时会增加 retry_count，并把 next_retry_tick 往后推，而不是每 tick 原地打桩。
+    ThreadPool pool(1, /*max_queue_size*/0);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(124, 12401, 1000);
+    span.trace_end = true;
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::AcceptedDeferred);
+
+    auto iter = manager.index_by_trace_.find(124);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 1u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 1u);
+
+    manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+
+    iter = manager.index_by_trace_.find(124);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state,
+              TraceSession::LifecycleState::ReadyRetryLater);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 2u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 3u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, RetryBackoffDoesNotRetryBeforeNextRetryTick)
+{
+    // 目的：验证 ready retry 会话在未到 next_retry_tick 前不会提前重试；
+    // 必须等 current_tick 追到 next_retry_tick，retry_count 才会再次增加。
+    ThreadPool pool(1, /*max_queue_size*/0);
+    FakeTraceRepository repo;
+    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(125, 12501, 1000);
+    span.trace_end = true;
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::AcceptedDeferred);
+
+    auto iter = manager.index_by_trace_.find(125);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 1u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 1u);
+
+    // tick=1：允许第一次重试，因此会再次失败并把 next_retry_tick 推到 3。
+    manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    iter = manager.index_by_trace_.find(125);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 2u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 3u);
+
+    // tick=2：还没到 next_retry_tick=3，不应该提前再次重试。
+    manager.SweepExpiredSessions(/*now_ms*/1500, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    iter = manager.index_by_trace_.find(125);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 2u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 3u);
+
+    // tick=3：此时才允许第三次尝试，因此 retry_count 应增加到 3。
+    manager.SweepExpiredSessions(/*now_ms*/2000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    iter = manager.index_by_trace_.find(125);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 3u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 7u);
 
     pool.shutdown();
 }

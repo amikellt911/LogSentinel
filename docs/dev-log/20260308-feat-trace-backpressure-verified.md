@@ -56,3 +56,93 @@ fix(trace): 修正无线程池时误报 accepted 的静默丢数据问题
 - 重新编译 `LogSentinel`、`test_trace_session_manager_unit`、`test_trace_session_manager_integration` 均通过。
 - 重新执行 `ctest -R "^(TraceSessionManagerUnitTest|TraceSessionManagerIntegrationTest)\\." --output-on-failure`，35 个测试全部通过。
 - 确认旧用例名 `DispatchReturnsSafelyWhenThreadPoolIsNull` 已替换为 `PushRejectsWhenThreadPoolIsNull`，当前行为与测试语义一致。
+
+---
+
+refactor(trace): 为 ready retry 会话增加失败计数与指数退避
+
+## Modification
+- **server/core/TraceSessionManager.h**:
+    - 在 `TraceSession` 中新增 `retry_count` 与 `next_retry_tick`，把重试状态挂在会话本身，而不是散在时间轮逻辑里硬算。
+    - 增加 `ComputeRetryDelayTicks(...)` 声明，统一收口退避 tick 计算。
+- **server/core/TraceSessionManager.cpp**:
+    - 在 `Push` 收到新 span 时清空 `retry_count/next_retry_tick`，让会话回到纯 collecting 语义。
+    - 在 `Dispatch` 的 submit 失败回滚路径中递增 `retry_count`，并基于指数退避计算新的 `next_retry_tick`。
+    - 将 `ScheduleRetryNode(...)` 改为优先使用 `session.next_retry_tick`，不再固定 `current_tick + 1`。
+    - 在 `SweepExpiredSessions(...)` 中增加 `ReadyRetryLater` 的二次判断，确保未到 `next_retry_tick` 的会话不会提前重撞线程池。
+- **server/tests/TraceSessionManager_unit_test.cpp**:
+    - 扩展 `PushReturnsAcceptedDeferredAndRollsBackWhenSubmitFails`，补充首轮失败后 `retry_count=1`、`next_retry_tick=1` 的断言。
+    - 新增 `RetryDelayBackoffGrowsOnRepeatedSubmitFailure`，验证第二次失败后会退避到更远的 tick，而不是继续每 tick 原地撞。
+
+## Learning Tips
+- **Newbie Tips**:
+    - 收集态的控制和重试态的控制不是一回事。`Collecting` 关心的是“等不等后续 span”，`ReadyRetryLater` 关心的是“多久再试一次投递”。
+    - 指数退避不一定要一步到位搞很复杂，先有 `retry_count + next_retry_tick` 这两个状态，后面才有资格继续调策略。
+- **Function Explanation**:
+    - `retry_count`: 连续 submit 失败次数，只在失败回滚时增加；新 span 到来时清零。
+    - `next_retry_tick`: 下一次最早允许重试投递的 tick，`ScheduleRetryNode(...)` 只负责按这个时间挂槽。
+    - `ComputeRetryDelayTicks(...)`: 当前采用最小指数退避，按 `1/2/4/8/16 tick` 增长并封顶。
+- **Pitfalls**:
+    - 如果 `ReadyRetryLater` 只靠 `LifecycleState` 不带具体时点，最终还是会退化成“每个 tick 都来撞一次”的假重试。
+    - `ctest` 若在 build 完成前先跑，测试数量和用例名可能还是旧缓存；最终结果要以 build 完成后的二次回归为准。
+
+## Validation
+- 重新编译 `test_trace_session_manager_unit` 与 `test_trace_session_manager_integration` 通过。
+- 重新执行 `ctest -R "^(TraceSessionManagerUnitTest|TraceSessionManagerIntegrationTest)\\." --output-on-failure`，36 个测试全部通过。
+- 确认新用例 `TraceSessionManagerUnitTest.RetryDelayBackoffGrowsOnRepeatedSubmitFailure` 已进入 CTest 注册列表并执行通过。
+
+---
+
+test(trace): 补齐 retry backoff 的时点行为测试
+
+## Modification
+- **server/tests/TraceSessionManager_unit_test.cpp**:
+    - 新增 `RetryBackoffDoesNotRetryBeforeNextRetryTick`，使用 `ThreadPool(1, 0)` 稳定制造 `submit` 失败。
+    - 断言第一次失败后 `retry_count=1 / next_retry_tick=1`。
+    - 断言 tick 走到 `1` 时允许第二次尝试，并把退避拉长到 `next_retry_tick=3`。
+    - 断言 tick 走到 `2` 时不会提前重试，`retry_count` 保持不变。
+    - 断言 tick 走到 `3` 时才发生第三次尝试，并继续把 `next_retry_tick` 推远。
+
+## Learning Tips
+- **Newbie Tips**:
+    - 测退避别只测字段有没有变化，最值钱的是测“没到时间绝对不该重试”这种行为边界。
+    - `max_queue_size=0` 比 `shutdown()` 更适合测 backoff，因为它表达的是“线程池对象还活着，但每次 submit 都失败”。
+- **Function Explanation**:
+    - `RetryBackoffDoesNotRetryBeforeNextRetryTick`: 锁住 `ReadyRetryLater` 会话的时间门禁语义，避免回归成“每 tick 原地撞一次”。
+- **Pitfalls**:
+    - 如果在 build 完成前先跑 `ctest`，新用例可能还没进入 CTest 注册列表；最终结果要以重新 link 后的二次回归为准。
+
+## Validation
+- 重新编译 `test_trace_session_manager_unit` 通过。
+- 重新执行 `ctest -R "^TraceSessionManagerUnitTest\\.(RetryDelayBackoffGrowsOnRepeatedSubmitFailure|RetryBackoffDoesNotRetryBeforeNextRetryTick)$" --output-on-failure`，2 个 retry 相关用例全部通过。
+- 确认新用例 `TraceSessionManagerUnitTest.RetryBackoffDoesNotRetryBeforeNextRetryTick` 已进入 CTest 注册列表。
+
+---
+
+test(handler): 补齐 `/logs/spans` 的 HTTP 协议响应单测
+
+## Modification
+- **server/tests/LogHandler_test.cpp**:
+    - 新增 `LogHandlerTracePostTest`，直接手搓 `HttpRequest/HttpResponse` 调 `handleTracePost(...)`，不走真 HTTP server。
+    - 覆盖 `trace_session_manager_ == nullptr` 的 503 unavailable 响应。
+    - 覆盖 `RejectedUnavailable` 的 503 unavailable 响应。
+    - 覆盖 `RejectedOverload` 的 `503 + Retry-After: 1` 协议契约。
+    - 覆盖 `AcceptedDeferred` 的 `202 + deferred=true` 响应体语义。
+- **server/CMakeLists.txt**:
+    - 新增 `test_log_handler` 测试目标并接入 `gtest_discover_tests`。
+
+## Learning Tips
+- **Newbie Tips**:
+    - 业务状态机测对了，不代表接口契约就稳了。客户端最终看到的是 HTTP 状态码、响应头和 JSON body，不是 `PushResult`。
+    - 这种 handler 单测没必要起真 server，直接构造 `HttpRequest/HttpResponse` 调函数更快，定位也更准。
+- **Function Explanation**:
+    - `LogHandler::handleTracePost(...)`: 这一层本质是“协议翻译器”，把 manager 的内部状态翻译成 HTTP 说法。
+    - `Retry-After`: 用来告诉调用方“你现在被拒了，建议多久后再试”，哪怕客户端未必听话，这个协议也得说清楚。
+- **Pitfalls**:
+    - 如果只测 `TraceSessionManager`，后面别人很容易把 `Retry-After` 或 `deferred=true` 手滑删掉，单元测试还全绿，看着就像没事一样。
+    - overload 用例别靠并发压测去碰运气，直接用很小的 `active_session_hard_limit` 人工把 manager 顶进 high 水位更稳。
+
+## Validation
+- 重新编译 `test_log_handler` 通过。
+- 重新执行 `ctest -R "^LogHandlerTracePostTest\\." --output-on-failure`，4 条 `/logs/spans` 协议单测全部通过。
+- 重新执行 `ctest -R "^(TraceSessionManagerUnitTest|TraceSessionManagerIntegrationTest|LogHandlerTracePostTest)\\." --output-on-failure`，41 个相关测试全部通过。

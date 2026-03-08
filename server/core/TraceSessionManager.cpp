@@ -79,6 +79,16 @@ TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_l
     return mark;
 }
 
+uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count)
+{
+    if (retry_count == 0) {
+        return 1;
+    }
+    constexpr uint64_t kMaxRetryDelayTicks = 16;
+    const size_t shift = std::min<size_t>(retry_count - 1, 4);
+    return std::min<uint64_t>(1ULL << shift, kMaxRetryDelayTicks);
+}
+
 size_t TraceSessionManager::size() const
 {
     return sessions_.size();
@@ -126,6 +136,8 @@ TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
     session.token_count += token_estimator_.Estimate(span);
     session.last_update_ms = now_ms;
     session.lifecycle_state = TraceSession::LifecycleState::Collecting;
+    session.retry_count = 0;
+    session.next_retry_tick = 0;
 
     if (span.trace_end.has_value() && span.trace_end.value()) {
         const bool dispatched = Dispatch(session.trace_key);
@@ -210,6 +222,12 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
                 time_wheel_[node.expire_tick % wheel_size_].push_back(node);
                 continue;
             }
+            if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater &&
+                current_tick_ < session.next_retry_tick) {
+                // retry 会话只有到达 next_retry_tick 才允许重投，避免固定频率打桩。
+                time_wheel_[session.next_retry_tick % wheel_size_].push_back(node);
+                continue;
+            }
             if (max_dispatch_per_tick > 0 && expired_trace_keys.size() >= max_dispatch_per_tick) {
                 // 本轮达到上限时，将当前有效节点顺延一 tick，避免被直接丢失。
                 node.expire_tick = current_tick_ + 1;
@@ -251,7 +269,8 @@ void TraceSessionManager::ScheduleTimeoutNode(TraceSession& session)
 void TraceSessionManager::ScheduleRetryNode(TraceSession& session)
 {
     session.timer_version += 1;
-    const uint64_t retry_tick = current_tick_ + 1;
+    const uint64_t retry_tick =
+        session.next_retry_tick > current_tick_ ? session.next_retry_tick : current_tick_ + 1;
     const size_t slot = static_cast<size_t>(retry_tick % wheel_size_);
     TimeWheelNode node;
     node.trace_key = session.trace_key;
@@ -407,6 +426,9 @@ bool TraceSessionManager::Dispatch(size_t trace_key)
         std::unique_ptr<TraceSession> restored_session = std::move(*session_holder);
         restored_session->lifecycle_state = TraceSession::LifecycleState::ReadyRetryLater;
         restored_session->last_update_ms = NowSteadyMs();
+        restored_session->retry_count += 1;
+        restored_session->next_retry_tick =
+            current_tick_ + ComputeRetryDelayTicks(restored_session->retry_count);
         sessions_.push_back(std::move(restored_session));
         index_by_trace_[trace_key] = sessions_.size() - 1;
         active_sessions_ += 1;
