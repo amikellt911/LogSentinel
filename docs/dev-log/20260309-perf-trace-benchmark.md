@@ -264,3 +264,53 @@ perf(flamegraph): 新增 trace flamegraph 编排脚本
 ## Validation
 - `bash -n server/tests/wrk/run_flamegraph.sh`
 - `bash server/tests/wrk/run_flamegraph.sh --help`
+
+---
+
+fix(flamegraph): 修复首次 flamegraph 采样 0 样本的问题
+
+## Git Commit Message
+fix(flamegraph): 修正 perf 目标线程与回栈方式
+
+## Modification
+- **server/tests/wrk/run_flamegraph.sh**:
+  - 将默认 `PERF_CALL_GRAPH` 从 `fp` 改为 `dwarf`。既然当前二进制没有专门用 `-fno-omit-frame-pointer` 重编，直接用 `fp` 很容易拿不到可靠栈。
+  - 新增 `server_thread_ids()`，在 `perf record` 前显式收集 `LogSentinel` 的所有线程 TID，并改为 `-t tid1,tid2,...` 采样，而不是只盯主 PID。
+  - 增加 `WARMUP_SETTLE_SEC`，在 warmup 结束后短暂等待，让正式 flamegraph 阶段别一上来就吃满前一波残留积压。
+  - `--help` 同步补上新的默认值和可覆盖变量说明。
+
+## Learning Tips
+- **Newbie Tips**:
+  - `perf.data` 文件存在，不代表真的采到样本。真正要看的是 `perf report --header-only` 里有没有 `time of first sample` 和非 0 的 `sample duration`。
+  - 如果只盯进程主 PID，而真正干活的是其它 worker 线程/IO 线程，你可能会得到“perf 成功跑完，但样本数是 0”这种特别恶心的假成功。
+- **Function Explanation**:
+  - `ps -T -p <pid> -o spid=`：列出某个进程当前所有线程的 TID，适合喂给 `perf record -t ...` 做线程级采样。
+  - `--call-graph dwarf`：通过 DWARF 展开调用栈，通常比 `fp` 更不依赖你是否重编了 frame pointer，但开销也更高一点。
+- **Pitfalls**:
+  - flamegraph 第一轮失败并不一定是 `perf` 权限不够，也可能是“采样目标不对”或者“回栈方式和当前二进制不匹配”。
+  - warmup 如果紧接着正式 wrk，不留一点点缓冲，正式阶段更容易被 warmup 残留积压带偏，尤其当前系统本来就容易快速进入背压。
+
+## Validation
+- 检查失败现场：
+  - `perf.data` 只有 16K
+  - `perf report --header-only` 中 `time of first sample : 0.000000`
+  - `sample duration : 0.000 ms`
+  - 说明首次 flamegraph 失败的根因不是 SVG 生成脚本坏了，而是 `perf` 根本没采到有效样本
+- 继续追查后确认 flamegraph harness 还存在第二个脚本层 bug：
+  - 启动时直接把 `$!` 当成 `SERVER_PID`
+  - 但这拿到的是外层启动壳 PID，不是真正监听 `8080` 的 `LogSentinel`
+  - 导致日志里出现 `pid=542161 tids=542161` 这种只采到单个线程的假目标
+- 已补上和 `run_bench.sh` 同级别的 listener PID 反查逻辑：
+  - 端口 ready 后通过 `lsof` 找真正监听 `8080` 的业务进程
+  - `cleanup` 同时区分 `SERVER_PID` 和 `SERVER_LAUNCH_PID`
+  - 避免 perf 再次附着到外层壳进程而不是服务本体
+- 继续最小对照实验后确认还有第三个根因：
+  - 当前环境下 `perf` 默认事件 `cycles` 会“命令成功、生成 perf.data、但 0 样本”
+  - 复现实验：对同一个 `yes > /dev/null` 进程
+    - `perf record -g --call-graph dwarf -p <pid>` 得到 0 样本
+    - `perf record -e cpu-clock -g --call-graph dwarf -p <pid>` 1 秒即可采到 98 个样本
+  - 说明之前 flamegraph 失败不是 `FlameGraph` 脚本坏了，而是默认 PMU 事件在这台机器/当前权限下不可用
+- 已将 flamegraph harness 默认事件改为 `PERF_EVENT=cpu-clock`，并保留环境变量覆盖口子，避免每次都踩“成功但 0 样本”的坑
+- 修正后重新通过：
+  - `bash -n server/tests/wrk/run_flamegraph.sh`
+  - `bash server/tests/wrk/run_flamegraph.sh --help`

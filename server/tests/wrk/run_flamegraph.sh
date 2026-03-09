@@ -27,11 +27,14 @@ DURATION="${DURATION:-15s}"
 CONNECTIONS="${CONNECTIONS:-100}"
 WRK_THREADS="${WRK_THREADS:-1}"
 PERF_FREQ="${PERF_FREQ:-99}"
-PERF_CALL_GRAPH="${PERF_CALL_GRAPH:-fp}"
+PERF_CALL_GRAPH="${PERF_CALL_GRAPH:-dwarf}"
+PERF_EVENT="${PERF_EVENT:-cpu-clock}"
+WARMUP_SETTLE_SEC="${WARMUP_SETTLE_SEC:-1}"
 WAIT_PORT_RETRY="${WAIT_PORT_RETRY:-50}"
 WAIT_PORT_SLEEP_SEC="${WAIT_PORT_SLEEP_SEC:-0.2}"
 
 SERVER_PID=""
+SERVER_LAUNCH_PID=""
 RUN_DIR=""
 SERVER_LOG=""
 WARMUP_LOG=""
@@ -63,7 +66,9 @@ usage() {
   CONNECTIONS=100
   WRK_THREADS=1
   PERF_FREQ=99
-  PERF_CALL_GRAPH=fp
+  PERF_CALL_GRAPH=dwarf
+  PERF_EVENT=cpu-clock
+  WARMUP_SETTLE_SEC=1
   FLAMEGRAPH_DIR=~/tools/FlameGraph
 EOF
 }
@@ -106,6 +111,10 @@ cleanup() {
         kill -TERM "${SERVER_PID}" >/dev/null 2>&1 || true
         wait "${SERVER_PID}" >/dev/null 2>&1 || true
     fi
+    if [[ -n "${SERVER_LAUNCH_PID}" ]] && [[ "${SERVER_LAUNCH_PID}" != "${SERVER_PID}" ]] && kill -0 "${SERVER_LAUNCH_PID}" >/dev/null 2>&1; then
+        kill -TERM "${SERVER_LAUNCH_PID}" >/dev/null 2>&1 || true
+        wait "${SERVER_LAUNCH_PID}" >/dev/null 2>&1 || true
+    fi
 }
 
 trap cleanup EXIT INT TERM
@@ -123,9 +132,26 @@ wait_for_port() {
     return 1
 }
 
+server_thread_ids() {
+    local pid="$1"
+    ps -T -p "${pid}" -o spid= 2>/dev/null | awk '{$1=$1; print}' | paste -sd, -
+}
+
 port_listener_pids() {
     local port="$1"
     lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true
+}
+
+port_owned_by_pid() {
+    local port="$1"
+    local target_pid="$2"
+    local pid
+    for pid in $(port_listener_pids "${port}"); do
+        if [[ "${pid}" == "${target_pid}" ]]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 ensure_port_available() {
@@ -192,6 +218,7 @@ set_profile_args() {
 
 start_server() {
     SERVER_LOG="${RUN_DIR}/server.log"
+    local listener_pid=""
     ensure_port_available "${PORT}"
 
     log "starting LogSentinel profile=${PROFILE} worker_threads=${WORKER_THREADS}"
@@ -212,11 +239,32 @@ start_server() {
         --trace-buffered-span-limit "${TRACE_BUFFERED_SPAN_LIMIT}" \
         --trace-active-session-limit "${TRACE_ACTIVE_SESSION_LIMIT}" \
         > "${SERVER_LOG}" 2>&1 &
-    SERVER_PID=$!
+    SERVER_LAUNCH_PID=$!
 
     if ! wait_for_port "${PORT}"; then
         echo "fatal: LogSentinel failed to listen on port ${PORT}" >&2
         tail -n 50 "${SERVER_LOG}" >&2 || true
+        exit 1
+    fi
+
+    for listener_pid in $(port_listener_pids "${PORT}"); do
+        local args
+        args="$(ps -p "${listener_pid}" -o args= 2>/dev/null || true)"
+        if [[ "${args}" == *"${SERVER_BIN}"* ]]; then
+            SERVER_PID="${listener_pid}"
+            break
+        fi
+    done
+
+    if [[ -z "${SERVER_PID}" ]]; then
+        echo "fatal: unable to resolve benchmark LogSentinel listener pid on port ${PORT}" >&2
+        lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >&2 || true
+        exit 1
+    fi
+
+    if ! port_owned_by_pid "${PORT}" "${SERVER_PID}"; then
+        echo "fatal: port ${PORT} became ready, but owner is not the benchmark LogSentinel pid=${SERVER_PID}" >&2
+        lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >&2 || true
         exit 1
     fi
 }
@@ -230,6 +278,7 @@ run_warmup() {
         -s "${WRK_SCRIPT}" "http://127.0.0.1:${PORT}" -- \
         "${MODE}" "${SPANS_PER_TRACE}" "${TIMEOUT_CUTOFF}" "${TOKEN_PAYLOAD_SIZE}" \
         > "${WARMUP_LOG}" 2>&1
+    sleep "${WARMUP_SETTLE_SEC}"
 }
 
 run_perf_and_wrk() {
@@ -238,9 +287,16 @@ run_perf_and_wrk() {
     PERF_SCRIPT="${RUN_DIR}/perf.script"
     FLAME_SVG="${RUN_DIR}/trace.svg"
 
-    log "recording flamegraph profile=${PROFILE} pid=${SERVER_PID} freq=${PERF_FREQ}"
-    perf record -F "${PERF_FREQ}" -g --call-graph "${PERF_CALL_GRAPH}" \
-        -p "${SERVER_PID}" -o "${PERF_DATA}" -- sleep "${DURATION}" >/dev/null 2>&1 &
+    local perf_targets
+    perf_targets="$(server_thread_ids "${SERVER_PID}")"
+    if [[ -z "${perf_targets}" ]]; then
+        echo "fatal: unable to resolve LogSentinel thread ids for pid=${SERVER_PID}" >&2
+        exit 1
+    fi
+
+    log "recording flamegraph profile=${PROFILE} pid=${SERVER_PID} tids=${perf_targets} event=${PERF_EVENT} freq=${PERF_FREQ}"
+    perf record -e "${PERF_EVENT}" -F "${PERF_FREQ}" -g --call-graph "${PERF_CALL_GRAPH}" \
+        -t "${perf_targets}" -o "${PERF_DATA}" -- sleep "${DURATION}" >/dev/null 2>&1 &
     local perf_pid=$!
 
     sleep 1
@@ -300,6 +356,7 @@ mkdir -p "${RUN_DIR}"
     echo "worker_queue_size=${WORKER_QUEUE_SIZE}"
     echo "warmup_duration=${WARMUP_DURATION}"
     echo "warmup_connections=${WARMUP_CONNECTIONS}"
+    echo "warmup_settle_sec=${WARMUP_SETTLE_SEC}"
     echo "duration=${DURATION}"
     echo "connections=${CONNECTIONS}"
     echo "wrk_threads=${WRK_THREADS}"
@@ -307,6 +364,7 @@ mkdir -p "${RUN_DIR}"
     echo "wrk_cpuset=${WRK_CPUSET}"
     echo "perf_freq=${PERF_FREQ}"
     echo "perf_call_graph=${PERF_CALL_GRAPH}"
+    echo "perf_event=${PERF_EVENT}"
     echo "trace_capacity=${TRACE_CAPACITY}"
     echo "trace_token_limit=${TRACE_TOKEN_LIMIT}"
     echo "trace_sweep_interval_ms=${TRACE_SWEEP_INTERVAL_MS}"

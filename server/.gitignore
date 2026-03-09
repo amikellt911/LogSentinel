@@ -17,3 +17,7 @@ tests/build
 *.db-shm
 *.db-wal
 /build-prof
+*.data
+*.svg
+*.script
+*.folded
