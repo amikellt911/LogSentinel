@@ -241,11 +241,18 @@ function request()
 end
 
 function done(summary, latency, requests)
+    local thread_count = tonumber(WRK_THREADS) or 0
+    local request_count = 0
+    if summary ~= nil and summary.requests ~= nil then
+        request_count = summary.requests
+    elseif requests ~= nil and requests.total ~= nil then
+        request_count = requests.total
+    end
     io.write(string.format(
         "trace_model done: mode=%s, threads=%d, requests=%d, timeout_cutoff=%d, token_payload_size=%d\n",
         mode,
-        summary.threads,
-        summary.requests,
+        thread_count,
+        request_count,
         timeout_cutoff,
         token_payload_size
     ))

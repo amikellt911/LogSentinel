@@ -87,3 +87,56 @@ docs(benchmark): 补齐 trace wrk 压测设计文档
 - **Pitfalls**:
   - 如果同时压 `/logs` 和 `/logs/spans`，因为它们当前共用同一个 `ThreadPool`，结果会混进 LogBatcher 链路的干扰，第一版很难解释。
   - benchmark 结果如果不带环境约束说明，比如 VPN 保留、openclaw 关闭、VSCode 保持最小活动，后面复现实验时很容易前后对不上。
+
+---
+
+perf(benchmark): 新增最小版 run_bench.sh 实验编排脚本
+
+## Git Commit Message
+perf(benchmark): 新增最小版 trace wrk 编排脚本
+
+## Modification
+- **server/tests/wrk/run_bench.sh**:
+  - 新增最小版 benchmark harness，支持按 `profile=end|capacity|token|timeout|mixed` 选择一套固定的服务端参数和 wrk 参数。
+  - 脚本按时间线完成：启动 `LogSentinel`、等待 `8080` ready、执行多组 wrk、双写输出到终端和文件、最后自动 cleanup。
+  - 默认循环 `worker_threads=2/3/4` 与 `connections=100/200/500`，并支持通过环境变量覆盖。
+  - 增加可选 `SERVER_CPUSET/WRK_CPUSET`，后续做 `taskset` 核心隔离时不用重写脚本主体。
+- **docs/todo-list/Todo_Benchmark.md**:
+  - 将一键 benchmark 脚本条目标记完成，并明确这是“最小编排版”，不是结果分析器。
+
+## Learning Tips
+- **Newbie Tips**:
+  - shell 脚本最适合做“实验流水线控制”，不适合抢 Lua/C++ 的业务逻辑工作，所以它只负责起服务、跑命令、收输出、收尾。
+  - `trap cleanup EXIT` 的味道就跟 RAII 很像：既然脚本可能正常结束、失败退出或 Ctrl+C，中间路径不统一，那就把收尾收口到一个出口。
+- **Function Explanation**:
+  - `wait_for_port()`: 负责轮询监听端口，避免服务还没 bind 就让 wrk 先撞上去。
+  - `taskset_wrap()`: 给后续核心隔离留接口；如果没设置 cpuset，就原样执行命令。
+  - `set_profile_args()`: 把实验设计文档里的 profile 参数固化进脚本，避免手工敲错。
+- **Pitfalls**:
+  - 这份脚本现在保留 wrk 原始输出，不做 CSV 解析，是故意的。第一版 benchmark 最重要的是把原始证据留住，而不是先追求花哨汇总。
+  - 脚本默认会给每组 worker 线程使用独立 DB 文件；如果后面为了省时间改成复用同一份 DB，结果就会更容易受前一轮残留影响。
+
+---
+
+fix(benchmark): 修正 wrk done 回调报错并优先使用项目 venv 启动 Python 依赖
+
+## Git Commit Message
+fix(benchmark): 修正 wrk done 报错并优先使用项目 venv
+
+## Modification
+- **server/tests/wrk/trace_model.lua**:
+  - 修正 `done(summary, latency, requests)` 中对 `summary.threads` 的错误假设。当前 wrk 回调里这个字段并不稳定存在，直接拿来 `%d` 会触发 Lua `string.format` 报错。
+  - 改为使用脚本已知的 `WRK_THREADS` 作为线程数展示，并对请求总数做空值兜底，避免整轮压测结束时才在收尾阶段 panic。
+- **server/util/DevSubprocessManager.cpp**:
+  - 新增 Python 解释器优先级选择逻辑：`DEV_PYTHON` > 当前激活 `VIRTUAL_ENV` > 仓库外层 `../venv/bin/python` > 系统 `python/python3`。
+  - 这样 benchmark/本地联调时，如果 AI proxy 依赖装在项目自己的虚拟环境里，就不会再傻乎乎走系统 Python。
+
+## Learning Tips
+- **Newbie Tips**:
+  - wrk 的 Lua 回调不是所有字段都稳稳存在，尤其 `done()` 里的 `summary` 别想当然照着名字就拿。
+  - 本地开发里“我明明装了依赖却还是起不来”很多时候不是脚本错了，而是子进程压根没走你以为的那个 Python 解释器。
+- **Function Explanation**:
+  - `ResolvePreferredPython()`: 负责把“优先用哪个 Python”这件事集中收口，避免在 fork/exec 路径里散落一堆路径判断。
+- **Pitfalls**:
+  - `wrk` 主压测阶段即使成功，`done()` 回调最后崩一下也会把实验体验弄得很脏，因为你会误以为整轮 benchmark 都失败了。
+  - 只依赖 `python`/`python3` 的 PATH 查找，在多虚拟环境机器上很容易起错解释器，尤其 benchmark 又经常从不同 shell 环境发起。
