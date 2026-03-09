@@ -241,7 +241,10 @@ function request()
 end
 
 function done(summary, latency, requests)
-    local thread_count = tonumber(WRK_THREADS) or 0
+    -- done 回调不一定复用请求生成阶段那份 Lua 状态，
+    -- 这里显式从 shell 注入的环境变量读取展示字段，避免日志永远退回默认 mode=end。
+    local reported_mode = os.getenv("TRACE_WRK_MODE") or mode
+    local thread_count = tonumber(os.getenv("TRACE_WRK_THREADS")) or 0
     local request_count = 0
     if summary ~= nil and summary.requests ~= nil then
         request_count = summary.requests
@@ -250,7 +253,7 @@ function done(summary, latency, requests)
     end
     io.write(string.format(
         "trace_model done: mode=%s, threads=%d, requests=%d, timeout_cutoff=%d, token_payload_size=%d\n",
-        mode,
+        reported_mode,
         thread_count,
         request_count,
         timeout_cutoff,

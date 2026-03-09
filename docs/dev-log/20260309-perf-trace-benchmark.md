@@ -202,3 +202,31 @@ fix(trace): 修复 TraceSessionManager 超时扫与入站并发竞态
   - 前台启动 `LogSentinel`，参数与 `run_bench.sh timeout` 一致
   - 单独执行 `wrk -t1 -c100 -d10s -s server/tests/wrk/trace_model.lua http://127.0.0.1:8080 -- timeout 8 4 2048`
   - 结果：服务端在 wrk 结束后仍存活（`server_alive_after_wrk`），不再出现先前的 `Segmentation fault (core dumped)`
+
+---
+
+fix(benchmark): 修正 wrk done 阶段的 mode/thread 展示字段
+
+## Git Commit Message
+fix(benchmark): 修正 trace_model done 展示字段
+
+## Modification
+- **server/tests/wrk/trace_model.lua**:
+  - `done()` 不再直接相信当前 Lua 状态里的 `mode` 和 `WRK_THREADS`，而是优先从环境变量 `TRACE_WRK_MODE`、`TRACE_WRK_THREADS` 读取展示值。
+  - 这样可以避免 wrk 收尾阶段使用另一份 Lua 状态时，又退回脚本默认值 `mode=end`，把 benchmark 日志看歪。
+- **server/tests/wrk/run_bench.sh**:
+  - 在启动 wrk 前显式导出 `TRACE_WRK_MODE` 和 `TRACE_WRK_THREADS`，让 `trace_model.lua` 的 `done()` 可以拿到这轮实验的真实 profile。
+
+## Learning Tips
+- **Newbie Tips**:
+  - wrk 的 `done()` 只是“收尾回调”，不要默认它和 `request()` 共享同一份你以为的运行态。展示字段如果特别重要，最好显式传进去。
+- **Function Explanation**:
+  - `os.getenv(...)`: 读取 shell 注入的环境变量，适合这种“收尾日志需要知道本轮 profile，但不想重新发明参数传递协议”的场景。
+- **Pitfalls**:
+  - 如果 benchmark 的收尾日志一直打印错 profile，后面你再回头整理结果，很容易把 `timeout/token/mixed` 的结论记错，即使真实压测本身是对的。
+
+## Validation
+- `bash -n server/tests/wrk/run_bench.sh`
+- 使用临时 `python3 -m http.server 18080` 做 1 秒最小 wrk 验证：
+  - `TRACE_WRK_MODE=token TRACE_WRK_THREADS=1 wrk -t1 -c1 -d1s --latency -s server/tests/wrk/trace_model.lua http://127.0.0.1:18080 -- token 8 4 2048`
+  - `done()` 输出已变为 `trace_model done: mode=token, threads=1, ...`

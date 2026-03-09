@@ -314,6 +314,8 @@ run_wrk_once() {
         echo "trace_active_session_limit=${TRACE_ACTIVE_SESSION_LIMIT}"
         echo "worker_queue_size=${WORKER_QUEUE_SIZE}"
         echo
+        export TRACE_WRK_MODE="${MODE}"
+        export TRACE_WRK_THREADS="${WRK_THREADS}"
         taskset_wrap "${WRK_CPUSET}" \
             wrk -t"${WRK_THREADS}" -c"${connections}" -d"${DURATION}" --latency \
             -s "${WRK_SCRIPT}" "http://127.0.0.1:${PORT}" -- \
