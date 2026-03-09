@@ -314,3 +314,36 @@ fix(flamegraph): 修正 perf 目标线程与回栈方式
 - 修正后重新通过：
   - `bash -n server/tests/wrk/run_flamegraph.sh`
   - `bash server/tests/wrk/run_flamegraph.sh --help`
+
+---
+
+perf(sender): 新增低速率分批 Trace 发送脚本
+
+## Git Commit Message
+perf(sender): 新增业务态 paced trace 发送脚本
+
+## Modification
+- **server/tests/wrk/trace_paced_sender.py**:
+  - 新增最小版低速率 Trace 发送脚本，目标不是极限压测，而是给 flamegraph 提供“业务态、可控节奏”的请求流。
+  - 第一版只支持 `end` 模型，避免把 `timeout/capacity/token` 这些变量重新混进 flamegraph。
+  - 支持 `batch-traces`、`batch-sleep-ms`、`duration-sec` 等参数，表达“每批发多少条完整 trace、批间隔多久、总共持续多久”。
+  - 每条 trace 固定 `spans_per_trace` 个 span，前 N-1 个 `trace_end=false`，最后一个 `trace_end=true`。
+  - 输出最小统计：总 trace 数、总请求数、成功数、非 2xx 数、传输错误数，以及折算的 trace/s 和 req/s。
+- **docs/todo-list/Todo_Benchmark.md**:
+  - 追加并勾选 paced sender 任务，和 wrk benchmark、flamegraph harness 区分开。
+
+## Learning Tips
+- **Newbie Tips**:
+  - `wrk -c1` 并不等于“很低速率”。只要服务端返回够快，1 个连接照样能打出几千 req/s。
+  - 真正想得到“业务态火焰图”，要控的是发送节奏，不是只控连接数。
+- **Function Explanation**:
+  - `batch-traces`：每轮循环发多少条完整 trace。
+  - `batch-sleep-ms`：一批 trace 发完以后主动停多久，用来塑造更温和的业务节奏。
+  - `urllib.request`：第一版够用，目标只是低速率定节奏发送，不是追 client 自身极限性能。
+- **Pitfalls**:
+  - 如果总共只发几条 trace，火焰图样本会很稀，看不出稳定热点；所以要“分批持续发”，不是“只发几条”。
+  - 这个 sender 不是 benchmark 工具，不适合拿来做极限性能对比；它的职责只是给 flamegraph 喂一段更像业务的流量。
+
+## Validation
+- `python3 -m py_compile server/tests/wrk/trace_paced_sender.py`
+- `python3 server/tests/wrk/trace_paced_sender.py --help`
