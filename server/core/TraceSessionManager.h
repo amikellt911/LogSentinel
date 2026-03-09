@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -194,6 +195,10 @@ private:
     static Watermark BuildWatermark(size_t hard_limit);
     // 根据连续失败次数计算退避 tick，避免 ready retry 会话固定每 tick 原地撞线程池。
     static uint64_t ComputeRetryDelayTicks(size_t retry_count);
+    // Push/Dispatch 的共享状态会同时被 IO loop 和主 loop 定时器线程访问，这里拆出持锁版本，
+    // 避免公开入口互相调用时重复加锁导致死锁。
+    PushResult PushLocked(const SpanEvent& span, int64_t now_ms);
+    bool DispatchLocked(size_t trace_key);
     // 基于当前积压指标刷新 overload_state_，统一收口新老 trace 的准入门禁状态。
     void RefreshOverloadState();
     // 当前请求是否应该在入口被拒绝：Overload 拒新 trace，Critical 新老都拒。
@@ -231,4 +236,7 @@ private:
     Watermark pending_task_watermark_;
     // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
     OverloadState overload_state_ = OverloadState::Normal;
+    // TraceSessionManager 当前会被 HTTP 处理线程和主 loop 定时器线程同时访问，
+    // 这把锁先用最保守的方式把内部状态机串行化，优先保证正确性。
+    mutable std::mutex mutex_;
 };

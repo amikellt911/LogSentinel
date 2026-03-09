@@ -163,3 +163,42 @@ fix(benchmark): 修复 run_bench 端口污染检查
 - **Pitfalls**:
   - 如果脚本只会等端口 ready，而不会核对监听者 PID，那么旧服务和新服务抢同一端口时，wrk 看起来照样能跑，但整轮实验对象其实是错的。
   - 在 bash 里把“shell 函数”放到后台执行，`$!` 拿到的未必是最终业务进程本体 PID，可能只是后台 subshell 的 PID。benchmark 如果要校验端口归属，一定要小心这一层。
+
+---
+
+fix(trace): 修复 timeout 压测下 TraceSessionManager 的跨线程竞态崩溃
+
+## Git Commit Message
+fix(trace): 修复 TraceSessionManager 超时扫与入站并发竞态
+
+## Modification
+- **server/core/TraceSessionManager.h**:
+  - 新增 `std::mutex mutex_`，作为 TraceSessionManager 第一版最小互斥保护。
+  - 新增私有 `PushLocked(...)` / `DispatchLocked(...)`，把“公开入口拿锁”和“内部已持锁逻辑”拆开，避免 `Push -> Dispatch`、`Sweep -> Dispatch` 这种路径重复加锁死锁。
+- **server/core/TraceSessionManager.cpp**:
+  - `size()`、`Push()`、`Dispatch()`、`SweepExpiredSessions()` 统一改为公开入口拿锁。
+  - 将原 `Push()` 主体迁入 `PushLocked(...)`，内部触发分发时直接调用 `DispatchLocked(...)`，不再绕公开接口。
+  - 将原 `Dispatch()` 主体迁入 `DispatchLocked(...)`，保持线程池任务体不在 manager 锁内执行，只保护 manager 自己的容器与计数状态。
+  - `SweepExpiredSessions()` 收集到超时 trace 后，改为在同一把锁保护下调用 `DispatchLocked(...)`，消除主 loop 定时器线程与 HTTP 入站线程并发修改 `sessions_ / index_by_trace_ / time_wheel_` 的竞态。
+- **docs/todo-list/Todo_TraceSessionManager.md**:
+  - 追加并勾选“gdb 定位 timeout 竞态崩溃”“补最小互斥保护”“复跑 timeout 验证不再崩溃”三项记录。
+
+## Learning Tips
+- **Newbie Tips**:
+  - “只给两个容器加锁”这句话通常是错的。真正要保护的是“一整套状态机的一致性”，包括容器、索引、计数器、时间轮、会话内部字段。
+  - `std::atomic` 只能解决单个变量的原子读写，解决不了 `vector + map + set + counter` 这种复合状态的一致性。
+  - 第一次止血优先选 `std::mutex`，别急着上 `recursive_mutex`、自旋锁、无锁结构。先把正确性救回来，再谈细化。
+- **Function Explanation**:
+  - `gdb bt` / `thread apply all bt`：抓到 core 之后，先看当前崩溃线程栈，再看所有线程栈。比继续猜“是不是旧时间轮节点又来了”有效得多。
+  - `std::lock_guard<std::mutex>`：适合这种明确的作用域加锁。既然持锁范围很清楚，就别手搓 `lock()/unlock()`。
+- **Pitfalls**:
+  - 这次 crash 的根因不是 timer callback 没在 loop 线程，而是 `Push()` 根本跑在另一个 IO loop 线程里。给 `runEvery` 再套一层 `runInLoop()` 没意义，因为 timer 回调本来就在 loop 线程。
+  - `timeout` 模型比 `end/capacity` 更容易把竞态打出来，不是因为它“更复杂”这么一句空话，而是因为它会把主 loop 的 `SweepExpiredSessions()` 路径稳定拉进来，与 HTTP 入站线程同时改同一个 manager。
+
+## Validation
+- `cmake --build server/build --target LogSentinel test_trace_session_manager_unit test_trace_session_manager_integration`
+- `cd server/build && ctest -R '^(TraceSessionManagerUnitTest|TraceSessionManagerIntegrationTest)\\.' --output-on-failure`
+- 手动 timeout 最小复现：
+  - 前台启动 `LogSentinel`，参数与 `run_bench.sh timeout` 一致
+  - 单独执行 `wrk -t1 -c100 -d10s -s server/tests/wrk/trace_model.lua http://127.0.0.1:8080 -- timeout 8 4 2048`
+  - 结果：服务端在 wrk 结束后仍存活（`server_alive_after_wrk`），不再出现先前的 `Segmentation fault (core dumped)`

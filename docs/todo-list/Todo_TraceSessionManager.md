@@ -88,3 +88,6 @@
 - [x] 补齐背压核心单测：新 Trace 拒绝、老 Trace 放行、submit 失败不丢、恢复不抖动
 - [x] 完成背压改造后的构建与 TraceSessionManager 相关回归验证
 - [x] 追加本轮 Trace 背压实现 dev-log 记录
+- [x] 使用 core dump + gdb 定位 timeout 压测下的 TraceSessionManager 并发竞态崩溃
+- [x] 为 `TraceSessionManager` 增加最小互斥保护，串行化 `Push/Dispatch/SweepExpiredSessions`
+- [x] 复跑 `timeout` 最小复现场景，确认服务端不再在压测过程中段错误退出

@@ -91,16 +91,22 @@ uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count)
 
 size_t TraceSessionManager::size() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return sessions_.size();
 }
 
 TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return PushLocked(span, NowSteadyMs());
+}
+
+TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent& span, int64_t now_ms)
+{
     // 线程池是 trace 异步分发链路的硬依赖；缺失时直接拒绝，避免后续误报 accepted 后又静默丢数据。
     if (!thread_pool_) {
         return PushResult::RejectedUnavailable;
     }
-    const int64_t now_ms = NowSteadyMs();
     auto iter = index_by_trace_.find(span.trace_key);
     const bool trace_exists = (iter != index_by_trace_.end());
     RefreshOverloadState();
@@ -126,7 +132,7 @@ TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
         if (!session.duplicate_span_id.has_value()) {
             session.duplicate_span_id = span.span_id;
         }
-        const bool dispatched = Dispatch(session.trace_key);
+        const bool dispatched = DispatchLocked(session.trace_key);
         return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
     }
 
@@ -140,18 +146,18 @@ TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
     session.next_retry_tick = 0;
 
     if (span.trace_end.has_value() && span.trace_end.value()) {
-        const bool dispatched = Dispatch(session.trace_key);
+        const bool dispatched = DispatchLocked(session.trace_key);
         return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
     }
 
     if (token_limit_ > 0 && session.token_count >= token_limit_) {
-        const bool dispatched = Dispatch(session.trace_key);
+        const bool dispatched = DispatchLocked(session.trace_key);
         return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
     }
 
     if (session.capacity > 0 && session.spans.size() >= session.capacity) {
         // 达到容量上限即触发分发，避免单个 Trace 无限膨胀。
-        const bool dispatched = Dispatch(session.trace_key);
+        const bool dispatched = DispatchLocked(session.trace_key);
         return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
     }
 
@@ -168,6 +174,7 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
                                                int64_t idle_timeout_ms,
                                                size_t max_dispatch_per_tick)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (sessions_.empty()) {
         return;
     }
@@ -241,7 +248,7 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
     }
 
     for (size_t trace_key : expired_trace_keys) {
-        Dispatch(trace_key);
+        DispatchLocked(trace_key);
     }
 }
 
@@ -304,6 +311,12 @@ void TraceSessionManager::RebuildTimeWheel()
 }
 
 bool TraceSessionManager::Dispatch(size_t trace_key)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return DispatchLocked(trace_key);
+}
+
+bool TraceSessionManager::DispatchLocked(size_t trace_key)
 {
     // 双保险：正常路径已在 Push 入口拒绝无线程池情况；这里继续防御，避免未来别的路径直接调 Dispatch 时删掉 session。
     if (!thread_pool_) {
