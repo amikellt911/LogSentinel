@@ -7,13 +7,15 @@
 
 ## 2. 工具与脚本 (Scripting)
 - [x] 编写通用 Trace 压测脚本 `server/tests/wrk/trace_model.lua`（支持 end/capacity/token/timeout/mixed 五种模型，模板按顺序回环）
+- [x] 编写 Trace wrk benchmark 设计文档，收口模型目标、参数选择和第一版实验矩阵
 - [ ] 编写一键压测分析脚本 `server/tests/wrk/run_bench.sh` (含 taskset 核心隔离逻辑)
 
 ## 3. 代码改造 (Main Enhancement)
-- [ ] 增加 `--trace-threads` 命令行参数支持
-- [ ] 增加 `--trace-buffer-limit` 命令行参数支持
-- [ ] 增加 `--trace-queue-size` 命令行参数支持
-- [ ] 验证配置参数能准确透传给 `ThreadPool` 和 `TraceSessionManager`
+- [x] 增加 `--worker-threads` 命令行参数支持
+- [x] 增加 `--trace-buffered-span-limit` 命令行参数支持
+- [x] 增加 `--worker-queue-size` 命令行参数支持
+- [x] 增加 `--trace-capacity` / `--trace-token-limit` / `--trace-max-dispatch-per-tick` 参数支持
+- [x] 验证配置参数能准确透传给 `ThreadPool` 和 `TraceSessionManager`
 
 ## 4. 压力测试 (Execution)
 - [ ] **摸底测试 (Baseline)**: `-c 100`, 验证 QPS 指标
