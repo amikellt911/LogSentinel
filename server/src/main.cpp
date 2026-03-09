@@ -66,6 +66,13 @@ int main(int argc, char* argv[])
     int trace_ai_timeout_ms = 10000;
     int trace_sweep_interval_ms = 500;
     int trace_idle_timeout_ms = 5000;
+    int worker_threads_override = -1;
+    int worker_queue_size = 10000;
+    int trace_capacity = 100;
+    int trace_token_limit = 0;
+    int trace_max_dispatch_per_tick = 64;
+    int trace_buffered_span_limit = 4096;
+    int trace_active_session_limit = 1024;
     bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
@@ -93,6 +100,20 @@ int main(int argc, char* argv[])
             trace_sweep_interval_ms = std::stoi(argv[++i]);
         } else if (arg == "--trace-idle-timeout-ms" && i + 1 < argc) {
             trace_idle_timeout_ms = std::stoi(argv[++i]);
+        } else if (arg == "--worker-threads" && i + 1 < argc) {
+            worker_threads_override = std::stoi(argv[++i]);
+        } else if (arg == "--worker-queue-size" && i + 1 < argc) {
+            worker_queue_size = std::stoi(argv[++i]);
+        } else if (arg == "--trace-capacity" && i + 1 < argc) {
+            trace_capacity = std::stoi(argv[++i]);
+        } else if (arg == "--trace-token-limit" && i + 1 < argc) {
+            trace_token_limit = std::stoi(argv[++i]);
+        } else if (arg == "--trace-max-dispatch-per-tick" && i + 1 < argc) {
+            trace_max_dispatch_per_tick = std::stoi(argv[++i]);
+        } else if (arg == "--trace-buffered-span-limit" && i + 1 < argc) {
+            trace_buffered_span_limit = std::stoi(argv[++i]);
+        } else if (arg == "--trace-active-session-limit" && i + 1 < argc) {
+            trace_active_session_limit = std::stoi(argv[++i]);
         }
     }
 
@@ -102,6 +123,34 @@ int main(int argc, char* argv[])
     }
     if (trace_idle_timeout_ms <= 0) {
         std::cerr << "Fatal Error: --trace-idle-timeout-ms must be > 0" << std::endl;
+        return -1;
+    }
+    if (worker_threads_override == 0 || worker_threads_override < -1) {
+        std::cerr << "Fatal Error: --worker-threads must be > 0 or omitted" << std::endl;
+        return -1;
+    }
+    if (worker_queue_size <= 0) {
+        std::cerr << "Fatal Error: --worker-queue-size must be > 0" << std::endl;
+        return -1;
+    }
+    if (trace_capacity <= 0) {
+        std::cerr << "Fatal Error: --trace-capacity must be > 0" << std::endl;
+        return -1;
+    }
+    if (trace_token_limit < 0) {
+        std::cerr << "Fatal Error: --trace-token-limit must be >= 0" << std::endl;
+        return -1;
+    }
+    if (trace_max_dispatch_per_tick <= 0) {
+        std::cerr << "Fatal Error: --trace-max-dispatch-per-tick must be > 0" << std::endl;
+        return -1;
+    }
+    if (trace_buffered_span_limit <= 0) {
+        std::cerr << "Fatal Error: --trace-buffered-span-limit must be > 0" << std::endl;
+        return -1;
+    }
+    if (trace_active_session_limit <= 0) {
+        std::cerr << "Fatal Error: --trace-active-session-limit must be > 0" << std::endl;
         return -1;
     }
 
@@ -162,7 +211,9 @@ int main(int argc, char* argv[])
 
     const int num_cpu_cores = std::thread::hardware_concurrency();
     const int num_io_threads = 1; // 明确 I/O 线程数量
-    const int num_worker_threads = num_cpu_cores > 1 ? num_cpu_cores - num_io_threads : 1;
+    const int default_worker_threads = num_cpu_cores > 1 ? num_cpu_cores - num_io_threads : 1;
+    const int num_worker_threads =
+        worker_threads_override > 0 ? worker_threads_override : default_worker_threads;
 
     std::cout << "System Info: " << num_cpu_cores << " cores detected." << std::endl;
     std::cout << "Thread Model: " << num_io_threads << " I/O threads, "
@@ -170,7 +221,7 @@ int main(int argc, char* argv[])
     MiniMuduo::net::EventLoop loop;
     MiniMuduo::net::InetAddress addr(port);
     testServer server(&loop, addr, num_io_threads);
-    ThreadPool tpool(num_worker_threads);
+    ThreadPool tpool(num_worker_threads, static_cast<size_t>(worker_queue_size));
     auto config_repo = std::make_shared<SqliteConfigRepository>(db_path);
     //std::vector<std::string> urls = config_repo->getActiveWebhookUrls();
     std::vector<std::string> urls;
@@ -201,20 +252,30 @@ int main(int argc, char* argv[])
         &tpool,
         trace_repo.get(),
         trace_ai.get(),
-        /*capacity*/100,
-        /*token_limit*/0,
+        /*capacity*/static_cast<size_t>(trace_capacity),
+        /*token_limit*/static_cast<size_t>(trace_token_limit),
         notifier.get(),
         trace_idle_timeout_ms,
-        trace_sweep_interval_ms);
+        trace_sweep_interval_ms,
+        /*wheel_size*/512,
+        static_cast<size_t>(trace_buffered_span_limit),
+        static_cast<size_t>(trace_active_session_limit));
     const double trace_sweep_interval_sec = static_cast<double>(trace_sweep_interval_ms) / 1000.0;
-    const size_t trace_max_dispatch_per_tick = 64;
     std::cout << "Trace session sweep enabled. sweep_interval_ms=" << trace_sweep_interval_ms
               << ", idle_timeout_ms=" << trace_idle_timeout_ms
-              << ", max_dispatch_per_tick=" << trace_max_dispatch_per_tick << std::endl;
+              << ", max_dispatch_per_tick=" << trace_max_dispatch_per_tick
+              << ", trace_capacity=" << trace_capacity
+              << ", trace_token_limit=" << trace_token_limit
+              << ", buffered_span_limit=" << trace_buffered_span_limit
+              << ", active_session_limit=" << trace_active_session_limit
+              << ", worker_queue_size=" << worker_queue_size << std::endl;
     loop.runEvery(trace_sweep_interval_sec, [trace_session_manager, trace_idle_timeout_ms, trace_max_dispatch_per_tick]() {
         const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        trace_session_manager->SweepExpiredSessions(now_ms, trace_idle_timeout_ms, trace_max_dispatch_per_tick);
+        trace_session_manager->SweepExpiredSessions(
+            now_ms,
+            trace_idle_timeout_ms,
+            static_cast<size_t>(trace_max_dispatch_per_tick));
     });
     
     std::shared_ptr<Router> router = std::make_shared<Router>();
