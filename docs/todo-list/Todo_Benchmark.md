@@ -6,7 +6,7 @@
 - [ ] 配置 AI Proxy (Python) 开启 Mock 模式并增加 20-50ms 延迟
 
 ## 2. 工具与脚本 (Scripting)
-- [ ] 编写标准 Trace 压测脚本 `server/tests/wrk/trace_standard.lua` (8 Spans, 随机 TraceID, 随机属性)
+- [x] 编写通用 Trace 压测脚本 `server/tests/wrk/trace_model.lua`（支持 end/capacity/token/timeout/mixed 五种模型，模板按顺序回环）
 - [ ] 编写一键压测分析脚本 `server/tests/wrk/run_bench.sh` (含 taskset 核心隔离逻辑)
 
 ## 3. 代码改造 (Main Enhancement)
