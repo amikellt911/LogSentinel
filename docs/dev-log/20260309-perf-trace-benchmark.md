@@ -230,3 +230,37 @@ fix(benchmark): 修正 trace_model done 展示字段
 - 使用临时 `python3 -m http.server 18080` 做 1 秒最小 wrk 验证：
   - `TRACE_WRK_MODE=token TRACE_WRK_THREADS=1 wrk -t1 -c1 -d1s --latency -s server/tests/wrk/trace_model.lua http://127.0.0.1:18080 -- token 8 4 2048`
   - `done()` 输出已变为 `trace_model done: mode=token, threads=1, ...`
+
+---
+
+perf(flamegraph): 新增最小版 CPU 火焰图编排脚本
+
+## Git Commit Message
+perf(flamegraph): 新增 trace flamegraph 编排脚本
+
+## Modification
+- **server/tests/wrk/run_flamegraph.sh**:
+  - 新增独立 flamegraph harness，职责只做一件事：按固定 profile 启动 `LogSentinel`，先 warmup，再用 `perf` 附着采样，并在正式 wrk 压力窗口内生成 CPU 火焰图。
+  - 复用 benchmark 里已经验证过的 `end/capacity/token/timeout/mixed` profile 参数，避免 flamegraph 和 benchmark 用两套口径。
+  - 自动处理端口占用检查、结果目录创建、服务端日志/预热日志/wrk 日志/perf 原始数据/svg 输出，以及最后的 cleanup。
+  - 通过环境变量支持 `SERVER_CPUSET/WRK_CPUSET/WARMUP_DURATION/DURATION/CONNECTIONS/PERF_FREQ/PERF_CALL_GRAPH/FLAMEGRAPH_DIR` 等最小覆盖点，默认值尽量贴合当前 4 核机器的实验习惯。
+- **docs/todo-list/Todo_Benchmark.md**:
+  - 追加并勾选 flamegraph 编排脚本任务，和 benchmark harness 区分开。
+
+## Learning Tips
+- **Newbie Tips**:
+  - 火焰图不是“程序里额外开个线程记录函数”，而是 `perf` 在采样窗口里不断抓当前调用栈快照，最后把样本堆成一张图。
+  - 第一张火焰图优先选 `end` 这种纯路径，不要上来就拿 `mixed`。因为火焰图本来就是做热点归因，变量越少越容易解释。
+  - warmup 不是装饰。既然 SQLite、Python proxy、连接和分配器都有冷启动成本，那正式采样前先热几秒，图更接近稳态。
+- **Function Explanation**:
+  - `perf record -p <pid> -- sleep <duration>`：把采样窗口绑定在目标服务进程上，`sleep` 只是用来控制采样持续多久。
+  - `perf script`：把二进制 perf 数据还原成文本栈。
+  - `stackcollapse-perf.pl`：把大量文本栈折叠成 FlameGraph 需要的 folded stack 格式。
+  - `flamegraph.pl`：把折叠栈画成 svg。
+- **Pitfalls**:
+  - `perf` 必须包住正式 wrk 的压力阶段，不是 wrk 跑完以后再单独采。后采样只会看到空闲或收尾，不是热点。
+  - 如果 flamegraph 脚本和 benchmark 脚本各自偷偷用不同的 trace 参数，最后 benchmark 数字和火焰图热点会对不上，解释会很乱。
+
+## Validation
+- `bash -n server/tests/wrk/run_flamegraph.sh`
+- `bash server/tests/wrk/run_flamegraph.sh --help`

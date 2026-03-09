@@ -16,3 +16,4 @@ tests/build
 *.log
 *.db-shm
 *.db-wal
+/build-prof
