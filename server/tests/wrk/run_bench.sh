@@ -25,8 +25,10 @@ SERVER_CPUSET="${SERVER_CPUSET:-}"
 WRK_CPUSET="${WRK_CPUSET:-}"
 WAIT_PORT_RETRY="${WAIT_PORT_RETRY:-50}"
 WAIT_PORT_SLEEP_SEC="${WAIT_PORT_SLEEP_SEC:-0.2}"
+BENCH_FORCE_STOP_OLD_SERVER="${BENCH_FORCE_STOP_OLD_SERVER:-1}"
 
 SERVER_PID=""
+SERVER_LAUNCH_PID=""
 RUN_DIR=""
 SERVER_LOG=""
 SUMMARY_LOG=""
@@ -84,6 +86,10 @@ cleanup() {
         kill -TERM "${SERVER_PID}" >/dev/null 2>&1 || true
         wait "${SERVER_PID}" >/dev/null 2>&1 || true
     fi
+    if [[ -n "${SERVER_LAUNCH_PID}" ]] && [[ "${SERVER_LAUNCH_PID}" != "${SERVER_PID}" ]] && kill -0 "${SERVER_LAUNCH_PID}" >/dev/null 2>&1; then
+        kill -TERM "${SERVER_LAUNCH_PID}" >/dev/null 2>&1 || true
+        wait "${SERVER_LAUNCH_PID}" >/dev/null 2>&1 || true
+    fi
 }
 
 trap cleanup EXIT INT TERM
@@ -99,6 +105,63 @@ wait_for_port() {
         retry=$((retry + 1))
     done
     return 1
+}
+
+port_listener_pids() {
+    local port="$1"
+    lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true
+}
+
+port_owned_by_pid() {
+    local port="$1"
+    local target_pid="$2"
+    local pid
+    for pid in $(port_listener_pids "${port}"); do
+        if [[ "${pid}" == "${target_pid}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+ensure_port_available() {
+    local port="$1"
+    local stale_found=0
+    local pid
+
+    for pid in $(port_listener_pids "${port}"); do
+        local args
+        args="$(ps -p "${pid}" -o args= 2>/dev/null || true)"
+        if [[ "${args}" == *"${SERVER_BIN}"* ]]; then
+            stale_found=1
+            if [[ "${BENCH_FORCE_STOP_OLD_SERVER}" == "1" ]]; then
+                log "stopping stale LogSentinel on port ${port}, pid=${pid}"
+                kill -TERM "${pid}" >/dev/null 2>&1 || true
+            else
+                echo "fatal: port ${port} is occupied by existing LogSentinel pid=${pid}" >&2
+                exit 1
+            fi
+        else
+            echo "fatal: port ${port} is occupied by non-benchmark process pid=${pid}" >&2
+            echo "fatal: refusing to kill unknown owner automatically" >&2
+            ps -p "${pid}" -o pid,ppid,user,comm,args >&2 || true
+            exit 1
+        fi
+    done
+
+    if [[ "${stale_found}" == "1" ]]; then
+        local retry=0
+        while (( retry < WAIT_PORT_RETRY )); do
+            if [[ -z "$(port_listener_pids "${port}")" ]]; then
+                return 0
+            fi
+            sleep "${WAIT_PORT_SLEEP_SEC}"
+            retry=$((retry + 1))
+        done
+        echo "fatal: port ${port} is still occupied after attempting to stop old LogSentinel" >&2
+        lsof -nP -iTCP:"${port}" -sTCP:LISTEN >&2 || true
+        exit 1
+    fi
 }
 
 taskset_wrap() {
@@ -158,32 +221,70 @@ set_profile_args() {
 
 start_server() {
     local worker_threads="$1"
+    local listener_pid=""
 
     SERVER_LOG="${RUN_DIR}/server-w${worker_threads}.log"
     log "starting LogSentinel profile=${PROFILE} worker_threads=${worker_threads}"
+    ensure_port_available "${PORT}"
 
-    taskset_wrap "${SERVER_CPUSET}" \
+    if [[ -n "${SERVER_CPUSET}" ]]; then
+        taskset -c "${SERVER_CPUSET}" \
+            "${SERVER_BIN}" \
+            --db "${RUN_DIR}/trace-bench-w${worker_threads}.db" \
+            --port "${PORT}" \
+            --auto-start-proxy \
+            --auto-start-webhook-mock \
+            --trace-ai-provider mock \
+            --worker-threads "${worker_threads}" \
+            --worker-queue-size "${WORKER_QUEUE_SIZE}" \
+            --trace-capacity "${TRACE_CAPACITY}" \
+            --trace-token-limit "${TRACE_TOKEN_LIMIT}" \
+            --trace-sweep-interval-ms "${TRACE_SWEEP_INTERVAL_MS}" \
+            --trace-idle-timeout-ms "${TRACE_IDLE_TIMEOUT_MS}" \
+            --trace-max-dispatch-per-tick "${TRACE_MAX_DISPATCH_PER_TICK}" \
+            --trace-buffered-span-limit "${TRACE_BUFFERED_SPAN_LIMIT}" \
+            --trace-active-session-limit "${TRACE_ACTIVE_SESSION_LIMIT}" \
+            > "${SERVER_LOG}" 2>&1 &
+    else
         "${SERVER_BIN}" \
-        --db "${RUN_DIR}/trace-bench-w${worker_threads}.db" \
-        --port "${PORT}" \
-        --auto-start-proxy \
-        --auto-start-webhook-mock \
-        --trace-ai-provider mock \
-        --worker-threads "${worker_threads}" \
-        --worker-queue-size "${WORKER_QUEUE_SIZE}" \
-        --trace-capacity "${TRACE_CAPACITY}" \
-        --trace-token-limit "${TRACE_TOKEN_LIMIT}" \
-        --trace-sweep-interval-ms "${TRACE_SWEEP_INTERVAL_MS}" \
-        --trace-idle-timeout-ms "${TRACE_IDLE_TIMEOUT_MS}" \
-        --trace-max-dispatch-per-tick "${TRACE_MAX_DISPATCH_PER_TICK}" \
-        --trace-buffered-span-limit "${TRACE_BUFFERED_SPAN_LIMIT}" \
-        --trace-active-session-limit "${TRACE_ACTIVE_SESSION_LIMIT}" \
-        > "${SERVER_LOG}" 2>&1 &
+            --db "${RUN_DIR}/trace-bench-w${worker_threads}.db" \
+            --port "${PORT}" \
+            --auto-start-proxy \
+            --auto-start-webhook-mock \
+            --trace-ai-provider mock \
+            --worker-threads "${worker_threads}" \
+            --worker-queue-size "${WORKER_QUEUE_SIZE}" \
+            --trace-capacity "${TRACE_CAPACITY}" \
+            --trace-token-limit "${TRACE_TOKEN_LIMIT}" \
+            --trace-sweep-interval-ms "${TRACE_SWEEP_INTERVAL_MS}" \
+            --trace-idle-timeout-ms "${TRACE_IDLE_TIMEOUT_MS}" \
+            --trace-max-dispatch-per-tick "${TRACE_MAX_DISPATCH_PER_TICK}" \
+            --trace-buffered-span-limit "${TRACE_BUFFERED_SPAN_LIMIT}" \
+            --trace-active-session-limit "${TRACE_ACTIVE_SESSION_LIMIT}" \
+            > "${SERVER_LOG}" 2>&1 &
+    fi
 
-    SERVER_PID=$!
+    SERVER_LAUNCH_PID=$!
 
     if ! wait_for_port "${PORT}"; then
         echo "fatal: LogSentinel failed to listen on port ${PORT}" >&2
+        tail -n 50 "${SERVER_LOG}" >&2 || true
+        exit 1
+    fi
+
+    listener_pid="$(port_listener_pids "${PORT}" | head -n 1)"
+    if [[ -z "${listener_pid}" ]]; then
+        echo "fatal: port ${PORT} became ready, but listener pid cannot be resolved" >&2
+        tail -n 50 "${SERVER_LOG}" >&2 || true
+        exit 1
+    fi
+
+    SERVER_PID="${listener_pid}"
+
+    if ! port_owned_by_pid "${PORT}" "${SERVER_PID}"; then
+        echo "fatal: port ${PORT} became ready, but owner is not the benchmark LogSentinel pid=${SERVER_PID}" >&2
+        echo "fatal: current listener(s):" >&2
+        lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >&2 || true
         tail -n 50 "${SERVER_LOG}" >&2 || true
         exit 1
     fi
@@ -268,6 +369,7 @@ for worker_threads in ${WORKER_THREAD_SET}; do
     done
     cleanup
     SERVER_PID=""
+    SERVER_LAUNCH_PID=""
     sleep 1
 done
 

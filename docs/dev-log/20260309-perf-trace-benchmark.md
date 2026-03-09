@@ -140,3 +140,26 @@ fix(benchmark): 修正 wrk done 报错并优先使用项目 venv
 - **Pitfalls**:
   - `wrk` 主压测阶段即使成功，`done()` 回调最后崩一下也会把实验体验弄得很脏，因为你会误以为整轮 benchmark 都失败了。
   - 只依赖 `python`/`python3` 的 PATH 查找，在多虚拟环境机器上很容易起错解释器，尤其 benchmark 又经常从不同 shell 环境发起。
+
+---
+
+fix(benchmark): 修复 run_bench.sh 被旧端口监听污染的问题
+
+## Git Commit Message
+fix(benchmark): 修复 run_bench 端口污染检查
+
+## Modification
+- **server/tests/wrk/run_bench.sh**:
+  - 新增 `ensure_port_available()`，在每轮启动前先检查目标端口是否已有监听。
+  - 如果监听者是旧的 `LogSentinel`，默认会先 `TERM` 掉并等待端口释放；如果监听者不是 benchmark 目标进程，则直接失败退出，避免误杀未知服务。
+  - 新增 `port_owned_by_pid()`，在新服务启动并等待端口 ready 之后，再次确认当前监听这个端口的就是刚拉起来的那一个 PID。
+  - 这样 wrk 不会再被“旧服务也在监听同一端口”这种脏环境骗过去。
+
+## Learning Tips
+- **Newbie Tips**:
+  - “端口 ready” 和 “监听这个端口的是我刚拉起来的进程” 不是一回事。benchmark 只检查 ready，很容易被旧实例污染。
+- **Function Explanation**:
+  - `lsof -tiTCP:<port> -sTCP:LISTEN`: 用来找当前到底是谁在监听目标端口，比单纯 `ss` 看端口是否 ready 更适合做 benchmark 前置检查。
+- **Pitfalls**:
+  - 如果脚本只会等端口 ready，而不会核对监听者 PID，那么旧服务和新服务抢同一端口时，wrk 看起来照样能跑，但整轮实验对象其实是错的。
+  - 在 bash 里把“shell 函数”放到后台执行，`$!` 拿到的未必是最终业务进程本体 PID，可能只是后台 subshell 的 PID。benchmark 如果要校验端口归属，一定要小心这一层。
