@@ -347,3 +347,65 @@ perf(sender): 新增业务态 paced trace 发送脚本
 ## Validation
 - `python3 -m py_compile server/tests/wrk/trace_paced_sender.py`
 - `python3 server/tests/wrk/trace_paced_sender.py --help`
+
+---
+
+perf(flamegraph): 将 paced sender 接入 flamegraph 总控脚本
+
+## Git Commit Message
+perf(flamegraph): 接入 paced sender 作为业务态流量源
+
+## Modification
+- **server/tests/wrk/run_flamegraph.sh**:
+  - 新增 `LOAD_GENERATOR=wrk|paced`，默认仍为 `wrk`，但现在可以切换到低速率的业务态发送脚本。
+  - 新增 `PACED_BATCH_TRACES`、`PACED_BATCH_SLEEP_MS`、`PACED_REQUEST_TIMEOUT_MS`、`PACED_SERVICE_NAME` 等环境变量，直接透传给 `trace_paced_sender.py`。
+  - 正式采样阶段从“固定调用 wrk”改为“按流量源分支执行”，这样不需要再手工拼两套命令。
+  - `run-summary.log` 现在会记录 `load_generator` 和 paced sender 参数，方便回头对照 flamegraph 结果。
+- **server/tests/wrk/trace_paced_sender.py**:
+  - 保持最小版接口不变，只作为 flamegraph 的业务态流量源，不承担 benchmark 角色。
+
+## Learning Tips
+- **Newbie Tips**:
+  - benchmark 和 flamegraph 的“流量发生器”不一定是同一个。`wrk` 更适合冲吞吐，paced sender 更适合控节奏。
+  - 真正的“只用一条命令”不是把所有逻辑糊在一个脚本里，而是让总控脚本支持切换不同的流量源。
+- **Function Explanation**:
+  - `LOAD_GENERATOR=wrk|paced`：决定 flamegraph 正式采样阶段是走 wrk 还是走分批低速率 sender。
+  - `${DURATION%s}`：把 shell 里的 `10s/20s` 这种时长参数裁成 Python sender 更容易直接吃的整数秒。
+- **Pitfalls**:
+  - 如果业务态 sender 还需要手工和 flamegraph 脚本一起拼命令，后面复现实验时很容易漏参数，尤其是 perf 频率和 paced 间隔。
+
+## Validation
+- `bash -n server/tests/wrk/run_flamegraph.sh`
+- `bash server/tests/wrk/run_flamegraph.sh --help`
+- `python3 -m py_compile server/tests/wrk/trace_paced_sender.py`
+
+---
+
+perf(flamegraph): 增加后链路 drain 等待与最终落库统计
+
+## Git Commit Message
+perf(flamegraph): 增加后链路 drain 等待与最终落库统计
+
+## Modification
+- **server/tests/wrk/run_flamegraph.sh**:
+  - 新增 `DRAIN_WAIT_SEC` 环境变量，正式流量结束后不再立刻停服，而是给异步后链路额外的 drain 时间。
+  - `perf record` 的采样时长同步覆盖 `正式流量 + drain` 窗口，避免 sender 一结束就停止采样，看不到队列排空阶段。
+  - 新增 `emit_trace_db_stats()`，在 flamegraph 生成后自动读取本轮 `trace-flame.db` 的 `trace_summary`、`trace_span` 和 `span_count` 统计，并同时打印到终端与 `run-summary.log`。
+  - `run-summary.log` 新增 `drain_wait_sec`，让后面回看 flamegraph 结果时能知道这轮是否给过后链路排空时间。
+- **docs/todo-list/Todo_Benchmark.md**:
+  - 追加并勾选“火焰图实验补充后链路 drain 与最终落库统计”，避免后续继续拿入口成功数误判最终完成量。
+
+## Learning Tips
+- **Newbie Tips**:
+  - 网关成功响应不等于 trace 已经真正处理完成。既然 `Dispatch` 后面走的是线程池异步链路，那么 sender 刚发完就停服，只能测到入口，不一定测到最终完成量。
+  - flamegraph 如果只覆盖发送窗口，不覆盖 drain 窗口，那么很容易把“后链路来不及排空”误判成“后链路根本没跑”。
+- **Function Explanation**:
+  - `DRAIN_WAIT_SEC`：sender/wrk 结束后，额外留给线程池、AI proxy、SQLite 的排空时间。
+  - `emit_trace_db_stats()`：直接查本轮 SQLite，输出最终落库条数，帮 benchmark 把“入口账”和“完成账”分开。
+- **Pitfalls**:
+  - 如果只看 sender 的 `success_requests` 或 wrk 的 `2xx`，很容易高估系统真实完成吞吐。因为这些数字只说明入口接收成功，不说明异步后链路已经处理完。
+  - `perf` 覆盖的时间窗如果太短，正好卡在入口阶段，也会让 on-CPU 图看起来几乎全是 `Push/JSON`。
+
+## Validation
+- `bash -n server/tests/wrk/run_flamegraph.sh`
+- `bash server/tests/wrk/run_flamegraph.sh --help`

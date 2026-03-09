@@ -11,6 +11,7 @@
 - [x] 编写一键压测编排脚本 `server/tests/wrk/run_bench.sh`（最小版：起服务、等端口、跑 wrk、双写日志、自动 cleanup）
 - [x] 编写火焰图编排脚本 `server/tests/wrk/run_flamegraph.sh`（最小版：起服务、warmup、perf record、正式 wrk、生成 svg、自动 cleanup）
 - [x] 编写低速率 Trace 发送脚本 `server/tests/wrk/trace_paced_sender.py`（最小版：按 batch-traces + batch-sleep-ms 固定节奏发送 end trace）
+- [x] 为火焰图实验补充后链路 `drain` 等待与最终落库统计（避免只看到入口成功，不知道最后真正完成多少 trace）
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 增加 `--worker-threads` 命令行参数支持

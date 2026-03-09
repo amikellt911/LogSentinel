@@ -12,6 +12,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SERVER_BIN="${ROOT_DIR}/server/build/LogSentinel"
 WRK_SCRIPT="${ROOT_DIR}/server/tests/wrk/trace_model.lua"
+PACED_SENDER="${ROOT_DIR}/server/tests/wrk/trace_paced_sender.py"
 RESULT_ROOT="${ROOT_DIR}/server/tests/wrk/results"
 FLAMEGRAPH_DIR="${FLAMEGRAPH_DIR:-${HOME}/tools/FlameGraph}"
 PROFILE="${1:-end}"
@@ -26,10 +27,16 @@ WARMUP_CONNECTIONS="${WARMUP_CONNECTIONS:-20}"
 DURATION="${DURATION:-15s}"
 CONNECTIONS="${CONNECTIONS:-100}"
 WRK_THREADS="${WRK_THREADS:-1}"
+LOAD_GENERATOR="${LOAD_GENERATOR:-wrk}"
+PACED_BATCH_TRACES="${PACED_BATCH_TRACES:-5}"
+PACED_BATCH_SLEEP_MS="${PACED_BATCH_SLEEP_MS:-100}"
+PACED_REQUEST_TIMEOUT_MS="${PACED_REQUEST_TIMEOUT_MS:-1000}"
+PACED_SERVICE_NAME="${PACED_SERVICE_NAME:-svc-paced}"
 PERF_FREQ="${PERF_FREQ:-99}"
 PERF_CALL_GRAPH="${PERF_CALL_GRAPH:-dwarf}"
 PERF_EVENT="${PERF_EVENT:-cpu-clock}"
 WARMUP_SETTLE_SEC="${WARMUP_SETTLE_SEC:-1}"
+DRAIN_WAIT_SEC="${DRAIN_WAIT_SEC:-10}"
 WAIT_PORT_RETRY="${WAIT_PORT_RETRY:-50}"
 WAIT_PORT_SLEEP_SEC="${WAIT_PORT_SLEEP_SEC:-0.2}"
 
@@ -42,6 +49,7 @@ WRK_LOG=""
 PERF_DATA=""
 PERF_SCRIPT=""
 FLAME_SVG=""
+TRACE_DB="${ROOT_DIR}/server/tests/wrk/results/trace-flame.db"
 
 usage() {
     cat <<'EOF'
@@ -60,15 +68,21 @@ usage() {
   SERVER_CPUSET="1-2"
   WRK_CPUSET="0"
   WORKER_THREADS=3
+  LOAD_GENERATOR=wrk|paced
   WARMUP_DURATION=3s
   WARMUP_CONNECTIONS=20
   DURATION=15s
   CONNECTIONS=100
   WRK_THREADS=1
+  PACED_BATCH_TRACES=5
+  PACED_BATCH_SLEEP_MS=100
+  PACED_REQUEST_TIMEOUT_MS=1000
+  PACED_SERVICE_NAME=svc-paced
   PERF_FREQ=99
   PERF_CALL_GRAPH=dwarf
   PERF_EVENT=cpu-clock
   WARMUP_SETTLE_SEC=1
+  DRAIN_WAIT_SEC=10
   FLAMEGRAPH_DIR=~/tools/FlameGraph
 EOF
 }
@@ -218,13 +232,14 @@ set_profile_args() {
 
 start_server() {
     SERVER_LOG="${RUN_DIR}/server.log"
+    TRACE_DB="${RUN_DIR}/trace-flame.db"
     local listener_pid=""
     ensure_port_available "${PORT}"
 
     log "starting LogSentinel profile=${PROFILE} worker_threads=${WORKER_THREADS}"
     taskset_wrap "${SERVER_CPUSET}" \
         "${SERVER_BIN}" \
-        --db "${RUN_DIR}/trace-flame.db" \
+        --db "${TRACE_DB}" \
         --port "${PORT}" \
         --auto-start-proxy \
         --auto-start-webhook-mock \
@@ -281,7 +296,7 @@ run_warmup() {
     sleep "${WARMUP_SETTLE_SEC}"
 }
 
-run_perf_and_wrk() {
+run_perf_and_load() {
     WRK_LOG="${RUN_DIR}/wrk.log"
     PERF_DATA="${RUN_DIR}/perf.data"
     PERF_SCRIPT="${RUN_DIR}/perf.script"
@@ -294,32 +309,76 @@ run_perf_and_wrk() {
         exit 1
     fi
 
-    log "recording flamegraph profile=${PROFILE} pid=${SERVER_PID} tids=${perf_targets} event=${PERF_EVENT} freq=${PERF_FREQ}"
+    local duration_sec="${DURATION%s}"
+    local perf_duration_sec=$(( duration_sec + DRAIN_WAIT_SEC + 1 ))
+
+    log "recording flamegraph profile=${PROFILE} pid=${SERVER_PID} tids=${perf_targets} event=${PERF_EVENT} freq=${PERF_FREQ} perf_duration_sec=${perf_duration_sec}"
     perf record -e "${PERF_EVENT}" -F "${PERF_FREQ}" -g --call-graph "${PERF_CALL_GRAPH}" \
-        -t "${perf_targets}" -o "${PERF_DATA}" -- sleep "${DURATION}" >/dev/null 2>&1 &
+        -t "${perf_targets}" -o "${PERF_DATA}" -- sleep "${perf_duration_sec}" >/dev/null 2>&1 &
     local perf_pid=$!
 
     sleep 1
-    log "running wrk profile=${PROFILE} connections=${CONNECTIONS} duration=${DURATION}"
-    {
-        echo "===== WRK RUN BEGIN ====="
-        echo "profile=${PROFILE}"
-        echo "worker_threads=${WORKER_THREADS}"
-        echo "connections=${CONNECTIONS}"
-        echo "duration=${DURATION}"
-        echo "wrk_threads=${WRK_THREADS}"
-        echo "server_cpuset=${SERVER_CPUSET}"
-        echo "wrk_cpuset=${WRK_CPUSET}"
-        echo "perf_freq=${PERF_FREQ}"
-        echo "perf_call_graph=${PERF_CALL_GRAPH}"
-        echo
-        TRACE_WRK_MODE="${MODE}" TRACE_WRK_THREADS="${WRK_THREADS}" \
+    if [[ "${LOAD_GENERATOR}" == "wrk" ]]; then
+        log "running wrk profile=${PROFILE} connections=${CONNECTIONS} duration=${DURATION}"
+        {
+            echo "===== WRK RUN BEGIN ====="
+            echo "profile=${PROFILE}"
+            echo "worker_threads=${WORKER_THREADS}"
+            echo "connections=${CONNECTIONS}"
+            echo "duration=${DURATION}"
+            echo "wrk_threads=${WRK_THREADS}"
+            echo "server_cpuset=${SERVER_CPUSET}"
+            echo "wrk_cpuset=${WRK_CPUSET}"
+            echo "perf_freq=${PERF_FREQ}"
+            echo "perf_call_graph=${PERF_CALL_GRAPH}"
+            echo "perf_event=${PERF_EVENT}"
+            echo "load_generator=${LOAD_GENERATOR}"
+            echo
+            TRACE_WRK_MODE="${MODE}" TRACE_WRK_THREADS="${WRK_THREADS}" \
+                taskset_wrap "${WRK_CPUSET}" \
+                wrk -t"${WRK_THREADS}" -c"${CONNECTIONS}" -d"${DURATION}" --latency \
+                -s "${WRK_SCRIPT}" "http://127.0.0.1:${PORT}" -- \
+                "${MODE}" "${SPANS_PER_TRACE}" "${TIMEOUT_CUTOFF}" "${TOKEN_PAYLOAD_SIZE}"
+            echo "===== WRK RUN END ====="
+        } | tee "${WRK_LOG}"
+    elif [[ "${LOAD_GENERATOR}" == "paced" ]]; then
+        log "running paced sender profile=${PROFILE} batch_traces=${PACED_BATCH_TRACES} batch_sleep_ms=${PACED_BATCH_SLEEP_MS} duration=${DURATION}"
+        {
+            echo "===== PACED RUN BEGIN ====="
+            echo "profile=${PROFILE}"
+            echo "worker_threads=${WORKER_THREADS}"
+            echo "duration=${DURATION}"
+            echo "server_cpuset=${SERVER_CPUSET}"
+            echo "wrk_cpuset=${WRK_CPUSET}"
+            echo "perf_freq=${PERF_FREQ}"
+            echo "perf_call_graph=${PERF_CALL_GRAPH}"
+            echo "perf_event=${PERF_EVENT}"
+            echo "load_generator=${LOAD_GENERATOR}"
+            echo "paced_batch_traces=${PACED_BATCH_TRACES}"
+            echo "paced_batch_sleep_ms=${PACED_BATCH_SLEEP_MS}"
+            echo "paced_request_timeout_ms=${PACED_REQUEST_TIMEOUT_MS}"
+            echo
             taskset_wrap "${WRK_CPUSET}" \
-            wrk -t"${WRK_THREADS}" -c"${CONNECTIONS}" -d"${DURATION}" --latency \
-            -s "${WRK_SCRIPT}" "http://127.0.0.1:${PORT}" -- \
-            "${MODE}" "${SPANS_PER_TRACE}" "${TIMEOUT_CUTOFF}" "${TOKEN_PAYLOAD_SIZE}"
-        echo "===== WRK RUN END ====="
-    } | tee "${WRK_LOG}"
+                python3 "${PACED_SENDER}" \
+                --url "http://127.0.0.1:${PORT}/logs/spans" \
+                --mode "${MODE}" \
+                --spans-per-trace "${SPANS_PER_TRACE}" \
+                --batch-traces "${PACED_BATCH_TRACES}" \
+                --batch-sleep-ms "${PACED_BATCH_SLEEP_MS}" \
+                --duration-sec "${DURATION%s}" \
+                --request-timeout-ms "${PACED_REQUEST_TIMEOUT_MS}" \
+                --service-name "${PACED_SERVICE_NAME}"
+            echo "===== PACED RUN END ====="
+        } | tee "${WRK_LOG}"
+    else
+        echo "fatal: unsupported LOAD_GENERATOR=${LOAD_GENERATOR}, expected wrk or paced" >&2
+        exit 1
+    fi
+
+    if (( DRAIN_WAIT_SEC > 0 )); then
+        log "draining backend profile=${PROFILE} drain_wait_sec=${DRAIN_WAIT_SEC}"
+        sleep "${DRAIN_WAIT_SEC}"
+    fi
 
     wait "${perf_pid}"
 
@@ -329,6 +388,30 @@ run_perf_and_wrk() {
     "${FLAMEGRAPH_DIR}/flamegraph.pl" "${RUN_DIR}/trace.folded" > "${FLAME_SVG}"
 }
 
+emit_trace_db_stats() {
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        log "skip trace db stats because sqlite3 is unavailable"
+        return 0
+    fi
+
+    if [[ ! -f "${TRACE_DB}" ]]; then
+        log "skip trace db stats because db file is missing: ${TRACE_DB}"
+        return 0
+    fi
+
+    local summary_count span_count span_stats
+    summary_count="$(sqlite3 "${TRACE_DB}" 'select count(*) from trace_summary;' 2>/dev/null || echo "0")"
+    span_count="$(sqlite3 "${TRACE_DB}" 'select count(*) from trace_span;' 2>/dev/null || echo "0")"
+    span_stats="$(sqlite3 "${TRACE_DB}" 'select coalesce(min(span_count),0), coalesce(avg(span_count),0), coalesce(max(span_count),0) from trace_summary;' 2>/dev/null || echo "0|0|0")"
+
+    {
+        echo "trace_db=${TRACE_DB}"
+        echo "trace_summary_count=${summary_count}"
+        echo "trace_span_count=${span_count}"
+        echo "trace_span_stats=${span_stats}"
+    } | tee -a "${RUN_DIR}/run-summary.log"
+}
+
 if [[ "${PROFILE}" == "-h" || "${PROFILE}" == "--help" ]]; then
     usage
     exit 0
@@ -336,12 +419,15 @@ fi
 
 require_file "${SERVER_BIN}"
 require_file "${WRK_SCRIPT}"
+require_file "${PACED_SENDER}"
 require_file "${FLAMEGRAPH_DIR}/stackcollapse-perf.pl"
 require_file "${FLAMEGRAPH_DIR}/flamegraph.pl"
 require_command wrk
+require_command python3
 require_command perf
 require_command ss
 require_command lsof
+require_command sqlite3
 
 set_profile_args "${PROFILE}"
 
@@ -357,9 +443,15 @@ mkdir -p "${RUN_DIR}"
     echo "warmup_duration=${WARMUP_DURATION}"
     echo "warmup_connections=${WARMUP_CONNECTIONS}"
     echo "warmup_settle_sec=${WARMUP_SETTLE_SEC}"
+    echo "drain_wait_sec=${DRAIN_WAIT_SEC}"
     echo "duration=${DURATION}"
     echo "connections=${CONNECTIONS}"
     echo "wrk_threads=${WRK_THREADS}"
+    echo "load_generator=${LOAD_GENERATOR}"
+    echo "paced_batch_traces=${PACED_BATCH_TRACES}"
+    echo "paced_batch_sleep_ms=${PACED_BATCH_SLEEP_MS}"
+    echo "paced_request_timeout_ms=${PACED_REQUEST_TIMEOUT_MS}"
+    echo "paced_service_name=${PACED_SERVICE_NAME}"
     echo "server_cpuset=${SERVER_CPUSET}"
     echo "wrk_cpuset=${WRK_CPUSET}"
     echo "perf_freq=${PERF_FREQ}"
@@ -377,6 +469,7 @@ mkdir -p "${RUN_DIR}"
 
 start_server
 run_warmup
-run_perf_and_wrk
+run_perf_and_load
+emit_trace_db_stats
 
 log "flamegraph generated at ${FLAME_SVG}"
