@@ -7,8 +7,18 @@
 
 #include "ai/MockTraceAi.h"
 #include "core/TraceSessionManager.h"
+#include "persistence/BufferedTraceRepository.h"
 #include "persistence/SqliteTraceRepository.h"
 #include "threadpool/ThreadPool.h"
+
+namespace
+{
+std::unique_ptr<BufferedTraceRepository> MakeBufferedTraceRepository(TraceRepository* repo)
+{
+    auto sink = std::shared_ptr<TraceRepository>(repo, [](TraceRepository*) {});
+    return std::make_unique<BufferedTraceRepository>(std::move(sink));
+}
+}
 
 class TraceSessionManagerIntegrationTest : public ::testing::Test
 {
@@ -285,7 +295,8 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTraceEndAndPersistsAnalys
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(1, 100, std::nullopt);
     span.trace_end = true;
@@ -306,7 +317,8 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnCapacityAndStoresParentId
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/2, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/2, /*token_limit*/0);
 
     SpanEvent root = MakeSpan(2, 200, std::nullopt);
     SpanEvent child = MakeSpan(2, 201, 200);
@@ -347,8 +359,9 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTokenLimitWithoutTraceEnd
     ASSERT_GT(token_limit, 0u);
 
     // capacity 设大，确保不会被容量路径抢先触发。
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 /*trace_ai*/nullptr,
                                 /*capacity*/100,
                                 token_limit);
@@ -373,7 +386,8 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnDuplicateSpanId)
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent root = MakeSpan(3, 300, std::nullopt);
     EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
@@ -394,7 +408,8 @@ TEST_F(TraceSessionManagerIntegrationTest, PersistsSummarySpanAndAnalysisFields)
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent root = MakeSpan(4, 400, std::nullopt);
     root.name = "root-op";
@@ -463,7 +478,8 @@ TEST_F(TraceSessionManagerIntegrationTest, MarksCycleAsAnomaly)
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span_a = MakeSpan(5, 500, 501);
     span_a.attributes["seed"] = "cycle";
@@ -492,7 +508,8 @@ TEST_F(TraceSessionManagerIntegrationTest, TreatsMissingParentAsRoot)
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent orphan = MakeSpan(6, 600, 999);
     orphan.trace_end = true;
@@ -517,7 +534,8 @@ TEST_F(TraceSessionManagerIntegrationTest, HandlesOutOfOrderSpans)
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent child = MakeSpan(7, 701, 700);
     SpanEvent root = MakeSpan(7, 700, std::nullopt);
@@ -543,8 +561,9 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnIdleTimeoutWithoutTraceEn
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     // 这个用例只验证“超时触发基础落库”，不依赖 AI 返回结果，避免外部依赖导致抖动。
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 /*trace_ai*/nullptr,
                                 /*capacity*/10,
                                 /*token_limit*/0,
@@ -603,8 +622,9 @@ TEST_F(TraceSessionManagerIntegrationTest, FrequentUpdatesPreventEarlyTimeoutDis
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 /*trace_ai*/nullptr,
                                 /*capacity*/32,
                                 /*token_limit*/0,
@@ -659,8 +679,9 @@ TEST_F(TraceSessionManagerIntegrationTest, MaxDispatchPerTickDefersRemainingTime
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 /*trace_ai*/nullptr,
                                 /*capacity*/10,
                                 /*token_limit*/0,

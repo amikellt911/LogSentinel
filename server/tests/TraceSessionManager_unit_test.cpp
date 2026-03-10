@@ -15,12 +15,19 @@
 #include "core/TraceSessionManager.h"
 #undef private
 #include "notification/INotifier.h"
+#include "persistence/BufferedTraceRepository.h"
 #include "persistence/TraceRepository.h"
 #include "threadpool/ThreadPool.h"
 #include <nlohmann/json.hpp>
 
 namespace
 {
+std::unique_ptr<BufferedTraceRepository> MakeBufferedTraceRepository(TraceRepository* repo)
+{
+    auto sink = std::shared_ptr<TraceRepository>(repo, [](TraceRepository*) {});
+    return std::make_unique<BufferedTraceRepository>(std::move(sink));
+}
+
 // 用 FakeRepository 记录调用入参，目的是让单测只验证 TraceSessionManager 组装与调用是否正确，
 // 不依赖真实 SQLite，从而把失败定位收敛在 manager 逻辑本身。
 class FakeTraceRepository : public TraceRepository
@@ -178,7 +185,8 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenTraceEndIsTrue)
     // 目的：验证 trace_end=true 时，Push 会触发立即分发，而不是继续滞留在内存会话中。
     ThreadPool pool(1);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(11, 101, 1000);
     span.trace_end = true;
@@ -199,7 +207,8 @@ TEST_F(TraceSessionManagerUnitTest, RuntimeStatsTrackDispatchWorkerAiAndSave)
     ThreadPool pool(1);
     FakeTraceRepository repo;
     StubTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(910, 91001, 1000);
     span.trace_end = true;
@@ -226,7 +235,8 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenCapacityReached)
     // 目的：验证会话到达容量上限时会触发分发，防止单条 trace 无限制膨胀占用内存。
     ThreadPool pool(1);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/2, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/2, /*token_limit*/0);
 
     SpanEvent span1 = MakeSpan(22, 201, 1000);
     SpanEvent span2 = MakeSpan(22, 202, 1100);
@@ -267,7 +277,8 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenTokenLimitReached)
 
     // 阈值设为“两条 span 估算之和”，确保第一条不触发、第二条触发。
     const size_t token_limit = first_tokens + second_tokens;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, token_limit);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, token_limit);
 
     ASSERT_EQ(manager.Push(span1), TraceSessionManager::PushResult::Accepted);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
@@ -288,7 +299,8 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenDuplicateSpanIdAppears)
     // 目的：验证重复 span_id 会触发提前分发，避免脏数据持续污染当前会话。
     ThreadPool pool(1);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(33, 301, 1000);
 
@@ -310,7 +322,8 @@ TEST_F(TraceSessionManagerUnitTest, DispatchBuildsCorrectTraceTreeAndOrder)
     // 目的：验证 root-child 关系构建后，子节点会按 start_time_ms 排序进入落库顺序。
     ThreadPool pool(1);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent root = MakeSpan(88, 801, 1000);
     SpanEvent child_late = MakeSpan(88, 803, 3000);
@@ -338,7 +351,8 @@ TEST_F(TraceSessionManagerUnitTest, DispatchHandlesMissingParentAsRoot)
     // 说明：当前实现会把该节点当作 root 参与遍历，但保留原始 parent_id 以便排障定位上游数据问题。
     ThreadPool pool(1);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent orphan = MakeSpan(99, 901, 1000);
     orphan.parent_span_id = 9999;
@@ -386,7 +400,8 @@ TEST_F(TraceSessionManagerUnitTest, DispatchPersistsSummaryAndSpansToRepository)
     // 目的：验证 manager 组装出的 summary/spans 是否按契约映射到 repository。
     ThreadPool pool(1);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent root = MakeSpan(44, 401, 1000);
     root.name = "root-op";
@@ -431,7 +446,8 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSkipsAnalysisWhenAiProviderIsNull)
     // 目的：验证 AI 依赖为空时仍可落库基础 trace 数据，确保最小部署模式可用。
     ThreadPool pool(1);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(55, 501, 1000);
     span.trace_end = true;
@@ -454,7 +470,8 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
     FakeTraceRepository repo;
     StubTraceAi ai;
     SpyNotifier notifier;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0, &notifier);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0, &notifier);
 
     SpanEvent critical_span = MakeSpan(66, 601, 1000);
     critical_span.trace_end = true;
@@ -488,7 +505,8 @@ TEST_F(TraceSessionManagerUnitTest, DispatchDoesNotNotifyWhenSaveFails)
     StubTraceAi ai;
     ai.result.risk_level = RiskLevel::CRITICAL;
     SpyNotifier notifier;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0, &notifier);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0, &notifier);
 
     SpanEvent span = MakeSpan(111, 1101, 1000);
     span.trace_end = true;
@@ -504,7 +522,8 @@ TEST_F(TraceSessionManagerUnitTest, PushRejectsWhenThreadPoolIsNull)
 {
     // 目的：验证 thread_pool 为空时直接拒绝请求，而不是误报 accepted 后把 trace 静默丢掉。
     FakeTraceRepository repo;
-    TraceSessionManager manager(nullptr, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(nullptr, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(122, 1201, 1000);
     span.trace_end = true;
@@ -519,7 +538,8 @@ TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredAndRollsBackWhenS
     // 目的：验证 ready trace 在 submit 失败时不会蒸发，而是回滚回 manager 并标记为待重投状态。
     ThreadPool pool(1, /*max_queue_size*/0);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(123, 12301, 1000);
     span.trace_end = true;
@@ -555,7 +575,8 @@ TEST_F(TraceSessionManagerUnitTest, RetryDelayBackoffGrowsOnRepeatedSubmitFailur
     // 目的：验证 ready retry 会话连续失败时会增加 retry_count，并把 next_retry_tick 往后推，而不是每 tick 原地打桩。
     ThreadPool pool(1, /*max_queue_size*/0);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(124, 12401, 1000);
     span.trace_end = true;
@@ -586,7 +607,8 @@ TEST_F(TraceSessionManagerUnitTest, RetryBackoffDoesNotRetryBeforeNextRetryTick)
     // 必须等 current_tick 追到 next_retry_tick，retry_count 才会再次增加。
     ThreadPool pool(1, /*max_queue_size*/0);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(125, 12501, 1000);
     span.trace_end = true;
@@ -630,9 +652,10 @@ TEST_F(TraceSessionManagerUnitTest, RebuildTimeWheelKeepsReadyRetryLaterOnRetryS
     // 目的：验证 ReadyRetryLater 会话在重建时间轮后仍走“快速重投”语义，而不是退回普通 idle timeout。
     ThreadPool pool(1, /*max_queue_size*/0);
     FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(
         &pool,
-        &repo,
+        buffered_repo.get(),
         nullptr,
         /*capacity*/10,
         /*token_limit*/0,
@@ -675,9 +698,10 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DispatchesSessionWithoutTraceEn
     // 这条用例专门覆盖时间轮最基础行为：不到期不分发，到期后分发。
     ThreadPool pool(1);
     FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(
         &pool,
-        &repo,
+        buffered_repo.get(),
         nullptr,
         /*capacity*/10,
         /*token_limit*/0,
@@ -711,9 +735,10 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_ReschedulePreventsEarlyDispatch
     // 目的：验证同一 trace 续命后，旧超时计划不会提前触发分发。
     ThreadPool pool(1);
     FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(
         &pool,
-        &repo,
+        buffered_repo.get(),
         nullptr,
         /*capacity*/10,
         /*token_limit*/0,
@@ -750,9 +775,10 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_TraceKeyReuseDoesNotTriggerNewS
     // 目的：验证 trace_key 复用时，旧会话的轮子节点不会误命中新会话（epoch 防串台）。
     ThreadPool pool(1);
     FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(
         &pool,
-        &repo,
+        buffered_repo.get(),
         nullptr,
         /*capacity*/10,
         /*token_limit*/0,
@@ -794,9 +820,10 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_MaxDispatchPerTickDefersRemaini
     // 目的：验证单轮分发上限生效，未处理节点会顺延而不是丢失。
     ThreadPool pool(1);
     FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(
         &pool,
-        &repo,
+        buffered_repo.get(),
         nullptr,
         /*capacity*/10,
         /*token_limit*/0,
@@ -836,9 +863,10 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DeduplicatesSameTraceInSingleSw
     // 目的：验证同一槽里出现同 trace 的重复有效节点时，只会分发一次。
     ThreadPool pool(1);
     FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(
         &pool,
-        &repo,
+        buffered_repo.get(),
         nullptr,
         /*capacity*/10,
         /*token_limit*/0,
@@ -878,9 +906,10 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_RebuildOnIdleTimeoutChangeUsesN
     // 目的：验证动态修改 idle_timeout 后，重建时间轮并按新超时策略触发分发。
     ThreadPool pool(1);
     FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(
         &pool,
-        &repo,
+        buffered_repo.get(),
         nullptr,
         /*capacity*/10,
         /*token_limit*/0,
@@ -912,8 +941,9 @@ TEST_F(TraceSessionManagerUnitTest, PushRejectsNewTraceButAllowsExistingTraceWhe
     // 目的：验证进入 overload 后只拒绝新 trace，已在内存中的老 trace 仍尽量放行，避免聚合被截断。
     ThreadPool pool(1, /*max_queue_size*/100);
     FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 nullptr,
                                 /*capacity*/100,
                                 /*token_limit*/0,
@@ -951,8 +981,9 @@ TEST_F(TraceSessionManagerUnitTest, PushRejectsExistingTraceWhenCritical)
     // 目的：验证进入 critical 后连老 trace 也允许拒绝，优先保住进程，不继续用完整性换 OOM 风险。
     ThreadPool pool(1, /*max_queue_size*/100);
     FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 nullptr,
                                 /*capacity*/100,
                                 /*token_limit*/0,
@@ -989,7 +1020,8 @@ TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredWhenSubmitFails)
     ThreadPool pool(1, 10);
     FakeTraceRepository repo;
     // 设 capacity 为 1，token_limit 为 0，这样推一个 span 就会立刻触发 Dispatch。
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/1, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/1, /*token_limit*/0);
 
     // 模拟线程池已关闭，导致 submit 必定返回 false。
     pool.shutdown();
@@ -1015,7 +1047,8 @@ TEST_F(TraceSessionManagerUnitTest, BackpressureRecoversWhenWatermarkDropsBelowL
     ThreadPool pool(1, 100);
     FakeTraceRepository repo;
     // Hard limit = 100 -> Low = 55, High = 75, Critical = 90
-    TraceSessionManager manager(&pool, &repo, nullptr, 100, 0, nullptr, 5000, 500, 512, 100);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, 100, 0, nullptr, 5000, 500, 512, 100);
 
     // 1. 达到 High 水位 (76 > 75) 触发 Overload。
     for (size_t i = 0; i < 76; ++i) {

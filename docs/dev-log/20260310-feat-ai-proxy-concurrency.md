@@ -170,3 +170,62 @@ Pitfalls
 
 追加验证
 - `cmake --build server/build -j2` 已通过，`LogSentinel` 与相关测试目标重新链接成功。
+
+追加记录（八）
+Git Commit Message
+feat(persistence): 接通 Trace 双缓冲写入主调用链
+
+Modification
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- server/src/main.cpp
+- docs/todo-list/Todo_SqliteDoubleBuffer.md
+- docs/dev-log/20260310-feat-ai-proxy-concurrency.md
+
+Learning Tips
+Newbie Tips
+- “缓冲层代码写完了”和“运行时真的走到缓冲层了”完全是两回事。既然 `main` 里如果还是只把 `SqliteTraceRepository` 直接塞给 `TraceSessionManager`，那前面做的双缓冲实现就只是摆设，线上路径依然还是旧的单条写入。
+- 数据一旦被拆成“主数据先落、分析结果后落”两段，那么主数据那一段需要的 DFS 顺序就不能再偷懒等到 worker 里现算。既然 `summary/span_records` 要先入 `BufferedTraceRepository`，那 `Dispatch` 把 session 从 manager 里摘出来时，就得先把顺序和序列化结果准备好。
+
+Function Explanation
+- `BufferedTraceRepository` 注入到 `TraceSessionManager`
+  现在入口在 `server/src/main.cpp` 里真正实例化了 `BufferedTraceRepository(trace_repo)`，再把裸指针传给 `TraceSessionManager`。既然 flush 线程生命周期要跟主进程一起走，那么这里用 `shared_ptr` 持有仓库对象、manager 只拿非拥有指针，是为了保证主进程退出前缓冲层一直活着。
+- `TraceSessionManager::DispatchLocked`
+  这一步把 `trace_payload / summary / span_records` 的准备提前到了 submit 之前。既然 submit 失败时 session 还可能回滚重试，那么主数据是否已经 append 成功要靠 `primary_enqueued` 明确标记；接着 worker 线程只负责基于已经准备好的 `trace_payload` 做 AI 分析，再把 analysis append 进第二条缓冲线。
+
+Pitfalls
+- 不要在接调用链时只顾着把 `buffered_trace_repo_` 塞进去，却忘了主数据构建依赖 `order`。之前那版代码里 `BuildTraceSummary(*session, order)` 的 `order` 是空的，真接上双缓冲以后，主数据会先被写成空 span，这种 bug 比“没接调用”还阴。
+- `primary_enqueued` 这个标记不能乱删。既然 `AppendPrimary` 发生在 submit 之前，那么 submit 失败回滚后 session 会重新排队；如果不记住“这一批主数据已经进过缓冲层”，下一次重试就会把同一批 summary/spans 重复写进库里。
+- 当前语义已经明确成“主数据先落库，分析结果后补齐”。所以崩溃恢复时天然可能出现“只有 summary/spans，没有 analysis”的中间态；这不是实现失误，而是这条时间线的客观结果，后面如果要补偿，得单独设计。
+
+追加验证
+- `cd server && cmake --build build -j2` 已通过，说明 `main -> TraceSessionManager -> BufferedTraceRepository` 这条接线至少已经能完整编译和链接。
+
+追加记录（九）
+Git Commit Message
+refactor(core): 收口 TraceSessionManager 持久化依赖
+
+Modification
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- server/src/main.cpp
+- server/tests/TraceSessionManager_unit_test.cpp
+- server/tests/TraceSessionManager_integration_test.cpp
+- server/tests/LogHandler_test.cpp
+- docs/todo-list/Todo_SqliteDoubleBuffer.md
+- docs/dev-log/20260310-feat-ai-proxy-concurrency.md
+
+Learning Tips
+Newbie Tips
+- “双缓冲已经是主链路”这句话如果是真的，那上层就不该再偷偷保留一条 `TraceRepository` 直写后门。既然 manager 还同时认识 `trace_repo` 和 `buffered_trace_repo`，那后面一出问题你就会反复纠结“这次到底走的是哪条持久化路径”。
+- 依赖收口不是删成员这么简单。既然构造函数签名一变，主程序和测试里所有 manager 调用点都得一起改；不把这条线一口气收完，代码就会长期处于“看起来重构了，其实到处都是兼容胶水”的半死不活状态。
+
+Function Explanation
+- `TraceSessionManager::PushLocked`
+  这里现在把“链路可用”的条件明确成 `thread_pool_ && buffered_trace_repo_`。既然主数据和分析结果都必须分段 append 到同一个双缓冲写入器里，那么少了线程池或者少了缓冲写入器，本质上都是这条 trace 管线不可用，入口就该直接返回 `RejectedUnavailable`。
+- 测试里的 `MakeBufferedTraceRepository`
+  单测和集成测试里加了一个很小的 helper，用 aliasing `shared_ptr` 把已有 fake/sqlite repo 包进 `BufferedTraceRepository`。既然测试主体想验证的还是 manager 行为，就没必要为了“谁拥有 repo 生命周期”在每个 case 里重复写一遍样板。
+
+Pitfalls
+- 不要一边说“manager 只走双缓冲”，一边还让 worker 在 `buffered_trace_repo` 为空时 fallback 到 `SaveSingleTraceAtomic`。这种代码最烦人的地方不是丑，而是它会把持久化语义重新分叉，后面排查数据重复、数据缺失时很难一眼看出是哪个分支在跑。
+- 现在 `PushLocked` 缺 `buffered_trace_repo_` 就会直接拒绝，所以那些旧测试如果还按“只有 repo 没有 buffer”去构 manager，语义已经不对了，必须跟着一起切过去。这个痛苦是应该承受的，不然“只认双缓冲”永远只是嘴上说说。
