@@ -69,7 +69,7 @@ bool BufferedTraceRepository::AppendPrimary(TracePrimaryWrite write)
                                    std::make_move_iterator(write.spans.begin()),
                                    std::make_move_iterator(write.spans.end()));
 
-    if (!ShouldFlushPrimaryCurrentLocked()) {
+    if (!ShouldFlushPrimaryCurrentBySizeLocked()) {
         return true;
     }
 
@@ -100,7 +100,7 @@ bool BufferedTraceRepository::AppendAnalysis(TraceAnalysisWrite write)
         current_analysis_->prompt_debugs.push_back(std::move(write.prompt_debug.value()));
     }
 
-    if (!ShouldFlushAnalysisCurrentLocked()) {
+    if (!ShouldFlushAnalysisCurrentBySizeLocked()) {
         return true;
     }
 
@@ -125,7 +125,7 @@ BufferedTraceRepository::AnalysisBufferPtr BufferedTraceRepository::CreateAnalys
     return buffer;
 }
 
-bool BufferedTraceRepository::ShouldFlushPrimaryCurrentLocked() const
+bool BufferedTraceRepository::ShouldFlushPrimaryCurrentBySizeLocked() const
 {
     if (!current_primary_ || current_primary_->Empty()) {
         return false;
@@ -136,7 +136,7 @@ bool BufferedTraceRepository::ShouldFlushPrimaryCurrentLocked() const
     return current_primary_->spans.size() >= config_.primary_span_reserve;
 }
 
-bool BufferedTraceRepository::ShouldFlushAnalysisCurrentLocked() const
+bool BufferedTraceRepository::ShouldFlushAnalysisCurrentBySizeLocked() const
 {
     if (!current_analysis_ || current_analysis_->Empty()) {
         return false;
@@ -145,6 +145,22 @@ bool BufferedTraceRepository::ShouldFlushAnalysisCurrentLocked() const
     // 分析结果这条线先以 analyses 条数做主水位。
     // 既然 prompt_debug 本来就是可选表，就不该拿它的数量做主条件。
     return current_analysis_->analyses.size() >= config_.analysis_reserve;
+}
+
+bool BufferedTraceRepository::ShouldFlushPrimaryCurrentByTimeLocked(int64_t now_ms) const
+{
+    if (!current_primary_ || current_primary_->Empty() || current_primary_->first_enqueue_ms <= 0) {
+        return false;
+    }
+    return now_ms - current_primary_->first_enqueue_ms >= config_.primary_flush_interval_ms;
+}
+
+bool BufferedTraceRepository::ShouldFlushAnalysisCurrentByTimeLocked(int64_t now_ms) const
+{
+    if (!current_analysis_ || current_analysis_->Empty() || current_analysis_->first_enqueue_ms <= 0) {
+        return false;
+    }
+    return now_ms - current_analysis_->first_enqueue_ms >= config_.analysis_flush_interval_ms;
 }
 
 BufferedTraceRepository::PrimaryBufferPtr BufferedTraceRepository::TakeOrCreateFreePrimaryBufferLocked()
@@ -215,6 +231,36 @@ BufferedTraceRepository::AnalysisBufferPtr BufferedTraceRepository::TakeOneFullA
     return buffer;
 }
 
+BufferedTraceRepository::PrimaryBufferPtr BufferedTraceRepository::TakeOnePrimaryBufferForFlushLocked(int64_t now_ms,
+                                                                                                      bool draining)
+{
+    if (!full_primary_buffers_.empty()) {
+        return TakeOneFullPrimaryBufferLocked();
+    }
+
+    if ((draining || ShouldFlushPrimaryCurrentByTimeLocked(now_ms)) && current_primary_ && !current_primary_->Empty()) {
+        RotatePrimaryBuffersLocked();
+        return TakeOneFullPrimaryBufferLocked();
+    }
+
+    return nullptr;
+}
+
+BufferedTraceRepository::AnalysisBufferPtr BufferedTraceRepository::TakeOneAnalysisBufferForFlushLocked(int64_t now_ms,
+                                                                                                        bool draining)
+{
+    if (!full_analysis_buffers_.empty()) {
+        return TakeOneFullAnalysisBufferLocked();
+    }
+
+    if ((draining || ShouldFlushAnalysisCurrentByTimeLocked(now_ms)) && current_analysis_ && !current_analysis_->Empty()) {
+        RotateAnalysisBuffersLocked();
+        return TakeOneFullAnalysisBufferLocked();
+    }
+
+    return nullptr;
+}
+
 void BufferedTraceRepository::RecyclePrimaryBuffer(PrimaryBufferPtr buffer)
 {
     if (!buffer) {
@@ -248,14 +294,15 @@ void BufferedTraceRepository::FlushLoop()
 
         PrimaryBufferPtr primary_buffer;
         AnalysisBufferPtr analysis_buffer;
+        const int64_t now_ms = NowMs();
 
         {
             std::lock_guard<std::mutex> primary_lock(primary_mutex_);
-            primary_buffer = TakeOneFullPrimaryBufferLocked();
+            primary_buffer = TakeOnePrimaryBufferForFlushLocked(now_ms, false);
         }
         {
             std::lock_guard<std::mutex> analysis_lock(analysis_mutex_);
-            analysis_buffer = TakeOneFullAnalysisBufferLocked();
+            analysis_buffer = TakeOneAnalysisBufferForFlushLocked(now_ms, false);
         }
 
         if (primary_buffer) {
@@ -280,14 +327,15 @@ void BufferedTraceRepository::FlushLoop()
     while (true) {
         PrimaryBufferPtr primary_buffer;
         AnalysisBufferPtr analysis_buffer;
+        const int64_t now_ms = NowMs();
 
         {
             std::lock_guard<std::mutex> primary_lock(primary_mutex_);
-            primary_buffer = TakeOneFullPrimaryBufferLocked();
+            primary_buffer = TakeOnePrimaryBufferForFlushLocked(now_ms, true);
         }
         {
             std::lock_guard<std::mutex> analysis_lock(analysis_mutex_);
-            analysis_buffer = TakeOneFullAnalysisBufferLocked();
+            analysis_buffer = TakeOneAnalysisBufferForFlushLocked(now_ms, true);
         }
 
         if (!primary_buffer && !analysis_buffer) {

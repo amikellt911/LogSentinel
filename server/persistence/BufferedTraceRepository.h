@@ -97,14 +97,18 @@ private:
 
     PrimaryBufferPtr CreatePrimaryBuffer() const;
     AnalysisBufferPtr CreateAnalysisBuffer() const;
-    bool ShouldFlushPrimaryCurrentLocked() const;
-    bool ShouldFlushAnalysisCurrentLocked() const;
+    bool ShouldFlushPrimaryCurrentBySizeLocked() const;
+    bool ShouldFlushAnalysisCurrentBySizeLocked() const;
+    bool ShouldFlushPrimaryCurrentByTimeLocked(int64_t now_ms) const;
+    bool ShouldFlushAnalysisCurrentByTimeLocked(int64_t now_ms) const;
     PrimaryBufferPtr TakeOrCreateFreePrimaryBufferLocked();
     AnalysisBufferPtr TakeOrCreateFreeAnalysisBufferLocked();
     void RotatePrimaryBuffersLocked();
     void RotateAnalysisBuffersLocked();
     PrimaryBufferPtr TakeOneFullPrimaryBufferLocked();
     AnalysisBufferPtr TakeOneFullAnalysisBufferLocked();
+    PrimaryBufferPtr TakeOnePrimaryBufferForFlushLocked(int64_t now_ms, bool draining);
+    AnalysisBufferPtr TakeOneAnalysisBufferForFlushLocked(int64_t now_ms, bool draining);
     void RecyclePrimaryBuffer(PrimaryBufferPtr buffer);
     void RecycleAnalysisBuffer(AnalysisBufferPtr buffer);
     void FlushLoop();

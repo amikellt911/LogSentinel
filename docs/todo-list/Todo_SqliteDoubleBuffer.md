@@ -10,6 +10,7 @@
 - [x] 实现前台主数据 append 与分析结果 append 的最小切桶逻辑（`current / next / free / full`）
 - [x] 实现后台单 flush 线程：`wait_for` 定时唤醒、按主数据优先顺序 flush、无锁状态下调用底层 sink
 - [x] 在 `SqliteTraceRepository` 中真正实现 `SavePrimaryBatch / SaveAnalysisBatch`，用“一批一次事务”替代“循环单条事务”
+- [x] 实现后台按时间切 `current` 与关闭时强制 drain 半桶，补齐“满水位之外”的最小 flush 语义
 - [ ] 补最小正确性验证：主数据/分析结果都能落库，关闭时不丢最后一批
 - [ ] 预留缓冲区状态观测点，后续再考虑和背压联动（第一版先不做联动策略）
 - [x] 追加同日 dev-log，记录为什么双缓冲放在 `TraceRepository` 包装层而不是写死在 SQLite 实现里

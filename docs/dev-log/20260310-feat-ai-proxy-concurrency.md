@@ -122,3 +122,29 @@ Pitfalls
 追加验证
 - `cmake --build server/build -j2` 已通过，`LogSentinel`、持久化模块和相关测试目标均能重新链接。
 - `./server/build/test_sqlite_trace_repo` 已通过，12/12 通过。
+
+追加记录（六）
+Git Commit Message
+feat(persistence): 补齐双缓冲定时切桶与关闭时 drain 语义
+
+Modification
+- server/persistence/BufferedTraceRepository.h
+- server/persistence/BufferedTraceRepository.cpp
+- docs/todo-list/Todo_SqliteDoubleBuffer.md
+- docs/dev-log/20260310-feat-ai-proxy-concurrency.md
+
+Learning Tips
+Newbie Tips
+- 双缓冲如果只会“满水位切桶”，那小流量场景会很别扭。既然 current 桶可能一直装不满，但数据已经在内存里放了很久，那么后台线程就必须定时醒来看看，必要时主动把 current 封箱送去 flush。
+- 析构时只 drain `full_*_buffers_` 还不够。既然最后半桶数据可能还留在 `current_*` 里，那么 stop 阶段必须把 current 也强制切出去，不然最后那一批永远没有机会落库。
+
+Function Explanation
+- `ShouldFlushPrimaryCurrentByTimeLocked / ShouldFlushAnalysisCurrentByTimeLocked`
+  这两个判断只看“当前桶是不是非空、首条数据进桶时间是不是已经超过 interval”。既然后台线程的定时语义只是兜底，那它就不该和前台按数量切桶那套判断混在一起。
+- `TakeOnePrimaryBufferForFlushLocked / TakeOneAnalysisBufferForFlushLocked`
+  这一步把“先拿满桶；如果没有满桶，再按时间或 drain 需要把 current 切出去”收成了统一入口。这样前台和后台虽然都能触发切桶，但真正的切桶动作始终通过同一套锁内路径完成，不会一边偷 current、一边往旧桶里写。
+
+Pitfalls
+- 不要让后台线程在无锁状态下直接碰 `current_*`。既然前台 append 也会改 current，那么后台如果不通过同一把锁切桶，马上就会回到你前面最怕的那种生命周期竞态。
+- 定时唤醒不是时间轮场景。既然这里只有一个 flush 工人，不是几千个对象各自超时，那么 `wait_for(min(primary_interval, analysis_interval))` 就够了，别为了“有个定时器”再把时间轮搬进来。
+- 这一步补的是 flush 语义，不是最终正确性证明。编译通过只能说明路径接起来了，还不能替代“主数据/分析结果都真正落库，关闭时最后半桶不丢”的专门验证。
