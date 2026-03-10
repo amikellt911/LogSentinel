@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -71,8 +72,17 @@ public:
         }
     };
 
-    using TracePrimaryWrite = TraceRepository::TracePrimaryWrite;
-    using TraceAnalysisWrite = TraceRepository::TraceAnalysisWrite;
+    struct TracePrimaryWrite
+    {
+        TraceSummary summary;
+        std::vector<TraceSpanRecord> spans;
+    };
+
+    struct TraceAnalysisWrite
+    {
+        std::optional<TraceAnalysisRecord> analysis;
+        std::optional<PromptDebugRecord> prompt_debug;
+    };
 
     explicit BufferedTraceRepository(std::shared_ptr<TraceRepository> sink);
     BufferedTraceRepository(std::shared_ptr<TraceRepository> sink, Config config);
@@ -93,6 +103,10 @@ private:
     AnalysisBufferPtr TakeOrCreateFreeAnalysisBufferLocked();
     void RotatePrimaryBuffersLocked();
     void RotateAnalysisBuffersLocked();
+    PrimaryBufferPtr TakeOneFullPrimaryBufferLocked();
+    AnalysisBufferPtr TakeOneFullAnalysisBufferLocked();
+    void RecyclePrimaryBuffer(PrimaryBufferPtr buffer);
+    void RecycleAnalysisBuffer(AnalysisBufferPtr buffer);
     void FlushLoop();
     void StopFlushThread();
 

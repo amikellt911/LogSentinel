@@ -195,6 +195,46 @@ void BufferedTraceRepository::RotateAnalysisBuffersLocked()
     next_analysis_ = TakeOrCreateFreeAnalysisBufferLocked();
 }
 
+BufferedTraceRepository::PrimaryBufferPtr BufferedTraceRepository::TakeOneFullPrimaryBufferLocked()
+{
+    if (full_primary_buffers_.empty()) {
+        return nullptr;
+    }
+    auto buffer = std::move(full_primary_buffers_.front());
+    full_primary_buffers_.erase(full_primary_buffers_.begin());
+    return buffer;
+}
+
+BufferedTraceRepository::AnalysisBufferPtr BufferedTraceRepository::TakeOneFullAnalysisBufferLocked()
+{
+    if (full_analysis_buffers_.empty()) {
+        return nullptr;
+    }
+    auto buffer = std::move(full_analysis_buffers_.front());
+    full_analysis_buffers_.erase(full_analysis_buffers_.begin());
+    return buffer;
+}
+
+void BufferedTraceRepository::RecyclePrimaryBuffer(PrimaryBufferPtr buffer)
+{
+    if (!buffer) {
+        return;
+    }
+    buffer->ClearButKeepCapacity();
+    std::lock_guard<std::mutex> lock(primary_mutex_);
+    free_primary_buffers_.push_back(std::move(buffer));
+}
+
+void BufferedTraceRepository::RecycleAnalysisBuffer(AnalysisBufferPtr buffer)
+{
+    if (!buffer) {
+        return;
+    }
+    buffer->ClearButKeepCapacity();
+    std::lock_guard<std::mutex> lock(analysis_mutex_);
+    free_analysis_buffers_.push_back(std::move(buffer));
+}
+
 void BufferedTraceRepository::FlushLoop()
 {
     const auto primary_interval = std::chrono::milliseconds(std::max<int64_t>(1, config_.primary_flush_interval_ms));
@@ -203,10 +243,70 @@ void BufferedTraceRepository::FlushLoop()
 
     std::unique_lock<std::mutex> lock(state_mutex_);
     while (!stopping_) {
-        // 第一版先只把线程生命周期和唤醒骨架立起来。
-        // 真正的“切桶 + 取桶 + 无锁 flush”逻辑下一刀再接，不在这一刀里把并发状态机和 SQL 一起揉进去。
         flush_cv_.wait_for(lock, sleep_interval, [this]() { return stopping_; });
-        (void)NowMs();
+        lock.unlock();
+
+        PrimaryBufferPtr primary_buffer;
+        AnalysisBufferPtr analysis_buffer;
+
+        {
+            std::lock_guard<std::mutex> primary_lock(primary_mutex_);
+            primary_buffer = TakeOneFullPrimaryBufferLocked();
+        }
+        {
+            std::lock_guard<std::mutex> analysis_lock(analysis_mutex_);
+            analysis_buffer = TakeOneFullAnalysisBufferLocked();
+        }
+
+        if (primary_buffer) {
+            if (!primary_buffer->summaries.empty() || !primary_buffer->spans.empty()) {
+                (void)sink_->SavePrimaryBatch(primary_buffer->summaries, primary_buffer->spans);
+            }
+            RecyclePrimaryBuffer(std::move(primary_buffer));
+        }
+
+        if (analysis_buffer) {
+            if (!analysis_buffer->analyses.empty() || !analysis_buffer->prompt_debugs.empty()) {
+                (void)sink_->SaveAnalysisBatch(analysis_buffer->analyses, analysis_buffer->prompt_debugs);
+            }
+            RecycleAnalysisBuffer(std::move(analysis_buffer));
+        }
+
+        lock.lock();
+    }
+
+    lock.unlock();
+
+    while (true) {
+        PrimaryBufferPtr primary_buffer;
+        AnalysisBufferPtr analysis_buffer;
+
+        {
+            std::lock_guard<std::mutex> primary_lock(primary_mutex_);
+            primary_buffer = TakeOneFullPrimaryBufferLocked();
+        }
+        {
+            std::lock_guard<std::mutex> analysis_lock(analysis_mutex_);
+            analysis_buffer = TakeOneFullAnalysisBufferLocked();
+        }
+
+        if (!primary_buffer && !analysis_buffer) {
+            break;
+        }
+
+        if (primary_buffer) {
+            if (!primary_buffer->summaries.empty() || !primary_buffer->spans.empty()) {
+                (void)sink_->SavePrimaryBatch(primary_buffer->summaries, primary_buffer->spans);
+            }
+            RecyclePrimaryBuffer(std::move(primary_buffer));
+        }
+
+        if (analysis_buffer) {
+            if (!analysis_buffer->analyses.empty() || !analysis_buffer->prompt_debugs.empty()) {
+                (void)sink_->SaveAnalysisBatch(analysis_buffer->analyses, analysis_buffer->prompt_debugs);
+            }
+            RecycleAnalysisBuffer(std::move(analysis_buffer));
+        }
     }
 }
 

@@ -77,3 +77,18 @@ feat(persistence): 接入双缓冲前台最小切桶逻辑
 - `BufferedTraceRepository` 现在已经接上了前台两条缓冲线的最小切桶逻辑：`AppendPrimary` 会把 `summary + spans` 写进 `current_primary_`，按 `spans.size()` 看主水位；`AppendAnalysis` 会把 `analysis + prompt_debug` 写进 `current_analysis_`，按 `analyses.size()` 看主水位。
 - 两条线一旦达到各自主水位，就会执行同一套最小切桶动作：把 `current` move 进 `full` 队列、让 `next` 顶上来成为新的 `current`、再从 `free` 池补一只新的 `next`，最后 `notify_one()` 叫醒后台 flush 线程。
 - 这一步还没有接“时间到切 current”和“后台线程真实 flush”。也就是说，现在前台切桶已经成形，但后台线程还只是生命周期骨架，SQLite 这边也还没有真正的一批一事务实现。
+
+追加记录（三）
+Git Commit Message
+feat(persistence): 接入双缓冲后台最小消费闭环
+
+- `BufferedTraceRepository` 的后台 flush 线程现在已经不再只是空壳。它会用 `wait_for` 休眠，醒来后分别从 `full_primary_buffers_` 和 `full_analysis_buffers_` 各拿一桶出来，在无锁状态下调用底层 `sink_->SavePrimaryBatch(...) / SaveAnalysisBatch(...)`，写完后再 `clear()` 并回收到 free 池。
+- 这一刀故意把锁边界收得很短：锁内只做“从满桶队列拿桶”和“把空桶放回 free 池”，真正慢的 batch flush 都放在锁外。既然前台 append 是高频路径，这个边界必须守住，不然后台一写库就会把前台全部堵死。
+- 当前后台线程还没有接“按时间把没满的 current 桶主动切出去”这条逻辑。也就是说，这一版已经形成“前台满水位切桶 -> 后台消费满桶”的最小闭环，但定时触发 flush 还没真正生效，SQLite 底层也还没 override 成“一批一事务”的高效实现。
+
+追加记录（四）
+Git Commit Message
+feat(persistence): 调整批量写接口为按表平铺直写
+
+- 这条线又收了一次数据形状。既然 `PrimaryBufferGroup` 和 `AnalysisBufferGroup` 内部本来就是 SoA 形状（`summaries/spans`、`analyses/prompt_debugs`），那么后台 flush 不该再把它们重新组回 `vector<TracePrimaryWrite>` 或 `vector<TraceAnalysisWrite>`。这一步已经把 `TraceRepository` 的 batch 接口改成直接吃按表拆开的两个 vector，后台线程也改成把桶里的平铺数据原样交给底层 sink。
+- 也就是说，现在后台 flush 的方向已经和桶内部形状一致了：主数据直接走 `SavePrimaryBatch(summaries, spans)`，分析结果直接走 `SaveAnalysisBatch(analyses, prompt_debugs)`，不再在缓冲层做多余重组。
