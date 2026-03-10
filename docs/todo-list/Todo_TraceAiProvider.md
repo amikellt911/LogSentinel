@@ -17,6 +17,7 @@
 - [x] 重新确认 `main.py -> provider.analyze_trace` 当前同步调用链，锁定真正阻塞 event loop 的位置
 - [x] 采用框架自带线程池方案，在 `main.py` 路由层把同步 provider 调用移出 event loop
 - [x] 保持 `AIProvider` / `GeminiProvider` / `MockProvider` 现有同步接口不变，先不做整套 async 化改造
-- [ ] 验证 `/analyze/trace/mock` 与 `/analyze/trace/gemini` 在新调用方式下都能正常返回
-- [ ] 补最小验证：并发请求下 mock 不再因 `time.sleep` 把整个 proxy 单车道堵死
+- [ ] 验证 `/analyze/trace/mock` 在新调用方式下能正常返回（本次不拿 gemini 做并发验证）
+- [x] 补一个最小并发验证脚本，固定并发打 `/analyze/trace/mock`，通过总墙钟时间判断 mock 是否仍是单车道
+- [ ] 实跑并发验证脚本，确认 mock 不再因 `time.sleep` 把整个 proxy 单车道堵死
 - [x] 追加同日 dev-log，记录“为什么先走线程池桥接，而不是 provider 全 async 化”

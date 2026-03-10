@@ -23,3 +23,8 @@ Pitfalls
 - 不要误以为“把同步函数名字改成 `async def`”就异步了。既然函数内部还是同步 SDK 调用、还是 `time.sleep`，那只是换皮，event loop 还是会被堵。
 - 不要在 event loop 线程里直接跑第三方同步 SDK。既然像 Gemini 这种调用本质上还是同步网络请求，那么如果不做线程池桥接，单个慢请求就会把整个 Python proxy 的接入层一起拖慢。
 - 线程池桥接解决的是“别堵住 event loop”，不是“全局并发策略已经设计好了”。如果后面要做模型降级、限流、优先级或者 fallback，这些还得在更外层单独控制，不能指望线程池本身替你兜底。
+
+追加记录
+- 新增 `server/tests/verify_ai_proxy_concurrency.py`，专门验证 `/analyze/trace/mock` 的固定并发总墙钟时间。
+- 这次没有继续拿 `wrk` 做并发验证。既然 `wrk` 的模型是“连接一空就继续狂发”，那它更适合压吞吐，不适合验证 “5 个并发请求会不会被 `0.5s` 的 mock sleep 串成 2.5s” 这种问题。
+- 验证脚本改用 `ThreadPoolExecutor + urllib.request` 做一轮固定并发。既然目标只是看 route 层有没有把阻塞 provider 从 event loop 挪走，那么这种“发一轮、量总耗时、看是否线性叠加”的方法更直接。
