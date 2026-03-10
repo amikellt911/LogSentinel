@@ -267,6 +267,45 @@ perf(flamegraph): 新增 trace flamegraph 编排脚本
 
 ---
 
+perf(trace): 增加后链路最小埋点
+
+## Git Commit Message
+perf(trace): 增加后链路最小埋点
+
+## Modification
+- **server/core/TraceSessionManager.h**:
+  - 新增 `RuntimeStatsSnapshot`，用于汇总最小后链路统计。
+  - 新增原子计数与累计耗时字段：`dispatch_count`、`submit_ok_count`、`submit_fail_count`、`worker_begin_count`、`worker_done_count`、`ai_calls`、`ai_total_ns`、`save_calls`、`save_total_ns`。
+  - 新增 `SnapshotRuntimeStats()` 与 `DescribeRuntimeStats()`，便于单测和运行时输出。
+- **server/core/TraceSessionManager.cpp**:
+  - 在 `DispatchLocked()` 入口记录 dispatch 次数。
+  - 在 `thread_pool_->submit()` 成功/失败分支分别记录 submit 成功与失败次数。
+  - 在线程池 worker lambda 入口/结束记录 worker begin/done。
+  - 用单调时钟包住 `TraceProxyAi::AnalyzeTrace()` 和 `TraceRepository::SaveSingleTraceAtomic()`，累计墙钟耗时而不是 CPU 时间。
+  - 在 `TraceSessionManager` 析构时，当统计非空时自动向日志输出 `[TraceRuntimeStats] ...` 总结，方便 flamegraph/benchmark 直接从 `server.log` 对账。
+- **server/tests/TraceSessionManager_unit_test.cpp**:
+  - 新增 `RuntimeStatsTrackDispatchWorkerAiAndSave`，验证正常 `trace_end -> dispatch -> worker -> AI -> save` 路径统计生效。
+  - 在 `PushReturnsAcceptedDeferredAndRollsBackWhenSubmitFails` 中补充对 submit 失败计数的断言，验证回滚路径统计也正确。
+- **docs/todo-list/Todo_Benchmark.md**:
+  - 勾选“后链路最小埋点”任务，和 flamegraph、paced sender 一起形成“入口账 + 完成账 + 阶段耗时”的三本账。
+
+## Learning Tips
+- **Newbie Tips**:
+  - on-CPU 火焰图只能告诉你“CPU 在忙什么”，不能直接告诉你“线程总共等了多久”。这次埋点故意记的是墙钟时间，就是为了把 AI/SQLite 这类等待型瓶颈补出来。
+  - 统计埋点和并发安全不是一回事。这里用 `atomic` 合适，是因为只是做独立数值累加；前面 `TraceSessionManager` 加锁是因为要保护整套容器状态一致性。
+- **Function Explanation**:
+  - `std::chrono::steady_clock`：适合做阶段耗时统计，不受系统时间回拨影响。
+  - `std::memory_order_relaxed`：这里只是做近实时性能观测，不拿这些原子值参与业务判断，因此用 relaxed 足够，也最省开销。
+- **Pitfalls**:
+  - `Dispatch` 很短，火焰图里不宽不代表没跑。现在有了 `dispatch_count`，就不用再靠“图上像不像有”来猜。
+  - 如果只记成功次数，不记累计墙钟耗时，你还是不知道 AI 和 SQLite 谁在拖时间；所以这次必须把 `ai_total_ns` 和 `save_total_ns` 一起记。
+
+## Validation
+- `cmake --build server/build`
+- `cd server/build && ctest -R '^TraceSessionManagerUnitTest\\.' --output-on-failure`
+
+---
+
 fix(flamegraph): 修复首次 flamegraph 采样 0 样本的问题
 
 ## Git Commit Message

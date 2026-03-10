@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <iostream>
 #include <limits>
 #include <nlohmann/json.hpp>
+#include <sstream>
 
 namespace
 {
@@ -24,6 +26,13 @@ int64_t NowSteadyMs()
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
+}
+
+uint64_t NowSteadyNs()
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count());
 }
 
 }
@@ -66,7 +75,14 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
     pending_task_watermark_ = BuildWatermark(pending_task_hard_limit);
 }
 
-TraceSessionManager::~TraceSessionManager() = default;
+TraceSessionManager::~TraceSessionManager()
+{
+    const RuntimeStatsSnapshot stats = SnapshotRuntimeStats();
+    if (stats.dispatch_count == 0 && stats.worker_begin_count == 0 && stats.save_calls == 0) {
+        return;
+    }
+    std::clog << "[TraceRuntimeStats] " << DescribeRuntimeStats() << std::endl;
+}
 
 TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_limit)
 {
@@ -93,6 +109,39 @@ size_t TraceSessionManager::size() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return sessions_.size();
+}
+
+TraceSessionManager::RuntimeStatsSnapshot TraceSessionManager::SnapshotRuntimeStats() const
+{
+    RuntimeStatsSnapshot stats;
+    stats.dispatch_count = dispatch_count_.load(std::memory_order_relaxed);
+    stats.submit_ok_count = submit_ok_count_.load(std::memory_order_relaxed);
+    stats.submit_fail_count = submit_fail_count_.load(std::memory_order_relaxed);
+    stats.worker_begin_count = worker_begin_count_.load(std::memory_order_relaxed);
+    stats.worker_done_count = worker_done_count_.load(std::memory_order_relaxed);
+    stats.ai_calls = ai_calls_.load(std::memory_order_relaxed);
+    stats.ai_total_ns = ai_total_ns_.load(std::memory_order_relaxed);
+    stats.save_calls = save_calls_.load(std::memory_order_relaxed);
+    stats.save_total_ns = save_total_ns_.load(std::memory_order_relaxed);
+    return stats;
+}
+
+std::string TraceSessionManager::DescribeRuntimeStats() const
+{
+    const RuntimeStatsSnapshot stats = SnapshotRuntimeStats();
+    std::ostringstream oss;
+    oss << "dispatch_count=" << stats.dispatch_count
+        << ", submit_ok_count=" << stats.submit_ok_count
+        << ", submit_fail_count=" << stats.submit_fail_count
+        << ", worker_begin_count=" << stats.worker_begin_count
+        << ", worker_done_count=" << stats.worker_done_count
+        << ", ai_calls=" << stats.ai_calls
+        << ", ai_total_ns=" << stats.ai_total_ns
+        << ", ai_avg_ms=" << (stats.ai_calls > 0 ? (static_cast<double>(stats.ai_total_ns) / stats.ai_calls / 1'000'000.0) : 0.0)
+        << ", save_calls=" << stats.save_calls
+        << ", save_total_ns=" << stats.save_total_ns
+        << ", save_avg_ms=" << (stats.save_calls > 0 ? (static_cast<double>(stats.save_total_ns) / stats.save_calls / 1'000'000.0) : 0.0);
+    return oss.str();
 }
 
 TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
@@ -326,6 +375,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
     if (iter == index_by_trace_.end()) {
         return true;
     }
+    dispatch_count_.fetch_add(1, std::memory_order_relaxed);
 
     const size_t index = iter->second;
     std::unique_ptr<TraceSession> session = std::move(sessions_[index]);
@@ -363,6 +413,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         if (!manager || !trace_repo || !session_holder || !(*session_holder)) {
             return;
         }
+        manager->worker_begin_count_.fetch_add(1, std::memory_order_relaxed);
         TraceSession& owned_session = *(*session_holder);
 
         TraceSessionManager::TraceIndex index = manager->BuildTraceIndex(owned_session);
@@ -379,6 +430,8 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         TraceRepository::TraceAnalysisRecord analysis_record;
         TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
         if (trace_ai) {
+            manager->ai_calls_.fetch_add(1, std::memory_order_relaxed);
+            const uint64_t ai_begin_ns = NowSteadyNs();
             try {
                 LogAnalysisResult analysis = trace_ai->AnalyzeTrace(trace_payload);
                 analysis_record = manager->BuildAnalysisRecord(summary.trace_id, analysis);
@@ -402,6 +455,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
                 analysis_record.confidence = 0.0;
                 analysis_ptr = &analysis_record;
             }
+            manager->ai_total_ns_.fetch_add(NowSteadyNs() - ai_begin_ns, std::memory_order_relaxed);
         }
 
         // prompt_debug 现状说明：
@@ -409,7 +463,11 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         // 2) 当前先不在主链路写入（传 nullptr），避免在 MVP 阶段引入额外字段组装复杂度；
         // 3) 后续做“分析重试”时，优先把当次 trace_payload 作为 input_json 落到 prompt_debug，
         //    这样可直接重放请求，不需要再次从 trace_span 重新组装树结构。
+        manager->save_calls_.fetch_add(1, std::memory_order_relaxed);
+        const uint64_t save_begin_ns = NowSteadyNs();
         bool saved = trace_repo->SaveSingleTraceAtomic(summary, span_records, analysis_ptr, nullptr);
+        manager->save_total_ns_.fetch_add(NowSteadyNs() - save_begin_ns, std::memory_order_relaxed);
+        manager->worker_done_count_.fetch_add(1, std::memory_order_relaxed);
         if (!saved || !notifier || !analysis_ptr) {
             return;
         }
@@ -434,6 +492,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         event.confidence = analysis_ptr->confidence;
         notifier->notifyTraceAlert(event);
     })) {
+        submit_fail_count_.fetch_add(1, std::memory_order_relaxed);
         // submit 失败时说明 ready trace 还没真正进入下游执行队列，这时候必须把会话塞回 manager，
         // 否则客户端已经拿到 202，但服务端内部却把 trace 蒸发了。
         std::unique_ptr<TraceSession> restored_session = std::move(*session_holder);
@@ -450,6 +509,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         RefreshOverloadState();
         return false;
     }
+    submit_ok_count_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 

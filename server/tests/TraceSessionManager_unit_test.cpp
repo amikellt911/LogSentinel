@@ -193,6 +193,34 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenTraceEndIsTrue)
     pool.shutdown();
 }
 
+TEST_F(TraceSessionManagerUnitTest, RuntimeStatsTrackDispatchWorkerAiAndSave)
+{
+    // 目的：验证最小后链路埋点会在“dispatch -> worker -> AI -> SQLite”这条链上记到真实次数和墙钟耗时。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    StubTraceAi ai;
+    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(910, 91001, 1000);
+    span.trace_end = true;
+
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+
+    const TraceSessionManager::RuntimeStatsSnapshot stats = manager.SnapshotRuntimeStats();
+    EXPECT_EQ(stats.dispatch_count, 1u);
+    EXPECT_EQ(stats.submit_ok_count, 1u);
+    EXPECT_EQ(stats.submit_fail_count, 0u);
+    EXPECT_EQ(stats.worker_begin_count, 1u);
+    EXPECT_EQ(stats.worker_done_count, 1u);
+    EXPECT_EQ(stats.ai_calls, 1u);
+    EXPECT_GE(stats.ai_total_ns, 1u);
+    EXPECT_EQ(stats.save_calls, 1u);
+    EXPECT_GE(stats.save_total_ns, 1u);
+
+    pool.shutdown();
+}
+
 TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenCapacityReached)
 {
     // 目的：验证会话到达容量上限时会触发分发，防止单条 trace 无限制膨胀占用内存。
@@ -509,6 +537,15 @@ TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredAndRollsBackWhenS
     EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 1u);
     EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 1u);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+
+    const TraceSessionManager::RuntimeStatsSnapshot stats = manager.SnapshotRuntimeStats();
+    EXPECT_EQ(stats.dispatch_count, 1u);
+    EXPECT_EQ(stats.submit_ok_count, 0u);
+    EXPECT_EQ(stats.submit_fail_count, 1u);
+    EXPECT_EQ(stats.worker_begin_count, 0u);
+    EXPECT_EQ(stats.worker_done_count, 0u);
+    EXPECT_EQ(stats.ai_calls, 0u);
+    EXPECT_EQ(stats.save_calls, 0u);
 
     pool.shutdown();
 }

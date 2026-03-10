@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -101,6 +102,19 @@ struct TraceSession
 class TraceSessionManager
 {
 public:
+    struct RuntimeStatsSnapshot
+    {
+        uint64_t dispatch_count = 0;
+        uint64_t submit_ok_count = 0;
+        uint64_t submit_fail_count = 0;
+        uint64_t worker_begin_count = 0;
+        uint64_t worker_done_count = 0;
+        uint64_t ai_calls = 0;
+        uint64_t ai_total_ns = 0;
+        uint64_t save_calls = 0;
+        uint64_t save_total_ns = 0;
+    };
+
     enum class PushResult
     {
         // 正常收下当前 span，请求层可以返回 202。
@@ -139,6 +153,8 @@ public:
     size_t size() const;
     PushResult Push(const SpanEvent& span);
     bool Dispatch(size_t trace_key);
+    RuntimeStatsSnapshot SnapshotRuntimeStats() const;
+    std::string DescribeRuntimeStats() const;
     // 由 EventLoop 定期调用，扫描长时间未更新的 session 并触发分发。
     // now_ms 使用 steady_clock 毫秒时间戳，idle_timeout_ms<=0 表示关闭。
     // max_dispatch_per_tick=0 表示不限制本轮分发数量。
@@ -236,6 +252,17 @@ private:
     Watermark pending_task_watermark_;
     // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
     OverloadState overload_state_ = OverloadState::Normal;
+    // 这批统计只服务“后链路是否真的跑了、各阶段墙钟耗时多少”，
+    // 不参与业务判断，因此第一版直接用全局原子累加，先把账记清楚。
+    std::atomic<uint64_t> dispatch_count_{0};
+    std::atomic<uint64_t> submit_ok_count_{0};
+    std::atomic<uint64_t> submit_fail_count_{0};
+    std::atomic<uint64_t> worker_begin_count_{0};
+    std::atomic<uint64_t> worker_done_count_{0};
+    std::atomic<uint64_t> ai_calls_{0};
+    std::atomic<uint64_t> ai_total_ns_{0};
+    std::atomic<uint64_t> save_calls_{0};
+    std::atomic<uint64_t> save_total_ns_{0};
     // TraceSessionManager 当前会被 HTTP 处理线程和主 loop 定时器线程同时访问，
     // 这把锁先用最保守的方式把内部状态机串行化，优先保证正确性。
     mutable std::mutex mutex_;
