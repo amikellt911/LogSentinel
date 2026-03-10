@@ -257,3 +257,33 @@ Pitfalls
 追加验证
 - `cmake --build server/build --target test_trace_session_manager_integration -j2` 已通过。
 - `./server/build/test_trace_session_manager_integration --gtest_filter=TraceSessionManagerIntegrationTest.BufferedMainPathPersistsPrimaryAndAnalysisRecords` 已通过。
+
+追加记录（十一）
+Git Commit Message
+test(trace): 补齐双缓冲 drain 与重试幂等验证
+
+Modification
+- server/tests/TraceSessionManager_integration_test.cpp
+- server/tests/TraceSessionManager_unit_test.cpp
+- docs/todo-list/Todo_SqliteDoubleBuffer.md
+- docs/dev-log/20260310-feat-ai-proxy-concurrency.md
+
+Learning Tips
+Newbie Tips
+- 析构 drain 这种语义最怕测成“其实是定时 flush 帮你过了”。既然你想证明的是 `StopFlushThread()` 会把半桶 current 强制刷出去，那测试里就必须把 flush interval 拉很长，先确认库里还是 0，再销毁对象后查到数据。
+- “submit 失败后不重复”这个问题，别只盯 `Dispatch` 调了几次。既然真正的风险是 primary 可能在第一次失败前已经进了缓冲，那么要验证的是最终 `summary/spans` 只写了一份，而不是某个回调函数看起来只跑了一次。
+
+Function Explanation
+- `BufferedRepositoryDestructorDrainsRemainingPrimaryAndAnalysis`
+  这条集成测试故意让 primary 和 analysis 都停留在 current 桶里，不给满水位和时间阈值机会。既然在销毁前数据库里还是空的，而销毁后 `trace_summary / trace_span / trace_analysis` 都出现了，那就能说明真正生效的是析构阶段的 drain。
+- `RetrySuccessDoesNotAppendPrimaryTwiceAfterSubmitFailure`
+  这条单测先用“必失败 submit”的线程池把 session 打回 `ReadyRetryLater`，再切回可用线程池重投。既然 `primary_enqueued` 在第一次失败后仍然保留，那么第二次成功时只能补 analysis，summary/spans 计数不能再涨。
+
+Pitfalls
+- 不要把“session 回滚了”理解成“primary 也该撤回”。当前实现里 rollback 只恢复 manager 内部生命周期，不会去回滚已经 append 进双缓冲的主数据；所以幂等靠的是 `primary_enqueued`，不是靠把 buffer 里的东西删回来。
+- 如果以后你想把 `trace_summary.risk_level` 当列表页权威字段，那这套测试会提醒你一个现实：analysis 是后补表，析构 drain 和重试成功时它都可能比 summary 晚到。既然时间线就是分段的，就别假装 summary 天生知道最终风险等级。
+
+追加验证
+- `cmake --build server/build --target test_trace_session_manager_unit test_trace_session_manager_integration -j2` 已通过。
+- `./server/build/test_trace_session_manager_unit --gtest_filter=TraceSessionManagerUnitTest.RetrySuccessDoesNotAppendPrimaryTwiceAfterSubmitFailure` 已通过。
+- `./server/build/test_trace_session_manager_integration --gtest_filter=TraceSessionManagerIntegrationTest.BufferedRepositoryDestructorDrainsRemainingPrimaryAndAnalysis` 已通过。

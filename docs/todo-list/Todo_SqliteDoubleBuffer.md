@@ -14,6 +14,7 @@
 - [x] 在 `main -> TraceSessionManager` 调用链把 `BufferedTraceRepository` 真正接上，避免实现落地了但运行时仍走旧的单条原子写路径
 - [x] 收口 `TraceSessionManager` 的持久化依赖，只保留 `BufferedTraceRepository`，移除对底层 `TraceRepository` 直写 fallback
 - [x] 补主链路最小正确性集成测试：真实 `BufferedTraceRepository` 路径下 `trace_summary / trace_span / trace_analysis` 都能落库
-- [ ] 补最小正确性验证：主数据/分析结果都能落库，关闭时不丢最后一批
+- [x] 补最小正确性验证：主数据/分析结果都能落库，关闭时不丢最后一批
+- [x] 补 submit 失败后的最小幂等验证：session 回滚重试时 `primary` 不重复 append
 - [ ] 预留缓冲区状态观测点，后续再考虑和背压联动（第一版先不做联动策略）
 - [x] 追加同日 dev-log，记录为什么双缓冲放在 `TraceRepository` 包装层而不是写死在 SQLite 实现里

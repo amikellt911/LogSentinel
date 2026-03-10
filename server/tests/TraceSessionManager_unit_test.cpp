@@ -37,6 +37,9 @@ public:
     std::atomic<bool> save_spans_called{false};
     std::atomic<bool> save_analysis_called{false};
     std::atomic<bool> save_prompt_called{false};
+    std::atomic<int> save_summary_count{0};
+    std::atomic<int> save_spans_count{0};
+    std::atomic<int> save_analysis_count{0};
     std::atomic<bool> save_atomic_called{false};
     std::atomic<int> save_atomic_count{0};
     std::vector<std::string> saved_trace_ids;
@@ -53,6 +56,7 @@ public:
     {
         last_summary = summary;
         save_summary_called.store(true, std::memory_order_release);
+        save_summary_count.fetch_add(1, std::memory_order_acq_rel);
         return true;
     }
 
@@ -61,6 +65,7 @@ public:
     {
         last_spans = spans;
         save_spans_called.store(true, std::memory_order_release);
+        save_spans_count.fetch_add(1, std::memory_order_acq_rel);
         return true;
     }
 
@@ -68,6 +73,7 @@ public:
     {
         last_analysis = analysis;
         save_analysis_called.store(true, std::memory_order_release);
+        save_analysis_count.fetch_add(1, std::memory_order_acq_rel);
         return true;
     }
 
@@ -645,6 +651,59 @@ TEST_F(TraceSessionManagerUnitTest, RetryBackoffDoesNotRetryBeforeNextRetryTick)
     EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 7u);
 
     pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, RetrySuccessDoesNotAppendPrimaryTwiceAfterSubmitFailure)
+{
+    // 目的：验证 primary 在首次 submit 失败后不会重复 append；
+    // 既然回滚的是 session 生命周期，不是回滚已经入缓冲的主数据，那下一次重试只能补 analysis，不能再写第二份 summary/spans。
+    ThreadPool rejected_pool(0, /*max_queue_size*/0);
+    ThreadPool success_pool(1);
+    FakeTraceRepository repo;
+    StubTraceAi ai;
+    BufferedTraceRepository::Config buffer_config;
+    buffer_config.primary_flush_interval_ms = 20;
+    buffer_config.analysis_flush_interval_ms = 20;
+    auto sink = std::shared_ptr<TraceRepository>(&repo, [](TraceRepository*) {});
+    auto buffered_repo = std::make_unique<BufferedTraceRepository>(std::move(sink), buffer_config);
+    TraceSessionManager manager(&rejected_pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(126, 12601, 1000);
+    span.trace_end = true;
+
+    EXPECT_EQ(manager.Push(span), TraceSessionManager::PushResult::AcceptedDeferred);
+
+    auto iter = manager.index_by_trace_.find(126);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_TRUE(manager.sessions_[iter->second]->primary_enqueued);
+
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.save_summary_count.load(std::memory_order_acquire) >= 1 &&
+               repo.save_spans_count.load(std::memory_order_acquire) >= 1;
+    }, 1000));
+    EXPECT_EQ(repo.save_summary_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(repo.save_spans_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(repo.save_analysis_count.load(std::memory_order_acquire), 0);
+
+    // 第一次失败后把 thread_pool 切回可用实现，再手动重投同一 trace。
+    manager.thread_pool_ = &success_pool;
+    ASSERT_TRUE(manager.Dispatch(126));
+
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.save_analysis_count.load(std::memory_order_acquire) >= 1;
+    }, 1000));
+    EXPECT_EQ(repo.save_summary_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(repo.save_spans_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(repo.save_analysis_count.load(std::memory_order_acquire), 1);
+
+    const TraceSessionManager::RuntimeStatsSnapshot stats = manager.SnapshotRuntimeStats();
+    EXPECT_EQ(stats.submit_fail_count, 1u);
+    EXPECT_EQ(stats.submit_ok_count, 1u);
+    EXPECT_EQ(stats.worker_done_count, 1u);
+
+    success_pool.shutdown();
+    rejected_pool.shutdown();
 }
 
 TEST_F(TraceSessionManagerUnitTest, RebuildTimeWheelKeepsReadyRetryLaterOnRetrySchedule)

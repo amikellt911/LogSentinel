@@ -1,5 +1,6 @@
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <gtest/gtest.h>
 #include <optional>
 #include <sqlite3.h>
@@ -293,6 +294,17 @@ protected:
         return false;
     }
 
+    bool WaitUntil(const std::function<bool()>& predicate, std::chrono::milliseconds timeout) {
+        auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (predicate()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return predicate();
+    }
+
     SpanEvent MakeSpan(size_t trace_key, size_t span_id, std::optional<size_t> parent_id) {
         SpanEvent span;
         span.trace_key = trace_key;
@@ -402,6 +414,63 @@ TEST_F(TraceSessionManagerIntegrationTest, BufferedMainPathPersistsPrimaryAndAna
     EXPECT_EQ(analysis->summary, "fixed-trace-summary");
     EXPECT_EQ(analysis->root_cause, "fixed-root-cause");
     EXPECT_EQ(analysis->solution, "fixed-solution");
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerIntegrationTest, BufferedRepositoryDestructorDrainsRemainingPrimaryAndAnalysis)
+{
+    ThreadPool pool(1);
+    SqliteTraceRepository repo(db_path);
+    FixedTraceAi ai;
+
+    {
+        BufferedTraceRepository::Config buffer_config;
+        buffer_config.primary_summary_reserve = 64;
+        buffer_config.primary_span_reserve = 64;
+        buffer_config.analysis_reserve = 64;
+        buffer_config.prompt_debug_reserve = 64;
+        // 故意把时间阈值拉长，确保测试关注的是“析构 drain”，不是后台定时 flush。
+        buffer_config.primary_flush_interval_ms = 60 * 1000;
+        buffer_config.analysis_flush_interval_ms = 60 * 1000;
+        auto sink = std::shared_ptr<TraceRepository>(&repo, [](TraceRepository*) {});
+        auto buffered_repo = std::make_unique<BufferedTraceRepository>(std::move(sink), buffer_config);
+        TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/8, /*token_limit*/0);
+
+        SpanEvent root = MakeSpan(202, 2020, std::nullopt);
+        root.name = "drain-root";
+        root.service_name = "drain-service";
+        root.start_time_ms = 2000;
+        root.end_time = 2600;
+
+        SpanEvent child = MakeSpan(202, 2021, 2020);
+        child.name = "drain-child";
+        child.service_name = "drain-service";
+        child.start_time_ms = 2100;
+        child.end_time = 2400;
+        child.trace_end = true;
+
+        EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
+        EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+
+        ASSERT_TRUE(WaitUntil([&manager]() {
+            return manager.SnapshotRuntimeStats().worker_done_count >= 1;
+        }, std::chrono::seconds(2)));
+
+        // 这里必须还是 0，才能证明后面查到的数据来自 StopFlushThread 的 drain，而不是时间到自动刷盘。
+        EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
+        EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 0);
+        EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+    }
+
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(2)));
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(2)));
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_analysis;", 1, std::chrono::seconds(2)));
+
+    auto analysis = QueryAnalysis("202");
+    ASSERT_TRUE(analysis.has_value());
+    EXPECT_EQ(analysis->risk_level, "warning");
+    EXPECT_EQ(analysis->summary, "fixed-trace-summary");
 
     pool.shutdown();
 }
