@@ -64,5 +64,16 @@ Pitfalls
 - 当前 `BufferedTraceRepository` 还没有接真正的前台 append 和后台 flush，只是把生命周期和数据结构先落进代码里，并验证能完整编译通过。
 
 追加修正
+Git Commit Message
+feat(persistence): 收窄双缓冲写入器接口边界
+
 - 这条线中途收了一次接口形状。最开始把 `BufferedTraceRepository` 写成了“完整继承 `TraceRepository` 的装饰器”，但这和真实时间线不一致。既然当前持久化流程已经拆成“Dispatch 前写主数据”和“AI 返回后写分析结果”两段，那么缓冲层更自然的形状应该是：内部持有底层 `TraceRepository` sink，只对外暴露 `AppendPrimary / AppendAnalysis` 两个入口。
 - 这次已经把类收窄到这两个 append 操作，不再伪装成完整 repository。这样后面继续接切桶和 flush 时，职责边界会更干净：底层 repository 负责“怎么把一批数据写进具体数据库”，缓冲层负责“什么时候切桶、什么时候 flush、后台线程怎么活”。
+
+追加记录（二）
+Git Commit Message
+feat(persistence): 接入双缓冲前台最小切桶逻辑
+
+- `BufferedTraceRepository` 现在已经接上了前台两条缓冲线的最小切桶逻辑：`AppendPrimary` 会把 `summary + spans` 写进 `current_primary_`，按 `spans.size()` 看主水位；`AppendAnalysis` 会把 `analysis + prompt_debug` 写进 `current_analysis_`，按 `analyses.size()` 看主水位。
+- 两条线一旦达到各自主水位，就会执行同一套最小切桶动作：把 `current` move 进 `full` 队列、让 `next` 顶上来成为新的 `current`、再从 `free` 池补一只新的 `next`，最后 `notify_one()` 叫醒后台 flush 线程。
+- 这一步还没有接“时间到切 current”和“后台线程真实 flush”。也就是说，现在前台切桶已经成形，但后台线程还只是生命周期骨架，SQLite 这边也还没有真正的一批一事务实现。

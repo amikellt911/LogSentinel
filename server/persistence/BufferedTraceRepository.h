@@ -87,6 +87,12 @@ private:
 
     PrimaryBufferPtr CreatePrimaryBuffer() const;
     AnalysisBufferPtr CreateAnalysisBuffer() const;
+    bool ShouldFlushPrimaryCurrentLocked() const;
+    bool ShouldFlushAnalysisCurrentLocked() const;
+    PrimaryBufferPtr TakeOrCreateFreePrimaryBufferLocked();
+    AnalysisBufferPtr TakeOrCreateFreeAnalysisBufferLocked();
+    void RotatePrimaryBuffersLocked();
+    void RotateAnalysisBuffersLocked();
     void FlushLoop();
     void StopFlushThread();
 

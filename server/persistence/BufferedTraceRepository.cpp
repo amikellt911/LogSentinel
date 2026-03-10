@@ -51,15 +51,61 @@ BufferedTraceRepository::~BufferedTraceRepository()
 
 bool BufferedTraceRepository::AppendPrimary(TracePrimaryWrite write)
 {
-    (void)write;
-    // 这一刀先把类边界收正：外层只暴露两个 append 入口。
-    // 真正的“写 current / 达水位切桶 / 进 full 队列”下一刀再接。
+    std::lock_guard<std::mutex> lock(primary_mutex_);
+
+    if (!current_primary_) {
+        current_primary_ = CreatePrimaryBuffer();
+    }
+    if (!next_primary_) {
+        next_primary_ = CreatePrimaryBuffer();
+    }
+
+    if (current_primary_->Empty()) {
+        current_primary_->first_enqueue_ms = NowMs();
+    }
+
+    current_primary_->summaries.push_back(std::move(write.summary));
+    current_primary_->spans.insert(current_primary_->spans.end(),
+                                   std::make_move_iterator(write.spans.begin()),
+                                   std::make_move_iterator(write.spans.end()));
+
+    if (!ShouldFlushPrimaryCurrentLocked()) {
+        return true;
+    }
+
+    RotatePrimaryBuffersLocked();
+    flush_cv_.notify_one();
     return true;
 }
 
 bool BufferedTraceRepository::AppendAnalysis(TraceAnalysisWrite write)
 {
-    (void)write;
+    std::lock_guard<std::mutex> lock(analysis_mutex_);
+
+    if (!current_analysis_) {
+        current_analysis_ = CreateAnalysisBuffer();
+    }
+    if (!next_analysis_) {
+        next_analysis_ = CreateAnalysisBuffer();
+    }
+
+    if (current_analysis_->Empty()) {
+        current_analysis_->first_enqueue_ms = NowMs();
+    }
+
+    if (write.analysis.has_value()) {
+        current_analysis_->analyses.push_back(std::move(write.analysis.value()));
+    }
+    if (write.prompt_debug.has_value()) {
+        current_analysis_->prompt_debugs.push_back(std::move(write.prompt_debug.value()));
+    }
+
+    if (!ShouldFlushAnalysisCurrentLocked()) {
+        return true;
+    }
+
+    RotateAnalysisBuffersLocked();
+    flush_cv_.notify_one();
     return true;
 }
 
@@ -77,6 +123,76 @@ BufferedTraceRepository::AnalysisBufferPtr BufferedTraceRepository::CreateAnalys
     buffer->analyses.reserve(config_.analysis_reserve);
     buffer->prompt_debugs.reserve(config_.prompt_debug_reserve);
     return buffer;
+}
+
+bool BufferedTraceRepository::ShouldFlushPrimaryCurrentLocked() const
+{
+    if (!current_primary_ || current_primary_->Empty()) {
+        return false;
+    }
+
+    // 主数据缓冲区的主水位先盯 spans。既然 summary 一条 trace 只有一条，
+    // 真正占内存、真正影响 SQLite 批量写时长的还是 spans 这边。
+    return current_primary_->spans.size() >= config_.primary_span_reserve;
+}
+
+bool BufferedTraceRepository::ShouldFlushAnalysisCurrentLocked() const
+{
+    if (!current_analysis_ || current_analysis_->Empty()) {
+        return false;
+    }
+
+    // 分析结果这条线先以 analyses 条数做主水位。
+    // 既然 prompt_debug 本来就是可选表，就不该拿它的数量做主条件。
+    return current_analysis_->analyses.size() >= config_.analysis_reserve;
+}
+
+BufferedTraceRepository::PrimaryBufferPtr BufferedTraceRepository::TakeOrCreateFreePrimaryBufferLocked()
+{
+    if (!free_primary_buffers_.empty()) {
+        auto buffer = std::move(free_primary_buffers_.back());
+        free_primary_buffers_.pop_back();
+        return buffer;
+    }
+    return CreatePrimaryBuffer();
+}
+
+BufferedTraceRepository::AnalysisBufferPtr BufferedTraceRepository::TakeOrCreateFreeAnalysisBufferLocked()
+{
+    if (!free_analysis_buffers_.empty()) {
+        auto buffer = std::move(free_analysis_buffers_.back());
+        free_analysis_buffers_.pop_back();
+        return buffer;
+    }
+    return CreateAnalysisBuffer();
+}
+
+void BufferedTraceRepository::RotatePrimaryBuffersLocked()
+{
+    if (!current_primary_ || current_primary_->Empty()) {
+        return;
+    }
+
+    full_primary_buffers_.push_back(std::move(current_primary_));
+    current_primary_ = std::move(next_primary_);
+    if (!current_primary_) {
+        current_primary_ = CreatePrimaryBuffer();
+    }
+    next_primary_ = TakeOrCreateFreePrimaryBufferLocked();
+}
+
+void BufferedTraceRepository::RotateAnalysisBuffersLocked()
+{
+    if (!current_analysis_ || current_analysis_->Empty()) {
+        return;
+    }
+
+    full_analysis_buffers_.push_back(std::move(current_analysis_));
+    current_analysis_ = std::move(next_analysis_);
+    if (!current_analysis_) {
+        current_analysis_ = CreateAnalysisBuffer();
+    }
+    next_analysis_ = TakeOrCreateFreeAnalysisBufferLocked();
 }
 
 void BufferedTraceRepository::FlushLoop()
