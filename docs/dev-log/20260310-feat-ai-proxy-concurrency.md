@@ -92,3 +92,33 @@ feat(persistence): 调整批量写接口为按表平铺直写
 
 - 这条线又收了一次数据形状。既然 `PrimaryBufferGroup` 和 `AnalysisBufferGroup` 内部本来就是 SoA 形状（`summaries/spans`、`analyses/prompt_debugs`），那么后台 flush 不该再把它们重新组回 `vector<TracePrimaryWrite>` 或 `vector<TraceAnalysisWrite>`。这一步已经把 `TraceRepository` 的 batch 接口改成直接吃按表拆开的两个 vector，后台线程也改成把桶里的平铺数据原样交给底层 sink。
 - 也就是说，现在后台 flush 的方向已经和桶内部形状一致了：主数据直接走 `SavePrimaryBatch(summaries, spans)`，分析结果直接走 `SaveAnalysisBatch(analyses, prompt_debugs)`，不再在缓冲层做多余重组。
+
+追加记录（五）
+Git Commit Message
+feat(persistence): 将 SQLite Trace 批量写入改为一批一事务
+
+Modification
+- server/persistence/SqliteTraceRepository.h
+- server/persistence/SqliteTraceRepository.cpp
+- docs/todo-list/Todo_SqliteDoubleBuffer.md
+- docs/dev-log/20260310-feat-ai-proxy-concurrency.md
+
+Learning Tips
+Newbie Tips
+- “有 batch 接口”和“真的批量事务写入”不是一回事。既然底层如果还是循环调用旧的单条事务接口，那只是接口名变了，事务边界并没有变小，SQLite 该反复 `BEGIN/COMMIT` 还是会反复做。
+- SQLite 这种单文件串行写场景里，批量优化最值钱的点不是神秘参数，而是把很多条 insert 包进一次事务里，同时把 `prepare` 次数降下来。既然事务提交和语句准备本身都有固定成本，那么一批一事务才有意义。
+
+Function Explanation
+- `SqliteTraceRepository::SavePrimaryBatch`
+  这次改成了“一批一次事务”。既然 flush 线程已经把很多条 trace 的 `summary/spans` 攒进一个桶里，那么底层就应该在同一个事务里先循环写 `trace_summary`，再循环写 `trace_span`，中间只做 `bind/step/reset`，最后统一 `COMMIT`。
+- `SqliteTraceRepository::SaveAnalysisBatch`
+  逻辑和主数据批次一致，只不过写的是 `trace_analysis` 和 `trace_prompt_debug`。既然分析结果本来就是 AI 返回后的附加数据，那么这一批也应该一次事务提交，不要再退化成很多条小事务。
+
+Pitfalls
+- 不要在 batch 接口里再套一层旧的 `SaveSingleTraceAtomic`。既然旧接口自己内部就会开事务，那外层批次循环它，只会变成“大循环包小事务”，达不到这次优化的目的。
+- 事务里循环多表写入时，`prepare` 应该尽量一批一次，而不是一条数据一次。否则即使事务合并了，语句准备成本还是会反复打在热路径上。
+- 这一步虽然把 SQLite 底层 batch 事务接上了，但还没解决“时间到了却没满的 current 桶怎么 flush”和“关闭时如何强制 flush 最后一批 current 桶”。所以当前闭环仍然是“满水位驱动”优先，不要误以为整套双缓冲已经完全收尾。
+
+追加验证
+- `cmake --build server/build -j2` 已通过，`LogSentinel`、持久化模块和相关测试目标均能重新链接。
+- `./server/build/test_sqlite_trace_repo` 已通过，12/12 通过。
