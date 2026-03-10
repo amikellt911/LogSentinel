@@ -148,3 +148,25 @@ Pitfalls
 - 不要让后台线程在无锁状态下直接碰 `current_*`。既然前台 append 也会改 current，那么后台如果不通过同一把锁切桶，马上就会回到你前面最怕的那种生命周期竞态。
 - 定时唤醒不是时间轮场景。既然这里只有一个 flush 工人，不是几千个对象各自超时，那么 `wait_for(min(primary_interval, analysis_interval))` 就够了，别为了“有个定时器”再把时间轮搬进来。
 - 这一步补的是 flush 语义，不是最终正确性证明。编译通过只能说明路径接起来了，还不能替代“主数据/分析结果都真正落库，关闭时最后半桶不丢”的专门验证。
+
+追加记录（七）
+Git Commit Message
+fix(persistence): 修正双缓冲 flush 线程的条件变量唤醒语义
+
+Modification
+- server/persistence/BufferedTraceRepository.cpp
+- docs/dev-log/20260310-feat-ai-proxy-concurrency.md
+
+Learning Tips
+Newbie Tips
+- `condition_variable::wait_for(lock, timeout, pred)` 不是“有人 notify 我就立刻往下跑”。既然你传了 predicate，它真正关心的是 predicate 有没有变成 true。前面如果只拿 `stopping_` 当 predicate，那前台写满桶时 `notify_one()` 也不会让 flush 线程立刻处理工作。
+
+Function Explanation
+- `flush_cv_.wait_for(lock, sleep_interval)`
+  这里现在改成只负责“让线程睡一会儿，或者被前台提前叫醒”。既然醒来以后反正都要自己检查 `stopping_`、满桶队列和时间水位，那就不该再把 `stopping_` 写成唯一 predicate。
+
+Pitfalls
+- 不要把“stop 条件”和“有活可干”硬揉进一个错误的 predicate。既然这条线程既要响应 `notify_one()`，又要定时兜底，那最简单也最不容易写歪的做法就是：先醒，再统一检查。
+
+追加验证
+- `cmake --build server/build -j2` 已通过，`LogSentinel` 与相关测试目标重新链接成功。

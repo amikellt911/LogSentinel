@@ -289,7 +289,13 @@ void BufferedTraceRepository::FlushLoop()
 
     std::unique_lock<std::mutex> lock(state_mutex_);
     while (!stopping_) {
-        flush_cv_.wait_for(lock, sleep_interval, [this]() { return stopping_; });
+        // 这里只负责“把后台线程叫醒”，不要把 stopping_ 写成唯一 predicate。
+        // 既然前台写满桶时会 notify_one()，那这里就应该立刻醒来；
+        // 醒来以后再统一检查 stopping_、满桶队列和按时间切 current 的条件。
+        flush_cv_.wait_for(lock, sleep_interval);
+        if (stopping_) {
+            break;
+        }
         lock.unlock();
 
         PrimaryBufferPtr primary_buffer;
