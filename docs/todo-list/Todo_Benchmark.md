@@ -8,6 +8,7 @@
 ## 2. 工具与脚本 (Scripting)
 - [x] 编写通用 Trace 压测脚本 `server/tests/wrk/trace_model.lua`（支持 end/capacity/token/timeout/mixed 五种模型，模板按顺序回环）
 - [x] 编写 Trace wrk benchmark 设计文档，收口模型目标、参数选择和第一版实验矩阵
+- [x] 编写阶段性性能实验模板 `docs/PERFORMANCE_PHASE_TEMPLATE.md`，固定论文可复用的命令、指标与记录格式
 - [x] 编写一键压测编排脚本 `server/tests/wrk/run_bench.sh`（最小版：起服务、等端口、跑 wrk、双写日志、自动 cleanup）
 - [x] 编写火焰图编排脚本 `server/tests/wrk/run_flamegraph.sh`（最小版：起服务、warmup、perf record、正式 wrk、生成 svg、自动 cleanup）
 - [x] 编写低速率 Trace 发送脚本 `server/tests/wrk/trace_paced_sender.py`（最小版：按 batch-traces + batch-sleep-ms 固定节奏发送 end trace）
