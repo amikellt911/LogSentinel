@@ -18,6 +18,25 @@ std::unique_ptr<BufferedTraceRepository> MakeBufferedTraceRepository(TraceReposi
     auto sink = std::shared_ptr<TraceRepository>(repo, [](TraceRepository*) {});
     return std::make_unique<BufferedTraceRepository>(std::move(sink));
 }
+
+class FixedTraceAi : public TraceAiProvider
+{
+public:
+    LogAnalysisResult result{
+        .summary = "fixed-trace-summary",
+        .risk_level = RiskLevel::WARNING,
+        .root_cause = "fixed-root-cause",
+        .solution = "fixed-solution",
+    };
+
+    std::string last_payload;
+
+    LogAnalysisResult AnalyzeTrace(const std::string& trace_payload) override
+    {
+        last_payload = trace_payload;
+        return result;
+    }
+};
 }
 
 class TraceSessionManagerIntegrationTest : public ::testing::Test
@@ -308,6 +327,81 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTraceEndAndPersistsAnalys
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_analysis;", 1, std::chrono::seconds(3)));
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerIntegrationTest, BufferedMainPathPersistsPrimaryAndAnalysisRecords)
+{
+    ThreadPool pool(1);
+    SqliteTraceRepository repo(db_path);
+    FixedTraceAi ai;
+    BufferedTraceRepository::Config buffer_config;
+    buffer_config.primary_flush_interval_ms = 50;
+    buffer_config.analysis_flush_interval_ms = 50;
+    auto sink = std::shared_ptr<TraceRepository>(&repo, [](TraceRepository*) {});
+    auto buffered_repo = std::make_unique<BufferedTraceRepository>(std::move(sink), buffer_config);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/8, /*token_limit*/0);
+
+    SpanEvent root = MakeSpan(101, 1010, std::nullopt);
+    root.name = "checkout-root";
+    root.service_name = "checkout-service";
+    root.start_time_ms = 1000;
+    root.end_time = 1400;
+    root.status = SpanEvent::Status::Ok;
+    root.attributes["http.method"] = "POST";
+
+    SpanEvent child = MakeSpan(101, 1011, 1010);
+    child.name = "query-inventory";
+    child.service_name = "checkout-service";
+    child.start_time_ms = 1100;
+    child.end_time = 1250;
+    child.status = SpanEvent::Status::Error;
+    child.attributes["db.system"] = "sqlite";
+    child.trace_end = true;
+
+    EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_analysis;", 1, std::chrono::seconds(3)));
+
+    EXPECT_FALSE(ai.last_payload.empty());
+
+    auto summary = QuerySummary("101");
+    ASSERT_TRUE(summary.has_value());
+    EXPECT_EQ(summary->service_name, "checkout-service");
+    EXPECT_EQ(summary->start_time_ms, 1000);
+    EXPECT_EQ(summary->duration_ms, 400);
+    EXPECT_EQ(summary->span_count, 2);
+    // summary 在 Dispatch 前先入 primary 缓冲，因此这里仍应保持主数据阶段的默认风险等级。
+    EXPECT_EQ(summary->risk_level, "unknown");
+
+    auto root_row = QuerySpan("1010");
+    ASSERT_TRUE(root_row.has_value());
+    EXPECT_EQ(root_row->trace_id, "101");
+    EXPECT_FALSE(root_row->parent_id.has_value());
+    EXPECT_EQ(root_row->operation, "checkout-root");
+    EXPECT_EQ(root_row->status, "OK");
+    EXPECT_EQ(root_row->duration_ms, 400);
+
+    auto child_row = QuerySpan("1011");
+    ASSERT_TRUE(child_row.has_value());
+    EXPECT_EQ(child_row->trace_id, "101");
+    ASSERT_TRUE(child_row->parent_id.has_value());
+    EXPECT_EQ(child_row->parent_id.value(), "1010");
+    EXPECT_EQ(child_row->operation, "query-inventory");
+    EXPECT_EQ(child_row->status, "ERROR");
+    EXPECT_EQ(child_row->duration_ms, 150);
+
+    auto analysis = QueryAnalysis("101");
+    ASSERT_TRUE(analysis.has_value());
+    EXPECT_EQ(analysis->trace_id, "101");
+    EXPECT_EQ(analysis->risk_level, "warning");
+    EXPECT_EQ(analysis->summary, "fixed-trace-summary");
+    EXPECT_EQ(analysis->root_cause, "fixed-root-cause");
+    EXPECT_EQ(analysis->solution, "fixed-solution");
 
     pool.shutdown();
 }

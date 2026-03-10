@@ -229,3 +229,31 @@ Function Explanation
 Pitfalls
 - 不要一边说“manager 只走双缓冲”，一边还让 worker 在 `buffered_trace_repo` 为空时 fallback 到 `SaveSingleTraceAtomic`。这种代码最烦人的地方不是丑，而是它会把持久化语义重新分叉，后面排查数据重复、数据缺失时很难一眼看出是哪个分支在跑。
 - 现在 `PushLocked` 缺 `buffered_trace_repo_` 就会直接拒绝，所以那些旧测试如果还按“只有 repo 没有 buffer”去构 manager，语义已经不对了，必须跟着一起切过去。这个痛苦是应该承受的，不然“只认双缓冲”永远只是嘴上说说。
+
+追加记录（十）
+Git Commit Message
+test(trace): 增加双缓冲主链路落库集成验证
+
+Modification
+- server/tests/TraceSessionManager_integration_test.cpp
+- docs/todo-list/Todo_SqliteDoubleBuffer.md
+- docs/dev-log/20260310-feat-ai-proxy-concurrency.md
+
+Learning Tips
+Newbie Tips
+- “编译通过”只能说明类型和链接没炸，说明不了异步链路真的走通。既然这条路径现在拆成 `manager -> thread pool -> buffered repo -> flush thread -> sqlite`，那最值钱的验证一定是最终查库，而不是只看某个 mock 函数有没有被调。
+- 集成测试里别把外部 AI proxy 当成默认依赖。既然这次只是想证明主链路能把 analysis 真正写进库里，那么用一个进程内固定返回的 `FixedTraceAi` 更稳，失败时也更容易判断到底是业务链断了，还是外部服务没起来。
+
+Function Explanation
+- `FixedTraceAi`
+  这个测试桩只做一件事：收到序列化后的 trace payload，就返回一份固定分析结果。既然分析阶段本身不是这条测试的变量，那就应该把 AI 输出钉死，避免 HTTP 调用和外部进程把结果搞抖。
+- `BufferedMainPathPersistsPrimaryAndAnalysisRecords`
+  这条测试故意用真实 `SqliteTraceRepository + BufferedTraceRepository + TraceSessionManager`，然后直接轮询 SQLite 的三张表。既然 primary 和 analysis 是分段写入，那断言也应该直接落在最终表状态上：`trace_summary`、`trace_span`、`trace_analysis` 都要出现，而且字段值要对得上。
+
+Pitfalls
+- 不要把“summary 里的 risk_level 还是 unknown”误判成 bug。既然当前主数据在 Dispatch 前先入 primary 缓冲，而 analysis 是后补表，所以 `trace_summary.risk_level` 维持默认值是现阶段的既定语义。
+- 这条测试已经覆盖“主链路能落库”，但还没覆盖“析构 drain 半桶不丢”和“submit 失败重试不重复 primary”。也就是说，它证明了最基本的闭环，不等于整套双缓冲边界都已经守住。
+
+追加验证
+- `cmake --build server/build --target test_trace_session_manager_integration -j2` 已通过。
+- `./server/build/test_trace_session_manager_integration --gtest_filter=TraceSessionManagerIntegrationTest.BufferedMainPathPersistsPrimaryAndAnalysisRecords` 已通过。
