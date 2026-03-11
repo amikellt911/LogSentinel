@@ -6,14 +6,21 @@
 - [ ] 配置 AI Proxy (Python) 开启 Mock 模式并增加 20-50ms 延迟
 
 ## 2. 工具与脚本 (Scripting)
-- [ ] 编写标准 Trace 压测脚本 `server/tests/wrk/trace_standard.lua` (8 Spans, 随机 TraceID, 随机属性)
-- [ ] 编写一键压测分析脚本 `server/tests/wrk/run_bench.sh` (含 taskset 核心隔离逻辑)
+- [x] 编写通用 Trace 压测脚本 `server/tests/wrk/trace_model.lua`（支持 end/capacity/token/timeout/mixed 五种模型，模板按顺序回环）
+- [x] 编写 Trace wrk benchmark 设计文档，收口模型目标、参数选择和第一版实验矩阵
+- [x] 编写阶段性性能实验模板 `docs/PERFORMANCE_PHASE_TEMPLATE.md`，固定论文可复用的命令、指标与记录格式
+- [x] 编写一键压测编排脚本 `server/tests/wrk/run_bench.sh`（最小版：起服务、等端口、跑 wrk、双写日志、自动 cleanup）
+- [x] 编写火焰图编排脚本 `server/tests/wrk/run_flamegraph.sh`（最小版：起服务、warmup、perf record、正式 wrk、生成 svg、自动 cleanup）
+- [x] 编写低速率 Trace 发送脚本 `server/tests/wrk/trace_paced_sender.py`（最小版：按 batch-traces + batch-sleep-ms 固定节奏发送 end trace）
+- [x] 为火焰图实验补充后链路 `drain` 等待与最终落库统计（避免只看到入口成功，不知道最后真正完成多少 trace）
+- [x] 为 Trace 后链路补最小埋点（Dispatch/submit/worker/AI/SQLite 的次数与累计墙钟耗时）
 
 ## 3. 代码改造 (Main Enhancement)
-- [ ] 增加 `--trace-threads` 命令行参数支持
-- [ ] 增加 `--trace-buffer-limit` 命令行参数支持
-- [ ] 增加 `--trace-queue-size` 命令行参数支持
-- [ ] 验证配置参数能准确透传给 `ThreadPool` 和 `TraceSessionManager`
+- [x] 增加 `--worker-threads` 命令行参数支持
+- [x] 增加 `--trace-buffered-span-limit` 命令行参数支持
+- [x] 增加 `--worker-queue-size` 命令行参数支持
+- [x] 增加 `--trace-capacity` / `--trace-token-limit` / `--trace-max-dispatch-per-tick` 参数支持
+- [x] 验证配置参数能准确透传给 `ThreadPool` 和 `TraceSessionManager`
 
 ## 4. 压力测试 (Execution)
 - [ ] **摸底测试 (Baseline)**: `-c 100`, 验证 QPS 指标

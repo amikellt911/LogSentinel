@@ -1,8 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -14,7 +16,7 @@
 #include "persistence/TraceRepository.h"
 
 class ThreadPool;
-class TraceRepository;
+class BufferedTraceRepository;
 class TraceAiProvider;
 class INotifier;
 
@@ -95,11 +97,26 @@ struct TraceSession
     size_t retry_count = 0;
     // next_retry_tick 表示 ready trace 下一次最早允许重试投递的 tick。
     uint64_t next_retry_tick = 0;
+    // 主数据（summary + spans）一旦已经送进缓冲写入器，submit 失败回滚后就不能重复送。
+    bool primary_enqueued = false;
 };
 
 class TraceSessionManager
 {
 public:
+    struct RuntimeStatsSnapshot
+    {
+        uint64_t dispatch_count = 0;
+        uint64_t submit_ok_count = 0;
+        uint64_t submit_fail_count = 0;
+        uint64_t worker_begin_count = 0;
+        uint64_t worker_done_count = 0;
+        uint64_t ai_calls = 0;
+        uint64_t ai_total_ns = 0;
+        uint64_t save_calls = 0;
+        uint64_t save_total_ns = 0;
+    };
+
     enum class PushResult
     {
         // 正常收下当前 span，请求层可以返回 202。
@@ -123,7 +140,7 @@ public:
     };
 
     explicit TraceSessionManager(ThreadPool* thread_pool,
-                                 TraceRepository* trace_repo,
+                                 BufferedTraceRepository* buffered_trace_repo,
                                  TraceAiProvider* trace_ai,
                                  size_t capacity,
                                  size_t token_limit,
@@ -138,6 +155,8 @@ public:
     size_t size() const;
     PushResult Push(const SpanEvent& span);
     bool Dispatch(size_t trace_key);
+    RuntimeStatsSnapshot SnapshotRuntimeStats() const;
+    std::string DescribeRuntimeStats() const;
     // 由 EventLoop 定期调用，扫描长时间未更新的 session 并触发分发。
     // now_ms 使用 steady_clock 毫秒时间戳，idle_timeout_ms<=0 表示关闭。
     // max_dispatch_per_tick=0 表示不限制本轮分发数量。
@@ -149,7 +168,7 @@ private:
     friend class TraceSessionManagerTest_SerializeTraceSortsChildrenByStartTime_Test;
 
     ThreadPool* thread_pool_ = nullptr;
-    TraceRepository* trace_repo_ = nullptr;
+    BufferedTraceRepository* buffered_trace_repo_ = nullptr;
     TraceAiProvider* trace_ai_ = nullptr;
     INotifier* notifier_ = nullptr;
     size_t capacity_ = 0;
@@ -194,6 +213,10 @@ private:
     static Watermark BuildWatermark(size_t hard_limit);
     // 根据连续失败次数计算退避 tick，避免 ready retry 会话固定每 tick 原地撞线程池。
     static uint64_t ComputeRetryDelayTicks(size_t retry_count);
+    // Push/Dispatch 的共享状态会同时被 IO loop 和主 loop 定时器线程访问，这里拆出持锁版本，
+    // 避免公开入口互相调用时重复加锁导致死锁。
+    PushResult PushLocked(const SpanEvent& span, int64_t now_ms);
+    bool DispatchLocked(size_t trace_key);
     // 基于当前积压指标刷新 overload_state_，统一收口新老 trace 的准入门禁状态。
     void RefreshOverloadState();
     // 当前请求是否应该在入口被拒绝：Overload 拒新 trace，Critical 新老都拒。
@@ -231,4 +254,18 @@ private:
     Watermark pending_task_watermark_;
     // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
     OverloadState overload_state_ = OverloadState::Normal;
+    // 这批统计只服务“后链路是否真的跑了、各阶段墙钟耗时多少”，
+    // 不参与业务判断，因此第一版直接用全局原子累加，先把账记清楚。
+    std::atomic<uint64_t> dispatch_count_{0};
+    std::atomic<uint64_t> submit_ok_count_{0};
+    std::atomic<uint64_t> submit_fail_count_{0};
+    std::atomic<uint64_t> worker_begin_count_{0};
+    std::atomic<uint64_t> worker_done_count_{0};
+    std::atomic<uint64_t> ai_calls_{0};
+    std::atomic<uint64_t> ai_total_ns_{0};
+    std::atomic<uint64_t> save_calls_{0};
+    std::atomic<uint64_t> save_total_ns_{0};
+    // TraceSessionManager 当前会被 HTTP 处理线程和主 loop 定时器线程同时访问，
+    // 这把锁先用最保守的方式把内部状态机串行化，优先保证正确性。
+    mutable std::mutex mutex_;
 };

@@ -1,6 +1,7 @@
 # ai/proxy/main.py
 import os
 from fastapi import FastAPI, Request, HTTPException
+from starlette.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
@@ -53,6 +54,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
+
+async def call_provider_in_threadpool(func, *args, **kwargs):
+    """
+    将同步 Provider 调用丢到框架线程池中执行。
+    既然当前 Provider 接口还是同步 def，那么就不能在 async 路由里直接调用它，
+    否则像 mock 里的 time.sleep、Gemini SDK 里的同步网络调用都会把 event loop 卡死。
+    这里统一走线程池桥接，路由继续保持 async，阻塞工作交给后台线程。
+    """
+    return await run_in_threadpool(func, *args, **kwargs)
+
 # --- Provider 实例化和注册 ---
 # 在这里，我们创建所有可用的'转换插头'实例，并放入一个字典中进行管理。
 # 这种方式使得添加新的 Provider 变得非常容易。
@@ -99,7 +110,11 @@ async def analyze_log(provider_name: str, request: Request):
     try:
         log_text = (await request.body()).decode('utf-8')
         # 当前接口接收纯文本，动态配置（api_key/model/prompt）由批量接口承载。
-        result = provider.analyze(log_text=log_text, prompt=LOG_PROMPT_TEMPLATE)
+        result = await call_provider_in_threadpool(
+            provider.analyze,
+            log_text=log_text,
+            prompt=LOG_PROMPT_TEMPLATE,
+        )
         return {"provider": provider_name, "analysis": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"分析过程中发生错误: {e}")
@@ -116,7 +131,11 @@ async def analyze_trace(provider_name: str, request: Request):
 
     try:
         trace_text = (await request.body()).decode('utf-8')
-        result = provider.analyze_trace(trace_text=trace_text, prompt=TRACE_PROMPT_TEMPLATE)
+        result = await call_provider_in_threadpool(
+            provider.analyze_trace,
+            trace_text=trace_text,
+            prompt=TRACE_PROMPT_TEMPLATE,
+        )
         return {"provider": provider_name, "analysis": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"分析过程中发生错误: {e}")
@@ -132,11 +151,12 @@ async def analyze_log_batch(provider_name: str, request: BatchRequestSchema):
         # 使用提供的 Prompt 或回退到默认模板
         prompt_to_use = request.prompt if request.prompt else BATCH_PROMPT_TEMPLATE
 
-        results=provider.analyze_batch(
+        results = await call_provider_in_threadpool(
+            provider.analyze_batch,
             batch_logs=logs_list,
             prompt=prompt_to_use,
             api_key=request.api_key,
-            model=request.model
+            model=request.model,
         )
         return {"provider": provider_name, "results": results}
     except Exception as e:
@@ -159,11 +179,12 @@ async def summarize_logs(provider_name: str, request_data: SummarizeRequest):
         prompt_to_use = request_data.prompt if request_data.prompt else SUMMARIZE_PROMPT_TEMPLATE
 
         # 调用 Provider 的 summarize 接口
-        summary_text = provider.summarize(
+        summary_text = await call_provider_in_threadpool(
+            provider.summarize,
             summary_logs=results_list,
             prompt=prompt_to_use,
             api_key=request_data.api_key,
-            model=request_data.model
+            model=request_data.model,
         )
         # 返回格式要匹配 C++ 端的预期
         # C++ MockAI::summarize 里解析的是 response_json["summary"]
@@ -189,7 +210,11 @@ async def chat_with_logs(provider_name: str, chat_request: ChatRequest):
         # 简单起见，我们暂时直接传递历史记录
         managed_history = chat_request.history
 
-        result = provider.chat(history=managed_history, new_message=chat_request.new_message)
+        result = await call_provider_in_threadpool(
+            provider.chat,
+            history=managed_history,
+            new_message=chat_request.new_message,
+        )
         
         return {"provider": provider_name, "response": result}
     except Exception as e:

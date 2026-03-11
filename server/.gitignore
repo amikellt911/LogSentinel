@@ -12,3 +12,12 @@ tests/build
 
 # 屏蔽所有 .pyc 编译文件
 *.pyc
+*.db
+*.log
+*.db-shm
+*.db-wal
+/build-prof
+*.data
+*.svg
+*.script
+*.folded
