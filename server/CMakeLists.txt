@@ -66,6 +66,7 @@ add_library(core_module STATIC
     core/TokenEstimator.cpp
 )
 add_library(persistence_module STATIC
+    persistence/BufferedTraceRepository.cpp
     persistence/SqliteLogRepository.cpp
     persistence/SqliteConfigRepository.cpp
     persistence/SqliteTraceRepository.cpp

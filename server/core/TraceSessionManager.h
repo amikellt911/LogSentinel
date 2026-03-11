@@ -16,7 +16,7 @@
 #include "persistence/TraceRepository.h"
 
 class ThreadPool;
-class TraceRepository;
+class BufferedTraceRepository;
 class TraceAiProvider;
 class INotifier;
 
@@ -97,6 +97,8 @@ struct TraceSession
     size_t retry_count = 0;
     // next_retry_tick 表示 ready trace 下一次最早允许重试投递的 tick。
     uint64_t next_retry_tick = 0;
+    // 主数据（summary + spans）一旦已经送进缓冲写入器，submit 失败回滚后就不能重复送。
+    bool primary_enqueued = false;
 };
 
 class TraceSessionManager
@@ -138,7 +140,7 @@ public:
     };
 
     explicit TraceSessionManager(ThreadPool* thread_pool,
-                                 TraceRepository* trace_repo,
+                                 BufferedTraceRepository* buffered_trace_repo,
                                  TraceAiProvider* trace_ai,
                                  size_t capacity,
                                  size_t token_limit,
@@ -166,7 +168,7 @@ private:
     friend class TraceSessionManagerTest_SerializeTraceSortsChildrenByStartTime_Test;
 
     ThreadPool* thread_pool_ = nullptr;
-    TraceRepository* trace_repo_ = nullptr;
+    BufferedTraceRepository* buffered_trace_repo_ = nullptr;
     TraceAiProvider* trace_ai_ = nullptr;
     INotifier* notifier_ = nullptr;
     size_t capacity_ = 0;

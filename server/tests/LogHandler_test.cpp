@@ -7,11 +7,18 @@
 
 #include "core/TraceSessionManager.h"
 #include "handlers/LogHandler.h"
+#include "persistence/BufferedTraceRepository.h"
 #include "persistence/TraceRepository.h"
 #include "threadpool/ThreadPool.h"
 
 namespace
 {
+std::unique_ptr<BufferedTraceRepository> MakeBufferedTraceRepository(TraceRepository* repo)
+{
+    auto sink = std::shared_ptr<TraceRepository>(repo, [](TraceRepository*) {});
+    return std::make_unique<BufferedTraceRepository>(std::move(sink));
+}
+
 class FakeTraceRepository : public TraceRepository
 {
 public:
@@ -100,7 +107,8 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostReturns503WhenTraceManagerMissing
 TEST_F(LogHandlerTracePostTest, HandleTracePostReturns503WhenManagerRejectsUnavailable)
 {
     FakeTraceRepository repo;
-    TraceSessionManager manager(nullptr, &repo, nullptr, /*capacity*/ 8, /*token_limit*/ 0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(nullptr, buffered_repo.get(), nullptr, /*capacity*/ 8, /*token_limit*/ 0);
     LogHandler handler(nullptr, nullptr, nullptr, &manager);
     HttpRequest req = MakeTraceRequest(2, 201, true);
     HttpResponse resp;
@@ -118,8 +126,9 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostReturns503AndRetryAfterWhenManage
 {
     ThreadPool pool(1, 16);
     FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 nullptr,
                                 /*capacity*/ 8,
                                 /*token_limit*/ 0,
@@ -160,7 +169,8 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostReturns202AndDeferredBodyWhenDisp
 {
     ThreadPool pool(1, 0);
     FakeTraceRepository repo;
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/ 8, /*token_limit*/ 0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/ 8, /*token_limit*/ 0);
     LogHandler handler(nullptr, nullptr, nullptr, &manager);
     HttpRequest req = MakeTraceRequest(3, 301, true);
     HttpResponse resp;

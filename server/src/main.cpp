@@ -12,6 +12,7 @@
 #include <MiniMuduo/net/TcpConnection.h>
 #include <memory> // For std::unique_ptr
 #include "notification/WebhookNotifier.h"
+#include "persistence/BufferedTraceRepository.h"
 #include "persistence/SqliteConfigRepository.h"
 #include "persistence/SqliteTraceRepository.h"
 #include "http/Router.h"
@@ -191,10 +192,13 @@ int main(int argc, char* argv[])
 
     std::shared_ptr<SqliteLogRepository> persistence;
     std::shared_ptr<SqliteTraceRepository> trace_repo;
+    std::shared_ptr<BufferedTraceRepository> buffered_trace_repo;
     try
     {
         persistence = std::make_shared<SqliteLogRepository>(db_path);
         trace_repo = std::make_shared<SqliteTraceRepository>(db_path);
+        // Trace 主数据和分析结果现在都先走双缓冲写入器，再由后台 flush 线程批量落到 SQLite。
+        buffered_trace_repo = std::make_shared<BufferedTraceRepository>(trace_repo);
     }
     catch (const std::exception &e)
     {
@@ -250,7 +254,7 @@ int main(int argc, char* argv[])
     }
     std::shared_ptr<TraceSessionManager> trace_session_manager = std::make_shared<TraceSessionManager>(
         &tpool,
-        trace_repo.get(),
+        buffered_trace_repo.get(),
         trace_ai.get(),
         /*capacity*/static_cast<size_t>(trace_capacity),
         /*token_limit*/static_cast<size_t>(trace_token_limit),
