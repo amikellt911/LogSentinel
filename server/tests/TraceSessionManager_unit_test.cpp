@@ -486,6 +486,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchBuildsCorrectTraceTreeAndOrder)
     ASSERT_EQ(manager.Push(child_late), TraceSessionManager::PushResult::Accepted);
     ASSERT_EQ(manager.Push(child_early), TraceSessionManager::PushResult::Accepted);
 
+    SweepTraceEndSealWindow(manager);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     ASSERT_EQ(repo.last_spans.size(), 3u);
     EXPECT_EQ(repo.last_spans[0].span_id, "801");
@@ -509,6 +510,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchHandlesMissingParentAsRoot)
     orphan.trace_end = true;
 
     ASSERT_EQ(manager.Push(orphan), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     ASSERT_EQ(repo.last_spans.size(), 1u);
     EXPECT_EQ(repo.last_spans[0].span_id, "901");
@@ -650,9 +652,10 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
     pool.shutdown();
 }
 
-TEST_F(TraceSessionManagerUnitTest, DispatchDoesNotNotifyWhenSaveFails)
+TEST_F(TraceSessionManagerUnitTest, DispatchNotifiesAfterAnalysisEnqueueEvenIfBackgroundPrimaryFlushFails)
 {
-    // 目的：验证“先落库后通知”策略：当落库失败时，即使风险等级是 critical 也不应发送通知。
+    // 目的：锁定当前双缓冲语义：通知是在 analysis 成功 enqueue 后触发，
+    // 而不是等后台 primary flush 真正完成。这里主数据 flush 故意失败，验证 notifier 仍会触发。
     ThreadPool pool(1);
     FakeTraceRepository repo;
     repo.save_atomic_return = false;
@@ -668,7 +671,10 @@ TEST_F(TraceSessionManagerUnitTest, DispatchDoesNotNotifyWhenSaveFails)
 
     SweepTraceEndSealWindow(manager);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
-    EXPECT_FALSE(notifier.notify_trace_alert_called.load(std::memory_order_acquire));
+    ASSERT_TRUE(WaitUntil([&notifier]() {
+        return notifier.notify_trace_alert_called.load(std::memory_order_acquire);
+    }));
+    EXPECT_EQ(notifier.last_event.trace_id, "111");
 
     pool.shutdown();
 }
@@ -905,6 +911,74 @@ TEST_F(TraceSessionManagerUnitTest, ReadyRetryLaterDoesNotMergeLateSpan)
     EXPECT_EQ(manager.sessions_[iter->second]->spans.size(), 1u);
     EXPECT_EQ(manager.sessions_[iter->second]->span_ids.count(12702), 0u);
     EXPECT_EQ(manager.total_buffered_spans_, 1u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, CompletedTombstoneAbsorbsLateSpanWithoutCreatingNewSession)
+{
+    // 目的：验证 trace 成功进入 worker 队列后会进入短暂 TIME_WAIT；
+    // 后续同 trace_key 的晚到 span 应直接被吞掉，而不是再复活成新的聚合会话。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent first = MakeSpan(128, 12801, 1000);
+    first.trace_end = true;
+    ASSERT_EQ(manager.Push(first), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.save_summary_count.load(std::memory_order_acquire) >= 1 &&
+               repo.save_spans_count.load(std::memory_order_acquire) >= 1;
+    }));
+    EXPECT_EQ(manager.size(), 0u);
+    ASSERT_EQ(manager.completed_trace_expire_tick_.count(128), 1u);
+    EXPECT_GT(manager.completed_trace_expire_tick_[128], manager.current_tick_);
+
+    const int summary_count_before = repo.save_summary_count.load(std::memory_order_acquire);
+    const int span_batch_count_before = repo.save_spans_count.load(std::memory_order_acquire);
+
+    SpanEvent late = MakeSpan(128, 12802, 1100);
+    EXPECT_EQ(manager.Push(late), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.size(), 0u);
+    EXPECT_EQ(manager.completed_trace_expire_tick_.count(128), 1u);
+    EXPECT_EQ(repo.save_summary_count.load(std::memory_order_acquire), summary_count_before);
+    EXPECT_EQ(repo.save_spans_count.load(std::memory_order_acquire), span_batch_count_before);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, CompletedTombstoneExpiresAndAllowsTraceKeyReuse)
+{
+    // 目的：验证 TIME_WAIT tombstone 只负责短时间延迟遗忘；
+    // 一旦到期，同 trace_key 应允许重新创建新会话。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent first = MakeSpan(129, 12901, 1000);
+    first.trace_end = true;
+    ASSERT_EQ(manager.Push(first), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.save_summary_count.load(std::memory_order_acquire) >= 1 &&
+               repo.save_spans_count.load(std::memory_order_acquire) >= 1;
+    }));
+    ASSERT_EQ(manager.completed_trace_expire_tick_.count(129), 1u);
+
+    // 当前 tick 约为 2；tombstone 默认保留 25 tick。
+    // 这里一次性推进 30 tick，验证即使没有活跃 session，completed wheel 也会被正常回收。
+    manager.SweepExpiredSessions(/*now_ms*/16500, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    EXPECT_EQ(manager.completed_trace_expire_tick_.count(129), 0u);
+
+    SpanEvent reused = MakeSpan(129, 12902, 1200);
+    EXPECT_EQ(manager.Push(reused), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.size(), 1u);
+    EXPECT_EQ(manager.index_by_trace_.count(129), 1u);
 
     pool.shutdown();
 }
@@ -1279,30 +1353,35 @@ TEST_F(TraceSessionManagerUnitTest, PushRejectsExistingTraceWhenCritical)
 
 TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredWhenSubmitFails)
 {
-    // 目的：验证当 ready trace 准备分发但线程池队列满（submit 失败）时，
-    // 会话必须被退回到 manager 队列并标记为 ReadyRetryLater，保证数据不因分发失败而蒸发。
+    // 目的：保留最小协议断言：容量封口后的 trace 在 dispatch submit 失败时，
+    // 会回滚成 ReadyRetryLater，而不是丢失。
     ThreadPool pool(1, 10);
     FakeTraceRepository repo;
-    // 设 capacity 为 1，token_limit 为 0，这样推一个 span 就会立刻触发 Dispatch。
+    // 设 capacity=1。现在语义不是“立刻 dispatch”，而是先 sealed 1 tick，再尝试 dispatch。
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/1, /*token_limit*/0);
 
-    // 模拟线程池已关闭，导致 submit 必定返回 false。
+    // 模拟线程池已关闭，等 sweep 到 sealed deadline 时 submit 必定返回 false。
     pool.shutdown();
 
     SpanEvent span = MakeSpan(901, 9001, 1000);
-    // Push 内部会调 Dispatch(901)，Dispatch 调 submit 失败后应将 Trace 重新挂载回 sessions_。
     TraceSessionManager::PushResult result = manager.Push(span);
 
-    // 语义验证：返回 AcceptedDeferred 表示服务端已收下但在延后重试。
-    EXPECT_EQ(result, TraceSessionManager::PushResult::AcceptedDeferred);
-    
-    // 结构验证：trace 还在内存中，且状态转为 ReadyRetryLater。
-    EXPECT_EQ(manager.size(), 1u);
+    EXPECT_EQ(result, TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.size(), 1u);
     auto iter = manager.index_by_trace_.find(901);
     ASSERT_NE(iter, manager.index_by_trace_.end());
-    EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state, 
+    EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state,
+              TraceSession::LifecycleState::Sealed);
+    
+    SweepOneTick(manager, /*now_ms*/1000);
+    iter = manager.index_by_trace_.find(901);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state,
               TraceSession::LifecycleState::ReadyRetryLater);
+    EXPECT_EQ(manager.size(), 1u);
+    EXPECT_EQ(manager.sessions_[iter->second]->retry_count, 1u);
+    EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 2u);
 }
 
 TEST_F(TraceSessionManagerUnitTest, BackpressureRecoversWhenWatermarkDropsBelowLow)

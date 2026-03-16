@@ -180,6 +180,11 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
     }
     auto iter = index_by_trace_.find(span.trace_key);
     const bool trace_exists = (iter != index_by_trace_.end());
+    if (!trace_exists && IsCompletedTombstoneAliveLocked(span.trace_key)) {
+        // 这条 trace 已经完成并处于短暂 TIME_WAIT。
+        // 既然现在来的是晚到 span，那么直接幂等吸收即可，不能再把旧 trace 复活成新 session。
+        return PushResult::Accepted;
+    }
     RefreshOverloadState();
     if (ShouldRejectIncomingTrace(trace_exists)) {
         return PushResult::RejectedOverload;
@@ -262,7 +267,7 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
                                                size_t max_dispatch_per_tick)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (sessions_.empty()) {
+    if (sessions_.empty() && completed_trace_expire_tick_.empty()) {
         return;
     }
     if (idle_timeout_ms > 0 && idle_timeout_ms != idle_timeout_ms_) {
@@ -297,6 +302,7 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
     for (uint64_t step = 0; step < advance_ticks; ++step) {
         ++current_tick_;
         const size_t slot = static_cast<size_t>(current_tick_ % wheel_size_);
+        SweepCompletedTombstonesLocked(slot);
         std::vector<TimeWheelNode> bucket = std::move(time_wheel_[slot]);
         time_wheel_[slot].clear();
 
@@ -351,6 +357,47 @@ uint64_t TraceSessionManager::ComputeTimeoutTicks() const
         return 1;
     }
     return static_cast<uint64_t>((idle_timeout_ms_ + wheel_tick_ms_ - 1) / wheel_tick_ms_);
+}
+
+void TraceSessionManager::AddCompletedTombstoneLocked(size_t trace_key)
+{
+    const uint64_t expire_tick = current_tick_ + completed_trace_tombstone_ticks_;
+    completed_trace_expire_tick_[trace_key] = expire_tick;
+    completed_trace_wheel_[expire_tick % wheel_size_].push_back(trace_key);
+}
+
+bool TraceSessionManager::IsCompletedTombstoneAliveLocked(size_t trace_key)
+{
+    auto iter = completed_trace_expire_tick_.find(trace_key);
+    if (iter == completed_trace_expire_tick_.end()) {
+        return false;
+    }
+    if (iter->second > current_tick_) {
+        return true;
+    }
+    completed_trace_expire_tick_.erase(iter);
+    return false;
+}
+
+void TraceSessionManager::SweepCompletedTombstonesLocked(size_t slot)
+{
+    std::vector<size_t> bucket = std::move(completed_trace_wheel_[slot]);
+    completed_trace_wheel_[slot].clear();
+
+    for (size_t trace_key : bucket) {
+        auto iter = completed_trace_expire_tick_.find(trace_key);
+        if (iter == completed_trace_expire_tick_.end()) {
+            // 已被新 tombstone 覆盖或已过期删除，旧 wheel 节点直接丢弃。
+            continue;
+        }
+        if (iter->second > current_tick_) {
+            // 由于是取模回环，同一个槽里可能混着未来很多轮才真正到期的 tombstone。
+            // 这里必须按真实 expire_tick 重新挂回去，不能因为扫到当前槽就提前遗忘。
+            completed_trace_wheel_[iter->second % wheel_size_].push_back(trace_key);
+            continue;
+        }
+        completed_trace_expire_tick_.erase(iter);
+    }
 }
 
 void TraceSessionManager::ScheduleTimeoutNode(TraceSession& session)
@@ -606,6 +653,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         rollback_session(std::move(restored_session));
         return false;
     }
+    AddCompletedTombstoneLocked(trace_key);
     submit_ok_count_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }

@@ -55,6 +55,40 @@ Pitfalls
 
 追加记录
 Git Commit Message
+feat(core): 为已完成 trace 接入 TIME_WAIT tombstone
+
+Modification
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- server/tests/TraceSessionManager_unit_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+- docs/dev-log/20260316-fix-trace-primary-flush-logging.md
+
+Learning Tips
+Newbie Tips
+- `tombstone` 不是缓存历史结果，也不是查数据库做全局去重。它只是“这几秒内刚完成过的 trace_key 集合”，职责非常窄：拦截晚到包，防止旧 trace 被复活。
+- 时间轮里按 `% wheel_size` 取槽只是粗筛，不是精确到期。既然 completed tombstone 也会回环，那么 sweep 时同样必须回到 `completed_trace_expire_tick_` 看真实过期 tick，不能看到当前槽就直接删。
+
+Function Explanation
+- `AddCompletedTombstoneLocked`
+  这一步在 `thread_pool_->submit(...)` 成功之后调用。既然只有真正成功进入 worker 队列，才说明这条 trace 已经完成并进入下游，那么 tombstone 也只能在这里写，不能提前。
+- `IsCompletedTombstoneAliveLocked`
+  Push 新 span 时先查这个函数。既然活跃 session 不存在，但这个 key 还处在 TIME_WAIT，那么这就是晚到 span，不该新建 session；如果发现 map 里只是过期脏数据，这里会顺手清掉。
+- `SweepCompletedTombstonesLocked`
+  这一步专门扫独立的 completed wheel。既然 tombstone 过期和 live session dispatch 是两套完全不同的语义，那么拆开管理比把各种 type 塞进一套节点里更容易保证状态不串。
+
+Pitfalls
+- `SweepExpiredSessions` 之前一上来如果发现 `sessions_.empty()` 就直接 return，那么 tombstone 永远不会过期。因为 trace 正常完成后，活跃 session 本来就应该清空，completed wheel 只能靠 sweep 自己继续推进。
+- 不要把 tombstone 写在 `AppendPrimary` 成功后。那时只说明主数据进了缓冲区，不说明这条 trace 已经成功进入 worker 队列；如果随后 submit 失败，它还会回滚成 `ReadyRetryLater`，这时提前写 tombstone 会把活 trace 误判成“已完成”。
+
+追加验证
+- 计划执行 `cmake --build server/build --target test_trace_session_manager_unit -j2`。
+- 计划执行 tombstone 相关最小单测回归。
+- 已执行 `cd server && cmake --build build --target test_trace_session_manager_unit -j2`，通过。
+- 已执行 `cd server && ./build/test_trace_session_manager_unit`，32/32 通过。
+
+追加记录
+Git Commit Message
 feat(core): 为 Trace sealed 和 tombstone 补状态骨架
 
 Modification

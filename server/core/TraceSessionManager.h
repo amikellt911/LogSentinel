@@ -233,6 +233,12 @@ private:
     static uint64_t ComputeSealDelayTicks(TraceSession::SealReason reason);
     // 根据连续失败次数计算退避 tick，避免 ready retry 会话固定每 tick 原地撞线程池。
     static uint64_t ComputeRetryDelayTicks(size_t retry_count);
+    // completed tombstone 进入 TIME_WAIT：写入精确查找表并挂进独立 wheel，避免晚到 span 复活旧 trace。
+    void AddCompletedTombstoneLocked(size_t trace_key);
+    // 命中且仍未过期时返回 true；若发现只是 map 里的过期脏数据，会在这里顺手清掉。
+    bool IsCompletedTombstoneAliveLocked(size_t trace_key);
+    // 扫描当前 tick 的 completed tombstone 桶：到期则删除，未到期则按真实 expire_tick 重新挂回。
+    void SweepCompletedTombstonesLocked(size_t slot);
     // Push/Dispatch 的共享状态会同时被 IO loop 和主 loop 定时器线程访问，这里拆出持锁版本，
     // 避免公开入口互相调用时重复加锁导致死锁。
     PushResult PushLocked(const SpanEvent& span, int64_t now_ms);

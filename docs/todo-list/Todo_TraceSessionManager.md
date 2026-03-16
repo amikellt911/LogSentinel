@@ -94,5 +94,7 @@
 - [x] 为 `trace_end / capacity / token_limit` 接入 sealed 短窗口语义，改为“先封口、后按 tick dispatch”
 - [x] 允许 sealed 会话吸收短窗口内的 late span，但不续命 `sealed_deadline_tick`
 - [x] 禁止 `ReadyRetryLater` 会话继续并入新 span，避免 primary 已收口后出现内存版本漂移
-- [ ] 在 `DispatchLocked` submit 成功后写入 completed tombstone，并接入独立回收 wheel
-- [ ] 在 `PushLocked` 用 tombstone 拦截晚到 span，避免相同 `trace_id` 二次落库触发唯一键冲突
+- [x] 在 `DispatchLocked` submit 成功后写入 completed tombstone，并接入独立回收 wheel
+- [x] 在 `PushLocked` 用 tombstone 拦截晚到 span，避免相同 `trace_id` 二次落库触发唯一键冲突
+- [x] 补最小单测：tombstone 存活期内吸收 late span，不再新建 session
+- [x] 补最小单测：tombstone 过期后允许同 `trace_id` 重新建 session
