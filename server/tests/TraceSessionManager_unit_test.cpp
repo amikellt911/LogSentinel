@@ -207,20 +207,30 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenTraceEndIsTrue)
     pool.shutdown();
 }
 
-TEST_F(TraceSessionManagerUnitTest, RuntimeStatsTrackDispatchWorkerAiAndSave)
+TEST_F(TraceSessionManagerUnitTest, RuntimeStatsTrackDispatchWorkerAiEnqueueAndBufferedFlush)
 {
-    // 目的：验证最小后链路埋点会在“dispatch -> worker -> AI -> SQLite”这条链上记到真实次数和墙钟耗时。
+    // 目的：验证埋点现在能把两段时间线分清：
+    // 1) manager worker 内的 AI + analysis enqueue
+    // 2) BufferedTraceRepository 后台线程里的真实 batch flush
     ThreadPool pool(1);
     FakeTraceRepository repo;
     StubTraceAi ai;
-    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    BufferedTraceRepository::Config buffer_config;
+    buffer_config.primary_flush_interval_ms = 20;
+    buffer_config.analysis_flush_interval_ms = 20;
+    auto sink = std::shared_ptr<TraceRepository>(&repo, [](TraceRepository*) {});
+    auto buffered_repo = std::make_unique<BufferedTraceRepository>(std::move(sink), buffer_config);
     TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(910, 91001, 1000);
     span.trace_end = true;
 
     ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
-    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.save_summary_called.load(std::memory_order_acquire) &&
+               repo.save_spans_called.load(std::memory_order_acquire) &&
+               repo.save_analysis_called.load(std::memory_order_acquire);
+    }, 1000));
 
     const TraceSessionManager::RuntimeStatsSnapshot stats = manager.SnapshotRuntimeStats();
     EXPECT_EQ(stats.dispatch_count, 1u);
@@ -230,8 +240,19 @@ TEST_F(TraceSessionManagerUnitTest, RuntimeStatsTrackDispatchWorkerAiAndSave)
     EXPECT_EQ(stats.worker_done_count, 1u);
     EXPECT_EQ(stats.ai_calls, 1u);
     EXPECT_GE(stats.ai_total_ns, 1u);
-    EXPECT_EQ(stats.save_calls, 1u);
-    EXPECT_GE(stats.save_total_ns, 1u);
+    EXPECT_EQ(stats.analysis_enqueue_calls, 1u);
+    EXPECT_GE(stats.analysis_enqueue_total_ns, 1u);
+
+    const BufferedTraceRepository::RuntimeStatsSnapshot buffered_stats = buffered_repo->SnapshotRuntimeStats();
+    EXPECT_EQ(buffered_stats.primary_append_calls, 1u);
+    EXPECT_EQ(buffered_stats.analysis_append_calls, 1u);
+    EXPECT_EQ(buffered_stats.primary_flush_calls, 1u);
+    EXPECT_EQ(buffered_stats.analysis_flush_calls, 1u);
+    EXPECT_EQ(buffered_stats.primary_flushed_summary_count, 1u);
+    EXPECT_EQ(buffered_stats.primary_flushed_span_count, 1u);
+    EXPECT_EQ(buffered_stats.analysis_flushed_analysis_count, 1u);
+    EXPECT_GE(buffered_stats.primary_flush_total_ns, 1u);
+    EXPECT_GE(buffered_stats.analysis_flush_total_ns, 1u);
 
     pool.shutdown();
 }
@@ -571,7 +592,7 @@ TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredAndRollsBackWhenS
     EXPECT_EQ(stats.worker_begin_count, 0u);
     EXPECT_EQ(stats.worker_done_count, 0u);
     EXPECT_EQ(stats.ai_calls, 0u);
-    EXPECT_EQ(stats.save_calls, 0u);
+    EXPECT_EQ(stats.analysis_enqueue_calls, 0u);
 
     pool.shutdown();
 }

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <iostream>
+#include <sstream>
 #include <stdexcept>
 
 namespace
@@ -11,6 +13,13 @@ int64_t NowMs()
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch())
         .count();
+}
+
+uint64_t NowNs()
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count());
 }
 }
 
@@ -47,10 +56,19 @@ BufferedTraceRepository::BufferedTraceRepository(std::shared_ptr<TraceRepository
 BufferedTraceRepository::~BufferedTraceRepository()
 {
     StopFlushThread();
+    const RuntimeStatsSnapshot stats = SnapshotRuntimeStats();
+    if (stats.primary_append_calls == 0 &&
+        stats.analysis_append_calls == 0 &&
+        stats.primary_flush_calls == 0 &&
+        stats.analysis_flush_calls == 0) {
+        return;
+    }
+    std::clog << "[BufferedTraceRuntimeStats] " << DescribeRuntimeStats() << std::endl;
 }
 
 bool BufferedTraceRepository::AppendPrimary(TracePrimaryWrite write)
 {
+    primary_append_calls_.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(primary_mutex_);
 
     if (!current_primary_) {
@@ -80,6 +98,7 @@ bool BufferedTraceRepository::AppendPrimary(TracePrimaryWrite write)
 
 bool BufferedTraceRepository::AppendAnalysis(TraceAnalysisWrite write)
 {
+    analysis_append_calls_.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(analysis_mutex_);
 
     if (!current_analysis_) {
@@ -313,14 +332,30 @@ void BufferedTraceRepository::FlushLoop()
 
         if (primary_buffer) {
             if (!primary_buffer->summaries.empty() || !primary_buffer->spans.empty()) {
-                (void)sink_->SavePrimaryBatch(primary_buffer->summaries, primary_buffer->spans);
+                const uint64_t flush_begin_ns = NowNs();
+                const bool saved = sink_->SavePrimaryBatch(primary_buffer->summaries, primary_buffer->spans);
+                primary_flush_calls_.fetch_add(1, std::memory_order_relaxed);
+                primary_flush_total_ns_.fetch_add(NowNs() - flush_begin_ns, std::memory_order_relaxed);
+                primary_flushed_summary_count_.fetch_add(primary_buffer->summaries.size(), std::memory_order_relaxed);
+                primary_flushed_span_count_.fetch_add(primary_buffer->spans.size(), std::memory_order_relaxed);
+                if (!saved) {
+                    primary_flush_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                }
             }
             RecyclePrimaryBuffer(std::move(primary_buffer));
         }
 
         if (analysis_buffer) {
             if (!analysis_buffer->analyses.empty() || !analysis_buffer->prompt_debugs.empty()) {
-                (void)sink_->SaveAnalysisBatch(analysis_buffer->analyses, analysis_buffer->prompt_debugs);
+                const uint64_t flush_begin_ns = NowNs();
+                const bool saved = sink_->SaveAnalysisBatch(analysis_buffer->analyses, analysis_buffer->prompt_debugs);
+                analysis_flush_calls_.fetch_add(1, std::memory_order_relaxed);
+                analysis_flush_total_ns_.fetch_add(NowNs() - flush_begin_ns, std::memory_order_relaxed);
+                analysis_flushed_analysis_count_.fetch_add(analysis_buffer->analyses.size(), std::memory_order_relaxed);
+                analysis_flushed_prompt_debug_count_.fetch_add(analysis_buffer->prompt_debugs.size(), std::memory_order_relaxed);
+                if (!saved) {
+                    analysis_flush_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                }
             }
             RecycleAnalysisBuffer(std::move(analysis_buffer));
         }
@@ -350,18 +385,75 @@ void BufferedTraceRepository::FlushLoop()
 
         if (primary_buffer) {
             if (!primary_buffer->summaries.empty() || !primary_buffer->spans.empty()) {
-                (void)sink_->SavePrimaryBatch(primary_buffer->summaries, primary_buffer->spans);
+                const uint64_t flush_begin_ns = NowNs();
+                const bool saved = sink_->SavePrimaryBatch(primary_buffer->summaries, primary_buffer->spans);
+                primary_flush_calls_.fetch_add(1, std::memory_order_relaxed);
+                primary_flush_total_ns_.fetch_add(NowNs() - flush_begin_ns, std::memory_order_relaxed);
+                primary_flushed_summary_count_.fetch_add(primary_buffer->summaries.size(), std::memory_order_relaxed);
+                primary_flushed_span_count_.fetch_add(primary_buffer->spans.size(), std::memory_order_relaxed);
+                if (!saved) {
+                    primary_flush_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                }
             }
             RecyclePrimaryBuffer(std::move(primary_buffer));
         }
 
         if (analysis_buffer) {
             if (!analysis_buffer->analyses.empty() || !analysis_buffer->prompt_debugs.empty()) {
-                (void)sink_->SaveAnalysisBatch(analysis_buffer->analyses, analysis_buffer->prompt_debugs);
+                const uint64_t flush_begin_ns = NowNs();
+                const bool saved = sink_->SaveAnalysisBatch(analysis_buffer->analyses, analysis_buffer->prompt_debugs);
+                analysis_flush_calls_.fetch_add(1, std::memory_order_relaxed);
+                analysis_flush_total_ns_.fetch_add(NowNs() - flush_begin_ns, std::memory_order_relaxed);
+                analysis_flushed_analysis_count_.fetch_add(analysis_buffer->analyses.size(), std::memory_order_relaxed);
+                analysis_flushed_prompt_debug_count_.fetch_add(analysis_buffer->prompt_debugs.size(), std::memory_order_relaxed);
+                if (!saved) {
+                    analysis_flush_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                }
             }
             RecycleAnalysisBuffer(std::move(analysis_buffer));
         }
     }
+}
+
+BufferedTraceRepository::RuntimeStatsSnapshot BufferedTraceRepository::SnapshotRuntimeStats() const
+{
+    RuntimeStatsSnapshot stats;
+    stats.primary_append_calls = primary_append_calls_.load(std::memory_order_relaxed);
+    stats.analysis_append_calls = analysis_append_calls_.load(std::memory_order_relaxed);
+    stats.primary_flush_calls = primary_flush_calls_.load(std::memory_order_relaxed);
+    stats.primary_flush_fail_count = primary_flush_fail_count_.load(std::memory_order_relaxed);
+    stats.primary_flush_total_ns = primary_flush_total_ns_.load(std::memory_order_relaxed);
+    stats.primary_flushed_summary_count = primary_flushed_summary_count_.load(std::memory_order_relaxed);
+    stats.primary_flushed_span_count = primary_flushed_span_count_.load(std::memory_order_relaxed);
+    stats.analysis_flush_calls = analysis_flush_calls_.load(std::memory_order_relaxed);
+    stats.analysis_flush_fail_count = analysis_flush_fail_count_.load(std::memory_order_relaxed);
+    stats.analysis_flush_total_ns = analysis_flush_total_ns_.load(std::memory_order_relaxed);
+    stats.analysis_flushed_analysis_count = analysis_flushed_analysis_count_.load(std::memory_order_relaxed);
+    stats.analysis_flushed_prompt_debug_count = analysis_flushed_prompt_debug_count_.load(std::memory_order_relaxed);
+    return stats;
+}
+
+std::string BufferedTraceRepository::DescribeRuntimeStats() const
+{
+    const RuntimeStatsSnapshot stats = SnapshotRuntimeStats();
+    std::ostringstream oss;
+    oss << "primary_append_calls=" << stats.primary_append_calls
+        << ", analysis_append_calls=" << stats.analysis_append_calls
+        << ", primary_flush_calls=" << stats.primary_flush_calls
+        << ", primary_flush_fail_count=" << stats.primary_flush_fail_count
+        << ", primary_flush_total_ns=" << stats.primary_flush_total_ns
+        << ", primary_flush_avg_ms="
+        << (stats.primary_flush_calls > 0 ? (static_cast<double>(stats.primary_flush_total_ns) / stats.primary_flush_calls / 1'000'000.0) : 0.0)
+        << ", primary_flushed_summary_count=" << stats.primary_flushed_summary_count
+        << ", primary_flushed_span_count=" << stats.primary_flushed_span_count
+        << ", analysis_flush_calls=" << stats.analysis_flush_calls
+        << ", analysis_flush_fail_count=" << stats.analysis_flush_fail_count
+        << ", analysis_flush_total_ns=" << stats.analysis_flush_total_ns
+        << ", analysis_flush_avg_ms="
+        << (stats.analysis_flush_calls > 0 ? (static_cast<double>(stats.analysis_flush_total_ns) / stats.analysis_flush_calls / 1'000'000.0) : 0.0)
+        << ", analysis_flushed_analysis_count=" << stats.analysis_flushed_analysis_count
+        << ", analysis_flushed_prompt_debug_count=" << stats.analysis_flushed_prompt_debug_count;
+    return oss.str();
 }
 
 void BufferedTraceRepository::StopFlushThread()

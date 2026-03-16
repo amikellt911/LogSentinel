@@ -79,7 +79,7 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
 TraceSessionManager::~TraceSessionManager()
 {
     const RuntimeStatsSnapshot stats = SnapshotRuntimeStats();
-    if (stats.dispatch_count == 0 && stats.worker_begin_count == 0 && stats.save_calls == 0) {
+    if (stats.dispatch_count == 0 && stats.worker_begin_count == 0 && stats.analysis_enqueue_calls == 0) {
         return;
     }
     std::clog << "[TraceRuntimeStats] " << DescribeRuntimeStats() << std::endl;
@@ -122,8 +122,8 @@ TraceSessionManager::RuntimeStatsSnapshot TraceSessionManager::SnapshotRuntimeSt
     stats.worker_done_count = worker_done_count_.load(std::memory_order_relaxed);
     stats.ai_calls = ai_calls_.load(std::memory_order_relaxed);
     stats.ai_total_ns = ai_total_ns_.load(std::memory_order_relaxed);
-    stats.save_calls = save_calls_.load(std::memory_order_relaxed);
-    stats.save_total_ns = save_total_ns_.load(std::memory_order_relaxed);
+    stats.analysis_enqueue_calls = analysis_enqueue_calls_.load(std::memory_order_relaxed);
+    stats.analysis_enqueue_total_ns = analysis_enqueue_total_ns_.load(std::memory_order_relaxed);
     return stats;
 }
 
@@ -139,9 +139,13 @@ std::string TraceSessionManager::DescribeRuntimeStats() const
         << ", ai_calls=" << stats.ai_calls
         << ", ai_total_ns=" << stats.ai_total_ns
         << ", ai_avg_ms=" << (stats.ai_calls > 0 ? (static_cast<double>(stats.ai_total_ns) / stats.ai_calls / 1'000'000.0) : 0.0)
-        << ", save_calls=" << stats.save_calls
-        << ", save_total_ns=" << stats.save_total_ns
-        << ", save_avg_ms=" << (stats.save_calls > 0 ? (static_cast<double>(stats.save_total_ns) / stats.save_calls / 1'000'000.0) : 0.0);
+        // 这里现在明确写成 enqueue，而不是 save。
+        // 既然真实 SQLite batch flush 已经挪到 BufferedTraceRepository 后台线程，
+        // 那 manager 这边量到的只是在 worker 内把 analysis 丢进缓冲区的墙钟时间。
+        << ", analysis_enqueue_calls=" << stats.analysis_enqueue_calls
+        << ", analysis_enqueue_total_ns=" << stats.analysis_enqueue_total_ns
+        << ", analysis_enqueue_avg_ms="
+        << (stats.analysis_enqueue_calls > 0 ? (static_cast<double>(stats.analysis_enqueue_total_ns) / stats.analysis_enqueue_calls / 1'000'000.0) : 0.0);
     return oss.str();
 }
 
@@ -493,8 +497,8 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         // 2) 当前先不在主链路写入（传 nullptr），避免在 MVP 阶段引入额外字段组装复杂度；
         // 3) 后续做“分析重试”时，优先把当次 trace_payload 作为 input_json 落到 prompt_debug，
         //    这样可直接重放请求，不需要再次从 trace_span 重新组装树结构。
-        manager->save_calls_.fetch_add(1, std::memory_order_relaxed);
-        const uint64_t save_begin_ns = NowSteadyNs();
+        manager->analysis_enqueue_calls_.fetch_add(1, std::memory_order_relaxed);
+        const uint64_t enqueue_begin_ns = NowSteadyNs();
         bool saved = true;
         if (!buffered_trace_repo) {
             saved = false;
@@ -505,7 +509,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
             }
             saved = buffered_trace_repo->AppendAnalysis(std::move(analysis_write));
         }
-        manager->save_total_ns_.fetch_add(NowSteadyNs() - save_begin_ns, std::memory_order_relaxed);
+        manager->analysis_enqueue_total_ns_.fetch_add(NowSteadyNs() - enqueue_begin_ns, std::memory_order_relaxed);
         manager->worker_done_count_.fetch_add(1, std::memory_order_relaxed);
         if (!saved || !notifier || !analysis_ptr) {
             return;

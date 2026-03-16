@@ -25,10 +25,20 @@
 #include "util/DevSubprocessManager.h"
 #include <filesystem>
 #include <chrono>
+#include <csignal>
 #include <optional>
 #include <vector>
 
 namespace {
+volatile std::sig_atomic_t g_shutdown_requested = 0;
+
+void HandleProcessSignal(int signal_number)
+{
+    if (signal_number == SIGINT || signal_number == SIGTERM) {
+        g_shutdown_requested = 1;
+    }
+}
+
 std::optional<std::string> ResolveScriptPath(const std::vector<std::string>& candidates)
 {
     for (const auto& candidate : candidates) {
@@ -155,6 +165,9 @@ int main(int argc, char* argv[])
         return -1;
     }
 
+    std::signal(SIGINT, HandleProcessSignal);
+    std::signal(SIGTERM, HandleProcessSignal);
+
     DevSubprocessManager dev_process_manager;
     if (auto_start_proxy) {
         std::optional<std::string> proxy_script = ResolveScriptPath({
@@ -225,7 +238,6 @@ int main(int argc, char* argv[])
     MiniMuduo::net::EventLoop loop;
     MiniMuduo::net::InetAddress addr(port);
     testServer server(&loop, addr, num_io_threads);
-    ThreadPool tpool(num_worker_threads, static_cast<size_t>(worker_queue_size));
     auto config_repo = std::make_shared<SqliteConfigRepository>(db_path);
     //std::vector<std::string> urls = config_repo->getActiveWebhookUrls();
     std::vector<std::string> urls;
@@ -252,6 +264,10 @@ int main(int argc, char* argv[])
                   << ", base_url=" << trace_ai_base_url
                   << ", timeout_ms=" << trace_ai_timeout_ms << std::endl;
     }
+    // 线程池需要在 trace_ai/notifier 之前回收：
+    // 既然 worker 任务里拿的是这些对象的裸指针，那么退出时必须先 join worker，
+    // 再销毁依赖对象，否则就会在“任务还在跑、对象先析构”时踩悬空指针。
+    ThreadPool tpool(num_worker_threads, static_cast<size_t>(worker_queue_size));
     std::shared_ptr<TraceSessionManager> trace_session_manager = std::make_shared<TraceSessionManager>(
         &tpool,
         buffered_trace_repo.get(),
@@ -273,13 +289,29 @@ int main(int argc, char* argv[])
               << ", buffered_span_limit=" << trace_buffered_span_limit
               << ", active_session_limit=" << trace_active_session_limit
               << ", worker_queue_size=" << worker_queue_size << std::endl;
-    loop.runEvery(trace_sweep_interval_sec, [trace_session_manager, trace_idle_timeout_ms, trace_max_dispatch_per_tick]() {
+    TraceSessionManager* trace_session_manager_raw = trace_session_manager.get();
+    loop.runEvery(trace_sweep_interval_sec, [trace_session_manager_raw, trace_idle_timeout_ms, trace_max_dispatch_per_tick]() {
         const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        trace_session_manager->SweepExpiredSessions(
+        trace_session_manager_raw->SweepExpiredSessions(
             now_ms,
             trace_idle_timeout_ms,
             static_cast<size_t>(trace_max_dispatch_per_tick));
+    });
+    bool shutdown_stats_logged = false;
+    loop.runEvery(0.1, [&loop, &shutdown_stats_logged, trace_session_manager_raw, buffered_trace_repo]() {
+        // signal handler 里只能做极少的事情，所以这里只记录退出意图；
+        // 真正的 quit 放回 EventLoop 线程执行，这样对象析构和埋点打印才会走完整。
+        if (g_shutdown_requested != 0) {
+            if (!shutdown_stats_logged) {
+                shutdown_stats_logged = true;
+                std::clog << "[TraceRuntimeStats] "
+                          << trace_session_manager_raw->DescribeRuntimeStats() << std::endl;
+                std::clog << "[BufferedTraceRuntimeStats] "
+                          << buffered_trace_repo->DescribeRuntimeStats() << std::endl;
+            }
+            loop.quit();
+        }
     });
     
     std::shared_ptr<Router> router = std::make_shared<Router>();

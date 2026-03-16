@@ -7,7 +7,7 @@ set -euo pipefail
 # 2. 后台启动 LogSentinel，并等待 8080 ready
 # 3. 跑多组 wrk（默认 worker_threads=2/3/4, connections=100/200/500）
 # 4. 终端打印 + 文件留痕
-# 5. 退出时自动 cleanup，避免残留进程污染下一轮实验
+# 5. 退出时先抓 shutdown snapshot 埋点，再做有上限的 cleanup，避免残留进程污染下一轮实验
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SERVER_BIN="${ROOT_DIR}/server/build/LogSentinel"
@@ -26,6 +26,8 @@ WRK_CPUSET="${WRK_CPUSET:-}"
 WAIT_PORT_RETRY="${WAIT_PORT_RETRY:-50}"
 WAIT_PORT_SLEEP_SEC="${WAIT_PORT_SLEEP_SEC:-0.2}"
 BENCH_FORCE_STOP_OLD_SERVER="${BENCH_FORCE_STOP_OLD_SERVER:-1}"
+STOP_RETRY="${STOP_RETRY:-50}"
+STOP_SLEEP_SEC="${STOP_SLEEP_SEC:-0.2}"
 
 SERVER_PID=""
 SERVER_LAUNCH_PID=""
@@ -53,6 +55,8 @@ usage() {
   CONNECTION_SET="100 200 500"
   SERVER_CPUSET="1-2"
   WRK_CPUSET="0"
+  STOP_RETRY=50
+  STOP_SLEEP_SEC=0.2
 EOF
 }
 
@@ -84,15 +88,38 @@ cleanup() {
     if [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
         log "stopping LogSentinel pid=${SERVER_PID}"
         kill -TERM "${SERVER_PID}" >/dev/null 2>&1 || true
-        wait "${SERVER_PID}" >/dev/null 2>&1 || true
+        if ! wait_for_pid_exit "${SERVER_PID}"; then
+            log "LogSentinel pid=${SERVER_PID} did not exit within ${STOP_RETRY} * ${STOP_SLEEP_SEC}s, sending SIGKILL"
+            kill -KILL "${SERVER_PID}" >/dev/null 2>&1 || true
+            wait "${SERVER_PID}" >/dev/null 2>&1 || true
+        fi
     fi
     if [[ -n "${SERVER_LAUNCH_PID}" ]] && [[ "${SERVER_LAUNCH_PID}" != "${SERVER_PID}" ]] && kill -0 "${SERVER_LAUNCH_PID}" >/dev/null 2>&1; then
         kill -TERM "${SERVER_LAUNCH_PID}" >/dev/null 2>&1 || true
-        wait "${SERVER_LAUNCH_PID}" >/dev/null 2>&1 || true
+        if ! wait_for_pid_exit "${SERVER_LAUNCH_PID}"; then
+            kill -KILL "${SERVER_LAUNCH_PID}" >/dev/null 2>&1 || true
+            wait "${SERVER_LAUNCH_PID}" >/dev/null 2>&1 || true
+        fi
     fi
 }
 
 trap cleanup EXIT INT TERM
+
+wait_for_pid_exit() {
+    local pid="$1"
+    local retry=0
+
+    while (( retry < STOP_RETRY )); do
+        if ! kill -0 "${pid}" >/dev/null 2>&1; then
+            wait "${pid}" >/dev/null 2>&1 || true
+            return 0
+        fi
+        sleep "${STOP_SLEEP_SEC}"
+        retry=$((retry + 1))
+    done
+
+    return 1
+}
 
 wait_for_port() {
     local port="$1"
@@ -324,6 +351,36 @@ run_wrk_once() {
     } | tee "${wrk_log}"
 }
 
+emit_runtime_stats() {
+    local worker_threads="$1"
+    local trace_stats=""
+    local buffered_stats=""
+
+    if [[ -n "${SERVER_LOG}" && -f "${SERVER_LOG}" ]]; then
+        # benchmark 结束后不该再靠人肉翻 server log。
+        # 这里直接把最后一条 Trace/BufferedTrace 埋点摘出来，写进 run-summary，后面抄表更稳。
+        trace_stats="$(grep -F "[TraceRuntimeStats]" "${SERVER_LOG}" | tail -n 1 || true)"
+        buffered_stats="$(grep -F "[BufferedTraceRuntimeStats]" "${SERVER_LOG}" | tail -n 1 || true)"
+    fi
+
+    {
+        echo "===== SERVER RUNTIME STATS BEGIN ====="
+        echo "worker_threads=${worker_threads}"
+        echo "server_log=${SERVER_LOG:-<unset>}"
+        if [[ -n "${trace_stats}" ]]; then
+            echo "${trace_stats}"
+        else
+            echo "[TraceRuntimeStats] <missing>"
+        fi
+        if [[ -n "${buffered_stats}" ]]; then
+            echo "${buffered_stats}"
+        else
+            echo "[BufferedTraceRuntimeStats] <missing>"
+        fi
+        echo "===== SERVER RUNTIME STATS END ====="
+    } | tee -a "${SUMMARY_LOG}"
+}
+
 if [[ -z "${PROFILE}" ]]; then
     usage
     exit 1
@@ -370,6 +427,7 @@ for worker_threads in ${WORKER_THREAD_SET}; do
         sleep 2
     done
     cleanup
+    emit_runtime_stats "${worker_threads}"
     SERVER_PID=""
     SERVER_LAUNCH_PID=""
     sleep 1

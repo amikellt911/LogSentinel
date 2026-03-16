@@ -121,13 +121,26 @@ bash server/tests/wrk/run_bench.sh end
 `worker_done_count`
 `ai_calls`
 `ai_total_ns`
-`save_calls`
-`save_total_ns`
+`analysis_enqueue_calls`
+`analysis_enqueue_total_ns`
+
+从服务端日志里的 `[BufferedTraceRuntimeStats]` 记录：
+
+`primary_flush_calls`
+`primary_flush_total_ns`
+`analysis_flush_calls`
+`analysis_flush_total_ns`
+`primary_flushed_summary_count`
+`primary_flushed_span_count`
+`analysis_flushed_analysis_count`
+
+现在 `run_bench.sh` 会把这两行自动摘进结果目录里的 `run-summary.log`。
+如果 benchmark 结束后服务端在限定时间内还没完全退干净，脚本会先保留 `SIGTERM` 时刻的埋点快照，再强制回收进程；所以这些数字的语义是“benchmark 停止时已完成到哪”，不是“无限等到后台彻底清空后的最终总账”。
 
 ### 4.3 论文里怎么解释
 
 既然 wrk 的 `req/s` 只是入口请求速率，那么不能单独拿它代表系统真正完成了多少 Trace。
-接着必须结合 `Non-2xx/3xx` 和 `TraceRuntimeStats` 一起看。
+接着必须结合 `Non-2xx/3xx`、`TraceRuntimeStats` 和 `BufferedTraceRuntimeStats` 一起看。
 
 说人话就是：
 
@@ -233,12 +246,25 @@ worker_begin_count：
 worker_done_count：
 ai_calls：
 ai_total_ns：
-save_calls：
-save_total_ns：
+analysis_enqueue_calls：
+analysis_enqueue_total_ns：
 
 可选计算：
 avg_ai_ms = ai_total_ns / ai_calls / 1e6
-avg_save_ms = save_total_ns / save_calls / 1e6
+avg_analysis_enqueue_ms = analysis_enqueue_total_ns / analysis_enqueue_calls / 1e6
+
+BufferedTraceRuntimeStats:
+primary_flush_calls：
+primary_flush_total_ns：
+analysis_flush_calls：
+analysis_flush_total_ns：
+primary_flushed_summary_count：
+primary_flushed_span_count：
+analysis_flushed_analysis_count：
+
+可选计算：
+avg_primary_flush_ms = primary_flush_total_ns / primary_flush_calls / 1e6
+avg_analysis_flush_ms = analysis_flush_total_ns / analysis_flush_calls / 1e6
 
 三、火焰图
 结果目录：

@@ -113,8 +113,8 @@ public:
         uint64_t worker_done_count = 0;
         uint64_t ai_calls = 0;
         uint64_t ai_total_ns = 0;
-        uint64_t save_calls = 0;
-        uint64_t save_total_ns = 0;
+        uint64_t analysis_enqueue_calls = 0;
+        uint64_t analysis_enqueue_total_ns = 0;
     };
 
     enum class PushResult
@@ -263,8 +263,8 @@ private:
     std::atomic<uint64_t> worker_done_count_{0};
     std::atomic<uint64_t> ai_calls_{0};
     std::atomic<uint64_t> ai_total_ns_{0};
-    std::atomic<uint64_t> save_calls_{0};
-    std::atomic<uint64_t> save_total_ns_{0};
+    std::atomic<uint64_t> analysis_enqueue_calls_{0};
+    std::atomic<uint64_t> analysis_enqueue_total_ns_{0};
     // TraceSessionManager 当前会被 HTTP 处理线程和主 loop 定时器线程同时访问，
     // 这把锁先用最保守的方式把内部状态机串行化，优先保证正确性。
     mutable std::mutex mutex_;

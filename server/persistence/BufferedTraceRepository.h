@@ -2,9 +2,11 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -84,12 +86,30 @@ public:
         std::optional<PromptDebugRecord> prompt_debug;
     };
 
+    struct RuntimeStatsSnapshot
+    {
+        uint64_t primary_append_calls = 0;
+        uint64_t analysis_append_calls = 0;
+        uint64_t primary_flush_calls = 0;
+        uint64_t primary_flush_fail_count = 0;
+        uint64_t primary_flush_total_ns = 0;
+        uint64_t primary_flushed_summary_count = 0;
+        uint64_t primary_flushed_span_count = 0;
+        uint64_t analysis_flush_calls = 0;
+        uint64_t analysis_flush_fail_count = 0;
+        uint64_t analysis_flush_total_ns = 0;
+        uint64_t analysis_flushed_analysis_count = 0;
+        uint64_t analysis_flushed_prompt_debug_count = 0;
+    };
+
     explicit BufferedTraceRepository(std::shared_ptr<TraceRepository> sink);
     BufferedTraceRepository(std::shared_ptr<TraceRepository> sink, Config config);
     ~BufferedTraceRepository();
 
     bool AppendPrimary(TracePrimaryWrite write);
     bool AppendAnalysis(TraceAnalysisWrite write);
+    RuntimeStatsSnapshot SnapshotRuntimeStats() const;
+    std::string DescribeRuntimeStats() const;
 
 private:
     using PrimaryBufferPtr = std::unique_ptr<PrimaryBufferGroup>;
@@ -135,4 +155,17 @@ private:
     std::condition_variable flush_cv_;
     bool stopping_ = false;
     std::thread flush_thread_;
+
+    std::atomic<uint64_t> primary_append_calls_{0};
+    std::atomic<uint64_t> analysis_append_calls_{0};
+    std::atomic<uint64_t> primary_flush_calls_{0};
+    std::atomic<uint64_t> primary_flush_fail_count_{0};
+    std::atomic<uint64_t> primary_flush_total_ns_{0};
+    std::atomic<uint64_t> primary_flushed_summary_count_{0};
+    std::atomic<uint64_t> primary_flushed_span_count_{0};
+    std::atomic<uint64_t> analysis_flush_calls_{0};
+    std::atomic<uint64_t> analysis_flush_fail_count_{0};
+    std::atomic<uint64_t> analysis_flush_total_ns_{0};
+    std::atomic<uint64_t> analysis_flushed_analysis_count_{0};
+    std::atomic<uint64_t> analysis_flushed_prompt_debug_count_{0};
 };
