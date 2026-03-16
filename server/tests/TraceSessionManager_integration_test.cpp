@@ -1,5 +1,6 @@
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <gtest/gtest.h>
 #include <optional>
 #include <sqlite3.h>
@@ -7,8 +8,37 @@
 
 #include "ai/MockTraceAi.h"
 #include "core/TraceSessionManager.h"
+#include "persistence/BufferedTraceRepository.h"
 #include "persistence/SqliteTraceRepository.h"
 #include "threadpool/ThreadPool.h"
+
+namespace
+{
+std::unique_ptr<BufferedTraceRepository> MakeBufferedTraceRepository(TraceRepository* repo)
+{
+    auto sink = std::shared_ptr<TraceRepository>(repo, [](TraceRepository*) {});
+    return std::make_unique<BufferedTraceRepository>(std::move(sink));
+}
+
+class FixedTraceAi : public TraceAiProvider
+{
+public:
+    LogAnalysisResult result{
+        .summary = "fixed-trace-summary",
+        .risk_level = RiskLevel::WARNING,
+        .root_cause = "fixed-root-cause",
+        .solution = "fixed-solution",
+    };
+
+    std::string last_payload;
+
+    LogAnalysisResult AnalyzeTrace(const std::string& trace_payload) override
+    {
+        last_payload = trace_payload;
+        return result;
+    }
+};
+}
 
 class TraceSessionManagerIntegrationTest : public ::testing::Test
 {
@@ -264,6 +294,41 @@ protected:
         return false;
     }
 
+    bool WaitUntil(const std::function<bool()>& predicate, std::chrono::milliseconds timeout) {
+        auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (predicate()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return predicate();
+    }
+
+    void SweepTicks(TraceSessionManager& manager,
+                    int tick_count,
+                    int64_t idle_timeout_ms = 5000,
+                    int64_t wheel_tick_ms = 500,
+                    size_t max_dispatch_per_tick = 0,
+                    int64_t base_now_ms = 1000) {
+        for (int tick = 0; tick < tick_count; ++tick) {
+            manager.SweepExpiredSessions(base_now_ms + static_cast<int64_t>(tick) * wheel_tick_ms,
+                                         idle_timeout_ms,
+                                         max_dispatch_per_tick);
+        }
+    }
+
+    void SweepTraceEndSealWindow(TraceSessionManager& manager) {
+        // trace_end 默认进入 2 tick sealed grace window，integration test 不跑 main 里的定时器，
+        // 所以这里需要手动推进两次 sweep，把会话从 sealed 推到真正 dispatch。
+        SweepTicks(manager, /*tick_count*/2);
+    }
+
+    void SweepProtectionSealWindow(TraceSessionManager& manager) {
+        // capacity/token_limit 属于保护性封口，只给 1 tick。
+        SweepTicks(manager, /*tick_count*/1);
+    }
+
     SpanEvent MakeSpan(size_t trace_key, size_t span_id, std::optional<size_t> parent_id) {
         SpanEvent span;
         span.trace_key = trace_key;
@@ -285,13 +350,15 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTraceEndAndPersistsAnalys
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(1, 100, std::nullopt);
     span.trace_end = true;
 
     // 依赖 AI Proxy 已启动，否则分析阶段会失败导致等待超时。
     EXPECT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     // 等待异步任务完成并落库，避免线程池尚未消费导致测试误判。
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
@@ -301,12 +368,147 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTraceEndAndPersistsAnalys
     pool.shutdown();
 }
 
+TEST_F(TraceSessionManagerIntegrationTest, BufferedMainPathPersistsPrimaryAndAnalysisRecords)
+{
+    ThreadPool pool(1);
+    SqliteTraceRepository repo(db_path);
+    FixedTraceAi ai;
+    BufferedTraceRepository::Config buffer_config;
+    buffer_config.primary_flush_interval_ms = 50;
+    buffer_config.analysis_flush_interval_ms = 50;
+    auto sink = std::shared_ptr<TraceRepository>(&repo, [](TraceRepository*) {});
+    auto buffered_repo = std::make_unique<BufferedTraceRepository>(std::move(sink), buffer_config);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/8, /*token_limit*/0);
+
+    SpanEvent root = MakeSpan(101, 1010, std::nullopt);
+    root.name = "checkout-root";
+    root.service_name = "checkout-service";
+    root.start_time_ms = 1000;
+    root.end_time = 1400;
+    root.status = SpanEvent::Status::Ok;
+    root.attributes["http.method"] = "POST";
+
+    SpanEvent child = MakeSpan(101, 1011, 1010);
+    child.name = "query-inventory";
+    child.service_name = "checkout-service";
+    child.start_time_ms = 1100;
+    child.end_time = 1250;
+    child.status = SpanEvent::Status::Error;
+    child.attributes["db.system"] = "sqlite";
+    child.trace_end = true;
+
+    EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_analysis;", 1, std::chrono::seconds(3)));
+
+    EXPECT_FALSE(ai.last_payload.empty());
+
+    auto summary = QuerySummary("101");
+    ASSERT_TRUE(summary.has_value());
+    EXPECT_EQ(summary->service_name, "checkout-service");
+    EXPECT_EQ(summary->start_time_ms, 1000);
+    EXPECT_EQ(summary->duration_ms, 400);
+    EXPECT_EQ(summary->span_count, 2);
+    // summary 在 Dispatch 前先入 primary 缓冲，因此这里仍应保持主数据阶段的默认风险等级。
+    EXPECT_EQ(summary->risk_level, "unknown");
+
+    auto root_row = QuerySpan("1010");
+    ASSERT_TRUE(root_row.has_value());
+    EXPECT_EQ(root_row->trace_id, "101");
+    EXPECT_FALSE(root_row->parent_id.has_value());
+    EXPECT_EQ(root_row->operation, "checkout-root");
+    EXPECT_EQ(root_row->status, "OK");
+    EXPECT_EQ(root_row->duration_ms, 400);
+
+    auto child_row = QuerySpan("1011");
+    ASSERT_TRUE(child_row.has_value());
+    EXPECT_EQ(child_row->trace_id, "101");
+    ASSERT_TRUE(child_row->parent_id.has_value());
+    EXPECT_EQ(child_row->parent_id.value(), "1010");
+    EXPECT_EQ(child_row->operation, "query-inventory");
+    EXPECT_EQ(child_row->status, "ERROR");
+    EXPECT_EQ(child_row->duration_ms, 150);
+
+    auto analysis = QueryAnalysis("101");
+    ASSERT_TRUE(analysis.has_value());
+    EXPECT_EQ(analysis->trace_id, "101");
+    EXPECT_EQ(analysis->risk_level, "warning");
+    EXPECT_EQ(analysis->summary, "fixed-trace-summary");
+    EXPECT_EQ(analysis->root_cause, "fixed-root-cause");
+    EXPECT_EQ(analysis->solution, "fixed-solution");
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerIntegrationTest, BufferedRepositoryDestructorDrainsRemainingPrimaryAndAnalysis)
+{
+    ThreadPool pool(1);
+    SqliteTraceRepository repo(db_path);
+    FixedTraceAi ai;
+
+    {
+        BufferedTraceRepository::Config buffer_config;
+        buffer_config.primary_summary_reserve = 64;
+        buffer_config.primary_span_reserve = 64;
+        buffer_config.analysis_reserve = 64;
+        buffer_config.prompt_debug_reserve = 64;
+        // 故意把时间阈值拉长，确保测试关注的是“析构 drain”，不是后台定时 flush。
+        buffer_config.primary_flush_interval_ms = 60 * 1000;
+        buffer_config.analysis_flush_interval_ms = 60 * 1000;
+        auto sink = std::shared_ptr<TraceRepository>(&repo, [](TraceRepository*) {});
+        auto buffered_repo = std::make_unique<BufferedTraceRepository>(std::move(sink), buffer_config);
+        TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/8, /*token_limit*/0);
+
+        SpanEvent root = MakeSpan(202, 2020, std::nullopt);
+        root.name = "drain-root";
+        root.service_name = "drain-service";
+        root.start_time_ms = 2000;
+        root.end_time = 2600;
+
+        SpanEvent child = MakeSpan(202, 2021, 2020);
+        child.name = "drain-child";
+        child.service_name = "drain-service";
+        child.start_time_ms = 2100;
+        child.end_time = 2400;
+        child.trace_end = true;
+
+        EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
+        EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+        SweepTraceEndSealWindow(manager);
+
+        ASSERT_TRUE(WaitUntil([&manager]() {
+            return manager.SnapshotRuntimeStats().worker_done_count >= 1;
+        }, std::chrono::seconds(2)));
+
+        // 这里必须还是 0，才能证明后面查到的数据来自 StopFlushThread 的 drain，而不是时间到自动刷盘。
+        EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
+        EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 0);
+        EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+    }
+
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(2)));
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(2)));
+    EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_analysis;", 1, std::chrono::seconds(2)));
+
+    auto analysis = QueryAnalysis("202");
+    ASSERT_TRUE(analysis.has_value());
+    EXPECT_EQ(analysis->risk_level, "warning");
+    EXPECT_EQ(analysis->summary, "fixed-trace-summary");
+
+    pool.shutdown();
+}
+
 TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnCapacityAndStoresParentId)
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/2, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/2, /*token_limit*/0);
 
     SpanEvent root = MakeSpan(2, 200, std::nullopt);
     SpanEvent child = MakeSpan(2, 201, 200);
@@ -314,6 +516,7 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnCapacityAndStoresParentId
     // 这里不设置 trace_end，验证容量触发的分发路径是否可用。
     EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+    SweepProtectionSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
@@ -347,8 +550,9 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTokenLimitWithoutTraceEnd
     ASSERT_GT(token_limit, 0u);
 
     // capacity 设大，确保不会被容量路径抢先触发。
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 /*trace_ai*/nullptr,
                                 /*capacity*/100,
                                 token_limit);
@@ -357,6 +561,7 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTokenLimitWithoutTraceEnd
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
 
     EXPECT_EQ(manager.Push(span2), TraceSessionManager::PushResult::Accepted);
+    SweepProtectionSealWindow(manager);
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
@@ -373,7 +578,8 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnDuplicateSpanId)
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent root = MakeSpan(3, 300, std::nullopt);
     EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
@@ -394,7 +600,8 @@ TEST_F(TraceSessionManagerIntegrationTest, PersistsSummarySpanAndAnalysisFields)
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent root = MakeSpan(4, 400, std::nullopt);
     root.name = "root-op";
@@ -413,6 +620,7 @@ TEST_F(TraceSessionManagerIntegrationTest, PersistsSummarySpanAndAnalysisFields)
     EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
     child.trace_end = true;
     EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
@@ -463,7 +671,8 @@ TEST_F(TraceSessionManagerIntegrationTest, MarksCycleAsAnomaly)
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
-    TraceSessionManager manager(&pool, &repo, nullptr, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span_a = MakeSpan(5, 500, 501);
     span_a.attributes["seed"] = "cycle";
@@ -473,6 +682,7 @@ TEST_F(TraceSessionManagerIntegrationTest, MarksCycleAsAnomaly)
 
     EXPECT_EQ(manager.Push(span_a), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(manager.Push(span_b), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     // 当前实现在“全环且无 root”时，序列化遍历顺序为空，因此不会写入 trace_span。
@@ -492,12 +702,14 @@ TEST_F(TraceSessionManagerIntegrationTest, TreatsMissingParentAsRoot)
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent orphan = MakeSpan(6, 600, 999);
     orphan.trace_end = true;
 
     EXPECT_EQ(manager.Push(orphan), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 1, std::chrono::seconds(3)));
@@ -517,7 +729,8 @@ TEST_F(TraceSessionManagerIntegrationTest, HandlesOutOfOrderSpans)
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     MockTraceAi ai;
-    TraceSessionManager manager(&pool, &repo, &ai, /*capacity*/10, /*token_limit*/0);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent child = MakeSpan(7, 701, 700);
     SpanEvent root = MakeSpan(7, 700, std::nullopt);
@@ -525,6 +738,7 @@ TEST_F(TraceSessionManagerIntegrationTest, HandlesOutOfOrderSpans)
 
     EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
@@ -543,8 +757,9 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnIdleTimeoutWithoutTraceEn
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
     // 这个用例只验证“超时触发基础落库”，不依赖 AI 返回结果，避免外部依赖导致抖动。
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 /*trace_ai*/nullptr,
                                 /*capacity*/10,
                                 /*token_limit*/0,
@@ -603,8 +818,9 @@ TEST_F(TraceSessionManagerIntegrationTest, FrequentUpdatesPreventEarlyTimeoutDis
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 /*trace_ai*/nullptr,
                                 /*capacity*/32,
                                 /*token_limit*/0,
@@ -659,8 +875,9 @@ TEST_F(TraceSessionManagerIntegrationTest, MaxDispatchPerTickDefersRemainingTime
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool,
-                                &repo,
+                                buffered_repo.get(),
                                 /*trace_ai*/nullptr,
                                 /*capacity*/10,
                                 /*token_limit*/0,

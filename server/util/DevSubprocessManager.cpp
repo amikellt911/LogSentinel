@@ -5,6 +5,8 @@
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <filesystem>
+#include <cstdlib>
 #include <iostream>
 #include <netinet/in.h>
 #include <string>
@@ -15,6 +17,33 @@
 
 namespace {
 constexpr const char* kLoopback = "127.0.0.1";
+
+std::string ResolvePreferredPython()
+{
+    // 既然 benchmark/本地联调经常依赖项目自己的虚拟环境，那么优先走“显式指定 > 当前激活 venv > 仓库外层 ../venv > 系统 python”。
+    if (const char* explicit_python = std::getenv("DEV_PYTHON"); explicit_python && explicit_python[0] != '\0') {
+        return explicit_python;
+    }
+
+    if (const char* virtual_env = std::getenv("VIRTUAL_ENV"); virtual_env && virtual_env[0] != '\0') {
+        const std::filesystem::path python_path = std::filesystem::path(virtual_env) / "bin" / "python";
+        if (std::filesystem::exists(python_path)) {
+            return python_path.string();
+        }
+    }
+
+    const std::vector<std::filesystem::path> candidates = {
+        std::filesystem::current_path() / ".." / "venv" / "bin" / "python",
+        std::filesystem::current_path() / "venv" / "bin" / "python",
+    };
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) {
+            return candidate.lexically_normal().string();
+        }
+    }
+
+    return "";
+}
 }
 
 DevSubprocessManager::~DevSubprocessManager()
@@ -53,6 +82,13 @@ bool DevSubprocessManager::EnsurePythonService(const std::string& service_name,
     }
 
     if (pid == 0) {
+        const std::string preferred_python = ResolvePreferredPython();
+        if (!preferred_python.empty()) {
+            ::execl(preferred_python.c_str(),
+                    preferred_python.c_str(),
+                    script_path.c_str(),
+                    static_cast<char*>(nullptr));
+        }
         // 子进程优先尝试 python，失败后回退 python3，兼容不同开发机默认命令。
         ::execlp("python", "python", script_path.c_str(), static_cast<char*>(nullptr));
         ::execlp("python3", "python3", script_path.c_str(), static_cast<char*>(nullptr));
