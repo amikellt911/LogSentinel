@@ -26,6 +26,35 @@ Pitfalls
 
 追加记录
 Git Commit Message
+feat(core): 接入 Trace sealed 短窗口并收紧 retry_later 语义
+
+Modification
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- server/tests/TraceSessionManager_unit_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+- docs/dev-log/20260316-fix-trace-primary-flush-logging.md
+
+Learning Tips
+Newbie Tips
+- `trace_end` 不等于“这个 trace 以后绝对不会再来 span”。真实网络里最后一个包完全可能先到，所以如果一看到 `trace_end` 就立刻 dispatch，你其实是在赌网络时序。
+- `sealed` 和 `ready_retry_later` 不是一回事。前者还是“短暂收集态”，允许晚到 span 并进来；后者已经是“重投态”，主数据可能已经 append 进缓冲区了，再并入新 span 只会把内存版本和已落库版本撕裂。
+
+Function Explanation
+- `ComputeSealDelayTicks`
+  这里把三种封口原因拆成两档：`trace_end` 给 2 tick，`capacity/token_limit` 给 1 tick。既然显式结束更像“最后一个包也许先到”，那就多给一点乱序窗口；而容量/token 打满本质是保护性截断，就不要再拖。
+- `SealSessionLocked`
+  这一步只做三件事：把生命周期切到 `Sealed`、写死 `sealed_deadline_tick`、把节点重新挂回时间轮。重点不是“重新开始等”，而是“从现在起只等到这个固定 deadline 为止”。
+
+Pitfalls
+- sealed 会话如果每来一个 late span 就把 deadline 往后推，看起来像“更完整”，实际上会把状态机抖坏。只要上游有持续乱序，这条 trace 就可能永远不 dispatch。
+- `ReadyRetryLater` 如果还继续吃新 span，下一次重试时 AI 看到的 payload 会比第一次 append primary 时更大，结果就是 `trace_summary/trace_span` 和 `trace_analysis` 描述的根本不是同一份 trace。
+
+追加验证
+- 计划执行 `cmake --build server/build --target test_trace_session_manager_unit -j2` 与 sealed/retry_later 相关最小用例回归。
+
+追加记录
+Git Commit Message
 feat(core): 为 Trace sealed 和 tombstone 补状态骨架
 
 Modification

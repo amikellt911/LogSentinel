@@ -228,6 +228,9 @@ private:
     uint64_t ComputeTimeoutTicks() const;
     // 按 hard limit 预计算 low/high/critical 三档阈值，构造期缓存后供准入门禁直接读取。
     static Watermark BuildWatermark(size_t hard_limit);
+    // sealed 会话使用短窗口而不是完整 idle timeout。trace_end 给 2 tick，
+    // capacity/token_limit 给 1 tick，目的是吸收少量乱序 span，但不把封口抖成长期收集。
+    static uint64_t ComputeSealDelayTicks(TraceSession::SealReason reason);
     // 根据连续失败次数计算退避 tick，避免 ready retry 会话固定每 tick 原地撞线程池。
     static uint64_t ComputeRetryDelayTicks(size_t retry_count);
     // Push/Dispatch 的共享状态会同时被 IO loop 和主 loop 定时器线程访问，这里拆出持锁版本，
@@ -240,10 +243,14 @@ private:
     bool ShouldRejectIncomingTrace(bool trace_exists) const;
     // 在时间轮中为会话安排最新超时节点（旧节点不删，靠 version/epoch 失效）。
     void ScheduleTimeoutNode(TraceSession& session);
+    // sealed 会话使用独立的 deadline tick；后续 late span 可以并入，但不能续命。
+    void ScheduleSealedNode(TraceSession& session);
     // ready trace 投递失败后，安排一个更短的“尽快重试”时点，避免继续沿用收集超时语义。
     void ScheduleRetryNode(TraceSession& session);
     // 按会话当前生命周期选择调度语义：Collecting 走收集超时，ReadyRetryLater 走快速重投。
     void ScheduleSessionNode(TraceSession& session);
+    // 将 collecting 会话收口到 sealed，后续只等固定短窗口，不再被新 span 延长。
+    void SealSessionLocked(TraceSession& session, TraceSession::SealReason reason);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
     void RebuildTimeWheel();
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。

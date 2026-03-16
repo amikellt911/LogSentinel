@@ -99,6 +99,18 @@ TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_l
     return mark;
 }
 
+uint64_t TraceSessionManager::ComputeSealDelayTicks(TraceSession::SealReason reason)
+{
+    switch (reason) {
+        case TraceSession::SealReason::TraceEnd:
+            return 2;
+        case TraceSession::SealReason::Capacity:
+        case TraceSession::SealReason::TokenLimit:
+            return 1;
+    }
+    return 1;
+}
+
 uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count)
 {
     if (retry_count == 0) {
@@ -186,6 +198,10 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
     }
 
     TraceSession& session = *sessions_[iter->second];
+    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater) {
+        // ready retry 会话已经完成主数据收口；这时再并入新 span，会把内存里的 trace 和已入缓冲的 primary 语义撕裂。
+        return PushResult::AcceptedDeferred;
+    }
     if (!session.span_ids.insert(span.span_id).second) {
         // 发现重复 span_id 时先记录首个重复值，便于后续分发时标注异常来源。
         if (!session.duplicate_span_id.has_value()) {
@@ -196,28 +212,40 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
     }
 
     // 先按到达顺序追加，后续聚合阶段再按 parent_id 重建结构。
+    const bool already_sealed = (session.lifecycle_state == TraceSession::LifecycleState::Sealed);
     session.spans.push_back(span);
     total_buffered_spans_ += 1;
     session.token_count += token_estimator_.Estimate(span);
     session.last_update_ms = now_ms;
-    session.lifecycle_state = TraceSession::LifecycleState::Collecting;
-    session.retry_count = 0;
-    session.next_retry_tick = 0;
+    if (!already_sealed) {
+        session.lifecycle_state = TraceSession::LifecycleState::Collecting;
+        session.retry_count = 0;
+        session.next_retry_tick = 0;
+    }
+
+    if (already_sealed) {
+        // sealed 会话允许吸收短窗口内的 late span，但 deadline 固定，不续命。
+        RefreshOverloadState();
+        return PushResult::Accepted;
+    }
 
     if (span.trace_end.has_value() && span.trace_end.value()) {
-        const bool dispatched = DispatchLocked(session.trace_key);
-        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
+        SealSessionLocked(session, TraceSession::SealReason::TraceEnd);
+        RefreshOverloadState();
+        return PushResult::Accepted;
     }
 
     if (token_limit_ > 0 && session.token_count >= token_limit_) {
-        const bool dispatched = DispatchLocked(session.trace_key);
-        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
+        SealSessionLocked(session, TraceSession::SealReason::TokenLimit);
+        RefreshOverloadState();
+        return PushResult::Accepted;
     }
 
     if (session.capacity > 0 && session.spans.size() >= session.capacity) {
-        // 达到容量上限即触发分发，避免单个 Trace 无限膨胀。
-        const bool dispatched = DispatchLocked(session.trace_key);
-        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
+        // 达到容量上限时先封口，再给一个最短 grace tick 吸收少量乱序 span。
+        SealSessionLocked(session, TraceSession::SealReason::Capacity);
+        RefreshOverloadState();
+        return PushResult::Accepted;
     }
 
     // collecting 会话继续按“等待后续 span”语义重排超时计划。
@@ -294,6 +322,12 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
                 time_wheel_[session.next_retry_tick % wheel_size_].push_back(node);
                 continue;
             }
+            if (session.lifecycle_state == TraceSession::LifecycleState::Sealed &&
+                current_tick_ < session.sealed_deadline_tick) {
+                // sealed 会话允许并入 late span，但 deadline 固定，不会因为后续 push 被重新向后推。
+                time_wheel_[session.sealed_deadline_tick % wheel_size_].push_back(node);
+                continue;
+            }
             if (max_dispatch_per_tick > 0 && expired_trace_keys.size() >= max_dispatch_per_tick) {
                 // 本轮达到上限时，将当前有效节点顺延一 tick，避免被直接丢失。
                 node.expire_tick = current_tick_ + 1;
@@ -332,6 +366,20 @@ void TraceSessionManager::ScheduleTimeoutNode(TraceSession& session)
     time_wheel_[slot].push_back(std::move(node));
 }
 
+void TraceSessionManager::ScheduleSealedNode(TraceSession& session)
+{
+    session.timer_version += 1;
+    const uint64_t expire_tick =
+        session.sealed_deadline_tick > current_tick_ ? session.sealed_deadline_tick : current_tick_ + 1;
+    const size_t slot = static_cast<size_t>(expire_tick % wheel_size_);
+    TimeWheelNode node;
+    node.trace_key = session.trace_key;
+    node.version = session.timer_version;
+    node.epoch = session.session_epoch;
+    node.expire_tick = expire_tick;
+    time_wheel_[slot].push_back(std::move(node));
+}
+
 void TraceSessionManager::ScheduleRetryNode(TraceSession& session)
 {
     session.timer_version += 1;
@@ -348,11 +396,23 @@ void TraceSessionManager::ScheduleRetryNode(TraceSession& session)
 
 void TraceSessionManager::ScheduleSessionNode(TraceSession& session)
 {
+    if (session.lifecycle_state == TraceSession::LifecycleState::Sealed) {
+        ScheduleSealedNode(session);
+        return;
+    }
     if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater) {
         ScheduleRetryNode(session);
         return;
     }
     ScheduleTimeoutNode(session);
+}
+
+void TraceSessionManager::SealSessionLocked(TraceSession& session, TraceSession::SealReason reason)
+{
+    session.lifecycle_state = TraceSession::LifecycleState::Sealed;
+    session.seal_reason = reason;
+    session.sealed_deadline_tick = current_tick_ + ComputeSealDelayTicks(reason);
+    ScheduleSessionNode(session);
 }
 
 void TraceSessionManager::RebuildTimeWheel()
@@ -364,7 +424,7 @@ void TraceSessionManager::RebuildTimeWheel()
         if (!session_ptr) {
             continue;
         }
-        // collecting 和 retry_later 的时间语义不同，重建时必须按当前生命周期分别重排。
+        // collecting / sealed / retry_later 三种时间语义不同，重建时必须按当前生命周期分别重排。
         ScheduleSessionNode(*session_ptr);
     }
 }
@@ -412,6 +472,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
 
     auto rollback_session = [this, trace_key, span_count](std::unique_ptr<TraceSession> restored_session) {
         restored_session->lifecycle_state = TraceSession::LifecycleState::ReadyRetryLater;
+        restored_session->sealed_deadline_tick = 0;
         restored_session->last_update_ms = NowSteadyMs();
         restored_session->retry_count += 1;
         restored_session->next_retry_tick =
