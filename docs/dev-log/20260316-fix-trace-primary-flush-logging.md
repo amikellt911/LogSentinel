@@ -23,3 +23,30 @@ Pitfalls
 
 追加验证
 - `cmake --build server/build --target LogSentinel -j2` 已通过。
+
+追加记录
+Git Commit Message
+feat(core): 为 Trace sealed 和 tombstone 补状态骨架
+
+Modification
+- server/core/TraceSessionManager.h
+- server/core/TraceSessionManager.cpp
+- docs/dev-log/20260316-fix-trace-primary-flush-logging.md
+
+Learning Tips
+Newbie Tips
+- 这种“先搭状态骨架、后改行为逻辑”的分步法很有必要。既然后面要同时改 `PushLocked / DispatchLocked / SweepExpiredSessions`，那你如果一上来边加字段边改流转，很容易把 bug 全搅在一起，最后连编译不过和逻辑错都分不清。
+- `tombstone` 在这里不是缓存结果，也不是历史全局去重表。它只是“最近刚完成过的 trace_key 集合”，职责是延迟遗忘，防止晚到 span 把旧 trace 复活。
+
+Function Explanation
+- `TraceSession::SealReason / LifecycleState::Sealed`
+  这一步先把 sealed 的状态语义放进 `TraceSession`。既然 `trace_end/capacity/token_limit` 后面都要统一改成“先封口、再给短窗口、最后再 dispatch”，那状态本身必须先有地方落。
+- `completed_trace_expire_tick_ / completed_trace_wheel_`
+  这里先把 completed tombstone 的两套基础结构放进 manager。既然我们已经决定不把 tombstone 和活跃 session 混成一种时间轮节点，那么就先把“精确查找 map + 按 tick 过期回收桶”这套骨架补齐，后面行为改造时才不会再反复改成员布局。
+
+Pitfalls
+- 不要把 `CompletedTombstone` 也塞进 `TraceSession::LifecycleState`。既然 dispatch 成功后 session 本体就应该离开活跃表，那 completed 这段短期保留状态应该放在 manager 外层结构里管，而不是继续占着一个活跃 session。
+- 不要现在就急着改调度逻辑。既然这一步的目标只是补字段和初始化，那么行为保持不变反而最稳；这样后面一旦出问题，你就知道是第二步、第三步的新逻辑炸了，不是第一步骨架导致的。
+
+追加验证
+- `cmake --build server/build --target LogSentinel -j2` 已通过。

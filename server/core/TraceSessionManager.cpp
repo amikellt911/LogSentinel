@@ -69,6 +69,9 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
 {
     timeout_ticks_ = ComputeTimeoutTicks();
     time_wheel_.resize(wheel_size_);
+    // 先把 completed tombstone 的桶位也按同样的 wheel_size 建好。
+    // 这样后面只要跟着 current_tick_ 同步推进，就能在同一套 tick 节奏里做过期回收。
+    completed_trace_wheel_.resize(wheel_size_);
     buffered_span_watermark_ = BuildWatermark(buffered_span_hard_limit_);
     active_session_watermark_ = BuildWatermark(active_session_hard_limit_);
     const size_t pending_task_hard_limit =

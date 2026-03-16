@@ -61,10 +61,22 @@ struct SpanEvent
 
 struct TraceSession
 {
+    enum class SealReason
+    {
+        // 显式 trace_end：更像“最后一个包可能先到”，允许给一个略长的乱序缓冲窗。
+        TraceEnd,
+        // 容量打满：目的是及时截断内存增长，所以只给最短 grace。
+        Capacity,
+        // token 打满：和容量一样，属于保护性封口，不应该再等太久。
+        TokenLimit
+    };
+
     enum class LifecycleState
     {
         // 仍处于 span 收集阶段，时间轮语义是“等后续 span 是否继续到达”。
         Collecting,
+        // 已命中 trace_end/capacity/token_limit，接下来只再等一个很短的乱序窗口。
+        Sealed,
         // 业务上已经 ready，但由于下游拥堵暂未成功投递，后续应走重试投递语义。
         ReadyRetryLater
     };
@@ -93,6 +105,11 @@ struct TraceSession
     uint64_t session_epoch = 0;
     // lifecycle_state 用来区分“仍在收集”和“已 ready 但等待重投”，避免复用同一套超时语义。
     LifecycleState lifecycle_state = LifecycleState::Collecting;
+    // seal_reason 记录本次封口由谁触发，后面时间轮调度要按 reason 决定 grace 长短。
+    SealReason seal_reason = SealReason::TraceEnd;
+    // sealed_deadline_tick 是 sealed 会话真正允许 dispatch 的最晚 tick。
+    // 注意它不是“每来一个 span 就续命”的 timeout，而是一个固定短窗口。
+    uint64_t sealed_deadline_tick = 0;
     // retry_count 只统计连续 submit 失败次数，用于计算指数退避的下次重试间隔。
     size_t retry_count = 0;
     // next_retry_tick 表示 ready trace 下一次最早允许重试投递的 tick。
@@ -235,9 +252,16 @@ private:
     std::unordered_map<size_t, size_t> index_by_trace_;
     // 时间轮主状态：按槽位存储超时候选节点。
     std::vector<std::vector<TimeWheelNode>> time_wheel_;
+    // completed tombstone 只记“最近刚完成过的 trace_key”，用于短时间内拦截 late span 复活旧 trace。
+    // map 负责 O(1) 判断是否仍在 tombstone 窗口内，value 是它的过期 tick。
+    std::unordered_map<size_t, uint64_t> completed_trace_expire_tick_;
+    // 和活跃 session 时间轮分开存，避免把“等待 dispatch”和“等待遗忘”两套语义塞进同一种节点。
+    std::vector<std::vector<size_t>> completed_trace_wheel_;
     size_t wheel_size_ = 512;
     int64_t idle_timeout_ms_ = 5000;
     int64_t wheel_tick_ms_ = 500;
+    // completed tombstone 默认保留 25 tick；当前 tick=200ms 时大约是 5s。
+    uint64_t completed_trace_tombstone_ticks_ = 25;
     uint64_t timeout_ticks_ = 10;
     uint64_t current_tick_ = 0;
     int64_t last_tick_now_ms_ = 0;
