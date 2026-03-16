@@ -6,6 +6,7 @@ LogSentinel 是一个面向中小规模服务排障场景的 C++17 日志 / Trac
 
 - 接收离散 Span，请求入口为 `POST /logs/spans`
 - 按 Trace 会话聚合 Span，并在多种触发条件下分发
+- 使用“两阶段延迟关闭”处理晚到 Span，避免已完成 Trace 被复活后重复落库
 - 在高水位下做分级背压，向入口返回 `503 + Retry-After`
 - 将 `trace_summary / trace_span / trace_analysis` 异步批量写入 SQLite（WAL）
 - 可选通过 Python FastAPI proxy 调用模型服务，并在 critical 风险时触发 Webhook
@@ -34,7 +35,9 @@ LogSentinel 是一个面向中小规模服务排障场景的 C++17 日志 / Trac
 
 - 以 `trace_key / span_id / parent_span_id` 维护活跃会话
 - 按 `trace_end`、Span 容量阈值、Token 阈值、idle timeout 触发分发
-- 用时间轮维护 collecting / retry 会话
+- 用时间轮维护 collecting / sealed / retry 会话
+- `trace_end`、容量阈值、Token 阈值命中后不会立刻 dispatch，而是先进入短暂 `sealed grace window`
+- dispatch 成功后把已完成 `trace_key` 放入短暂 `TIME_WAIT tombstone`，拦截晚到 Span，避免旧 Trace 被复活成新会话
 - 用 `buffered spans / active sessions / pending tasks` 三类指标判断水位
 - 高水位优先拒绝新 Trace，critical 水位才拒绝存量 Trace 的后续 Span
 - 线程池 submit 失败时把会话回滚到内存，并按 `1/2/4/8/16` tick 指数退避重试
