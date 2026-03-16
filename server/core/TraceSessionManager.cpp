@@ -69,6 +69,9 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
 {
     timeout_ticks_ = ComputeTimeoutTicks();
     time_wheel_.resize(wheel_size_);
+    // 先把 completed tombstone 的桶位也按同样的 wheel_size 建好。
+    // 这样后面只要跟着 current_tick_ 同步推进，就能在同一套 tick 节奏里做过期回收。
+    completed_trace_wheel_.resize(wheel_size_);
     buffered_span_watermark_ = BuildWatermark(buffered_span_hard_limit_);
     active_session_watermark_ = BuildWatermark(active_session_hard_limit_);
     const size_t pending_task_hard_limit =
@@ -79,7 +82,7 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
 TraceSessionManager::~TraceSessionManager()
 {
     const RuntimeStatsSnapshot stats = SnapshotRuntimeStats();
-    if (stats.dispatch_count == 0 && stats.worker_begin_count == 0 && stats.save_calls == 0) {
+    if (stats.dispatch_count == 0 && stats.worker_begin_count == 0 && stats.analysis_enqueue_calls == 0) {
         return;
     }
     std::clog << "[TraceRuntimeStats] " << DescribeRuntimeStats() << std::endl;
@@ -94,6 +97,18 @@ TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_l
     mark.critical = std::max(mark.high, std::max<size_t>(1, safe_hard_limit * 90 / 100));
     mark.critical = std::min(mark.critical, safe_hard_limit);
     return mark;
+}
+
+uint64_t TraceSessionManager::ComputeSealDelayTicks(TraceSession::SealReason reason)
+{
+    switch (reason) {
+        case TraceSession::SealReason::TraceEnd:
+            return 2;
+        case TraceSession::SealReason::Capacity:
+        case TraceSession::SealReason::TokenLimit:
+            return 1;
+    }
+    return 1;
 }
 
 uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count)
@@ -122,8 +137,8 @@ TraceSessionManager::RuntimeStatsSnapshot TraceSessionManager::SnapshotRuntimeSt
     stats.worker_done_count = worker_done_count_.load(std::memory_order_relaxed);
     stats.ai_calls = ai_calls_.load(std::memory_order_relaxed);
     stats.ai_total_ns = ai_total_ns_.load(std::memory_order_relaxed);
-    stats.save_calls = save_calls_.load(std::memory_order_relaxed);
-    stats.save_total_ns = save_total_ns_.load(std::memory_order_relaxed);
+    stats.analysis_enqueue_calls = analysis_enqueue_calls_.load(std::memory_order_relaxed);
+    stats.analysis_enqueue_total_ns = analysis_enqueue_total_ns_.load(std::memory_order_relaxed);
     return stats;
 }
 
@@ -139,9 +154,13 @@ std::string TraceSessionManager::DescribeRuntimeStats() const
         << ", ai_calls=" << stats.ai_calls
         << ", ai_total_ns=" << stats.ai_total_ns
         << ", ai_avg_ms=" << (stats.ai_calls > 0 ? (static_cast<double>(stats.ai_total_ns) / stats.ai_calls / 1'000'000.0) : 0.0)
-        << ", save_calls=" << stats.save_calls
-        << ", save_total_ns=" << stats.save_total_ns
-        << ", save_avg_ms=" << (stats.save_calls > 0 ? (static_cast<double>(stats.save_total_ns) / stats.save_calls / 1'000'000.0) : 0.0);
+        // 这里现在明确写成 enqueue，而不是 save。
+        // 既然真实 SQLite batch flush 已经挪到 BufferedTraceRepository 后台线程，
+        // 那 manager 这边量到的只是在 worker 内把 analysis 丢进缓冲区的墙钟时间。
+        << ", analysis_enqueue_calls=" << stats.analysis_enqueue_calls
+        << ", analysis_enqueue_total_ns=" << stats.analysis_enqueue_total_ns
+        << ", analysis_enqueue_avg_ms="
+        << (stats.analysis_enqueue_calls > 0 ? (static_cast<double>(stats.analysis_enqueue_total_ns) / stats.analysis_enqueue_calls / 1'000'000.0) : 0.0);
     return oss.str();
 }
 
@@ -161,6 +180,11 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
     }
     auto iter = index_by_trace_.find(span.trace_key);
     const bool trace_exists = (iter != index_by_trace_.end());
+    if (!trace_exists && IsCompletedTombstoneAliveLocked(span.trace_key)) {
+        // 这条 trace 已经完成并处于短暂 TIME_WAIT。
+        // 既然现在来的是晚到 span，那么直接幂等吸收即可，不能再把旧 trace 复活成新 session。
+        return PushResult::Accepted;
+    }
     RefreshOverloadState();
     if (ShouldRejectIncomingTrace(trace_exists)) {
         return PushResult::RejectedOverload;
@@ -179,6 +203,10 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
     }
 
     TraceSession& session = *sessions_[iter->second];
+    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater) {
+        // ready retry 会话已经完成主数据收口；这时再并入新 span，会把内存里的 trace 和已入缓冲的 primary 语义撕裂。
+        return PushResult::AcceptedDeferred;
+    }
     if (!session.span_ids.insert(span.span_id).second) {
         // 发现重复 span_id 时先记录首个重复值，便于后续分发时标注异常来源。
         if (!session.duplicate_span_id.has_value()) {
@@ -189,28 +217,40 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
     }
 
     // 先按到达顺序追加，后续聚合阶段再按 parent_id 重建结构。
+    const bool already_sealed = (session.lifecycle_state == TraceSession::LifecycleState::Sealed);
     session.spans.push_back(span);
     total_buffered_spans_ += 1;
     session.token_count += token_estimator_.Estimate(span);
     session.last_update_ms = now_ms;
-    session.lifecycle_state = TraceSession::LifecycleState::Collecting;
-    session.retry_count = 0;
-    session.next_retry_tick = 0;
+    if (!already_sealed) {
+        session.lifecycle_state = TraceSession::LifecycleState::Collecting;
+        session.retry_count = 0;
+        session.next_retry_tick = 0;
+    }
+
+    if (already_sealed) {
+        // sealed 会话允许吸收短窗口内的 late span，但 deadline 固定，不续命。
+        RefreshOverloadState();
+        return PushResult::Accepted;
+    }
 
     if (span.trace_end.has_value() && span.trace_end.value()) {
-        const bool dispatched = DispatchLocked(session.trace_key);
-        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
+        SealSessionLocked(session, TraceSession::SealReason::TraceEnd);
+        RefreshOverloadState();
+        return PushResult::Accepted;
     }
 
     if (token_limit_ > 0 && session.token_count >= token_limit_) {
-        const bool dispatched = DispatchLocked(session.trace_key);
-        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
+        SealSessionLocked(session, TraceSession::SealReason::TokenLimit);
+        RefreshOverloadState();
+        return PushResult::Accepted;
     }
 
     if (session.capacity > 0 && session.spans.size() >= session.capacity) {
-        // 达到容量上限即触发分发，避免单个 Trace 无限膨胀。
-        const bool dispatched = DispatchLocked(session.trace_key);
-        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
+        // 达到容量上限时先封口，再给一个最短 grace tick 吸收少量乱序 span。
+        SealSessionLocked(session, TraceSession::SealReason::Capacity);
+        RefreshOverloadState();
+        return PushResult::Accepted;
     }
 
     // collecting 会话继续按“等待后续 span”语义重排超时计划。
@@ -227,7 +267,7 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
                                                size_t max_dispatch_per_tick)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (sessions_.empty()) {
+    if (sessions_.empty() && completed_trace_expire_tick_.empty()) {
         return;
     }
     if (idle_timeout_ms > 0 && idle_timeout_ms != idle_timeout_ms_) {
@@ -262,6 +302,7 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
     for (uint64_t step = 0; step < advance_ticks; ++step) {
         ++current_tick_;
         const size_t slot = static_cast<size_t>(current_tick_ % wheel_size_);
+        SweepCompletedTombstonesLocked(slot);
         std::vector<TimeWheelNode> bucket = std::move(time_wheel_[slot]);
         time_wheel_[slot].clear();
 
@@ -285,6 +326,12 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
                 current_tick_ < session.next_retry_tick) {
                 // retry 会话只有到达 next_retry_tick 才允许重投，避免固定频率打桩。
                 time_wheel_[session.next_retry_tick % wheel_size_].push_back(node);
+                continue;
+            }
+            if (session.lifecycle_state == TraceSession::LifecycleState::Sealed &&
+                current_tick_ < session.sealed_deadline_tick) {
+                // sealed 会话允许并入 late span，但 deadline 固定，不会因为后续 push 被重新向后推。
+                time_wheel_[session.sealed_deadline_tick % wheel_size_].push_back(node);
                 continue;
             }
             if (max_dispatch_per_tick > 0 && expired_trace_keys.size() >= max_dispatch_per_tick) {
@@ -312,10 +359,65 @@ uint64_t TraceSessionManager::ComputeTimeoutTicks() const
     return static_cast<uint64_t>((idle_timeout_ms_ + wheel_tick_ms_ - 1) / wheel_tick_ms_);
 }
 
+void TraceSessionManager::AddCompletedTombstoneLocked(size_t trace_key)
+{
+    const uint64_t expire_tick = current_tick_ + completed_trace_tombstone_ticks_;
+    completed_trace_expire_tick_[trace_key] = expire_tick;
+    completed_trace_wheel_[expire_tick % wheel_size_].push_back(trace_key);
+}
+
+bool TraceSessionManager::IsCompletedTombstoneAliveLocked(size_t trace_key)
+{
+    auto iter = completed_trace_expire_tick_.find(trace_key);
+    if (iter == completed_trace_expire_tick_.end()) {
+        return false;
+    }
+    if (iter->second > current_tick_) {
+        return true;
+    }
+    completed_trace_expire_tick_.erase(iter);
+    return false;
+}
+
+void TraceSessionManager::SweepCompletedTombstonesLocked(size_t slot)
+{
+    std::vector<size_t> bucket = std::move(completed_trace_wheel_[slot]);
+    completed_trace_wheel_[slot].clear();
+
+    for (size_t trace_key : bucket) {
+        auto iter = completed_trace_expire_tick_.find(trace_key);
+        if (iter == completed_trace_expire_tick_.end()) {
+            // 已被新 tombstone 覆盖或已过期删除，旧 wheel 节点直接丢弃。
+            continue;
+        }
+        if (iter->second > current_tick_) {
+            // 由于是取模回环，同一个槽里可能混着未来很多轮才真正到期的 tombstone。
+            // 这里必须按真实 expire_tick 重新挂回去，不能因为扫到当前槽就提前遗忘。
+            completed_trace_wheel_[iter->second % wheel_size_].push_back(trace_key);
+            continue;
+        }
+        completed_trace_expire_tick_.erase(iter);
+    }
+}
+
 void TraceSessionManager::ScheduleTimeoutNode(TraceSession& session)
 {
     session.timer_version += 1;
     const uint64_t expire_tick = current_tick_ + timeout_ticks_;
+    const size_t slot = static_cast<size_t>(expire_tick % wheel_size_);
+    TimeWheelNode node;
+    node.trace_key = session.trace_key;
+    node.version = session.timer_version;
+    node.epoch = session.session_epoch;
+    node.expire_tick = expire_tick;
+    time_wheel_[slot].push_back(std::move(node));
+}
+
+void TraceSessionManager::ScheduleSealedNode(TraceSession& session)
+{
+    session.timer_version += 1;
+    const uint64_t expire_tick =
+        session.sealed_deadline_tick > current_tick_ ? session.sealed_deadline_tick : current_tick_ + 1;
     const size_t slot = static_cast<size_t>(expire_tick % wheel_size_);
     TimeWheelNode node;
     node.trace_key = session.trace_key;
@@ -341,11 +443,23 @@ void TraceSessionManager::ScheduleRetryNode(TraceSession& session)
 
 void TraceSessionManager::ScheduleSessionNode(TraceSession& session)
 {
+    if (session.lifecycle_state == TraceSession::LifecycleState::Sealed) {
+        ScheduleSealedNode(session);
+        return;
+    }
     if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater) {
         ScheduleRetryNode(session);
         return;
     }
     ScheduleTimeoutNode(session);
+}
+
+void TraceSessionManager::SealSessionLocked(TraceSession& session, TraceSession::SealReason reason)
+{
+    session.lifecycle_state = TraceSession::LifecycleState::Sealed;
+    session.seal_reason = reason;
+    session.sealed_deadline_tick = current_tick_ + ComputeSealDelayTicks(reason);
+    ScheduleSessionNode(session);
 }
 
 void TraceSessionManager::RebuildTimeWheel()
@@ -357,7 +471,7 @@ void TraceSessionManager::RebuildTimeWheel()
         if (!session_ptr) {
             continue;
         }
-        // collecting 和 retry_later 的时间语义不同，重建时必须按当前生命周期分别重排。
+        // collecting / sealed / retry_later 三种时间语义不同，重建时必须按当前生命周期分别重排。
         ScheduleSessionNode(*session_ptr);
     }
 }
@@ -405,6 +519,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
 
     auto rollback_session = [this, trace_key, span_count](std::unique_ptr<TraceSession> restored_session) {
         restored_session->lifecycle_state = TraceSession::LifecycleState::ReadyRetryLater;
+        restored_session->sealed_deadline_tick = 0;
         restored_session->last_update_ms = NowSteadyMs();
         restored_session->retry_count += 1;
         restored_session->next_retry_tick =
@@ -493,8 +608,8 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         // 2) 当前先不在主链路写入（传 nullptr），避免在 MVP 阶段引入额外字段组装复杂度；
         // 3) 后续做“分析重试”时，优先把当次 trace_payload 作为 input_json 落到 prompt_debug，
         //    这样可直接重放请求，不需要再次从 trace_span 重新组装树结构。
-        manager->save_calls_.fetch_add(1, std::memory_order_relaxed);
-        const uint64_t save_begin_ns = NowSteadyNs();
+        manager->analysis_enqueue_calls_.fetch_add(1, std::memory_order_relaxed);
+        const uint64_t enqueue_begin_ns = NowSteadyNs();
         bool saved = true;
         if (!buffered_trace_repo) {
             saved = false;
@@ -505,7 +620,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
             }
             saved = buffered_trace_repo->AppendAnalysis(std::move(analysis_write));
         }
-        manager->save_total_ns_.fetch_add(NowSteadyNs() - save_begin_ns, std::memory_order_relaxed);
+        manager->analysis_enqueue_total_ns_.fetch_add(NowSteadyNs() - enqueue_begin_ns, std::memory_order_relaxed);
         manager->worker_done_count_.fetch_add(1, std::memory_order_relaxed);
         if (!saved || !notifier || !analysis_ptr) {
             return;
@@ -538,6 +653,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         rollback_session(std::move(restored_session));
         return false;
     }
+    AddCompletedTombstoneLocked(trace_key);
     submit_ok_count_.fetch_add(1, std::memory_order_relaxed);
     return true;
 }

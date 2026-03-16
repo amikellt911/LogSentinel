@@ -61,10 +61,22 @@ struct SpanEvent
 
 struct TraceSession
 {
+    enum class SealReason
+    {
+        // 显式 trace_end：更像“最后一个包可能先到”，允许给一个略长的乱序缓冲窗。
+        TraceEnd,
+        // 容量打满：目的是及时截断内存增长，所以只给最短 grace。
+        Capacity,
+        // token 打满：和容量一样，属于保护性封口，不应该再等太久。
+        TokenLimit
+    };
+
     enum class LifecycleState
     {
         // 仍处于 span 收集阶段，时间轮语义是“等后续 span 是否继续到达”。
         Collecting,
+        // 已命中 trace_end/capacity/token_limit，接下来只再等一个很短的乱序窗口。
+        Sealed,
         // 业务上已经 ready，但由于下游拥堵暂未成功投递，后续应走重试投递语义。
         ReadyRetryLater
     };
@@ -93,6 +105,11 @@ struct TraceSession
     uint64_t session_epoch = 0;
     // lifecycle_state 用来区分“仍在收集”和“已 ready 但等待重投”，避免复用同一套超时语义。
     LifecycleState lifecycle_state = LifecycleState::Collecting;
+    // seal_reason 记录本次封口由谁触发，后面时间轮调度要按 reason 决定 grace 长短。
+    SealReason seal_reason = SealReason::TraceEnd;
+    // sealed_deadline_tick 是 sealed 会话真正允许 dispatch 的最晚 tick。
+    // 注意它不是“每来一个 span 就续命”的 timeout，而是一个固定短窗口。
+    uint64_t sealed_deadline_tick = 0;
     // retry_count 只统计连续 submit 失败次数，用于计算指数退避的下次重试间隔。
     size_t retry_count = 0;
     // next_retry_tick 表示 ready trace 下一次最早允许重试投递的 tick。
@@ -113,8 +130,8 @@ public:
         uint64_t worker_done_count = 0;
         uint64_t ai_calls = 0;
         uint64_t ai_total_ns = 0;
-        uint64_t save_calls = 0;
-        uint64_t save_total_ns = 0;
+        uint64_t analysis_enqueue_calls = 0;
+        uint64_t analysis_enqueue_total_ns = 0;
     };
 
     enum class PushResult
@@ -211,8 +228,17 @@ private:
     uint64_t ComputeTimeoutTicks() const;
     // 按 hard limit 预计算 low/high/critical 三档阈值，构造期缓存后供准入门禁直接读取。
     static Watermark BuildWatermark(size_t hard_limit);
+    // sealed 会话使用短窗口而不是完整 idle timeout。trace_end 给 2 tick，
+    // capacity/token_limit 给 1 tick，目的是吸收少量乱序 span，但不把封口抖成长期收集。
+    static uint64_t ComputeSealDelayTicks(TraceSession::SealReason reason);
     // 根据连续失败次数计算退避 tick，避免 ready retry 会话固定每 tick 原地撞线程池。
     static uint64_t ComputeRetryDelayTicks(size_t retry_count);
+    // completed tombstone 进入 TIME_WAIT：写入精确查找表并挂进独立 wheel，避免晚到 span 复活旧 trace。
+    void AddCompletedTombstoneLocked(size_t trace_key);
+    // 命中且仍未过期时返回 true；若发现只是 map 里的过期脏数据，会在这里顺手清掉。
+    bool IsCompletedTombstoneAliveLocked(size_t trace_key);
+    // 扫描当前 tick 的 completed tombstone 桶：到期则删除，未到期则按真实 expire_tick 重新挂回。
+    void SweepCompletedTombstonesLocked(size_t slot);
     // Push/Dispatch 的共享状态会同时被 IO loop 和主 loop 定时器线程访问，这里拆出持锁版本，
     // 避免公开入口互相调用时重复加锁导致死锁。
     PushResult PushLocked(const SpanEvent& span, int64_t now_ms);
@@ -223,10 +249,14 @@ private:
     bool ShouldRejectIncomingTrace(bool trace_exists) const;
     // 在时间轮中为会话安排最新超时节点（旧节点不删，靠 version/epoch 失效）。
     void ScheduleTimeoutNode(TraceSession& session);
+    // sealed 会话使用独立的 deadline tick；后续 late span 可以并入，但不能续命。
+    void ScheduleSealedNode(TraceSession& session);
     // ready trace 投递失败后，安排一个更短的“尽快重试”时点，避免继续沿用收集超时语义。
     void ScheduleRetryNode(TraceSession& session);
     // 按会话当前生命周期选择调度语义：Collecting 走收集超时，ReadyRetryLater 走快速重投。
     void ScheduleSessionNode(TraceSession& session);
+    // 将 collecting 会话收口到 sealed，后续只等固定短窗口，不再被新 span 延长。
+    void SealSessionLocked(TraceSession& session, TraceSession::SealReason reason);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
     void RebuildTimeWheel();
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。
@@ -235,9 +265,16 @@ private:
     std::unordered_map<size_t, size_t> index_by_trace_;
     // 时间轮主状态：按槽位存储超时候选节点。
     std::vector<std::vector<TimeWheelNode>> time_wheel_;
+    // completed tombstone 只记“最近刚完成过的 trace_key”，用于短时间内拦截 late span 复活旧 trace。
+    // map 负责 O(1) 判断是否仍在 tombstone 窗口内，value 是它的过期 tick。
+    std::unordered_map<size_t, uint64_t> completed_trace_expire_tick_;
+    // 和活跃 session 时间轮分开存，避免把“等待 dispatch”和“等待遗忘”两套语义塞进同一种节点。
+    std::vector<std::vector<size_t>> completed_trace_wheel_;
     size_t wheel_size_ = 512;
     int64_t idle_timeout_ms_ = 5000;
     int64_t wheel_tick_ms_ = 500;
+    // completed tombstone 默认保留 25 tick；当前 tick=200ms 时大约是 5s。
+    uint64_t completed_trace_tombstone_ticks_ = 25;
     uint64_t timeout_ticks_ = 10;
     uint64_t current_tick_ = 0;
     int64_t last_tick_now_ms_ = 0;
@@ -263,8 +300,8 @@ private:
     std::atomic<uint64_t> worker_done_count_{0};
     std::atomic<uint64_t> ai_calls_{0};
     std::atomic<uint64_t> ai_total_ns_{0};
-    std::atomic<uint64_t> save_calls_{0};
-    std::atomic<uint64_t> save_total_ns_{0};
+    std::atomic<uint64_t> analysis_enqueue_calls_{0};
+    std::atomic<uint64_t> analysis_enqueue_total_ns_{0};
     // TraceSessionManager 当前会被 HTTP 处理线程和主 loop 定时器线程同时访问，
     // 这把锁先用最保守的方式把内部状态机串行化，优先保证正确性。
     mutable std::mutex mutex_;

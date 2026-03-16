@@ -14,6 +14,10 @@
 - [x] 编写低速率 Trace 发送脚本 `server/tests/wrk/trace_paced_sender.py`（最小版：按 batch-traces + batch-sleep-ms 固定节奏发送 end trace）
 - [x] 为火焰图实验补充后链路 `drain` 等待与最终落库统计（避免只看到入口成功，不知道最后真正完成多少 trace）
 - [x] 为 Trace 后链路补最小埋点（Dispatch/submit/worker/AI/SQLite 的次数与累计墙钟耗时）
+- [x] 修正 Trace/BufferedTrace 埋点口径：把 manager 内的 analysis enqueue 和后台 flush 线程里的真实 SQLite batch flush 分开统计
+- [x] 为 `run_bench.sh` 自动摘出 `[TraceRuntimeStats] / [BufferedTraceRuntimeStats]`，避免每轮 benchmark 后手翻 server log
+- [x] 为 `run_bench.sh` 补受控停机与 shutdown snapshot，避免 worker/AI 积压太深时脚本一直卡在退出阶段
+- [x] 为 `SavePrimaryBatch` 补失败日志，输出 batch 边界 trace_id 和具体 SQLite 错误，避免 flush 失败时只看到 fail_count
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 增加 `--worker-threads` 命令行参数支持
