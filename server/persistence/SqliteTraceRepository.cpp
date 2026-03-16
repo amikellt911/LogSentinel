@@ -335,6 +335,17 @@ bool SqliteTraceRepository::SavePrimaryBatch(const std::vector<TraceSummary>& su
             sqlite3_free(rollback_err);
         }
     };
+    auto batch_edge_trace_id = [&summaries, &spans](bool first) -> std::string {
+        // flush 失败时最怕只有一句“return false”，后面根本不知道是哪一批炸了。
+        // 这里优先用 summary 的 trace_id 做边界；如果 summary 恰好为空，再退回 span 的 trace_id。
+        if (!summaries.empty()) {
+            return first ? summaries.front().trace_id : summaries.back().trace_id;
+        }
+        if (!spans.empty()) {
+            return first ? spans.front().trace_id : spans.back().trace_id;
+        }
+        return "<empty>";
+    };
 
     try {
         int rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, &errmsg);
@@ -419,7 +430,14 @@ bool SqliteTraceRepository::SavePrimaryBatch(const std::vector<TraceSummary>& su
             errmsg = nullptr;
         }
         persistence::checkSqliteError(db_, rc, "Commit primary batch transaction");
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        std::cerr << "[SqliteTraceRepository] SavePrimaryBatch failed"
+                  << " summary_count=" << summaries.size()
+                  << " span_count=" << spans.size()
+                  << " first_trace_id=" << batch_edge_trace_id(true)
+                  << " last_trace_id=" << batch_edge_trace_id(false)
+                  << " error=" << e.what()
+                  << std::endl;
         rollback();
         return false;
     }
