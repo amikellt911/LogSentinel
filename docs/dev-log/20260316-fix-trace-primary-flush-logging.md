@@ -26,6 +26,33 @@ Pitfalls
 
 追加记录
 Git Commit Message
+test(core): 修正 sealed 语义下的 Trace 集成测试驱动
+
+Modification
+- server/tests/TraceSessionManager_integration_test.cpp
+- docs/todo-list/Todo_TraceSessionManager.md
+- docs/dev-log/20260316-fix-trace-primary-flush-logging.md
+
+Learning Tips
+Newbie Tips
+- 集成测试最容易假的地方，不是断言写错，而是测试驱动还停留在旧时间线。既然 `trace_end/capacity/token_limit` 现在先进入 sealed，再靠 sweep 推到 dispatch，那么测试如果不手动推进 tick，就会一直看见数据库是空的。
+- `test_trace_session_manager_integration` 这类测试没有跑 `main.cpp` 里的 event loop 定时器，所以不要默认 sweep 会“自己发生”。单测和集成测里都得自己把时间往前推。
+
+Function Explanation
+- `SweepTraceEndSealWindow / SweepProtectionSealWindow`
+  这两个 helper 不是在测时间轮本身，而是在给业务测试补最小驱动。前者对应 `trace_end` 的 2 tick grace，后者对应 `capacity/token_limit` 的 1 tick grace。
+
+Pitfalls
+- `BufferedRepositoryDestructorDrainsRemainingPrimaryAndAnalysis` 这条最容易漏。既然 worker 任务只有在 sealed trace 真正 dispatch 后才会开始跑，那么不先 sweep 到 deadline，后面的 `worker_done_count` 永远不会增加。
+
+追加验证
+- 计划执行 `cd server && cmake --build build --target test_trace_session_manager_integration -j2`。
+- 计划执行 `cd server && ./build/test_trace_session_manager_integration`。
+- 已执行 `cd server && cmake --build build --target test_trace_session_manager_integration -j2`，通过。
+- 已执行 `cd server && ./build/test_trace_session_manager_integration`，13/13 通过。
+
+追加记录
+Git Commit Message
 feat(core): 接入 Trace sealed 短窗口并收紧 retry_later 语义
 
 Modification

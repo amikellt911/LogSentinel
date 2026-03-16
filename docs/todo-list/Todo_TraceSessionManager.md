@@ -98,3 +98,4 @@
 - [x] 在 `PushLocked` 用 tombstone 拦截晚到 span，避免相同 `trace_id` 二次落库触发唯一键冲突
 - [x] 补最小单测：tombstone 存活期内吸收 late span，不再新建 session
 - [x] 补最小单测：tombstone 过期后允许同 `trace_id` 重新建 session
+- [x] 修正 `TraceSessionManager` 集成测试口径：sealed trace 需手动 sweep 到 deadline 后才会 dispatch

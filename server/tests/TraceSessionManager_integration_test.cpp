@@ -305,6 +305,30 @@ protected:
         return predicate();
     }
 
+    void SweepTicks(TraceSessionManager& manager,
+                    int tick_count,
+                    int64_t idle_timeout_ms = 5000,
+                    int64_t wheel_tick_ms = 500,
+                    size_t max_dispatch_per_tick = 0,
+                    int64_t base_now_ms = 1000) {
+        for (int tick = 0; tick < tick_count; ++tick) {
+            manager.SweepExpiredSessions(base_now_ms + static_cast<int64_t>(tick) * wheel_tick_ms,
+                                         idle_timeout_ms,
+                                         max_dispatch_per_tick);
+        }
+    }
+
+    void SweepTraceEndSealWindow(TraceSessionManager& manager) {
+        // trace_end 默认进入 2 tick sealed grace window，integration test 不跑 main 里的定时器，
+        // 所以这里需要手动推进两次 sweep，把会话从 sealed 推到真正 dispatch。
+        SweepTicks(manager, /*tick_count*/2);
+    }
+
+    void SweepProtectionSealWindow(TraceSessionManager& manager) {
+        // capacity/token_limit 属于保护性封口，只给 1 tick。
+        SweepTicks(manager, /*tick_count*/1);
+    }
+
     SpanEvent MakeSpan(size_t trace_key, size_t span_id, std::optional<size_t> parent_id) {
         SpanEvent span;
         span.trace_key = trace_key;
@@ -334,6 +358,7 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTraceEndAndPersistsAnalys
 
     // 依赖 AI Proxy 已启动，否则分析阶段会失败导致等待超时。
     EXPECT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     // 等待异步任务完成并落库，避免线程池尚未消费导致测试误判。
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
@@ -374,6 +399,7 @@ TEST_F(TraceSessionManagerIntegrationTest, BufferedMainPathPersistsPrimaryAndAna
 
     EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
@@ -452,6 +478,7 @@ TEST_F(TraceSessionManagerIntegrationTest, BufferedRepositoryDestructorDrainsRem
 
         EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
         EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+        SweepTraceEndSealWindow(manager);
 
         ASSERT_TRUE(WaitUntil([&manager]() {
             return manager.SnapshotRuntimeStats().worker_done_count >= 1;
@@ -489,6 +516,7 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnCapacityAndStoresParentId
     // 这里不设置 trace_end，验证容量触发的分发路径是否可用。
     EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+    SweepProtectionSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
@@ -533,6 +561,7 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTokenLimitWithoutTraceEnd
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
 
     EXPECT_EQ(manager.Push(span2), TraceSessionManager::PushResult::Accepted);
+    SweepProtectionSealWindow(manager);
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
@@ -591,6 +620,7 @@ TEST_F(TraceSessionManagerIntegrationTest, PersistsSummarySpanAndAnalysisFields)
     EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
     child.trace_end = true;
     EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
@@ -652,6 +682,7 @@ TEST_F(TraceSessionManagerIntegrationTest, MarksCycleAsAnomaly)
 
     EXPECT_EQ(manager.Push(span_a), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(manager.Push(span_b), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     // 当前实现在“全环且无 root”时，序列化遍历顺序为空，因此不会写入 trace_span。
@@ -678,6 +709,7 @@ TEST_F(TraceSessionManagerIntegrationTest, TreatsMissingParentAsRoot)
     orphan.trace_end = true;
 
     EXPECT_EQ(manager.Push(orphan), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 1, std::chrono::seconds(3)));
@@ -706,6 +738,7 @@ TEST_F(TraceSessionManagerIntegrationTest, HandlesOutOfOrderSpans)
 
     EXPECT_EQ(manager.Push(child), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(manager.Push(root), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
 
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 2, std::chrono::seconds(3)));
