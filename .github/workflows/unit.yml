@@ -2,9 +2,9 @@ name: CI Unit
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main ,develop]
   pull_request:
-    branches: [ main ]
+    branches: [ main ,develop]
   workflow_dispatch: {}   # 手动触发按钮
 
 jobs:

@@ -1,7 +1,11 @@
 name: CI Integration
 
 on:
-  workflow_dispatch: {}   # 手动触发按钮
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+  workflow_dispatch: {}
 
 jobs:
   trace-session-manager-integration:
