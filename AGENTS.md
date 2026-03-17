@@ -3,6 +3,8 @@
 ## 项目最小上下文
 
 本项目是一个“C++ 高并发日志接入 + Trace 聚合 + 可选 AI 推理（Python proxy）+ 存储/查询/告警”的系统。
+当前已跑通的 Trace 主链路为：POST /logs/spans -> TraceSessionManager -> BufferedTraceRepository -> SqliteTraceRepository。
+当前 Trace 聚合采用“两阶段延迟关闭”语义：先通过 sealed grace window 吸收短暂乱序 Span，再通过 TIME_WAIT tombstone 拦截已完成 Trace 的晚到请求，避免重复落库。
 
 ## 禁止项与边界
 
@@ -24,7 +26,7 @@
 - 前端构建：`cd client && npm run build`（先 `vue-tsc` 类型检查，再打包）。
 - 后端构建：`cd server && cmake -B build -S . && cmake --build build`。
 - 运行后端：`./server/build/LogSentinel` 或 `./server/build/LogSentinel --db <path> --port <port>`。
-- AI 代理：`cd server/ai && pip install -r requirements.txt && cd proxy && python main.py`（监听 `127.0.0.1:8001`）。
+- AI 代理：`cd server/ai && pip install -r requirements.txt && cd proxy && python3 main.py`（监听 `127.0.0.1:8001`）。
 
 ## 编码风格与命名规范
 
@@ -39,8 +41,11 @@
 - 运行全部 C++ 测试：`cd server/build && ctest`。
 - 运行单个测试二进制：`./test_http_context`（或其他 `test_*` 可执行文件）。
 - Python 集成测试位于 `server/tests/*.py`；历史入口 `run_tests.py` 已迁移到 `server/tests/legacy/`。
-- 当前推荐的主入口是 `python server/tests/smoke_trace_spans.py --mode basic|advanced`。
-
+- 当前推荐的主入口是 `python3 server/tests/smoke_trace_spans.py --mode basic|advanced`。
+- 当前 Trace 主链路关键回归入口：
+  - ./server/build/test_trace_session_manager_unit
+  - ./server/build/test_trace_session_manager_integration
+- 注意：当前 trace_end / capacity / token_limit 不再代表“立即 dispatch”，而是先进入 sealed 状态；如果测试不跑 main.cpp 的定时 sweep，就需要手动推进 SweepExpiredSessions(...)。
 ## 提交与 PR 规范
 
 - 提交历史遵循 Conventional Commits（例如 `feat(frontend): 说明`、`fix(core): 说明`），描述简洁且中文。
