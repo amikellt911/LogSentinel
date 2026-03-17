@@ -21,6 +21,10 @@ public:
                         const std::vector<TraceSpanRecord>& spans,
                         const TraceAnalysisRecord* analysis,
                         const PromptDebugRecord* prompt_debug) override;
+    bool SavePrimaryBatch(const std::vector<TraceSummary>& summaries,
+                          const std::vector<TraceSpanRecord>& spans) override;
+    bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses,
+                           const std::vector<PromptDebugRecord>& prompt_debugs) override;
 
 private:
     std::string db_path_;

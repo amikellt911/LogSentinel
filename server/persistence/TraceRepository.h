@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include "persistence/TraceTypes.h"
 
 // TraceRepository 作为 Trace 持久化的抽象接口，便于后续替换不同存储实现。
@@ -36,4 +37,46 @@ public:
                                 const std::vector<TraceSpanRecord>& spans,
                                 const TraceAnalysisRecord* analysis,
                                 const PromptDebugRecord* prompt_debug) = 0;
+
+    // 批量写主数据。这里直接按表给两条平铺数据流：
+    // summaries 对 trace_summary 表，spans 对 trace_span 表。
+    // 既然缓冲桶内部本来就是 SoA 形状，那么后台 flush 就不该再把它们重组回 AoS。
+    virtual bool SavePrimaryBatch(const std::vector<TraceSummary>& summaries,
+                                  const std::vector<TraceSpanRecord>& spans)
+    {
+        for (const auto& summary : summaries) {
+            if (!SaveSingleTraceSummary(summary)) {
+                return false;
+            }
+        }
+        if (!spans.empty()) {
+            std::unordered_map<std::string, std::vector<TraceSpanRecord>> grouped_spans;
+            for (const auto& span : spans) {
+                grouped_spans[span.trace_id].push_back(span);
+            }
+            for (const auto& entry : grouped_spans) {
+                if (!SaveSingleTraceSpans(entry.first, entry.second)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // 批量写分析结果，同样直接按表给两条平铺数据流。
+    virtual bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses,
+                                   const std::vector<PromptDebugRecord>& prompt_debugs)
+    {
+        for (const auto& analysis : analyses) {
+            if (!SaveSingleTraceAnalysis(analysis)) {
+                return false;
+            }
+        }
+        for (const auto& prompt_debug : prompt_debugs) {
+            if (!SaveSinglePromptDebug(prompt_debug)) {
+                return false;
+            }
+        }
+        return true;
+    }
 };

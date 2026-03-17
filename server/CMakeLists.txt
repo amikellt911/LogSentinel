@@ -66,6 +66,7 @@ add_library(core_module STATIC
     core/TokenEstimator.cpp
 )
 add_library(persistence_module STATIC
+    persistence/BufferedTraceRepository.cpp
     persistence/SqliteLogRepository.cpp
     persistence/SqliteConfigRepository.cpp
     persistence/SqliteTraceRepository.cpp
@@ -170,6 +171,10 @@ add_executable(test_sqlite_trace_repo
   tests/SqliteTraceRepository_test.cpp
 )
 
+add_executable(test_log_handler
+  tests/LogHandler_test.cpp
+)
+
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -193,6 +198,10 @@ target_link_libraries(test_sqlite_trace_repo PRIVATE
 GTest::gtest_main
 persistence_module
 )
+target_link_libraries(test_log_handler PRIVATE
+GTest::gtest_main
+handler_module
+)
 
 # 统一使用 gtest_discover_tests 注册，避免与 add_test 重复注册导致同一测试二进制被 CTest 跑两次。
 gtest_discover_tests(test_http_context)
@@ -200,6 +209,7 @@ gtest_discover_tests(test_threadpool)
 gtest_discover_tests(test_trace_session_manager_unit)
 gtest_discover_tests(test_trace_session_manager_integration)
 gtest_discover_tests(test_sqlite_trace_repo)
+gtest_discover_tests(test_log_handler)
 #-----------不同模块测试用例---------------
 #这些测试用例版本变动，用不了了
 # #http层测试用例

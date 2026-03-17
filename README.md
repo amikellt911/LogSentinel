@@ -1,199 +1,214 @@
 # LogSentinel
 
-LogSentinel 是一个面向云原生日志场景的“实时日志接入 + Trace 聚合 + AI 语义分析”的系统原型项目。
+LogSentinel 是一个面向中小规模服务排障场景的 C++17 日志 / Trace 实时分析项目。当前仓库已经包含可运行的后端主链路、Python AI proxy、前端页面、测试与压测脚本；本文档描述的是当前代码状态，不再把“目标架构草图”当成现状。
 
-> ⚠️ 重要说明（请先读）
->
-> - **目前项目处于“产品方案与前端 Demo 先行”的阶段。**
-> - **前端页面已更新**（用于展示系统形态与交互流程）。
-> - **后端 C++ 实现尚未按最新架构落地**：仓库中可能存在旧的模块结构、接口命名与说明。
-> - 因此：请将本 README 视为 **“当前规划与目标架构”**，并以代码实现为准；凡标注为 *Planned* 的部分尚未落地。
+## 项目现在能做什么
 
----
+- 接收离散 Span，请求入口为 `POST /logs/spans`
+- 按 Trace 会话聚合 Span，并在多种触发条件下分发
+- 使用“两阶段延迟关闭”处理晚到 Span，避免已完成 Trace 被复活后重复落库
+- 在高水位下做分级背压，向入口返回 `503 + Retry-After`
+- 将 `trace_summary / trace_span / trace_analysis` 异步批量写入 SQLite（WAL）
+- 可选通过 Python FastAPI proxy 调用模型服务，并在 critical 风险时触发 Webhook
+- 提供 Dashboard / History / Settings 页面与对应后端接口（后端接口没有写好）
+- 提供 GTest、smoke 脚本、wrk 压测脚本和 GitHub Actions workflow
 
-## 项目目标（What this project aims to do）
+## 当前边界
 
-LogSentinel 的目标不是“只存日志”，而是在高并发日志流中：
-1. **稳定接入与持久化**（接得住，不丢数据）
-2. **按 Trace 上下文聚合日志**（把碎片化日志变成可分析的 Trace 会话）
-3. **调用云端大模型进行语义分析**（输出风险等级、根因摘要与修复建议）
-4. **提供可视化与告警闭环**（Dashboard + Webhook 推送）
+- 仓库里同时存在两条链路：
+  - 旧日志批处理链路：`/logs` -> `LogBatcher` -> `SqliteLogRepository`
+  - 新 Trace 主链路：`/logs/spans` -> `TraceSessionManager` -> `BufferedTraceRepository` -> `SqliteTraceRepository`
+- 当前演进重点是 Trace 主链路；读侧 API 还没有完全切到 Trace 存储，`/dashboard`、`/history`、`/results/*` 主要仍服务旧链路
+- `TraceExplorer`、`Benchmark` 以及部分 Dashboard 图表仍有 mock 数据补位，前端不等于全链路真实可观测平台
+- Trace AI 分析不是默认开启：如果没有显式启动 proxy 或指定 Trace AI provider，Trace 链路仍会聚合并落主数据，但不会自动做 Trace AI 分析
+- `advanced smoke` 与 integration workflow 目前更适合手动触发，不要把当前 CI 理解成“所有链路全自动门禁”
 
----
+## 核心链路
 
-## 当前状态（Status）
+### 1. 接入层
 
-### 已完成（Done）
-- ✅ 前端 Demo 页面（Dashboard / 历史查询 / 设置等页面框架）
-- ✅ 产品方案与系统模块划分（以本文档“目标架构”部分为准）
+后端基于 MiniMuduo 的 `EventLoop + TcpServer` 组织 HTTP 接入层。请求解析、路由、CORS 和响应发送都在这一层完成；入口尽量只做轻量工作，把重活交给后续线程池或后台 flush 线程。
 
-### 进行中（In progress）
-- 🟡 后端接口与前端联调（API 形态仍在调整）
-- 🟡 Trace 聚合与微批调度的后端实现
+### 2. Trace 聚合与分级背压
 
-### 计划中（Planned, not implemented yet）
-- ⏳ **双线程池资源隔离**：交互通道（查询/控制台）与数据通道（写入/分析）分离
-- ⏳ **Trace 会话窗口聚合**：inactivity timeout + 容量触发
-- ⏳ **背压/限流**：过载保护，防止内存膨胀
-- ⏳ **LLM 结构化输出**：严格 JSON schema 校验、失败重试
-- ⏳ **结果复用/相似度缓存（simhash）**：减少重复云端推理
-- ⏳ （可选）端侧轻量预筛选：进一步降低云端调用量（优化方向）
+`POST /logs/spans` 的请求会进入 `TraceSessionManager`：
 
----
+- 以 `trace_key / span_id / parent_span_id` 维护活跃会话
+- 按 `trace_end`、Span 容量阈值、Token 阈值、idle timeout 触发分发
+- 用时间轮维护 collecting / sealed / retry 会话
+- `trace_end`、容量阈值、Token 阈值命中后不会立刻 dispatch，而是先进入短暂 `sealed grace window`
+- dispatch 成功后把已完成 `trace_key` 放入短暂 `TIME_WAIT tombstone`，拦截晚到 Span，避免旧 Trace 被复活成新会话
+- 用 `buffered spans / active sessions / pending tasks` 三类指标判断水位
+- 高水位优先拒绝新 Trace，critical 水位才拒绝存量 Trace 的后续 Span
+- 线程池 submit 失败时把会话回滚到内存，并按 `1/2/4/8/16` tick 指数退避重试
 
-## 目标架构（Target Architecture）
+### 3. 持久化
 
-### 系统整体架构（简版）
-前端演示层  
-Vue 3 + Vite + Element Plus + Axios 接收用户交互请求并展示数据  
+Trace 主链路通过 `BufferedTraceRepository` 把主数据和分析结果分两条缓冲线写入：
 
-后端处理层  
-C++ LogSentinel 服务 + SQLite + 线程池接收请求，负责接入、Trace 聚合与流程调度  
+- `trace_summary + trace_span` 先走 primary buffer
+- `trace_analysis + prompt_debug` 走 analysis buffer
+- 后台 flush 线程按“容量阈值 / 时间阈值”切桶并批量刷入 SQLite
+- SQLite 使用 WAL，目标是把热路径上的等待尽量变短，而不是让 Reactor 主线程直接阻塞在磁盘 I/O 上
 
-核心算法层  
-Python AI Proxy + LLM 推理服务接收聚合后的 Trace 数据并返回结构化分析结果  
+### 4. AI proxy 与告警
 
-LogSentinel 采用分层设计（按“先接住→再聚合→再分析→再展示”的主线）：
+- Python FastAPI proxy 位于 `server/ai/proxy`
+- C++ 侧通过 `TraceProxyAi` 调用 `/analyze/trace/{provider}`
+- provider 当前支持 `mock` 与 `gemini`
+- critical 风险会通过 `WebhookNotifier` 发送通知；本地开发可以自动拉起 mock webhook 服务
 
-### 1) 高性能网络接入层
-- Reactor + non-blocking I/O
-- 轻量 HTTP 解析、路由、CORS
-- 接入层只做轻量工作：**接收、校验、入队**
+## 仓库结构
 
-### 2) 资源隔离与异步调度层（核心）
-- **双通道资源隔离（双线程池）**
-  - 交互通道：Dashboard 查询、配置管理，保证低延迟
-  - 数据通道：日志写入、聚合、分析任务，吞吐优先
-- **Trace 上下文自适应微批（Context-aware micro-batching）**
-  - 维护 trace 会话窗口
-  - inactivity timeout + 容量触发
-  - 将海量碎片日志降维成较少的 trace 事件
-- 背压机制：系统过载时主动降速，避免 OOM
+- `client/`：Vue 3 + Vite 前端
+- `server/`：C++ 后端
+- `server/core/`：聚合、调度、批处理核心逻辑
+- `server/http/`：HTTP 解析与路由
+- `server/persistence/`：SQLite 仓储与 Trace 双缓冲写入器
+- `server/ai/`：C++ AI 接口与 Python proxy
+- `server/handlers/`：日志、配置、历史、Dashboard 相关 handler
+- `server/tests/`：单元测试、集成测试、smoke、wrk 脚本
+- `docs/`：外部资料、todo、开发记录
 
-### 3) 智能分析与业务逻辑层
-- 将 LLM 视为“语义推理引擎”
-- 输入：聚合后的 trace 会话
-- 输出：结构化 JSON（风险等级 / 根因摘要 / 修复建议）
-- 成本控制：依赖聚合与流量控制减少 token 冗余
+## 构建与运行
 
-### 4) 数据持久化与交互层
-- SQLite（WAL）作为轻量存储（后续可替换）
-- 原始日志与分析结果关联存储
-- REST API 支撑 Web 控制台：实时指标、趋势、历史检索
-- Webhook：高风险事件推送（飞书/钉钉等）
+### 1. 构建后端
 
----
+```bash
+cd server
+cmake -B build -S .
+cmake --build build
+```
 
-## API 设计（draft）
+### 2. 运行后端
 
-> 注：接口仍可能变化，当前以“前后端联调”需要为准。
+最小启动：
 
-- `POST /logs`：上报日志（建议携带 trace_id / span_id / service / timestamp / message）
-- `GET /results/{trace_id}`：获取某条 trace 的分析结果
-- `GET /dashboard/metrics`：系统指标（吞吐、队列水位、错误率等）
-- `GET /history`：历史检索（按时间/风险等级）
-- `POST /settings`：配置（模型、密钥、提示词等）
+```bash
+./server/build/LogSentinel --db /tmp/logsentinel.db --port 8080
+```
 
-## 待优化项汇总 (Optimization Roadmap)
+带本地开发依赖一起启动（AI proxy + webhook mock）：
 
-以下是根据各模块的 `README` 文件总结的未来优化方向列表。
+```bash
+./server/build/LogSentinel --db /tmp/logsentinel.db --port 8080 --auto-start-deps
+```
 
-### 1. 架构与核心逻辑 (Architecture & Core Logic)
+常用 Trace 相关参数：
 
-- **HTTP层重构**:
-    - 设计并使用 `RequestContext` 类来封装请求上下文，取代目前分散在 `httpCallback` 参数中的数据，使信息传递更集中、更可扩展。
-- **增强系统韧性**:
-    - 为 `SaveLog` 等关键的持久化操作增加 **重试或死信队列** 机制，当操作失败时（如数据库繁忙），能自动重试或将失败的日志存入死信队列，供后续分析处理。
+- `--worker-threads`
+- `--worker-queue-size`
+- `--trace-sweep-interval-ms`
+- `--trace-idle-timeout-ms`
+- `--trace-capacity`
+- `--trace-token-limit`
+- `--trace-max-dispatch-per-tick`
+- `--trace-buffered-span-limit`
+- `--trace-active-session-limit`
+- `--trace-ai-provider mock|gemini`
+- `--trace-ai-base-url http://127.0.0.1:8001`
 
-### 2. 性能与并发 (Performance & Concurrency)
+### 3. 单独启动 AI proxy
 
-- **升级为 gRPC 通信**:
-    - 在功能验证通过后，将服务间（如 C++ 与 Python 代理）的通信方式从 REST/HTTP 升级到 **gRPC**，以获得更高的性能和更强的类型安全。
-- **线程池背压机制**:
-    - 为线程池实现背压（Back-pressure）策略，如 **降级、熔断或直接拒绝请求**。这可以防止在极端高并发下，I/O线程（生产者）的生产速度远超工作线程（消费者）的处理速度，导致任务队列无限增长和内存耗尽。
-- **数据库并发优化**:
-    - 为每个工作线程 (`worker thread`) 分配一个 **线程局部 (`thread_local`) 的SQLite句柄**。这样每个线程可以独立操作数据库，从而使用 `SQLITE_OPEN_NOMUTEX` 模式来避免线程间的锁竞争，大幅提升写入性能。
-- **处理数据库繁忙**:
-    - 在代码中专门处理 `SQLITE_BUSY` 返回码，而不是直接抛出异常。可以实现一个带有退避策略的重试循环，以应对暂时的数据库锁定。
+```bash
+cd server/ai
+pip install -r requirements.txt
+cd proxy
+python main.py
+```
 
-### 3. 数据库与持久化 (Database & Persistence)
+### 4. 启动前端
 
-- **时间戳精度**:
-    - 将数据库中记录日志时间的 `received_at` 字段类型从 `TIMESTAMP` 改为 **整数类型的Unix时间戳**。在高负载下，任务从接收到执行之间可能存在延迟，使用时间戳能更精确地记录事件发生的时间。
+```bash
+cd client
+npm install
+npm run dev
+```
 
-### 4. API与外部集成 (API & External Integration)
+Vite 默认通过 `/api` 代理到 `localhost:8080`。
 
-- **统一API管理**:
-    - 针对 `ai` 模块，建立一个统一的API管理层，用于适配和处理来自不同AI厂商的、风格各异的 RESTful API。
+## 一个最小 Trace 请求示例
 
-### 5. 可观测性 (Observability)
+```bash
+curl -X POST http://127.0.0.1:8080/logs/spans \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "trace_key": 1001,
+    "span_id": 1,
+    "start_time_ms": 1741680000000,
+    "name": "GET /api/order",
+    "service_name": "order-service",
+    "trace_end": true
+  }'
+```
 
-- **Trace ID 优化**:
-    - 研究通过额外一轮哈希或其他算法来缩短 `trace_id` 的长度，使其在日志和监控系统中更易于阅读、存储和索引。
+典型返回：
 
-### 6. 测试环境 (Testing)
+- `202`：已接收；如果下游暂时拥堵，响应体里可能带 `deferred=true`
+- `503 + Retry-After`：入口触发分级背压，建议稍后重试
 
-- **独立的压测客户端**:
-    - 使用独立的机器（例如，阿里云的2核2G服务器）作为`wrk`压测的客户端，而不是在服务器本机上同时运行客户端和服务端。这可以避免因资源竞争（特别是CPU）导致测试结果不准确。
+## 当前接口概览
 
-### 7. AI上下文管理策略 (AI Context Management Strategy)
+### Trace 主链路
 
-为了解决大语言模型（LLM）的上下文窗口（Context Window）限制问题，特别是在处理长日志和多轮对话时，我们计划采用分阶段的演进策略来管理对话历史。
+- `POST /logs/spans`：接收 Span 并进入 Trace 聚合链路
 
-- **第一阶段：基本安全策略 (截断/滑动窗口)**
-    - 保证程序在任何情况下都不会因为Token超限而崩溃。
-- **第二阶段：AI辅助的上下文摘要**
-    - 当对话历史达到一定长度时，触发AI将历史压缩成摘要。
-- **第三阶段：向量数据库与RAG (检索增强生成)**
-    - 将对话历史向量化存储，通过相似度搜索实现长期记忆。
+### 旧日志批处理链路
 
-### 8. 日志解析与模版提取 (Log Parsing & Template Extraction)
+- `POST /logs`：旧日志批处理入口
+- `GET /results/{trace_id}`：旧链路分析结果查询
 
-引入学术界 LogBatcher 的核心思想，在日志进入 AI 分析流程前增加一个“解析/模版提取”层。
+### 页面与配置接口
 
-- **模版分离与结构化**: 利用聚类算法或正则匹配，将日志分离为 模版 (Template) 和 参数 (Variables)。
-- **缓存优先机制 (Caching First)**: 构建本地缓存存储已识别的模版正则，命中缓存则不调用 LLM。
-- **微批处理 (Micro-batching)**: 对于未命中的日志，打包发送给 LLM 进行模版学习。
+- `GET /dashboard`
+- `GET /history?page=<n>&pageSize=<n>&level=<level>&search=<keyword>`
+- `GET /settings/all`
+- `POST /settings/config`
+- `POST /settings/prompts`
+- `POST /settings/channels`
 
-### 9. 未来思考 (Future Considerations)
+## 测试与验证
 
-- **服务启动编排**: 考虑使用 `systemd` 或容器编排管理 C++ 与 Python 服务。
-- **AI上下文维护位置**: 探讨上下文管理应在 C++ 端还是 Python 端维护。
+### C++ 单元测试
 
----
+```bash
+cd server/build
+ctest
+```
 
-### 10. AI 基础设施与高性能推理灵感 (AI Infra & Inference Optimization) [NEW]
+### 基础 Trace 冒烟
 
-结合 AI Infra 领域的高性能推理（Inference）技术，将 LogSentinel 视为一个专用的推理服务网关，进一步压榨 C++ 性能。
+```bash
+python server/tests/smoke_trace_spans.py --mode basic
+```
 
-- **基于长度的分桶调度 (Length-based Bucketing)**:
-    - **痛点解决**: 解决“队头阻塞” (Head-of-line blocking) 问题。避免一条超长日志的分析阻塞了后续所有短日志的处理。
-    - **实现思路**: 在 Reactor 的任务分发层，建立多个优先队列（如 `Short`, `Medium`, `Long`）。调度器根据日志的 Token 预估长度，将其分发到不同的队列，并由不同的 Worker 线程或批次处理。
+### 增强 Trace 冒烟
 
-- **异构流水线 (Heterogeneous Pipelining)**:
-    - **痛点解决**: 消除 CPU (预处理) 等待 GPU/API (推理) 的空闲时间。
-    - **实现思路**: 将日志处理拆解为 `Pre-process` (脱敏、截断、正则提取) 和 `Inference` (LLM调用) 两个独立阶段。利用 C++ 的异步回调机制，当 Batch N 在进行网络 IO (等待 LLM 响应) 时，CPU 立即开始处理 Batch N+1 的正则和脱敏工作，实现资源的打满。
+```bash
+python server/tests/smoke_trace_spans.py --mode advanced
+```
 
-- **分级处理与投机采样 (Tiered Processing / Speculative Decoding)**:
-    - **痛点解决**: 降低昂贵的 LLM 调用成本和延迟。
-    - **实现思路**: 采用“漏斗式”处理。
-        1.  **L1**: 极速正则/关键词匹配 (0ms, C++) -> 拦截已知错误。
-        2.  **L2**: 小参数模型或统计模型 (10ms, Python Sidecar) -> 快速分类风险。
-        3.  **L3**: 仅当 L2 判定为“高疑难”或“未知风险”时，才透传给 Gemini/OpenAI (1s+) 进行深度语义分析。
-### 11. C++17 现代化改造与内存安全 (C++17 Modernization & Memory Safety) [NEW]
+### wrk 压测
 
-针对底层网络库与协议解析层进行深度重构，引入 C++17 特性以提升代码的可读性、安全性及性能。
+```bash
+server/tests/wrk/run_bench.sh end
+```
 
-- **全面引入 `std::string_view` (Zero-copy Adoption)**:
-    - **痛点解决**: 消除 `HttpContext` 解析过程中产生的大量临时 `std::string` 对象（如 `method`, `version` 等），减少不必要的堆内存分配（Heap Allocation）。
-    - **实现思路**: 将 `parseRequest` 内部的逻辑从“手动指针偏移”重构为 `std::string_view` 的 `remove_prefix` 和 `find` 操作。利用视图进行高效率的切分和查找，仅在数据最终存入 `HttpRequest` 对象（需要跨越生命周期）时才进行物理拷贝。
+也可以直接查看：
 
-- **摒弃不安全的 C 字符串函数 (Deprecate Unsafe C-APIs)**:
-    - **痛点解决**: 消除网络缓冲区（Buffer）中因缺乏 `\0` 结尾导致使用 `strchr`, `strlen` 可能引发的 **缓冲区越界读取 (Buffer Over-read)** 风险。
-    - **实现思路**: 严格禁止在网络 Buffer 上使用依赖 `\0` 的函数。改用带长度限制的 `std::string_view::find` 或 `memchr`，强制执行边界检查，确保解析器永远不会读取超过 `readableBytes()` 范围的内存，防止类似 Heartbleed 的安全漏洞。
+- `server/tests/wrk/trace_model.lua`
+- `server/tests/wrk/run_flamegraph.sh`
 
-- **明确“视图”与“资源”的生命周期界限 (View vs. Resource Ownership)**:
-    - **痛点解决**: 防止因误用 `string_view` 导致的 **悬空指针 (Dangling Pointer)** 问题，以及混淆“零拷贝”与“必要拷贝”的边界。
-    - **实现思路**: 在代码架构层面明确划分“解析层”与“存储层”。
-        - **解析层 (Parser)**: 持有 Buffer 的 `string_view`，生命周期仅限于 `onMessage` 回调函数栈内，负责无锁、无拷贝的高效处理。
-        - **存储层 (Model)**: `HttpRequest` 等业务对象必须持有 `std::string` 实体（Deep Copy），确保在网络 Buffer 被复用 (`retrieve`) 或连接断开后，业务数据依然有效且安全。
+## CI 现状
+
+- `CI Unit`：核心单元测试
+- `CI Smoke`：basic smoke 常规运行；advanced smoke 更适合手动触发
+- `CI Integration`：TraceSessionManager integration workflow，当前偏手动触发
+
+## 进一步阅读
+
+- `FutureMap.md`：后续演进方向
+- `docs/KnownIssues.md`：当前已知问题
+- `docs/README.md`：外部资料索引
+
+如果你是第一次看这个仓库，建议先从 `server/src/main.cpp`、`server/core/TraceSessionManager.*`、`server/persistence/BufferedTraceRepository.*` 这三处开始看，能最快看清当前主链路。

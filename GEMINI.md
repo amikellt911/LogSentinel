@@ -3,8 +3,6 @@
 ## 项目最小上下文
 
 本项目是一个“C++ 高并发日志接入 + Trace 聚合 + 可选 AI 推理（Python proxy）+ 存储/查询/告警”的系统。
-当前已跑通的 Trace 主链路为：POST /logs/spans -> TraceSessionManager -> BufferedTraceRepository -> SqliteTraceRepository。
-当前 Trace 聚合采用“两阶段延迟关闭”语义：先通过 sealed grace window 吸收短暂乱序 Span，再通过 TIME_WAIT tombstone 拦截已完成 Trace 的晚到请求，避免重复落库。
 
 ## 禁止项与边界
 
@@ -26,7 +24,7 @@
 - 前端构建：`cd client && npm run build`（先 `vue-tsc` 类型检查，再打包）。
 - 后端构建：`cd server && cmake -B build -S . && cmake --build build`。
 - 运行后端：`./server/build/LogSentinel` 或 `./server/build/LogSentinel --db <path> --port <port>`。
-- AI 代理：`cd server/ai && pip install -r requirements.txt && cd proxy && python3 main.py`（监听 `127.0.0.1:8001`）。
+- AI 代理：`cd server/ai && pip install -r requirements.txt && cd proxy && python main.py`（监听 `127.0.0.1:8001`）。
 
 ## 编码风格与命名规范
 
@@ -41,11 +39,8 @@
 - 运行全部 C++ 测试：`cd server/build && ctest`。
 - 运行单个测试二进制：`./test_http_context`（或其他 `test_*` 可执行文件）。
 - Python 集成测试位于 `server/tests/*.py`；历史入口 `run_tests.py` 已迁移到 `server/tests/legacy/`。
-- 当前推荐的主入口是 `python3 server/tests/smoke_trace_spans.py --mode basic|advanced`。
-- 当前 Trace 主链路关键回归入口：
-  - ./server/build/test_trace_session_manager_unit
-  - ./server/build/test_trace_session_manager_integration
-- 注意：当前 trace_end / capacity / token_limit 不再代表“立即 dispatch”，而是先进入 sealed 状态；如果测试不跑 main.cpp 的定时 sweep，就需要手动推进 SweepExpiredSessions(...)。
+- 当前推荐的主入口是 `python server/tests/smoke_trace_spans.py --mode basic|advanced`。
+
 ## 提交与 PR 规范
 
 - 提交历史遵循 Conventional Commits（例如 `feat(frontend): 说明`、`fix(core): 说明`），描述简洁且中文。
@@ -65,7 +60,6 @@
 - **逻辑连贯与时间线推导（反 PPT 模式）**：解答底层逻辑或并发问题时，绝对禁止用孤立的列表或标题来回跳跃！你必须顺着“数据的生命周期”或“代码执行的时间线”一步步推导。强制要求使用“既然...那么...接着...但是...所以”这种有因果关系的连接词。必须讲清楚数据是怎么跨线程、跨模块流转的（比如谁持有了 shared_ptr，在哪释放）。
 - **客观务实（反抽象术语）**：禁止使用“优雅、高效、解耦”等无意义的形容词。如果要提专业名词（如背压、零拷贝），必须立刻结合具体的内存读写、硬件机制或实际业务场景解释其物理意义。把复杂的概念扒光了揉碎了给我看。
 - **绝对诚实与理性（拒绝讨好）**：遇到不确定的问题或代码边界，优先搜索或查本地文件，绝不编造假消息，不会就是不会。禁止阿谀奉承，禁止使用戏剧化或震惊的词汇。如果发现我的思路或架构设计有问题，客观理性地指出并分析利弊，不要一味顺从。
-
 
 ### 1. 语言与输出格式
 - **纯文本复制**：如果涉及需要我直接复制到文档（如开题报告、论文）的内容，请去除 Markdown 列表符号（如 * - 1.）和缩进，使用“纯文本”块或直接分段输出，方便一键无脑复制。
