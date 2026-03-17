@@ -126,6 +126,26 @@ SqliteTraceRepository::~SqliteTraceRepository()
     }
 }
 
+TraceSearchResult SqliteTraceRepository::SearchTraces(const TraceSearchRequest& request)
+{
+    (void)request;
+    if (!db_) {
+        throw std::runtime_error("Trace database is not available");
+    }
+    // 这一版先把读侧方法签名和执行通道接上，真正的动态 SQL 放到下一步补。
+    throw std::runtime_error("SearchTraces is not implemented yet");
+}
+
+std::optional<TraceDetailRecord> SqliteTraceRepository::GetTraceDetail(const std::string& trace_id)
+{
+    (void)trace_id;
+    if (!db_) {
+        throw std::runtime_error("Trace database is not available");
+    }
+    // 详情查询和列表查询一样，当前先立方法签名与调用路径，下一步再补真实 SQL。
+    throw std::runtime_error("GetTraceDetail is not implemented yet");
+}
+
 bool SqliteTraceRepository::SaveSingleTraceSummary(const TraceSummary& summary)
 {
     std::lock_guard<std::mutex> lock(mutex_);

@@ -17,6 +17,7 @@
 #include "persistence/SqliteTraceRepository.h"
 #include "http/Router.h"
 #include "handlers/LogHandler.h"
+#include "handlers/TraceQueryHandler.h"
 #include "handlers/DashboardHandler.h"
 #include "handlers/HistoryHandler.h"
 #include "handlers/ConfigHandler.h"
@@ -205,11 +206,13 @@ int main(int argc, char* argv[])
 
     std::shared_ptr<SqliteLogRepository> persistence;
     std::shared_ptr<SqliteTraceRepository> trace_repo;
+    std::shared_ptr<SqliteTraceRepository> trace_read_repo;
     std::shared_ptr<BufferedTraceRepository> buffered_trace_repo;
     try
     {
         persistence = std::make_shared<SqliteLogRepository>(db_path);
         trace_repo = std::make_shared<SqliteTraceRepository>(db_path);
+        trace_read_repo = std::make_shared<SqliteTraceRepository>(db_path);
         // Trace 主数据和分析结果现在都先走双缓冲写入器，再由后台 flush 线程批量落到 SQLite。
         buffered_trace_repo = std::make_shared<BufferedTraceRepository>(trace_repo);
     }
@@ -231,10 +234,12 @@ int main(int argc, char* argv[])
     const int default_worker_threads = num_cpu_cores > 1 ? num_cpu_cores - num_io_threads : 1;
     const int num_worker_threads =
         worker_threads_override > 0 ? worker_threads_override : default_worker_threads;
+    const int num_query_threads = 1;
 
     std::cout << "System Info: " << num_cpu_cores << " cores detected." << std::endl;
     std::cout << "Thread Model: " << num_io_threads << " I/O threads, "
-              << num_worker_threads << " worker threads." << std::endl;
+              << num_worker_threads << " worker threads, "
+              << num_query_threads << " query threads." << std::endl;
     MiniMuduo::net::EventLoop loop;
     MiniMuduo::net::InetAddress addr(port);
     testServer server(&loop, addr, num_io_threads);
@@ -268,6 +273,9 @@ int main(int argc, char* argv[])
     // 既然 worker 任务里拿的是这些对象的裸指针，那么退出时必须先 join worker，
     // 再销毁依赖对象，否则就会在“任务还在跑、对象先析构”时踩悬空指针。
     ThreadPool tpool(num_worker_threads, static_cast<size_t>(worker_queue_size));
+    // Trace 读请求单独走查询线程池，避免前端查库任务和 AI/聚合任务抢同一条队列。
+    // 当前先固定 1 条查询线程，把“执行通道分离”先做出来，后面再按压测结果调整线程数。
+    ThreadPool query_tpool(static_cast<size_t>(num_query_threads), static_cast<size_t>(worker_queue_size));
     std::shared_ptr<TraceSessionManager> trace_session_manager = std::make_shared<TraceSessionManager>(
         &tpool,
         buffered_trace_repo.get(),
@@ -315,6 +323,14 @@ int main(int argc, char* argv[])
     });
     
     std::shared_ptr<Router> router = std::make_shared<Router>();
+    auto trace_query_handler = std::make_shared<TraceQueryHandler>(trace_read_repo, &query_tpool);
+
+    router->add("POST", "/traces/search", [trace_query_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        trace_query_handler->handleSearchTraces(req, resp, conn);
+    });
+    router->add("GET", "/traces/*", [trace_query_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        trace_query_handler->handleGetTraceDetail(req, resp, conn);
+    });
 
     // Config Handler
     auto config_handler = std::make_shared<ConfigHandler>(config_repo, &tpool);
