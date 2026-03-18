@@ -265,3 +265,47 @@ feat(trace-explorer): 接通 trace 详情查询并映射调用链数据
 
 - 已运行 `cd client && npm run build`
 - 构建仍被仓库里已有的前端 TypeScript 老问题阻塞，本次改动涉及的 `TraceExplorer/types` 没有新增报错
+
+## 追加记录（手动灌 Trace 测试脚本）
+
+### Git Commit Message
+
+test(trace): 增加本地手动灌 trace 的脚本
+
+### Modification
+
+- server/tests/post_trace_fixture.sh
+- docs/todo-list/Todo_TraceReadSide.md
+
+### 本次补充
+
+- 新增 `server/tests/post_trace_fixture.sh`
+- 脚本会直接向当前运行中的后端实例发送 1 条完整 trace：
+  - 1 个 root span
+  - 4 个子 span
+  - 覆盖多个 service，便于前端瀑布图和调用链联调
+- 时间戳使用“当前时间附近”的绝对毫秒值，保证前端默认 24h 搜索窗口能查到
+- 最后一条请求带 `trace_end=true`，便于服务端尽快闭合 trace 并落库
+- 脚本执行完会直接打印 `trace_key`，方便前端按 trace_id 精确搜索
+
+### Learning Tips
+
+#### Newbie Tips
+
+- 手工联调时，最省事的数据入口永远是“走真实主链路”，不是直接改数据库。这样你测到的才是完整链路，不是半截假状态。
+- `/logs/spans` 当前要求 `trace_key/span_id/parent_span_id` 都是整数，所以本地造数脚本也应该严格按这个约束来。
+
+#### Function Explanation
+
+- `date +%s%3N`：取当前 Unix 毫秒时间戳，方便直接构造 `start_time_ms/end_time_ms`
+- `curl -X POST ... /logs/spans`：直接命中 Trace 主链路入站接口，触发聚合、闭合和落库
+
+#### Pitfalls
+
+- 如果你手工插 SQLite，只能看到“表里有数据”，但测不到 `/logs/spans -> TraceSessionManager -> 落库` 这段真实路径。
+- 如果造的数据时间太旧，前端默认 24h 搜索窗口会查不到，你会误以为查询有问题。
+
+### 验证说明
+
+- 已运行 `bash -n server/tests/post_trace_fixture.sh`
+- 脚本语法通过；未在当前回合自动执行，因为它依赖你本地已有正在运行的后端实例
