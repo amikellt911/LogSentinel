@@ -14,14 +14,15 @@
 
 ## 下一阶段：TraceExplorer 前后端联调顺序
 
-- [ ] 冻结本轮 Trace 查询契约：确认前端只接 `/traces/search` 与 `/traces/{trace_id}`，不扩 `prompt_debug`
+- [x] 冻结本轮 Trace 查询契约：确认前端只接 `/traces/search` 与 `/traces/{trace_id}`，不扩 `prompt_debug`
 - [ ] 重写 `client/src/types/trace.ts`，先把前端类型对齐后端真实字段
 - [ ] 收口 `TraceSearchBar`：去掉按耗时过滤，服务名从写死下拉改为可输入，时间范围统一换算为 `start_time_ms/end_time_ms`
-- [ ] 接通 `TraceExplorer.vue` 列表请求：真实调用 `/api/traces/search`，打通分页与筛选
+- [x] 接通 `TraceExplorer.vue` 列表请求：真实调用 `/api/traces/search`，打通分页与筛选
 - [ ] 接通 `TraceExplorer.vue` 详情请求：真实调用 `/api/traces/{trace_id}`
 - [ ] 适配 `AIAnalysisDrawerContent` 与 `CallChainDrawerContent` 的真实字段
 - [ ] 适配 `TraceWaterfall` 的时间与状态映射：绝对时间转相对时间，`raw_status` 转前端展示状态
-- [ ] 去掉或隐藏 `PromptDebugger` 入口，避免保留假功能
+- [x] 去掉或隐藏 `PromptDebugger` 入口，避免保留假功能
+- [x] 删除前端按耗时过滤 UI，并把 `service` 从写死下拉改成精确输入框
 - [ ] 做一次最小联调验收：发 span -> 列表查询 -> 打开 AI 分析 -> 打开调用链
 
 ## 2026-03-19 计划

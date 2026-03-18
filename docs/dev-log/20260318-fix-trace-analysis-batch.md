@@ -146,3 +146,81 @@ feat(trace): 实现 trace 详情查询与同快照读取
 
 - 如果 summary 和 spans 分两次查，却不放进同一个读事务，那么 flush 线程刚好插入新 span 时，详情页就可能出现“顶部 span_count 和下面真实 spans 条数对不上”的撕裂。
 - `tags` 结构体里虽然已经有字段，但这不代表后端已经真的写了 tags。当前这里只能稳定返回空数组，不能假装有真实数据。
+
+## 追加记录（TraceExplorer 界面收口）
+
+### Git Commit Message
+
+refactor(trace-explorer): 删除假入口并收口服务筛选方式
+
+### Modification
+
+- client/src/views/TraceExplorer.vue
+- client/src/components/TraceSearchBar.vue
+- client/src/components/TraceListTable.vue
+- client/src/types/trace.ts
+- client/src/i18n.ts
+- docs/todo-list/Todo_TraceReadSide.md
+
+### 本次补充
+
+- 从 `TraceExplorer` 页面移除了 `prompt_debug` 入口和对应抽屉挂载，避免继续展示本轮不做的假功能。
+- 从搜索栏移除了“按耗时过滤”输入框。
+- 把 `service` 从写死下拉改成可输入文本框，当前语义明确为“入口服务精确匹配”。
+- 删除了 Trace 详情类型里的 `prompt_debug` 字段，避免页面继续误以为详情接口会返回这块数据。
+
+### Learning Tips
+
+#### Newbie Tips
+
+- UI 上挂着一个按钮，不等于这个能力就算“以后再接”。如果后端当前没有稳定真实数据来源，最稳的是先把入口拿掉，不要让演示页面保留假动作。
+- “下拉框好看”不代表它适合当前阶段。既然后端还没有服务枚举接口，前端把服务名改成输入框，反而更接近真实查询语义。
+
+#### Pitfalls
+
+- 如果前端保留 `prompt_debug` 按钮，但点击后只能拿 mock 或空数据，那么到联调和答辩时，这种假入口最容易露馅。
+- 既然后端当前是 `service_name = ?` 精确匹配，那么前端就不能用模糊搜索的交互暗示用户，否则 UI 语义和后端实际行为会打架。
+
+## 追加记录（TraceExplorer 列表联调）
+
+### Git Commit Message
+
+feat(trace-explorer): 接通 trace 列表真实查询
+
+### Modification
+
+- client/src/views/TraceExplorer.vue
+- client/src/components/TraceListTable.vue
+- client/src/types/trace.ts
+- docs/todo-list/Todo_TraceReadSide.md
+
+### 本次补充
+
+- `TraceExplorer.vue` 不再用 mock 列表，而是实际调用 `POST /api/traces/search`。
+- 搜索、翻页、改 pageSize 现在共用同一份查询状态，不再各自拼一套请求。
+- 页面层增加了请求体转换：
+  - `time_range/custom_time_*` -> `start_time_ms/end_time_ms`
+  - `risk_level` -> 后端 `risk_levels`
+  - `trace_id` 有值时按精确查询优先
+- 页面层增加了响应映射：
+  - `start_time_ms` -> 表格显示时间
+  - `duration_ms` -> 表格耗时
+  - 后端风险等级字符串 -> 前端徽章显示值
+- `TraceListTable` 的分页状态改为由父页面控制，避免翻页后丢筛选条件。
+
+### Learning Tips
+
+#### Newbie Tips
+
+- 只要分页是服务端分页，页码就属于“查询条件的一部分”，不能让表格组件自己偷偷维护一套本地页码。
+- 后端 DTO 和前端表格行数据不是一回事。中间做一次映射，后面字段调整时才不会把每个组件都拖下水。
+
+#### Pitfalls
+
+- 如果搜索按钮和分页按钮各自拼请求体，最常见的问题就是“第一页搜得对，翻页条件全丢了”。
+- 风险等级如果前端展示值和后端存储值大小写不一致，搜索条件就会出现“看着一样、实际上查不到”的假象。
+
+### 验证说明
+
+- 已运行 `cd client && npm run build`
+- 构建仍被仓库里已有的前端 TypeScript 老问题阻塞，本次改动涉及的 `TraceExplorer/TraceListTable/types` 没有新增报错

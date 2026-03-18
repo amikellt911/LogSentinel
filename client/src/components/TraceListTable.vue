@@ -58,7 +58,7 @@
         </el-table-column>
 
         <!-- 操作按钮（拆分为 3 个独立按钮） -->
-        <el-table-column :label="$t('traceExplorer.table.actions')" width="140" fixed="right">
+        <el-table-column :label="$t('traceExplorer.table.actions')" width="100" fixed="right">
           <template #default="{ row }">
             <div class="flex gap-1">
               <!-- AI 分析按钮 -->
@@ -82,17 +82,6 @@
                   @click.stop="handleCallChain(row)"
                 />
               </el-tooltip>
-
-              <!-- Prompt 按钮 -->
-              <el-tooltip :content="$t('traceExplorer.table.promptDebugger')" placement="top">
-                <el-button
-                  type="warning"
-                  :icon="Document"
-                  circle
-                  size="small"
-                  @click.stop="handlePromptDebug(row)"
-                />
-              </el-tooltip>
             </div>
           </template>
         </el-table-column>
@@ -105,8 +94,8 @@
         {{ $t('traceExplorer.pagination.total') }}: {{ total }}
       </div>
       <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
+        :current-page="currentPage"
+        :page-size="pageSize"
         :page-sizes="[20, 50, 100]"
         :total="total"
         layout="sizes, prev, pager, next"
@@ -119,8 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Cpu, Histogram, Document } from '@element-plus/icons-vue'
+import { Cpu, Histogram } from '@element-plus/icons-vue'
 import type { TraceListItem } from '../types/trace'
 
 // Props
@@ -128,9 +116,11 @@ interface Props {
   data: TraceListItem[]
   loading?: boolean
   total: number
+  currentPage: number
+  pageSize: number
 }
 
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   loading: false
 })
 
@@ -139,14 +129,9 @@ const emit = defineEmits<{
   'row-click': [row: TraceListItem]
   'ai-analysis': [row: TraceListItem]
   'call-chain': [row: TraceListItem]
-  'prompt-debug': [row: TraceListItem]
   'page-change': [page: number]
   'size-change': [size: number]
 }>()
-
-// 分页状态
-const currentPage = ref(1)
-const pageSize = ref(20)
 
 /**
  * 格式化数字（千分位分隔符）
@@ -206,17 +191,9 @@ function handleCallChain(row: TraceListItem) {
 }
 
 /**
- * Prompt 按钮点击事件
- */
-function handlePromptDebug(row: TraceListItem) {
-  emit('prompt-debug', row)
-}
-
-/**
  * 页码变化
  */
 function handleCurrentChange(page: number) {
-  currentPage.value = page
   emit('page-change', page)
 }
 
@@ -224,7 +201,6 @@ function handleCurrentChange(page: number) {
  * 每页数量变化
  */
 function handleSizeChange(size: number) {
-  pageSize.value = size
   emit('size-change', size)
 }
 
