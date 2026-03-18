@@ -415,3 +415,41 @@ test(trace): 补充成功态 trace 联调脚本
 
 - 已运行 `bash -n server/tests/post_trace_fixture_success.sh`
 - 脚本语法通过
+
+## 追加记录（补充复杂拓扑 Trace 联调脚本）
+
+### Git Commit Message
+
+test(trace): 补充复杂拓扑 trace 联调脚本
+
+### Modification
+
+- server/tests/post_trace_fixture_complex.sh
+- docs/todo-list/Todo_TraceReadSide.md
+
+### 本次补充
+
+- 新增 `server/tests/post_trace_fixture_complex.sh`
+- 这条 trace 的目的不是单纯再测一条成功/失败，而是专门压一下当前瀑布图展示：
+  - 多层父子关系
+  - 同层分叉
+  - 多个 service 并行重叠
+  - 更深一层的孙节点调用
+- 这样更容易看出当前泳道图在复杂调用链下会不会乱序、挤压或者失真
+
+### Learning Tips
+
+#### Newbie Tips
+
+- 验瀑布图时，最重要的不是 span 数量有多大，而是有没有“分叉 + 并行 + 深度”这三个特征。
+- 一条复杂拓扑 trace 往往比三条线性 trace 更容易暴露可视化问题。
+
+#### Pitfalls
+
+- 如果所有测试 trace 都是线性的，你会误以为瀑布图没问题，但一到真实分布式链路那种分叉结构就可能露馅。
+- 复杂 trace 依然要用当前时间附近的绝对时间戳，否则又会被搜索时间窗误伤。
+
+### 验证说明
+
+- 已运行 `bash -n server/tests/post_trace_fixture_complex.sh`
+- 脚本语法通过
