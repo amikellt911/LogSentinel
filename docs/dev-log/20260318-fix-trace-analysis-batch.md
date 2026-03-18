@@ -379,3 +379,39 @@ chore(trace): 默认自动启动本地 trace ai proxy
 
 - 已运行 `cd server/build && cmake --build . --target LogSentinel`
 - 后端编译通过
+
+## 追加记录（补充成功态 Trace 联调脚本）
+
+### Git Commit Message
+
+test(trace): 补充成功态 trace 联调脚本
+
+### Modification
+
+- server/tests/post_trace_fixture_success.sh
+
+### 本次补充
+
+- 新增 `server/tests/post_trace_fixture_success.sh`
+- 这条 trace 和之前那条错误态 trace 不同：
+  - 所有 span 都是 `OK`
+  - 结构更简单
+  - 目标是补第二轮联调，验证“成功态/低风险”场景
+- 执行完同样会打印 `trace_key`，方便前端直接精确搜索
+
+### Learning Tips
+
+#### Newbie Tips
+
+- 联调不要只测一种坏路径。最小可接受的覆盖，至少应该有“一条失败态 + 一条成功态”。
+- 成功态 trace 不需要特别长，只要父子关系、时间轴和 service 分布合理，就足够验证查询和展示链路。
+
+#### Pitfalls
+
+- 如果只测 error trace，你会默认把 analysis 总是有风险当成“正常”，这样很难发现成功态下的展示有没有问题。
+- 两条 trace 的时间都必须落在当前搜索窗口里，否则你会误判成查询失败。
+
+### 验证说明
+
+- 已运行 `bash -n server/tests/post_trace_fixture_success.sh`
+- 脚本语法通过
