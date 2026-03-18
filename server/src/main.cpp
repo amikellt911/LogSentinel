@@ -71,7 +71,10 @@ int main(int argc, char* argv[])
 {
     std::string db_path = "LogSentinel.db"; // 生产环境默认名
     int port = 8080;
-    bool auto_start_proxy = false;
+    // 当前处于 TraceExplorer 联调阶段，开发时默认自动拉起本地 AI proxy，
+    // 这样直接点运行就能看到 trace_analysis，不需要每次手敲 --auto-start-proxy。
+    // 后续如果要切回更保守的默认行为，再按阶段调整。
+    bool auto_start_proxy = true;
     bool auto_start_webhook_mock = false;
     std::string trace_ai_provider = "mock";
     std::string trace_ai_base_url = "http://127.0.0.1:8001";

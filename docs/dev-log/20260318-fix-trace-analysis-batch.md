@@ -346,3 +346,36 @@ refactor(trace-explorer): 合并详情入口为单个查看详情抽屉
 
 - 已运行 `cd client && npm run build`
 - 构建仍被仓库里已有的前端 TypeScript 老问题阻塞，本次改动涉及的 `TraceExplorer/TraceListTable` 没有新增报错
+
+## 追加记录（默认自动拉起 Trace Mock AI）
+
+### Git Commit Message
+
+chore(trace): 默认自动启动本地 trace ai proxy
+
+### Modification
+
+- server/src/main.cpp
+
+### 本次补充
+
+- 把 `main.cpp` 里的 `auto_start_proxy` 默认值从 `false` 改成了 `true`
+- 这样开发阶段直接运行 `LogSentinel` 时，会默认尝试拉起本地 AI proxy
+- 由于默认 `trace_ai_provider` 本来就是 `mock`，所以现在不用每次手敲 `--auto-start-proxy`，也能直接联调 `trace_analysis`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- “默认值”本身就是一种工程配置。联调阶段把默认值调到最顺手，往往比要求每次记命令行参数更省时间。
+- 这里真正控制 Trace AI 是否启用的，不是 `trace_ai_provider = "mock"` 这一行，而是 `enable_trace_ai` 的判定条件。
+
+#### Pitfalls
+
+- 仅仅把 provider 默认写成 `mock`，不代表 Trace AI 就真的启用了；如果 `enable_trace_ai` 还是 false，后面根本不会创建 `trace_ai`。
+- 自动拉起 proxy 很适合本地联调，但它依赖 Python 环境和 proxy 脚本路径可用；如果本地环境没装好，启动会直接失败。
+
+### 验证说明
+
+- 已运行 `cd server/build && cmake --build . --target LogSentinel`
+- 后端编译通过
