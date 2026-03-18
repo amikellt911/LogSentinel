@@ -149,6 +149,8 @@ CREATE INDEX IF NOT EXISTS idx_trace_summary_start_time_trace_id
 ON trace_summary(start_time_ms DESC, trace_id DESC);
 CREATE INDEX IF NOT EXISTS idx_trace_summary_service_start_time_trace_id
 ON trace_summary(service_name, start_time_ms DESC, trace_id DESC);
+CREATE INDEX IF NOT EXISTS idx_trace_span_trace_start_time_span_id
+ON trace_span(trace_id, start_time_ms ASC, span_id ASC);
 )";
     errmsg = nullptr;
     rc = sqlite3_exec(db_, sql_create_index, nullptr, nullptr, &errmsg);
@@ -170,6 +172,9 @@ SqliteTraceRepository::~SqliteTraceRepository()
 
 TraceSearchResult SqliteTraceRepository::SearchTraces(const TraceSearchRequest& request)
 {
+    // 这里给读侧也串一个 repo 内部互斥，目的不是“把查询做成单线程”，
+    // 而是保证同一个 SQLite 连接上的多步读流程不要和别的查询在连接级别交叉执行。
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!db_) {
         throw std::runtime_error("Trace database is not available");
     }
@@ -347,12 +352,144 @@ TraceSearchResult SqliteTraceRepository::SearchTraces(const TraceSearchRequest& 
 
 std::optional<TraceDetailRecord> SqliteTraceRepository::GetTraceDetail(const std::string& trace_id)
 {
-    (void)trace_id;
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!db_) {
         throw std::runtime_error("Trace database is not available");
     }
-    // 详情查询和列表查询一样，当前先立方法签名与调用路径，下一步再补真实 SQL。
-    throw std::runtime_error("GetTraceDetail is not implemented yet");
+
+    char* errmsg = nullptr;
+    auto rollback = [this]() {
+        char* rollback_err = nullptr;
+        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &rollback_err);
+        if (rollback_err) {
+            sqlite3_free(rollback_err);
+        }
+    };
+
+    try {
+        // 详情页不是一条 SQL，而是“先查 summary/analysis，再查 spans”。
+        // 这里显式开一个读事务，是为了把这两次读取固定到同一份 WAL 快照上，
+        // 避免 flush 线程恰好在两次 SELECT 之间写入，导致顶部摘要和 spans 数量对不上。
+        int rc = sqlite3_exec(db_, "BEGIN;", nullptr, nullptr, &errmsg);
+        if (errmsg) {
+            sqlite3_free(errmsg);
+            errmsg = nullptr;
+        }
+        persistence::checkSqliteError(db_, rc, "Begin trace detail read transaction");
+
+        const char* sql_detail = R"(
+            SELECT s.trace_id,
+                   s.service_name,
+                   s.start_time_ms,
+                   s.end_time_ms,
+                   s.duration_ms,
+                   s.span_count,
+                   s.token_count,
+                   COALESCE(a.risk_level, s.risk_level) AS display_risk_level,
+                   a.risk_level,
+                   a.summary,
+                   a.root_cause,
+                   a.solution,
+                   a.confidence
+            FROM trace_summary s
+            LEFT JOIN trace_analysis a
+              ON a.trace_id = s.trace_id
+            WHERE s.trace_id = ?;
+        )";
+        persistence::StmtPtr detail_stmt;
+        sqlite3_stmt* detail_raw_stmt = nullptr;
+        rc = sqlite3_prepare_v2(db_, sql_detail, -1, &detail_raw_stmt, nullptr);
+        persistence::checkSqliteError(db_, rc, "Prepare trace detail summary query");
+        detail_stmt.reset(detail_raw_stmt);
+        sqlite3_bind_text(detail_stmt.get(), 1, trace_id.c_str(), -1, SQLITE_TRANSIENT);
+
+        const int detail_step_rc = sqlite3_step(detail_stmt.get());
+        if (detail_step_rc == SQLITE_DONE) {
+            rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
+            if (errmsg) {
+                sqlite3_free(errmsg);
+                errmsg = nullptr;
+            }
+            persistence::checkSqliteError(db_, rc, "Commit empty trace detail read transaction");
+            return std::nullopt;
+        }
+        persistence::checkSqliteError(db_, detail_step_rc, "Step trace detail summary query");
+
+        TraceDetailRecord detail;
+        detail.trace_id = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 0));
+        detail.service_name = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 1));
+        detail.start_time_ms = sqlite3_column_int64(detail_stmt.get(), 2);
+        if (sqlite3_column_type(detail_stmt.get(), 3) != SQLITE_NULL) {
+            detail.end_time_ms = sqlite3_column_int64(detail_stmt.get(), 3);
+        }
+        detail.duration_ms = sqlite3_column_int64(detail_stmt.get(), 4);
+        detail.span_count = static_cast<size_t>(sqlite3_column_int64(detail_stmt.get(), 5));
+        detail.token_count = static_cast<size_t>(sqlite3_column_int64(detail_stmt.get(), 6));
+        detail.risk_level = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 7));
+        // tags 当前后端主链路还没有真实产出，这里先稳定返回空数组，
+        // 等 AI proxy / analysis 存储链真的接上 tags 后再补真实读取。
+        detail.tags.clear();
+
+        if (sqlite3_column_type(detail_stmt.get(), 8) != SQLITE_NULL) {
+            TraceAnalysisDetail analysis;
+            analysis.risk_level = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 8));
+            analysis.summary = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 9));
+            analysis.root_cause = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 10));
+            analysis.solution = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 11));
+            analysis.confidence = sqlite3_column_double(detail_stmt.get(), 12);
+            detail.analysis = std::move(analysis);
+        }
+
+        const char* sql_spans = R"(
+            SELECT span_id,
+                   parent_id,
+                   service_name,
+                   operation,
+                   start_time_ms,
+                   duration_ms,
+                   status
+            FROM trace_span
+            WHERE trace_id = ?
+            ORDER BY start_time_ms ASC, span_id ASC;
+        )";
+        persistence::StmtPtr spans_stmt;
+        sqlite3_stmt* spans_raw_stmt = nullptr;
+        rc = sqlite3_prepare_v2(db_, sql_spans, -1, &spans_raw_stmt, nullptr);
+        persistence::checkSqliteError(db_, rc, "Prepare trace detail spans query");
+        spans_stmt.reset(spans_raw_stmt);
+        sqlite3_bind_text(spans_stmt.get(), 1, trace_id.c_str(), -1, SQLITE_TRANSIENT);
+
+        while (true) {
+            const int spans_step_rc = sqlite3_step(spans_stmt.get());
+            if (spans_step_rc == SQLITE_DONE) {
+                break;
+            }
+            persistence::checkSqliteError(db_, spans_step_rc, "Step trace detail spans query");
+
+            TraceSpanDetail span;
+            span.span_id = reinterpret_cast<const char*>(sqlite3_column_text(spans_stmt.get(), 0));
+            if (sqlite3_column_type(spans_stmt.get(), 1) != SQLITE_NULL) {
+                span.parent_id = std::string(reinterpret_cast<const char*>(sqlite3_column_text(spans_stmt.get(), 1)));
+            }
+            span.service_name = reinterpret_cast<const char*>(sqlite3_column_text(spans_stmt.get(), 2));
+            span.operation = reinterpret_cast<const char*>(sqlite3_column_text(spans_stmt.get(), 3));
+            span.start_time_ms = sqlite3_column_int64(spans_stmt.get(), 4);
+            span.duration_ms = sqlite3_column_int64(spans_stmt.get(), 5);
+            span.raw_status = reinterpret_cast<const char*>(sqlite3_column_text(spans_stmt.get(), 6));
+            detail.spans.push_back(std::move(span));
+        }
+
+        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
+        if (errmsg) {
+            sqlite3_free(errmsg);
+            errmsg = nullptr;
+        }
+        persistence::checkSqliteError(db_, rc, "Commit trace detail read transaction");
+        return detail;
+    } catch (const std::exception&) {
+        rollback();
+        throw;
+    }
 }
 
 bool SqliteTraceRepository::SaveSingleTraceSummary(const TraceSummary& summary)

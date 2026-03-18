@@ -9,5 +9,5 @@
 - [x] 实现 `/traces/search` 列表查询
 - [x] 优化 `SaveAnalysisBatch` 的风险缓存回写：update stmt 改为预编译复用
 - [x] 收口 `/traces/search` 语义：去掉隐式 24h 默认筛选，并移除冗余单列索引定义
-- [ ] 实现 `/traces/{trace_id}` 详情查询
-- [ ] 补最小自测与联调
+- [x] 实现 `/traces/{trace_id}` 详情查询
+- [x] 补最小仓库层自测：详情查询返回 summary / analysis / spans

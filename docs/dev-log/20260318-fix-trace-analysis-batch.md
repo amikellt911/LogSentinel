@@ -104,3 +104,45 @@ docs(trace): 澄清搜索时间窗和表字段的区别
 ### Pitfalls
 
 - 请求字段名和表字段名长得像，不代表它们语义相同。这个地方如果不写清，后面非常容易把“搜索窗口上界”误看成“trace 结束时间过滤”。
+
+## 追加记录（GetTraceDetail）
+
+### Git Commit Message
+
+feat(trace): 实现 trace 详情查询与同快照读取
+
+### Modification
+
+- server/persistence/SqliteTraceRepository.cpp
+- server/tests/SqliteTraceRepository_test.cpp
+- docs/todo-list/Todo_TraceReadSide.md
+
+### 本次补充
+
+- 实现了 `SqliteTraceRepository::GetTraceDetail(...)`
+  - 先查 `trace_summary LEFT JOIN trace_analysis`
+  - 再查 `trace_span`
+  - 组装为 `TraceDetailRecord`
+- 详情查询显式使用读事务，保证 summary / analysis / spans 基于同一份读取快照。
+- 新增 `trace_span(trace_id, start_time_ms, span_id)` 联合索引，服务详情页的调用链排序读取。
+- `tags` 当前明确返回空数组，因为后端主链路还没有真实 tags 落库。
+- 增加仓库层测试：
+  - 命中详情时返回 summary / analysis / spans
+  - trace 不存在时返回 `nullopt`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- 多条 `SELECT` 想读到同一时刻的数据库状态，靠的不是“运气刚好没写入”，而是显式把它们包进一个读事务里。
+- `LEFT JOIN` 适合详情页这种“一条 summary 对一条 optional analysis”的场景；但 spans 是一对多，硬 join 会把 summary 列重复很多次，组装代码会变脏。
+
+#### Function Explanation
+
+- `BEGIN; ... COMMIT;`：这里不是为了加写锁，而是为了把详情查询里的多次读取固定到同一个 WAL 快照上。
+- `COALESCE(a.risk_level, s.risk_level)`：优先拿 analysis 的风险等级；如果 analysis 还没落库，再回退到 summary 里的缓存值。
+
+#### Pitfalls
+
+- 如果 summary 和 spans 分两次查，却不放进同一个读事务，那么 flush 线程刚好插入新 span 时，详情页就可能出现“顶部 span_count 和下面真实 spans 条数对不上”的撕裂。
+- `tags` 结构体里虽然已经有字段，但这不代表后端已经真的写了 tags。当前这里只能稳定返回空数组，不能假装有真实数据。
