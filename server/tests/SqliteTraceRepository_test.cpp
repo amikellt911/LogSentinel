@@ -302,3 +302,71 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicRejectsOrphanSpan)
     EXPECT_FALSE(bad);
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 1);
 }
+
+TEST_F(SqliteTraceRepositoryTest, GetTraceDetailReturnsSummarySpansAndAnalysis)
+{
+    persistence::TraceSummary summary = MakeSummary("detail-trace-1");
+    summary.service_name = "order-service";
+    summary.start_time_ms = 1000;
+    summary.end_time_ms = 1600;
+    summary.duration_ms = 600;
+    summary.span_count = 2;
+    summary.token_count = 42;
+    ASSERT_TRUE(repo->SaveSingleTraceSummary(summary));
+
+    persistence::TraceSpanRecord child_span = MakeSpan(summary.trace_id, "span-2", "span-1");
+    child_span.service_name = "payment-service";
+    child_span.operation = "charge";
+    child_span.start_time_ms = 1200;
+    child_span.duration_ms = 200;
+
+    persistence::TraceSpanRecord root_span = MakeSpan(summary.trace_id, "span-1", "");
+    root_span.service_name = "order-service";
+    root_span.operation = "create-order";
+    root_span.start_time_ms = 1000;
+    root_span.duration_ms = 600;
+
+    std::vector<persistence::TraceSpanRecord> spans;
+    // 故意按乱序写入，验证详情查询会按 start_time_ms ASC, span_id ASC 排好。
+    spans.push_back(child_span);
+    spans.push_back(root_span);
+    ASSERT_TRUE(repo->SaveSingleTraceSpans(summary.trace_id, spans));
+
+    persistence::TraceAnalysisRecord analysis = MakeAnalysis(summary.trace_id);
+    analysis.risk_level = "critical";
+    analysis.summary = "trace summary";
+    analysis.root_cause = "db slow";
+    analysis.solution = "scale out";
+    analysis.confidence = 0.91;
+    ASSERT_TRUE(repo->SaveSingleTraceAnalysis(analysis));
+
+    std::optional<TraceDetailRecord> detail = repo->GetTraceDetail(summary.trace_id);
+    ASSERT_TRUE(detail.has_value());
+    EXPECT_EQ(detail->trace_id, summary.trace_id);
+    EXPECT_EQ(detail->service_name, summary.service_name);
+    EXPECT_EQ(detail->duration_ms, summary.duration_ms);
+    EXPECT_EQ(detail->token_count, summary.token_count);
+    EXPECT_EQ(detail->risk_level, analysis.risk_level);
+    EXPECT_TRUE(detail->tags.empty());
+
+    ASSERT_TRUE(detail->analysis.has_value());
+    EXPECT_EQ(detail->analysis->risk_level, analysis.risk_level);
+    EXPECT_EQ(detail->analysis->summary, analysis.summary);
+    EXPECT_EQ(detail->analysis->root_cause, analysis.root_cause);
+    EXPECT_EQ(detail->analysis->solution, analysis.solution);
+    EXPECT_DOUBLE_EQ(detail->analysis->confidence, analysis.confidence);
+
+    ASSERT_EQ(detail->spans.size(), 2u);
+    EXPECT_EQ(detail->spans[0].span_id, "span-1");
+    EXPECT_EQ(detail->spans[0].service_name, "order-service");
+    EXPECT_EQ(detail->spans[0].raw_status, "OK");
+    EXPECT_EQ(detail->spans[1].span_id, "span-2");
+    ASSERT_TRUE(detail->spans[1].parent_id.has_value());
+    EXPECT_EQ(detail->spans[1].parent_id.value(), "span-1");
+}
+
+TEST_F(SqliteTraceRepositoryTest, GetTraceDetailReturnsNulloptWhenTraceMissing)
+{
+    std::optional<TraceDetailRecord> detail = repo->GetTraceDetail("missing-trace");
+    EXPECT_FALSE(detail.has_value());
+}

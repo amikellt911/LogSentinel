@@ -3,6 +3,8 @@
  * 用于 TraceExplorer 页面和相关组件
  */
 
+export type RiskLevel = 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' | 'Unknown'
+
 /**
  * Trace Span 节点（调用链中的单个操作）
  */
@@ -20,7 +22,7 @@ export interface TraceSpan {
  * AI 分析结果
  */
 export interface AIAnalysis {
-  risk_level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' // 风险等级
+  risk_level: RiskLevel // 风险等级
   summary: string // 根因总结
   root_cause: string // 根因分析
   solution: string // 解决建议
@@ -36,9 +38,85 @@ export interface TraceListItem {
   start_time: string // 开始时间（格式化后的字符串，如 "2025-12-29 14:30:25"）
   duration: number // 用户耗时（ms），即业务系统从请求开始到结束的真实墙钟时间
   span_count: number // Span 数量（调用链中的操作节点数）
-  risk_level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' // 风险等级
+  risk_level: RiskLevel // 风险等级
   token_count: number // Token 消耗数量
   timestamp: number // 时间戳（用于排序）
+}
+
+/**
+ * Trace 列表查询请求（后端 DTO）
+ */
+export interface TraceSearchRequestPayload {
+  trace_id?: string // Trace ID 精确匹配
+  service_name?: string // 入口服务精确匹配
+  start_time_ms?: number // 搜索窗口起点（毫秒时间戳）
+  end_time_ms?: number // 搜索窗口终点（毫秒时间戳）
+  risk_levels?: string[] // 风险等级数组（按后端存储值传递）
+  page: number // 页码，从 1 开始
+  page_size: number // 每页条数
+}
+
+/**
+ * Trace 列表项（后端 DTO）
+ */
+export interface TraceListItemDto {
+  trace_id: string
+  service_name: string
+  start_time_ms: number
+  end_time_ms: number | null
+  duration_ms: number
+  span_count: number
+  token_count: number
+  risk_level: string
+}
+
+/**
+ * Trace 列表查询响应（后端 DTO）
+ */
+export interface TraceSearchResponseDto {
+  total: number
+  items: TraceListItemDto[]
+}
+
+/**
+ * Trace 详情里的单个 Span（后端 DTO）
+ */
+export interface TraceSpanDto {
+  span_id: string
+  parent_id: string | null
+  service_name: string
+  operation: string
+  start_time_ms: number
+  duration_ms: number
+  raw_status: string
+}
+
+/**
+ * Trace 详情里的 AI 分析（后端 DTO）
+ */
+export interface TraceAnalysisDto {
+  risk_level: string
+  summary: string
+  root_cause: string
+  solution: string
+  confidence: number
+}
+
+/**
+ * Trace 详情查询响应（后端 DTO）
+ */
+export interface TraceDetailResponseDto {
+  trace_id: string
+  service_name: string
+  start_time_ms: number
+  end_time_ms: number | null
+  duration_ms: number
+  span_count: number
+  token_count: number
+  risk_level: string
+  tags: string[]
+  spans: TraceSpanDto[]
+  analysis: TraceAnalysisDto | null
 }
 
 /**
@@ -79,7 +157,6 @@ export interface TraceDetail {
   tags: string[] // 标签（如 ['认证', '安全']）
   spans: TraceSpan[] // Span 列表（调用链）
   ai_analysis: AIAnalysis | null // AI 分析结果
-  prompt_debug: PromptDebugInfo | null // Prompt 调试信息
 }
 
 /**
@@ -87,13 +164,11 @@ export interface TraceDetail {
  */
 export interface TraceSearchCriteria {
   trace_id?: string // Trace ID（精确匹配）
-  service_name?: string // 服务名称（下拉选择）
+  service_name?: string // 入口服务名称（精确匹配）
   time_range?: '1h' | '6h' | '24h' | 'custom' // 时间范围
   custom_time_start?: string // 自定义开始时间
   custom_time_end?: string // 自定义结束时间
-  risk_level?: string[] // 风险等级（多选）
-  min_duration?: number // 最小耗时（ms）
-  max_duration?: number // 最大耗时（ms）
+  risk_level?: RiskLevel[] // 风险等级（多选）
 }
 
 /**

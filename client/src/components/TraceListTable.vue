@@ -57,43 +57,17 @@
           </template>
         </el-table-column>
 
-        <!-- 操作按钮（拆分为 3 个独立按钮） -->
-        <el-table-column :label="$t('traceExplorer.table.actions')" width="140" fixed="right">
+        <!-- 操作按钮（统一为查看详情） -->
+        <el-table-column :label="$t('traceExplorer.table.actions')" width="120" fixed="right">
           <template #default="{ row }">
-            <div class="flex gap-1">
-              <!-- AI 分析按钮 -->
-              <el-tooltip :content="$t('traceExplorer.table.aiAnalysis')" placement="top">
-                <el-button
-                  type="primary"
-                  :icon="Cpu"
-                  circle
-                  size="small"
-                  @click.stop="handleAIAnalysis(row)"
-                />
-              </el-tooltip>
-
-              <!-- 调用链按钮 -->
-              <el-tooltip :content="$t('traceExplorer.table.callChain')" placement="top">
-                <el-button
-                  type="success"
-                  :icon="Histogram"
-                  circle
-                  size="small"
-                  @click.stop="handleCallChain(row)"
-                />
-              </el-tooltip>
-
-              <!-- Prompt 按钮 -->
-              <el-tooltip :content="$t('traceExplorer.table.promptDebugger')" placement="top">
-                <el-button
-                  type="warning"
-                  :icon="Document"
-                  circle
-                  size="small"
-                  @click.stop="handlePromptDebug(row)"
-                />
-              </el-tooltip>
-            </div>
+            <el-button
+              type="primary"
+              :icon="View"
+              size="small"
+              @click.stop="handleViewDetail(row)"
+            >
+              {{ $t('traceExplorer.table.viewDetails') }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -105,8 +79,8 @@
         {{ $t('traceExplorer.pagination.total') }}: {{ total }}
       </div>
       <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
+        :current-page="currentPage"
+        :page-size="pageSize"
         :page-sizes="[20, 50, 100]"
         :total="total"
         layout="sizes, prev, pager, next"
@@ -119,8 +93,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Cpu, Histogram, Document } from '@element-plus/icons-vue'
+import { View } from '@element-plus/icons-vue'
 import type { TraceListItem } from '../types/trace'
 
 // Props
@@ -128,25 +101,21 @@ interface Props {
   data: TraceListItem[]
   loading?: boolean
   total: number
+  currentPage: number
+  pageSize: number
 }
 
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   loading: false
 })
 
 // Emits
 const emit = defineEmits<{
   'row-click': [row: TraceListItem]
-  'ai-analysis': [row: TraceListItem]
-  'call-chain': [row: TraceListItem]
-  'prompt-debug': [row: TraceListItem]
+  'view-detail': [row: TraceListItem]
   'page-change': [page: number]
   'size-change': [size: number]
 }>()
-
-// 分页状态
-const currentPage = ref(1)
-const pageSize = ref(20)
 
 /**
  * 格式化数字（千分位分隔符）
@@ -192,31 +161,16 @@ function handleRowClick(row: TraceListItem) {
 }
 
 /**
- * AI 分析按钮点击事件
+ * 查看详情按钮点击事件
  */
-function handleAIAnalysis(row: TraceListItem) {
-  emit('ai-analysis', row)
-}
-
-/**
- * 调用链按钮点击事件
- */
-function handleCallChain(row: TraceListItem) {
-  emit('call-chain', row)
-}
-
-/**
- * Prompt 按钮点击事件
- */
-function handlePromptDebug(row: TraceListItem) {
-  emit('prompt-debug', row)
+function handleViewDetail(row: TraceListItem) {
+  emit('view-detail', row)
 }
 
 /**
  * 页码变化
  */
 function handleCurrentChange(page: number) {
-  currentPage.value = page
   emit('page-change', page)
 }
 
@@ -224,7 +178,6 @@ function handleCurrentChange(page: number) {
  * 每页数量变化
  */
 function handleSizeChange(size: number) {
-  pageSize.value = size
   emit('size-change', size)
 }
 
