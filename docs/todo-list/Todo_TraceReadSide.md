@@ -15,8 +15,8 @@
 ## 下一阶段：TraceExplorer 前后端联调顺序
 
 - [x] 冻结本轮 Trace 查询契约：确认前端只接 `/traces/search` 与 `/traces/{trace_id}`，不扩 `prompt_debug`
-- [ ] 重写 `client/src/types/trace.ts`，先把前端类型对齐后端真实字段
-- [ ] 收口 `TraceSearchBar`：去掉按耗时过滤，服务名从写死下拉改为可输入，时间范围统一换算为 `start_time_ms/end_time_ms`
+- [x] 重写 `client/src/types/trace.ts`，先把前端类型对齐后端真实字段
+- [x] 收口 `TraceSearchBar`：去掉按耗时过滤，服务名从写死下拉改为可输入，时间范围统一换算为 `start_time_ms/end_time_ms`
 - [x] 接通 `TraceExplorer.vue` 列表请求：真实调用 `/api/traces/search`，打通分页与筛选
 - [x] 接通 `TraceExplorer.vue` 详情请求：真实调用 `/api/traces/{trace_id}`
 - [x] 通过页面层 DTO 转换适配 `AIAnalysisDrawerContent` 与 `CallChainDrawerContent` 的现有字段
@@ -26,10 +26,16 @@
 - [x] 删除前端按耗时过滤 UI，并把 `service` 从写死下拉改成精确输入框
 - [x] 提供手动灌 trace 的本地脚本，便于在当前运行实例上直接造联调数据
 - [x] 补充复杂拓扑 trace 脚本，专门验证瀑布图在分叉调用链下的表现
-- [ ] 做一次最小联调验收：发 span -> 列表查询 -> 打开 AI 分析 -> 打开调用链
+- [x] 做一次最小联调验收：发 span -> 列表查询 -> 打开 AI 分析 -> 打开调用链
+
+## 当前结论
+
+- [x] Trace 读侧这轮的后端实现、前端接线和最小手工联调已经基本完成
+- [x] 当前分支可以先阶段性收口，下一步转去讨论 runtime stats / Dashboard / Settings 的优先级
+- [x] 若后续还有时间，Trace 侧优先补“小增强”而不是大改：例如 span tree 结构视图
 
 ## 2026-03-19 计划
 
-- [ ] 继续当前 Trace 读侧闭环，不开新主题
-- [ ] 目标只做前端第一段：类型对齐 + 搜索栏收口 + 列表查询联调
-- [ ] 如果列表链路当天打通，再决定是否继续做详情抽屉；否则详情顺延到下一步
+- [x] 继续当前 Trace 读侧闭环，不开新主题
+- [x] 目标只做前端第一段：类型对齐 + 搜索栏收口 + 列表查询联调
+- [x] 列表链路打通后继续推进了详情抽屉、联调脚本和最小验收，实际进度已超过原计划
