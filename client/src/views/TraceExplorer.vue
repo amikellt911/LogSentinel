@@ -39,10 +39,16 @@
       :destroy-on-close="true"
       @closed="handleAIDrawerClosed"
     >
-      <AIAnalysisDrawerContent
-        v-if="selectedTraceDetail"
-        :trace-detail="selectedTraceDetail"
-      />
+      <div
+        class="h-full"
+        v-loading="detailLoading"
+        element-loading-background="rgba(0, 0, 0, 0.35)"
+      >
+        <AIAnalysisDrawerContent
+          v-if="selectedTraceDetail"
+          :trace-detail="selectedTraceDetail"
+        />
+      </div>
     </el-drawer>
 
     <!-- 调用链抽屉 -->
@@ -54,10 +60,16 @@
       :destroy-on-close="true"
       @closed="handleCallChainDrawerClosed"
     >
-      <CallChainDrawerContent
-        v-if="selectedTraceDetail"
-        :trace-detail="selectedTraceDetail"
-      />
+      <div
+        class="h-full"
+        v-loading="detailLoading"
+        element-loading-background="rgba(0, 0, 0, 0.35)"
+      >
+        <CallChainDrawerContent
+          v-if="selectedTraceDetail"
+          :trace-detail="selectedTraceDetail"
+        />
+      </div>
     </el-drawer>
 
   </div>
@@ -74,12 +86,13 @@ import type {
   TraceListItem,
   TraceDetail,
   TraceSearchCriteria,
-  TraceSpan,
-  AIAnalysis,
   RiskLevel,
   TraceSearchRequestPayload,
   TraceSearchResponseDto,
-  TraceListItemDto
+  TraceListItemDto,
+  TraceDetailResponseDto,
+  TraceSpanDto,
+  TraceAnalysisDto
 } from '../types/trace'
 import dayjs from 'dayjs'
 
@@ -93,11 +106,13 @@ const currentSearchCriteria = ref<TraceSearchCriteria>(createDefaultSearchCriter
 
 // AI 分析抽屉状态
 const aiDrawerVisible = ref(false)
+const detailLoading = ref(false)
 const selectedTraceDetail = ref<TraceDetail | null>(null)
 const selectedTraceId = ref('')
 
 // 调用链抽屉状态
 const callChainDrawerVisible = ref(false)
+let detailRequestSeq = 0
 
 function createDefaultSearchCriteria(): TraceSearchCriteria {
   return {
@@ -140,6 +155,64 @@ function mapTraceListItem(dto: TraceListItemDto): TraceListItem {
     risk_level: normalizeRiskLevel(dto.risk_level),
     token_count: dto.token_count,
     timestamp: dto.start_time_ms
+  }
+}
+
+function formatTraceDetailTime(timeMs: number | null): string {
+  if (timeMs === null) {
+    return ''
+  }
+  return dayjs(timeMs).format('YYYY-MM-DD HH:mm:ss')
+}
+
+function mapSpanStatus(rawStatus: string): 'success' | 'error' | 'warning' {
+  const normalized = rawStatus.trim().toLowerCase()
+  if (normalized === 'ok') {
+    return 'success'
+  }
+  if (normalized === 'error') {
+    return 'error'
+  }
+  return 'warning'
+}
+
+function mapTraceAnalysis(dto: TraceAnalysisDto | null) {
+  if (!dto) {
+    return null
+  }
+  return {
+    risk_level: normalizeRiskLevel(dto.risk_level),
+    summary: dto.summary,
+    root_cause: dto.root_cause,
+    solution: dto.solution,
+    confidence: dto.confidence
+  }
+}
+
+function mapTraceSpan(dto: TraceSpanDto, traceStartTimeMs: number) {
+  return {
+    span_id: dto.span_id,
+    service_name: dto.service_name,
+    start_time: Math.max(0, dto.start_time_ms - traceStartTimeMs),
+    duration: dto.duration_ms,
+    parent_id: dto.parent_id,
+    status: mapSpanStatus(dto.raw_status),
+    operation: dto.operation
+  }
+}
+
+function mapTraceDetail(dto: TraceDetailResponseDto): TraceDetail {
+  return {
+    trace_id: dto.trace_id,
+    service_name: dto.service_name,
+    start_time: formatTraceDetailTime(dto.start_time_ms),
+    end_time: formatTraceDetailTime(dto.end_time_ms),
+    duration: dto.duration_ms,
+    span_count: dto.span_count,
+    token_count: dto.token_count,
+    tags: Array.isArray(dto.tags) ? dto.tags : [],
+    spans: dto.spans.map(span => mapTraceSpan(span, dto.start_time_ms)),
+    ai_analysis: mapTraceAnalysis(dto.analysis)
   }
 }
 
@@ -240,87 +313,60 @@ async function fetchTraceList() {
   }
 }
 
-/**
- * 生成 Mock Trace 详情数据
- *
- * TraceDetail.duration 字段说明：
- * - 计算：最后一个 Span 结束时间 - 第一个 Span 开始时间
- * - 含义：用户业务的实际墙钟时间（不包含 LogSentinel 分析耗时）
- * - 方式：动态计算，每次新 Span 到达时更新（流式更新）
- */
-function generateMockTraceDetail(traceId: string): TraceDetail {
-  const mockSpans: TraceSpan[] = []
-  const services = ['user-service', 'order-service', 'payment-service', 'inventory-service', 'notification-service']
-  const operations = [
-    'GET /api/v1/user',
-    'POST /api/v1/order',
-    'POST /api/v1/payment',
-    'GET /api/v1/inventory',
-    'POST /api/v1/notification'
-  ]
-
-  // 生成 5-15 个 Span
-  const spanCount = Math.floor(Math.random() * 10) + 5
-  let currentTime = 0
-
-  for (let i = 0; i < spanCount; i++) {
-    const duration = Math.floor(Math.random() * 100) + 20
-    const status = Math.random() > 0.9 ? 'error' : (Math.random() > 0.8 ? 'warning' : 'success')
-
-    mockSpans.push({
-      span_id: `span_${i + 1}`,
-      service_name: services[i % services.length],
-      start_time: currentTime,
-      duration: duration,
-      parent_id: i > 0 ? `span_${i}` : null,
-      status: status,
-      operation: operations[i % operations.length]
-    })
-
-    currentTime += duration + Math.floor(Math.random() * 20) // 添加一些延迟
+async function fetchTraceDetail(traceId: string): Promise<TraceDetail> {
+  const response = await fetch(`/api/traces/${encodeURIComponent(traceId)}`)
+  if (!response.ok) {
+    let errorMessage = `Trace 详情查询失败（HTTP ${response.status}）`
+    try {
+      const errorBody = await response.json()
+      if (typeof errorBody?.error === 'string' && errorBody.error.length > 0) {
+        errorMessage = errorBody.error
+      }
+    } catch {
+      // 这里吞掉 JSON 解析失败，继续使用默认错误文案。
+    }
+    throw new Error(errorMessage)
   }
 
-  // 生成 AI 分析结果
-  const hasCritical = mockSpans.some(s => s.status === 'error')
-  const aiAnalysis: AIAnalysis = hasCritical ? {
-    risk_level: 'Critical',
-    summary: '检测到多个服务调用失败，导致整个 Trace 失败。',
-    root_cause: 'payment-service 响应超时，导致下游服务连锁失败。',
-    solution: '建议：1) 检查 payment-service 性能；2) 增加超时重试机制；3) 添加熔断器保护。',
-    confidence: 0.92
-  } : {
-    risk_level: 'Safe',
-    summary: 'Trace 执行正常，所有服务调用成功。',
-    root_cause: '无异常。',
-    solution: '保持当前配置。',
-    confidence: 0.98
+  const result: TraceDetailResponseDto = await response.json()
+  return mapTraceDetail(result)
+}
+
+async function ensureTraceDetail(traceId: string): Promise<boolean> {
+  if (selectedTraceDetail.value && selectedTraceId.value === traceId) {
+    return true
   }
 
-  // 生成标签
-  const allTags = ['认证', '安全', 'SQL注入', '登录', '数据库', '性能', '内存', '网络', '异常', '超时']
-  const tagCount = Math.floor(Math.random() * 3) + 1 // 1-3 个标签
-  const tags: string[] = []
-  for (let i = 0; i < tagCount; i++) {
-    const tag = allTags[Math.floor(Math.random() * allTags.length)]
-    if (!tags.includes(tag)) {
-      tags.push(tag)
+  const requestSeq = ++detailRequestSeq
+  detailLoading.value = true
+  selectedTraceId.value = traceId
+  selectedTraceDetail.value = null
+
+  try {
+    const detail = await fetchTraceDetail(traceId)
+    if (requestSeq !== detailRequestSeq) {
+      return false
+    }
+    selectedTraceDetail.value = detail
+    return true
+  } catch (error) {
+    if (requestSeq === detailRequestSeq) {
+      selectedTraceDetail.value = null
+      ElMessage.error(error instanceof Error ? error.message : 'Trace 详情查询失败')
+    }
+    return false
+  } finally {
+    if (requestSeq === detailRequestSeq) {
+      detailLoading.value = false
     }
   }
+}
 
-  // Token 消耗
-  const tokenCount = Math.floor(spanCount * (100 + Math.random() * 50))
-
-  return {
-    trace_id: traceId,
-    service_name: services[0],
-    start_time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-    end_time: dayjs().add(currentTime, 'ms').format('YYYY-MM-DD HH:mm:ss'),
-    duration: currentTime,
-    span_count: spanCount,
-    token_count: tokenCount,
-    tags: tags,
-    spans: mockSpans,
-    ai_analysis: aiAnalysis
+function clearSelectedTraceDetailIfAllDrawersClosed() {
+  if (!aiDrawerVisible.value && !callChainDrawerVisible.value) {
+    selectedTraceDetail.value = null
+    selectedTraceId.value = ''
+    detailLoading.value = false
   }
 }
 
@@ -364,42 +410,38 @@ function handleRowClick(row: TraceListItem) {
   handleAIAnalysis(row)
 }
 
-/**
- * AI 分析按钮点击事件
- */
-function handleAIAnalysis(row: TraceListItem) {
-  // TODO: 替换为真实 API 调用
-  const traceDetail = generateMockTraceDetail(row.trace_id)
-  selectedTraceDetail.value = traceDetail
-  selectedTraceId.value = row.trace_id
+async function handleAIAnalysis(row: TraceListItem) {
+  callChainDrawerVisible.value = false
   aiDrawerVisible.value = true
+  const ok = await ensureTraceDetail(row.trace_id)
+  if (!ok) {
+    aiDrawerVisible.value = false
+    clearSelectedTraceDetailIfAllDrawersClosed()
+  }
 }
 
-/**
- * 调用链按钮点击事件
- */
-function handleCallChain(row: TraceListItem) {
-  // TODO: 替换为真实 API 调用
-  const traceDetail = generateMockTraceDetail(row.trace_id)
-  selectedTraceDetail.value = traceDetail
-  selectedTraceId.value = row.trace_id
+async function handleCallChain(row: TraceListItem) {
+  aiDrawerVisible.value = false
   callChainDrawerVisible.value = true
+  const ok = await ensureTraceDetail(row.trace_id)
+  if (!ok) {
+    callChainDrawerVisible.value = false
+    clearSelectedTraceDetailIfAllDrawersClosed()
+  }
 }
 
 /**
  * AI 分析抽屉关闭时清理数据
  */
 function handleAIDrawerClosed() {
-  selectedTraceDetail.value = null
-  selectedTraceId.value = ''
+  clearSelectedTraceDetailIfAllDrawersClosed()
 }
 
 /**
  * 调用链抽屉关闭时清理数据
  */
 function handleCallChainDrawerClosed() {
-  selectedTraceDetail.value = null
-  selectedTraceId.value = ''
+  clearSelectedTraceDetailIfAllDrawersClosed()
 }
 
 /**

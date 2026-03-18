@@ -224,3 +224,44 @@ feat(trace-explorer): 接通 trace 列表真实查询
 
 - 已运行 `cd client && npm run build`
 - 构建仍被仓库里已有的前端 TypeScript 老问题阻塞，本次改动涉及的 `TraceExplorer/TraceListTable/types` 没有新增报错
+
+## 追加记录（TraceExplorer 详情联调）
+
+### Git Commit Message
+
+feat(trace-explorer): 接通 trace 详情查询并映射调用链数据
+
+### Modification
+
+- client/src/views/TraceExplorer.vue
+- client/src/types/trace.ts
+- docs/todo-list/Todo_TraceReadSide.md
+
+### 本次补充
+
+- `TraceExplorer.vue` 点击列表行、AI 分析按钮、调用链按钮后，不再生成 mock 详情，而是实际调用 `GET /api/traces/{trace_id}`。
+- 页面层新增了详情 DTO -> 前端展示对象的转换，继续兼容当前详情组件已有字段：
+  - `analysis` -> `ai_analysis`
+  - `start_time_ms/end_time_ms` -> 格式化时间字符串
+  - `span.start_time_ms` -> 相对 trace 起点的 `start_time`
+  - `span.duration_ms` -> `duration`
+  - `span.raw_status` -> 前端展示状态 `success/error/warning`
+- 新增详情抽屉加载态，避免请求过程里抽屉直接空白。
+- 增加了简单的详情请求顺序保护，避免快速连续点击不同 trace 时旧响应覆盖新响应。
+
+### Learning Tips
+
+#### Newbie Tips
+
+- 详情页最怕的不是“字段多”，而是后端 DTO 和前端旧组件字段不一致。这个时候最稳的是在页面层做一次转换，而不是把子组件一口气全改掉。
+- 瀑布图横轴要的是相对时间，不是 Unix 毫秒绝对值。后端给绝对时间很正常，前端展示前自己减去 trace 起点就行。
+
+#### Pitfalls
+
+- 如果直接把后端 `raw_status` 喂给旧组件，颜色和文案会全乱，因为旧组件只认识 `success/error/warning`。
+- 如果多个详情请求并发返回，而你不做最小的请求顺序保护，就会出现“最后点的是 B，结果页面显示成 A”的老问题。
+
+### 验证说明
+
+- 已运行 `cd client && npm run build`
+- 构建仍被仓库里已有的前端 TypeScript 老问题阻塞，本次改动涉及的 `TraceExplorer/types` 没有新增报错

@@ -79,6 +79,47 @@ export interface TraceSearchResponseDto {
 }
 
 /**
+ * Trace 详情里的单个 Span（后端 DTO）
+ */
+export interface TraceSpanDto {
+  span_id: string
+  parent_id: string | null
+  service_name: string
+  operation: string
+  start_time_ms: number
+  duration_ms: number
+  raw_status: string
+}
+
+/**
+ * Trace 详情里的 AI 分析（后端 DTO）
+ */
+export interface TraceAnalysisDto {
+  risk_level: string
+  summary: string
+  root_cause: string
+  solution: string
+  confidence: number
+}
+
+/**
+ * Trace 详情查询响应（后端 DTO）
+ */
+export interface TraceDetailResponseDto {
+  trace_id: string
+  service_name: string
+  start_time_ms: number
+  end_time_ms: number | null
+  duration_ms: number
+  span_count: number
+  token_count: number
+  risk_level: string
+  tags: string[]
+  spans: TraceSpanDto[]
+  analysis: TraceAnalysisDto | null
+}
+
+/**
  * Prompt 调试信息（用于 Prompt Debugger）
  */
 export interface PromptDebugInfo {
