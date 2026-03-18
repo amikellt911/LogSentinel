@@ -21,6 +21,7 @@
 - [x] 接通 `TraceExplorer.vue` 详情请求：真实调用 `/api/traces/{trace_id}`
 - [x] 通过页面层 DTO 转换适配 `AIAnalysisDrawerContent` 与 `CallChainDrawerContent` 的现有字段
 - [x] 在页面层完成 `TraceWaterfall` 所需的时间与状态映射：绝对时间转相对时间，`raw_status` 转前端展示状态
+- [x] 合并 Trace 列表里的详情入口：AI 分析 / 调用链收口为单个“查看详情”
 - [x] 去掉或隐藏 `PromptDebugger` 入口，避免保留假功能
 - [x] 删除前端按耗时过滤 UI，并把 `service` 从写死下拉改成精确输入框
 - [x] 提供手动灌 trace 的本地脚本，便于在当前运行实例上直接造联调数据

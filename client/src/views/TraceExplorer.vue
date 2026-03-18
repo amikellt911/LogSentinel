@@ -23,24 +23,23 @@
         :current-page="currentPage"
         :page-size="pageSize"
         @row-click="handleRowClick"
-        @ai-analysis="handleAIAnalysis"
-        @call-chain="handleCallChain"
+        @view-detail="handleViewDetail"
         @page-change="handlePageChange"
         @size-change="handleSizeChange"
       />
     </div>
 
-    <!-- AI 分析抽屉 -->
+    <!-- 详情抽屉 -->
     <el-drawer
-      v-model="aiDrawerVisible"
-      :title="$t('traceExplorer.table.aiAnalysis') + ' - ' + selectedTraceId"
+      v-model="detailDrawerVisible"
+      :title="$t('traceExplorer.table.viewDetails') + ' - ' + selectedTraceId"
       direction="rtl"
       size="70%"
       :destroy-on-close="true"
-      @closed="handleAIDrawerClosed"
+      @closed="handleDetailDrawerClosed"
     >
       <div
-        class="h-full"
+        class="h-full flex flex-col gap-6 overflow-y-auto"
         v-loading="detailLoading"
         element-loading-background="rgba(0, 0, 0, 0.35)"
       >
@@ -48,27 +47,14 @@
           v-if="selectedTraceDetail"
           :trace-detail="selectedTraceDetail"
         />
-      </div>
-    </el-drawer>
-
-    <!-- 调用链抽屉 -->
-    <el-drawer
-      v-model="callChainDrawerVisible"
-      :title="$t('traceExplorer.table.callChain') + ' - ' + selectedTraceId"
-      direction="rtl"
-      size="70%"
-      :destroy-on-close="true"
-      @closed="handleCallChainDrawerClosed"
-    >
-      <div
-        class="h-full"
-        v-loading="detailLoading"
-        element-loading-background="rgba(0, 0, 0, 0.35)"
-      >
-        <CallChainDrawerContent
+        <div
           v-if="selectedTraceDetail"
-          :trace-detail="selectedTraceDetail"
-        />
+          class="border-t border-gray-700/80 pt-6 min-h-[520px]"
+        >
+          <CallChainDrawerContent
+            :trace-detail="selectedTraceDetail"
+          />
+        </div>
       </div>
     </el-drawer>
 
@@ -104,14 +90,11 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const currentSearchCriteria = ref<TraceSearchCriteria>(createDefaultSearchCriteria())
 
-// AI 分析抽屉状态
-const aiDrawerVisible = ref(false)
+// 详情抽屉状态
+const detailDrawerVisible = ref(false)
 const detailLoading = ref(false)
 const selectedTraceDetail = ref<TraceDetail | null>(null)
 const selectedTraceId = ref('')
-
-// 调用链抽屉状态
-const callChainDrawerVisible = ref(false)
 let detailRequestSeq = 0
 
 function createDefaultSearchCriteria(): TraceSearchCriteria {
@@ -363,7 +346,7 @@ async function ensureTraceDetail(traceId: string): Promise<boolean> {
 }
 
 function clearSelectedTraceDetailIfAllDrawersClosed() {
-  if (!aiDrawerVisible.value && !callChainDrawerVisible.value) {
+  if (!detailDrawerVisible.value) {
     selectedTraceDetail.value = null
     selectedTraceId.value = ''
     detailLoading.value = false
@@ -404,43 +387,25 @@ function loadTraces() {
 }
 
 /**
- * 行点击事件（默认打开 AI 分析）
+ * 行点击事件（默认打开详情）
  */
 function handleRowClick(row: TraceListItem) {
-  handleAIAnalysis(row)
+  void handleViewDetail(row)
 }
 
-async function handleAIAnalysis(row: TraceListItem) {
-  callChainDrawerVisible.value = false
-  aiDrawerVisible.value = true
+async function handleViewDetail(row: TraceListItem) {
+  detailDrawerVisible.value = true
   const ok = await ensureTraceDetail(row.trace_id)
   if (!ok) {
-    aiDrawerVisible.value = false
-    clearSelectedTraceDetailIfAllDrawersClosed()
-  }
-}
-
-async function handleCallChain(row: TraceListItem) {
-  aiDrawerVisible.value = false
-  callChainDrawerVisible.value = true
-  const ok = await ensureTraceDetail(row.trace_id)
-  if (!ok) {
-    callChainDrawerVisible.value = false
+    detailDrawerVisible.value = false
     clearSelectedTraceDetailIfAllDrawersClosed()
   }
 }
 
 /**
- * AI 分析抽屉关闭时清理数据
+ * 详情抽屉关闭时清理数据
  */
-function handleAIDrawerClosed() {
-  clearSelectedTraceDetailIfAllDrawersClosed()
-}
-
-/**
- * 调用链抽屉关闭时清理数据
- */
-function handleCallChainDrawerClosed() {
+function handleDetailDrawerClosed() {
   clearSelectedTraceDetailIfAllDrawersClosed()
 }
 

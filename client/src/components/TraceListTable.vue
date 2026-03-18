@@ -57,32 +57,17 @@
           </template>
         </el-table-column>
 
-        <!-- 操作按钮（拆分为 3 个独立按钮） -->
-        <el-table-column :label="$t('traceExplorer.table.actions')" width="100" fixed="right">
+        <!-- 操作按钮（统一为查看详情） -->
+        <el-table-column :label="$t('traceExplorer.table.actions')" width="120" fixed="right">
           <template #default="{ row }">
-            <div class="flex gap-1">
-              <!-- AI 分析按钮 -->
-              <el-tooltip :content="$t('traceExplorer.table.aiAnalysis')" placement="top">
-                <el-button
-                  type="primary"
-                  :icon="Cpu"
-                  circle
-                  size="small"
-                  @click.stop="handleAIAnalysis(row)"
-                />
-              </el-tooltip>
-
-              <!-- 调用链按钮 -->
-              <el-tooltip :content="$t('traceExplorer.table.callChain')" placement="top">
-                <el-button
-                  type="success"
-                  :icon="Histogram"
-                  circle
-                  size="small"
-                  @click.stop="handleCallChain(row)"
-                />
-              </el-tooltip>
-            </div>
+            <el-button
+              type="primary"
+              :icon="View"
+              size="small"
+              @click.stop="handleViewDetail(row)"
+            >
+              {{ $t('traceExplorer.table.viewDetails') }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -108,7 +93,7 @@
 </template>
 
 <script setup lang="ts">
-import { Cpu, Histogram } from '@element-plus/icons-vue'
+import { View } from '@element-plus/icons-vue'
 import type { TraceListItem } from '../types/trace'
 
 // Props
@@ -127,8 +112,7 @@ withDefaults(defineProps<Props>(), {
 // Emits
 const emit = defineEmits<{
   'row-click': [row: TraceListItem]
-  'ai-analysis': [row: TraceListItem]
-  'call-chain': [row: TraceListItem]
+  'view-detail': [row: TraceListItem]
   'page-change': [page: number]
   'size-change': [size: number]
 }>()
@@ -177,17 +161,10 @@ function handleRowClick(row: TraceListItem) {
 }
 
 /**
- * AI 分析按钮点击事件
+ * 查看详情按钮点击事件
  */
-function handleAIAnalysis(row: TraceListItem) {
-  emit('ai-analysis', row)
-}
-
-/**
- * 调用链按钮点击事件
- */
-function handleCallChain(row: TraceListItem) {
-  emit('call-chain', row)
+function handleViewDetail(row: TraceListItem) {
+  emit('view-detail', row)
 }
 
 /**

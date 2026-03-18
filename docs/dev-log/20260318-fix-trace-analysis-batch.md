@@ -309,3 +309,40 @@ test(trace): 增加本地手动灌 trace 的脚本
 
 - 已运行 `bash -n server/tests/post_trace_fixture.sh`
 - 脚本语法通过；未在当前回合自动执行，因为它依赖你本地已有正在运行的后端实例
+
+## 追加记录（合并 Trace 详情入口）
+
+### Git Commit Message
+
+refactor(trace-explorer): 合并详情入口为单个查看详情抽屉
+
+### Modification
+
+- client/src/components/TraceListTable.vue
+- client/src/views/TraceExplorer.vue
+- docs/todo-list/Todo_TraceReadSide.md
+
+### 本次补充
+
+- Trace 列表操作列不再拆成“AI 分析 / 调用链”两个按钮，而是统一为一个“查看详情”按钮。
+- 页面只保留一个详情抽屉，里面同时展示：
+  - AI 分析卡片
+  - 调用链 / 瀑布图
+- 行点击行为也统一改为直接打开这个详情抽屉。
+
+### Learning Tips
+
+#### Newbie Tips
+
+- 如果两个入口最终依赖的是同一条详情接口，那继续拆成两个按钮只会增加状态管理复杂度，不会增加真实能力。
+- 页面状态一旦收口成“一个详情抽屉 + 一份详情数据”，请求生命周期和关闭清理都会简单很多。
+
+#### Pitfalls
+
+- 如果还保留两个 drawer，就会出现“同一份 selectedTraceDetail 被两个开关来回抢”的状态分裂问题。
+- 列表按钮虽然只是 UI，但它会反向影响页面状态模型；入口不统一，后面详情加载和缓存逻辑就会越来越绕。
+
+### 验证说明
+
+- 已运行 `cd client && npm run build`
+- 构建仍被仓库里已有的前端 TypeScript 老问题阻塞，本次改动涉及的 `TraceExplorer/TraceListTable` 没有新增报错
