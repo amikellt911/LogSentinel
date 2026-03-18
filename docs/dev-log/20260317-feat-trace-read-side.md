@@ -54,3 +54,49 @@ feat(trace): 增加 Trace 读侧 Handler 骨架与请求解析
 
 - 现在 `GET /traces/*` 用的是前缀路由，所以详情 handler 自己必须做 `trace_id` 提取和 query string 剥离；这件事不能指望 Router 帮你做。
 - 查询线程池虽然独立了，但当前 repo 读方法还没加真实 SQL，所以前端现在拿到的是明确的 500 占位响应，不是最终行为。
+
+## 追加记录（SearchTraces）
+
+### Git Commit Message
+
+feat(trace): 实现 trace 列表查询与风险等级同步缓存
+
+### Modification
+
+- server/persistence/SqliteTraceRepository.cpp
+- docs/todo-list/Todo_TraceReadSide.md
+
+### 本次补充
+
+- 实现了 `SqliteTraceRepository::SearchTraces(...)`
+  - `trace_id` 精确查询直接走主键
+  - 普通分页查询走动态 `WHERE`
+  - 默认时间窗兜底为最近 24 小时
+  - 列表统一按 `start_time_ms DESC, trace_id DESC` 排序
+  - 先 `COUNT(*)` 再 `LIMIT/OFFSET`
+- 新增两个列表热路径联合索引：
+  - `idx_trace_summary_start_time_trace_id`
+  - `idx_trace_summary_service_start_time_trace_id`
+- 在分析结果落库时，把 `trace_analysis.risk_level` 同步回写到 `trace_summary.risk_level`
+  - 这样列表页热路径就能只查 `trace_summary`
+  - 避免每次列表查询都 `LEFT JOIN trace_analysis`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- 联合索引不是“把所有列都塞进去”就一定更好。先服务 `WHERE + ORDER BY`，先解决扫描范围和排序，再看要不要为覆盖索引继续加返回列。
+- `COUNT(*)` 不可怕，可怕的是在 `LEFT JOIN / 子查询 / COALESCE` 之后再数。既然列表页只查 `trace_summary`，那么 count 成本就可控很多。
+- 时间范围筛选要统一语义。既然本轮列表是按 trace 开始时间搜，那就一直用 `start_time_ms`，不要一会儿拿开始时间，一会儿拿结束时间。
+
+#### Function Explanation
+
+- `sqlite3_prepare_v2(...)`：把 SQL 文本编译成可执行语句对象。动态 SQL 拼好以后，必须先 prepare，后面才能 bind 参数。
+- `sqlite3_bind_int64 / sqlite3_bind_text`：把 C++ 侧参数安全绑定进 SQL，占位符顺序必须和拼接顺序一致。
+- `sqlite3_step(...)`：驱动语句真正执行。查询时会不断返回 `SQLITE_ROW`，直到 `SQLITE_DONE`。
+
+#### Pitfalls
+
+- 不能写一条“大而全”的 SQL 再用 `(? IS NULL OR field = ?)` 这类写法图省事，这种写法很容易把索引计划搞废。
+- 只按 `start_time_ms DESC` 排序不稳，因为同一毫秒可能有多条 trace。加上 `trace_id DESC` 才能让分页边界稳定。
+- 如果 `trace_summary.risk_level` 不跟着 analysis 同步，列表页虽然查得快，但展示出来永远是最初的 `unknown`，这会直接把读侧语义搞假。
