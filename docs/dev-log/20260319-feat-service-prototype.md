@@ -158,3 +158,22 @@ Newbie Tips:
 
 Pitfalls:
 - 如果当前没有稳定的服务级风险评分，就不要硬写“高风险/中风险/低风险”。先收口成“异常 / 稳定”两档，页面语义才不会跑偏。
+
+---
+
+追加修改（2026-03-20，链路语义收口）：
+
+Git Commit Message:
+refactor(client): 统一服务监控原型页链路计数文案
+
+Modification:
+- client/src/views/ServiceMonitorPrototype.vue
+- docs/dev-log/20260319-feat-service-prototype.md
+
+Learning Tips:
+
+Newbie Tips:
+- 如果页面里的计数本质上是按 trace 去重，那“链路”通常比“事件”或“请求事件”更贴近 trace 语义，也更不容易把场景限制死在纯 HTTP 请求上。
+
+Pitfalls:
+- “请求”和“链路”都能勉强说通，但混着用会让页面像在数两种东西。既然这批统计都是按 trace 收口，就应该统一换成“链路”。

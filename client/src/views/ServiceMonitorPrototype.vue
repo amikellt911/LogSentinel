@@ -71,9 +71,9 @@
                       <span class="text-2xl font-semibold text-white">{{ service.name }}</span>
                     </div>
                     <div class="mt-4 text-sm text-gray-400">
-                      最近一小时异常请求 <span class="font-mono text-gray-200">{{ service.exceptionCount }}</span> 次
+                      最近一小时异常链路 <span class="font-mono text-gray-200">{{ service.exceptionCount }}</span> 次
                     </div>
-                    <div class="mt-1 text-xs text-gray-500">这里把一条 trace 视为一次请求链路，按 trace + service 去重</div>
+                    <div class="mt-1 text-xs text-gray-500">这里把一条 trace 近似视为一次请求链路，按 trace + service 去重</div>
                   </div>
 
                   <span
@@ -202,9 +202,9 @@
                 <div class="mt-2 text-3xl font-mono text-white">{{ selectedService.latestExceptionTime }}</div>
               </div>
               <div class="rounded-2xl bg-black/20 p-4">
-                <div class="text-sm text-gray-500">异常请求数</div>
+                <div class="text-sm text-gray-500">异常链路数</div>
                 <div class="mt-2 text-3xl font-mono text-white">{{ selectedService.exceptionCount }}</div>
-                <div class="mt-1 text-xs text-gray-500">这里把一条 trace 视为一次请求链路，按 trace + service 去重</div>
+                <div class="mt-1 text-xs text-gray-500">这里把一条 trace 近似视为一次请求链路，按 trace + service 去重</div>
               </div>
               <div class="rounded-2xl bg-black/20 p-4">
                 <div class="text-sm text-gray-500">异常平均耗时</div>
@@ -238,7 +238,7 @@
               <div class="mt-3 overflow-hidden rounded-2xl border border-gray-800">
                 <div class="grid grid-cols-[2fr_1fr_1fr_1fr] bg-gray-900/70 px-4 py-3 text-xs uppercase tracking-wider text-gray-500">
                   <div>操作</div>
-                  <div>异常请求数</div>
+                  <div>异常链路数</div>
                   <div>异常平均耗时</div>
                   <div>状态</div>
                 </div>
@@ -298,7 +298,7 @@
                   </div>
                 <div class="text-right">
                   <div class="font-mono text-white">{{ item.exceptions }}</div>
-                  <div class="text-xs text-gray-500">异常请求数</div>
+                  <div class="text-xs text-gray-500">异常链路数</div>
                 </div>
               </div>
                 <div class="mt-2 h-3 overflow-hidden rounded-full bg-gray-900/80">
@@ -552,9 +552,9 @@ const overviewCards = computed(() => {
       valueClass: 'text-red-400'
     },
     {
-      label: '异常请求数',
+      label: '异常链路数',
       value: highRiskEvents,
-      desc: '这里把一条 trace 视为一次请求链路，按 trace + service 去重',
+      desc: '这里把一条 trace 近似视为一次请求链路，按 trace + service 去重',
       valueClass: 'text-orange-400'
     },
     {
