@@ -28,6 +28,9 @@ Pitfalls:
 
 追加修改（2026-03-19）：
 
+Git Commit Message:
+refactor(client): 调整服务监控原型页信息结构
+
 Modification:
 - client/src/views/ServiceMonitorPrototype.vue
 - docs/todo-list/Todo_Phase1_ServiceMonitor.md
@@ -45,6 +48,9 @@ Pitfalls:
 
 追加修改（2026-03-19，文案收口）：
 
+Git Commit Message:
+refactor(client): 统一服务监控原型页操作语义
+
 Modification:
 - client/src/views/ServiceMonitorPrototype.vue
 - docs/dev-log/20260319-feat-service-prototype.md
@@ -60,6 +66,9 @@ Pitfalls:
 ---
 
 追加修改（2026-03-19，页面继续裁剪）：
+
+Git Commit Message:
+refactor(client): 裁剪服务监控原型页重复模块
 
 Modification:
 - client/src/views/ServiceMonitorPrototype.vue
@@ -78,6 +87,9 @@ Pitfalls:
 
 追加修改（2026-03-19，字段继续收口）：
 
+Git Commit Message:
+refactor(client): 收口服务监控原型页字段展示
+
 Modification:
 - client/src/views/ServiceMonitorPrototype.vue
 - docs/dev-log/20260319-feat-service-prototype.md
@@ -94,6 +106,9 @@ Pitfalls:
 
 追加修改（2026-03-19，布局收口）：
 
+Git Commit Message:
+refactor(client): 调整服务监控原型页布局层级
+
 Modification:
 - client/src/views/ServiceMonitorPrototype.vue
 - docs/dev-log/20260319-feat-service-prototype.md
@@ -105,3 +120,41 @@ Newbie Tips:
 
 Pitfalls:
 - 监控页最容易出现的丑问题不是颜色，而是空白。左侧下一个模块如果必须等右侧大面板结束后才能开始，那你就会看到一整块黑洞式空白；这通常说明布局分组错了，不是内容本身有问题。
+
+---
+
+追加修改（2026-03-20，界面文案收口）：
+
+Git Commit Message:
+refactor(client): 明确服务监控原型页统计口径文案
+
+Modification:
+- client/src/views/ServiceMonitorPrototype.vue
+- docs/dev-log/20260319-feat-service-prototype.md
+
+Learning Tips:
+
+Newbie Tips:
+- 页面字段一旦涉及“次数”“耗时”“时间”，最好直接把口径写进小字说明里。既然这些数字背后都有去重规则和取值规则，那就别指望用户自己脑补。
+
+Pitfalls:
+- “高风险事件数”“异常次数”“平均耗时”这种词如果不加限定，页面看起来像懂了，实际上每个人脑子里想的口径都不一样。原型阶段就应该把名字先改正，不要等后端做完再返工。
+
+---
+
+追加修改（2026-03-20，请求/状态语义收口）：
+
+Git Commit Message:
+refactor(client): 收口服务监控原型页请求与状态语义
+
+Modification:
+- client/src/views/ServiceMonitorPrototype.vue
+- docs/dev-log/20260319-feat-service-prototype.md
+
+Learning Tips:
+
+Newbie Tips:
+- 在你们这个页面里，一条 trace 更适合解释成“一次请求链路”，所以计数字段写成“异常请求数”会比“异常事件数”更贴用户直觉。
+
+Pitfalls:
+- 如果当前没有稳定的服务级风险评分，就不要硬写“高风险/中风险/低风险”。先收口成“异常 / 稳定”两档，页面语义才不会跑偏。

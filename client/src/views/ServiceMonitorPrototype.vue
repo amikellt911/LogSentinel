@@ -47,8 +47,11 @@
         <div class="space-y-6">
           <!-- 左侧服务卡：用户先扫一眼“最近哪些服务值得看” -->
           <section class="space-y-4">
-            <div class="flex items-center justify-between">
-              <h2 class="text-xl font-semibold text-white">服务健康概览</h2>
+          <div class="flex items-center justify-between">
+              <div>
+                <h2 class="text-xl font-semibold text-white">服务健康概览</h2>
+                <div class="mt-1 text-sm text-gray-500">这里只按服务看最近受影响的请求事件，不按 span 数直接累加。</div>
+              </div>
               <span class="text-xs uppercase tracking-[0.25em] text-gray-500">Service-first</span>
             </div>
 
@@ -68,22 +71,23 @@
                       <span class="text-2xl font-semibold text-white">{{ service.name }}</span>
                     </div>
                     <div class="mt-4 text-sm text-gray-400">
-                      最近一小时异常 <span class="font-mono text-gray-200">{{ service.exceptionCount }}</span> 次
+                      最近一小时异常请求 <span class="font-mono text-gray-200">{{ service.exceptionCount }}</span> 次
                     </div>
+                    <div class="mt-1 text-xs text-gray-500">这里把一条 trace 视为一次请求链路，按 trace + service 去重</div>
                   </div>
 
                   <span
                     class="rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wider"
                     :class="riskBadgeClass(service.risk)"
                   >
-                    {{ riskText(service.risk) }}
+                    {{ statusText(service.risk) }}
                   </span>
                 </div>
 
-                <div class="mt-5 rounded-xl bg-black/20 p-3 text-sm">
-                  <div class="text-gray-500">最近异常</div>
+              <div class="mt-5 rounded-xl bg-black/20 p-3 text-sm">
+                  <div class="text-gray-500">最近异常时间</div>
                   <div class="mt-1 text-xl font-mono text-white">{{ service.latestExceptionTime }}</div>
-                </div>
+              </div>
 
                 <div class="mt-4">
                   <div class="text-xs uppercase tracking-[0.2em] text-gray-500">最近异常摘要</div>
@@ -103,9 +107,9 @@
           <section class="rounded-3xl border border-gray-800 bg-[linear-gradient(180deg,rgba(20,24,34,0.95),rgba(14,17,24,0.95))] p-6">
             <div class="flex items-center justify-between">
               <div>
-                <h2 class="text-xl font-semibold text-white">当前服务最近异常 Trace</h2>
+                <h2 class="text-xl font-semibold text-white">当前服务最近异常 Trace 样本</h2>
                 <div class="mt-1 text-sm text-gray-500">
-                  这里只展示 {{ selectedService.name }} 的最近样本，不在这里做全量搜索。
+                  这里只展示 {{ selectedService.name }} 的最近样本，按异常时间倒序排列，不在这里做全量搜索。
                 </div>
               </div>
               <button
@@ -131,7 +135,7 @@
                         class="rounded-full border px-2 py-1 text-xs font-semibold uppercase tracking-wider"
                         :class="riskBadgeClass(trace.risk)"
                       >
-                        {{ riskText(trace.risk) }}
+                        {{ statusText(trace.risk) }}
                       </span>
                       <span class="rounded-full bg-gray-900/70 px-2 py-1 text-xs font-mono text-gray-300">
                         {{ trace.operation }}
@@ -174,35 +178,38 @@
           <section class="rounded-3xl border border-blue-500/30 bg-[linear-gradient(180deg,rgba(23,28,42,0.98),rgba(14,17,27,0.98))] p-6 shadow-[0_0_40px_rgba(59,130,246,0.12)]">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <div class="text-sm uppercase tracking-[0.25em] text-blue-300/70">Current Service Focus</div>
+                <div class="text-sm uppercase tracking-[0.25em] text-blue-300/70">当前服务聚焦</div>
                 <h2 class="mt-3 text-4xl font-bold text-white">{{ selectedService.name }}</h2>
               </div>
               <span
                 class="rounded-full border px-3 py-1 text-sm font-semibold uppercase tracking-wider"
                 :class="riskBadgeClass(selectedService.risk)"
               >
-                {{ riskText(selectedService.risk) }}
+                {{ statusText(selectedService.risk) }}
               </span>
             </div>
 
             <div class="mt-6 grid grid-cols-2 gap-3">
               <div class="rounded-2xl bg-black/20 p-4">
-                <div class="text-sm text-gray-500">当前风险</div>
+                <div class="text-sm text-gray-500">当前状态</div>
                 <div class="mt-2 text-3xl font-bold" :class="riskTextClass(selectedService.risk)">
-                  {{ riskText(selectedService.risk) }}
+                  {{ statusText(selectedService.risk) }}
                 </div>
+                <div class="mt-1 text-xs text-gray-500">当前只区分“异常 / 稳定”两档</div>
               </div>
               <div class="rounded-2xl bg-black/20 p-4">
                 <div class="text-sm text-gray-500">最近异常时间</div>
                 <div class="mt-2 text-3xl font-mono text-white">{{ selectedService.latestExceptionTime }}</div>
               </div>
               <div class="rounded-2xl bg-black/20 p-4">
-                <div class="text-sm text-gray-500">异常次数</div>
+                <div class="text-sm text-gray-500">异常请求数</div>
                 <div class="mt-2 text-3xl font-mono text-white">{{ selectedService.exceptionCount }}</div>
+                <div class="mt-1 text-xs text-gray-500">这里把一条 trace 视为一次请求链路，按 trace + service 去重</div>
               </div>
               <div class="rounded-2xl bg-black/20 p-4">
-                <div class="text-sm text-gray-500">平均耗时</div>
+                <div class="text-sm text-gray-500">异常平均耗时</div>
                 <div class="mt-2 text-3xl font-mono text-white">{{ selectedService.avgLatencyMs }}ms</div>
+                <div class="mt-1 text-xs text-gray-500">仅统计完整结束的异常 span</div>
               </div>
             </div>
 
@@ -221,16 +228,19 @@
 
             <div class="mt-6">
               <div class="flex items-center justify-between">
-                <div class="text-sm uppercase tracking-[0.2em] text-gray-500">异常操作</div>
+                <div>
+                  <div class="text-sm uppercase tracking-[0.2em] text-gray-500">异常操作</div>
+                  <div class="mt-1 text-xs text-gray-500">按 span.name 聚合；同一条 trace 内相同操作只记 1 次</div>
+                </div>
                 <div class="text-xs text-gray-500">只看当前服务</div>
               </div>
 
               <div class="mt-3 overflow-hidden rounded-2xl border border-gray-800">
                 <div class="grid grid-cols-[2fr_1fr_1fr_1fr] bg-gray-900/70 px-4 py-3 text-xs uppercase tracking-wider text-gray-500">
                   <div>操作</div>
-                  <div>异常数</div>
-                  <div>平均耗时</div>
-                  <div>最高风险</div>
+                  <div>异常请求数</div>
+                  <div>异常平均耗时</div>
+                  <div>状态</div>
                 </div>
                 <div
                   v-for="operation in selectedService.operations"
@@ -241,13 +251,13 @@
                   <div>{{ operation.exceptions }}</div>
                   <div>{{ operation.avgLatencyMs }}ms</div>
                   <div>
-                    <span
-                      class="rounded-full border px-2 py-1 text-xs font-semibold uppercase tracking-wider"
-                      :class="riskBadgeClass(operation.highestRisk)"
-                    >
-                      {{ riskText(operation.highestRisk) }}
-                    </span>
-                  </div>
+                  <span
+                    class="rounded-full border px-2 py-1 text-xs font-semibold uppercase tracking-wider"
+                    :class="riskBadgeClass(operation.highestRisk)"
+                  >
+                    {{ statusText(operation.highestRisk) }}
+                  </span>
+                </div>
                 </div>
               </div>
             </div>
@@ -272,8 +282,11 @@
           <!-- 右下排行：补一个全局视图，避免整个页面只有单服务 -->
           <section class="rounded-3xl border border-gray-800 bg-[linear-gradient(180deg,rgba(20,24,34,0.95),rgba(14,17,24,0.95))] p-6">
             <div class="flex items-center justify-between">
-              <h2 class="text-xl font-semibold text-white">异常操作排行</h2>
-              <span class="text-xs text-gray-500">跨服务 Top 6</span>
+              <div>
+                <h2 class="text-xl font-semibold text-white">异常操作排行</h2>
+                <div class="mt-1 text-xs text-gray-500">全局窗口统计，按 span.name 聚合，跨服务 Top 6</div>
+              </div>
+              <span class="text-xs text-gray-500">Global</span>
             </div>
 
             <div class="mt-5 space-y-4">
@@ -283,11 +296,11 @@
                     <div class="font-mono text-gray-200">{{ item.name }}</div>
                     <div class="text-xs text-gray-500">{{ item.service }}</div>
                   </div>
-                  <div class="text-right">
-                    <div class="font-mono text-white">{{ item.exceptions }}</div>
-                    <div class="text-xs text-gray-500">异常次数</div>
-                  </div>
+                <div class="text-right">
+                  <div class="font-mono text-white">{{ item.exceptions }}</div>
+                  <div class="text-xs text-gray-500">异常请求数</div>
                 </div>
+              </div>
                 <div class="mt-2 h-3 overflow-hidden rounded-full bg-gray-900/80">
                   <div
                     class="h-full rounded-full bg-[linear-gradient(90deg,#f97316,#ef4444)]"
@@ -535,19 +548,19 @@ const overviewCards = computed(() => {
     {
       label: '异常服务数',
       value: abnormalServices,
-      desc: '当前时间窗口内风险不为绿色的服务数量',
+      desc: '当前时间窗口内至少出现过 1 个 Error span 的服务数',
       valueClass: 'text-red-400'
     },
     {
-      label: '高风险事件数',
+      label: '异常请求数',
       value: highRiskEvents,
-      desc: '最近 30 分钟聚合后的异常事件总量',
+      desc: '这里把一条 trace 视为一次请求链路，按 trace + service 去重',
       valueClass: 'text-orange-400'
     },
     {
       label: '最近异常时间',
       value: latestTime ?? '--:--:--',
-      desc: '用于快速判断异常是否仍在持续发生',
+      desc: '最近一个异常 span 的确认时间，优先取 end_time',
       valueClass: 'text-white'
     }
   ]
@@ -576,14 +589,7 @@ function goTraceExplorer() {
 }
 
 function riskText(risk: RiskKind): string {
-  switch (risk) {
-    case 'critical':
-      return '高风险'
-    case 'warning':
-      return '警告'
-    default:
-      return '稳定'
-  }
+  return risk === 'healthy' ? '稳定' : '异常'
 }
 
 function riskDotClass(risk: RiskKind): string {
@@ -617,6 +623,10 @@ function riskTextClass(risk: RiskKind): string {
     default:
       return 'text-green-300'
   }
+}
+
+function statusText(risk: RiskKind): string {
+  return riskText(risk)
 }
 
 function serviceCardClass(service: ServiceItem): string {
