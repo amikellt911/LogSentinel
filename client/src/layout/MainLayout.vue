@@ -19,6 +19,11 @@
           <span>{{ $t('layout.serviceMonitor') }}</span>
         </el-menu-item>
 
+        <el-menu-item index="/service-prototype">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>{{ $t('layout.servicePrototype') }}</span>
+        </el-menu-item>
+
         <el-menu-item index="/">
           <el-icon><Odometer /></el-icon>
           <span>{{ $t('layout.dashboard') }}</span>
@@ -109,7 +114,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSystemStore } from '../stores/system'
-import { Odometer, Monitor, Setting, Clock, Lightning } from '@element-plus/icons-vue'
+import { Odometer, Monitor, Setting, Clock, Lightning, DataAnalysis } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 
@@ -120,6 +125,7 @@ const { t } = useI18n()
 const currentRouteName = computed(() => {
   switch (route.name) {
     case 'service': return t('layout.serviceMonitor')
+    case 'service-prototype': return t('layout.servicePrototype')
     case 'dashboard': return t('layout.dashboard')
     case 'logs': return t('layout.logs')
     case 'traces': return t('layout.traceExplorer')

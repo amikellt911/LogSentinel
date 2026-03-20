@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '../layout/MainLayout.vue'
 import ServiceMonitor from '../views/ServiceMonitor.vue'
+import ServiceMonitorPrototype from '../views/ServiceMonitorPrototype.vue'
 import Dashboard from '../views/Dashboard.vue'
 import LiveLogs from '../views/LiveLogs.vue'
 import TraceExplorer from '../views/TraceExplorer.vue'
@@ -23,6 +24,11 @@ const router = createRouter({
           path: 'service',
           name: 'service',
           component: ServiceMonitor
+        },
+        {
+          path: 'service-prototype',
+          name: 'service-prototype',
+          component: ServiceMonitorPrototype
         },
         {
           path: 'logs',
