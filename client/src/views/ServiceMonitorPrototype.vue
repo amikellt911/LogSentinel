@@ -236,28 +236,19 @@
               </div>
 
               <div class="mt-3 overflow-hidden rounded-2xl border border-gray-800">
-                <div class="grid grid-cols-[2fr_1fr_1fr_1fr] bg-gray-900/70 px-4 py-3 text-xs uppercase tracking-wider text-gray-500">
+                <div class="grid grid-cols-[2fr_1fr_1fr] bg-gray-900/70 px-4 py-3 text-xs uppercase tracking-wider text-gray-500">
                   <div>操作</div>
                   <div>异常链路数</div>
                   <div>异常平均耗时</div>
-                  <div>状态</div>
                 </div>
                 <div
                   v-for="operation in selectedService.operations"
                   :key="operation.name"
-                  class="grid grid-cols-[2fr_1fr_1fr_1fr] items-center border-t border-gray-800 px-4 py-3 text-sm text-gray-300"
+                  class="grid grid-cols-[2fr_1fr_1fr] items-center border-t border-gray-800 px-4 py-3 text-sm text-gray-300"
                 >
                   <div class="font-mono text-gray-200">{{ operation.name }}</div>
                   <div>{{ operation.exceptions }}</div>
                   <div>{{ operation.avgLatencyMs }}ms</div>
-                  <div>
-                  <span
-                    class="rounded-full border px-2 py-1 text-xs font-semibold uppercase tracking-wider"
-                    :class="riskBadgeClass(operation.highestRisk)"
-                  >
-                    {{ statusText(operation.highestRisk) }}
-                  </span>
-                </div>
                 </div>
               </div>
             </div>

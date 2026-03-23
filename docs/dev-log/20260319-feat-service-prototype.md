@@ -177,3 +177,22 @@ Newbie Tips:
 
 Pitfalls:
 - “请求”和“链路”都能勉强说通，但混着用会让页面像在数两种东西。既然这批统计都是按 trace 收口，就应该统一换成“链路”。
+
+---
+
+追加修改（2026-03-20，异常操作表裁剪）：
+
+Git Commit Message:
+refactor(client): 删除服务监控原型页异常操作状态列
+
+Modification:
+- client/src/views/ServiceMonitorPrototype.vue
+- docs/dev-log/20260319-feat-service-prototype.md
+
+Learning Tips:
+
+Newbie Tips:
+- 表格字段不是越多越好。既然标题已经写明“异常操作”，那表里再放一列“状态”通常就是重复信息，删掉反而更清楚。
+
+Pitfalls:
+- 很多页面会把“看起来完整”和“真正有用”混在一起。当前这张表最重要的是操作名、异常链路数、异常平均耗时；状态列既不新增判断力，也没有更稳的统计口径，所以应该直接删。
