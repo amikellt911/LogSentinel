@@ -14,6 +14,12 @@
 ### simhash 相似度缓存/结果复用（分级处理与投机采样,L1h和L2）
 ### MiniMuduo 增加 gRPC/Protobuf 支持
 ### pybind11 代替 C++ 与 Python 之间的 HTTP 交流
+### 服务监控快照作为 AI 上下文（后置增强）
+- []目标：把服务监控页当前窗口内的热点服务、热点操作、最近异常样本整理成结构化快照，作为 AI 分析的附加上下文，而不是只看单条 trace。
+- []第一步不改主链路统计，只在 snapshot 已经稳定后，再评估是否把这份状态通过 JSON 传给 AI。
+- []风险点：当前 AI 分析是 trace 级总结，不天然等于服务级总结；如果一个 trace 同时涉及多个异常服务，直接复用现有摘要会让“当前服务问题摘要”产生串味。
+- []后续方向：如果要做服务级摘要，需要调整提示词和输出 JSON 结构，至少支持按 service_name 分段说明问题，而不是只返回整条 trace 的一段总述。
+
 ### LangGraph/Agent
 ### SQLite/B-Tree 迁移到 RocksDB/LSM-Tree
 ### 线程池任务队列升级为无锁 MPSC Ring Buffer
