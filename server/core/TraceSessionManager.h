@@ -3,10 +3,13 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <queue>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -222,6 +225,11 @@ private:
         // 避免晚到 span 在 session 已摘出、tombstone 还没写入的窗口里把旧 trace 复活。
         uint64_t session_epoch = 0;
     };
+    struct DispatchJob
+    {
+        // 第二步先把 queue 骨架搭起来，job 直接持有 session 所有权，避免后面又回 manager 取一次。
+        std::unique_ptr<TraceSession> session;
+    };
 
     // 构建 trace 的父子关系索引，后续用于树形遍历与序列化。
     TraceIndex BuildTraceIndex(const TraceSession& session);
@@ -269,6 +277,9 @@ private:
     void SealSessionLocked(TraceSession& session, TraceSession::SealReason reason);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
     void RebuildTimeWheel();
+    // dispatch 线程第一步只做生命周期与队列骨架占位，后面再逐步接业务逻辑。
+    void DispatchLoop();
+    void StopDispatchThread();
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。
     std::vector<std::unique_ptr<TraceSession>> sessions_;
     // 通过 trace_key 快速定位到 vector 下标，避免线性扫描带来的开销。
@@ -302,6 +313,8 @@ private:
     Watermark buffered_span_watermark_;
     Watermark active_session_watermark_;
     Watermark pending_task_watermark_;
+    Watermark dispatch_queue_watermark_;
+    size_t dispatch_queue_hard_limit_ = 1;
     // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
     OverloadState overload_state_ = OverloadState::Normal;
     // 这批统计只服务“后链路是否真的跑了、各阶段墙钟耗时多少”，
@@ -315,6 +328,12 @@ private:
     std::atomic<uint64_t> ai_total_ns_{0};
     std::atomic<uint64_t> analysis_enqueue_calls_{0};
     std::atomic<uint64_t> analysis_enqueue_total_ns_{0};
+    // 独立 dispatch 线程的有界队列：第一步先占好结构，后面再把 sweep/dispatch 逐步接过来。
+    std::mutex dispatch_queue_mutex_;
+    std::condition_variable dispatch_queue_cv_;
+    std::queue<DispatchJob> dispatch_queue_;
+    bool dispatch_stopping_ = false;
+    std::thread dispatch_thread_;
     // TraceSessionManager 当前会被 HTTP 处理线程和主 loop 定时器线程同时访问，
     // 这把锁先用最保守的方式把内部状态机串行化，优先保证正确性。
     mutable std::mutex mutex_;

@@ -77,10 +77,16 @@ TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
     const size_t pending_task_hard_limit =
         thread_pool_ ? std::max<size_t>(1, thread_pool_->maxQueueSize()) : 1;
     pending_task_watermark_ = BuildWatermark(pending_task_hard_limit);
+    // dispatch queue 先按 worker queue 的一半建硬上限，目的是让“主线程摘 session”和“AI worker 真正吃任务”
+    // 之间至少隔一层更窄的静态闸门；后面如果压测显示过窄，再按结果调整。
+    dispatch_queue_hard_limit_ = std::max<size_t>(1, pending_task_hard_limit / 2);
+    dispatch_queue_watermark_ = BuildWatermark(dispatch_queue_hard_limit_);
+    dispatch_thread_ = std::thread(&TraceSessionManager::DispatchLoop, this);
 }
 
 TraceSessionManager::~TraceSessionManager()
 {
+    StopDispatchThread();
     const RuntimeStatsSnapshot stats = SnapshotRuntimeStats();
     if (stats.dispatch_count == 0 && stats.worker_begin_count == 0 && stats.analysis_enqueue_calls == 0) {
         return;
@@ -119,6 +125,40 @@ uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count)
     constexpr uint64_t kMaxRetryDelayTicks = 16;
     const size_t shift = std::min<size_t>(retry_count - 1, 4);
     return std::min<uint64_t>(1ULL << shift, kMaxRetryDelayTicks);
+}
+
+void TraceSessionManager::DispatchLoop()
+{
+    while (true) {
+        DispatchJob job;
+        {
+            std::unique_lock<std::mutex> lock(dispatch_queue_mutex_);
+            dispatch_queue_cv_.wait(lock, [this] {
+                return dispatch_stopping_ || !dispatch_queue_.empty();
+            });
+            if (dispatch_stopping_ && dispatch_queue_.empty()) {
+                return;
+            }
+            job = std::move(dispatch_queue_.front());
+            dispatch_queue_.pop();
+        }
+
+        // 第二步先只把线程和队列生命周期搭起来；真正的 dispatch 业务改造后续再接。
+        // 这里保留 job 所有权的基本流转，避免空转线程把队列骨架写死成不可扩展结构。
+        (void)job;
+    }
+}
+
+void TraceSessionManager::StopDispatchThread()
+{
+    {
+        std::lock_guard<std::mutex> lock(dispatch_queue_mutex_);
+        dispatch_stopping_ = true;
+    }
+    dispatch_queue_cv_.notify_all();
+    if (dispatch_thread_.joinable()) {
+        dispatch_thread_.join();
+    }
 }
 
 size_t TraceSessionManager::size() const
