@@ -116,6 +116,10 @@ struct TraceSession
     uint64_t next_retry_tick = 0;
     // 主数据（summary + spans）一旦已经送进缓冲写入器，submit 失败回滚后就不能重复送。
     bool primary_enqueued = false;
+    // 第一步先只缓存最值钱的两样：AI 输入 payload 和 webhook/analysis 还会复用的 summary。
+    // 既然 ready retry 会话已经不再吸收新 span，那么这两份 prepared 数据可以安全复用。
+    std::optional<std::string> prepared_trace_payload;
+    std::optional<TraceRepository::TraceSummary> prepared_summary;
 };
 
 class TraceSessionManager
@@ -212,6 +216,12 @@ private:
         size_t high = 0;
         size_t critical = 0;
     };
+    struct DispatchingInflightState
+    {
+        // inflight 只负责拦截“这条 trace 正在分发中”，第一步先只记最小 epoch，
+        // 避免晚到 span 在 session 已摘出、tombstone 还没写入的窗口里把旧 trace 复活。
+        uint64_t session_epoch = 0;
+    };
 
     // 构建 trace 的父子关系索引，后续用于树形遍历与序列化。
     TraceIndex BuildTraceIndex(const TraceSession& session);
@@ -268,6 +278,9 @@ private:
     // completed tombstone 只记“最近刚完成过的 trace_key”，用于短时间内拦截 late span 复活旧 trace。
     // map 负责 O(1) 判断是否仍在 tombstone 窗口内，value 是它的过期 tick。
     std::unordered_map<size_t, uint64_t> completed_trace_expire_tick_;
+    // dispatching_inflight_ 记录“已离开 manager、但尚未进入 tombstone”的 trace。
+    // 第一步先只做轻量占位，不在这里再次持有 session 所有权，避免状态双持有。
+    std::unordered_map<size_t, DispatchingInflightState> dispatching_inflight_;
     // 和活跃 session 时间轮分开存，避免把“等待 dispatch”和“等待遗忘”两套语义塞进同一种节点。
     std::vector<std::vector<size_t>> completed_trace_wheel_;
     size_t wheel_size_ = 512;
