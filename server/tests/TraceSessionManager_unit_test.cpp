@@ -466,9 +466,10 @@ TEST_F(TraceSessionManagerUnitTest, PushSealsWhenTokenLimitReachedAndDispatchesA
     pool.shutdown();
 }
 
-TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenDuplicateSpanIdAppears)
+TEST_F(TraceSessionManagerUnitTest, PushSealsWhenDuplicateSpanIdAppearsAndDispatchesAfterOneTick)
 {
-    // 目的：验证重复 span_id 会触发提前分发，避免脏数据持续污染当前会话。
+    // 目的：验证重复 span_id 不再走“立刻同步 dispatch”的老路径，
+    // 而是先封口成 DuplicateSpan，再通过 sweep 接入统一的异步 dispatch 主链。
     ThreadPool pool(1);
     FakeTraceRepository repo;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
@@ -479,7 +480,23 @@ TEST_F(TraceSessionManagerUnitTest, PushDispatchesWhenDuplicateSpanIdAppears)
     ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
     ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
-    // 重复 span_id 触发提前分发，是为了尽快“截断脏数据会话”，这里验证该保护逻辑不会被后续改动破坏。
+    auto iter = manager.index_by_trace_.find(33);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_LT(iter->second, manager.sessions_.size());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+
+    // 第二次 Push 只是把会话封口，不会立刻落库；
+    // 这样重复 span 也能复用和 trace_end/capacity 一样的 sweep -> dispatch 统一主链。
+    EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state, TraceSession::LifecycleState::Sealed);
+    EXPECT_EQ(manager.sessions_[iter->second]->seal_reason, TraceSession::SealReason::DuplicateSpan);
+    EXPECT_EQ(manager.sessions_[iter->second]->sealed_deadline_tick, 1u);
+    EXPECT_EQ(manager.sessions_[iter->second]->spans.size(), 1u);
+    ASSERT_TRUE(manager.sessions_[iter->second]->duplicate_span_id.has_value());
+    EXPECT_EQ(manager.sessions_[iter->second]->duplicate_span_id.value(), 301u);
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+
+    // DuplicateSpan 当前配置为 1 tick grace；推进一轮 sweep 后才应该真正进入异步分发。
+    SweepOneTick(manager, /*now_ms*/1000);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     EXPECT_EQ(manager.size(), 0u);
     EXPECT_EQ(repo.last_summary.trace_id, "33");

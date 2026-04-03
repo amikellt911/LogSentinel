@@ -62,3 +62,25 @@ Function Explanation:
 
 Pitfalls:
 - 如果 `AppendPrimary` 失败时只返回，不同步删 inflight 并恢复 session，那么这条 trace 就会卡在“manager 里查不到、tombstone 也没有”的中间态，后面晚到 span 会把状态机撕裂。
+
+---
+
+追加记录（2026-04-03，重复 span 单测口径同步）：
+
+Git Commit Message:
+test(core): 同步重复span封口后的异步分发测试口径
+
+Modification:
+- server/tests/TraceSessionManager_unit_test.cpp
+- docs/dev-log/20260403-test-trace-dispatch.md
+
+Learning Tips:
+
+Newbie Tips:
+- 当业务语义从“立即 dispatch”改成“先 sealed，再由 sweep 统一异步 dispatch”后，测试不该只改等待时机，还要改测试名字和中间态断言，不然下一次看测试名会继续误解真实语义。
+
+Function Explanation:
+- `SweepOneTick(...)`：这里不是普通 sleep，而是主动推进 TraceSessionManager 的时间轮。既然 DuplicateSpan 现在走的是 seal delay=1 tick 语义，测试就必须显式推进这一 tick，才能进入真正的 dispatch 流程。
+
+Pitfalls:
+- 只验证最终落库成功还不够；如果不先断言 `lifecycle_state=Sealed`、`seal_reason=DuplicateSpan`、`sealed_deadline_tick=1`，那么后面就算又被人偷偷改回“立刻 dispatch”，测试也可能继续绿，但保护语义已经被改坏了。
