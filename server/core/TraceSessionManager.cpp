@@ -14,27 +14,26 @@
 
 namespace
 {
-std::string toLowerCopy(std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return value;
-}
+    std::string toLowerCopy(std::string value)
+    {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c)
+                       { return static_cast<char>(std::tolower(c)); });
+        return value;
+    }
 
-int64_t NowSteadyMs()
-{
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
+    int64_t NowSteadyMs()
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
 
-uint64_t NowSteadyNs()
-{
-    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                     std::chrono::steady_clock::now().time_since_epoch())
-                                     .count());
-}
+    uint64_t NowSteadyNs()
+    {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                         std::chrono::steady_clock::now().time_since_epoch())
+                                         .count());
+    }
 
 }
 
@@ -44,28 +43,18 @@ TraceSession::TraceSession(size_t capacity)
     spans.reserve(capacity);
 }
 
-TraceSessionManager::TraceSessionManager(ThreadPool* thread_pool,
-                                         BufferedTraceRepository* buffered_trace_repo,
-                                         TraceAiProvider* trace_ai,
+TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
+                                         BufferedTraceRepository *buffered_trace_repo,
+                                         TraceAiProvider *trace_ai,
                                          size_t capacity,
                                          size_t token_limit,
-                                         INotifier* notifier,
+                                         INotifier *notifier,
                                          int64_t idle_timeout_ms,
                                          int64_t wheel_tick_ms,
                                          size_t wheel_size,
                                          size_t buffered_span_hard_limit,
                                          size_t active_session_hard_limit)
-    : thread_pool_(thread_pool)
-    , buffered_trace_repo_(buffered_trace_repo)
-    , trace_ai_(trace_ai)
-    , notifier_(notifier)
-    , capacity_(capacity)
-    , token_limit_(token_limit)
-    , wheel_size_(wheel_size > 0 ? wheel_size : 512)
-    , idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000)
-    , wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500)
-    , buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096)
-    , active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
+    : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
     time_wheel_.resize(wheel_size_);
@@ -88,7 +77,8 @@ TraceSessionManager::~TraceSessionManager()
 {
     StopDispatchThread();
     const RuntimeStatsSnapshot stats = SnapshotRuntimeStats();
-    if (stats.dispatch_count == 0 && stats.worker_begin_count == 0 && stats.analysis_enqueue_calls == 0) {
+    if (stats.dispatch_count == 0 && stats.worker_begin_count == 0 && stats.analysis_enqueue_calls == 0)
+    {
         return;
     }
     std::clog << "[TraceRuntimeStats] " << DescribeRuntimeStats() << std::endl;
@@ -107,19 +97,22 @@ TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_l
 
 uint64_t TraceSessionManager::ComputeSealDelayTicks(TraceSession::SealReason reason)
 {
-    switch (reason) {
-        case TraceSession::SealReason::TraceEnd:
-            return 2;
-        case TraceSession::SealReason::Capacity:
-        case TraceSession::SealReason::TokenLimit:
-            return 1;
+    switch (reason)
+    {
+    case TraceSession::SealReason::TraceEnd:
+        return 2;
+    case TraceSession::SealReason::Capacity:
+    case TraceSession::SealReason::TokenLimit:
+    case TraceSession::SealReason::DuplicateSpan:
+        return 1;
     }
     return 1;
 }
 
 uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count)
 {
-    if (retry_count == 0) {
+    if (retry_count == 0)
+    {
         return 1;
     }
     constexpr uint64_t kMaxRetryDelayTicks = 16;
@@ -129,14 +122,15 @@ uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count)
 
 void TraceSessionManager::DispatchLoop()
 {
-    while (true) {
+    while (true)
+    {
         DispatchJob job;
         {
             std::unique_lock<std::mutex> lock(dispatch_queue_mutex_);
-            dispatch_queue_cv_.wait(lock, [this] {
-                return dispatch_stopping_ || !dispatch_queue_.empty();
-            });
-            if (dispatch_stopping_ && dispatch_queue_.empty()) {
+            dispatch_queue_cv_.wait(lock, [this]
+                                    { return dispatch_stopping_ || !dispatch_queue_.empty(); });
+            if (dispatch_stopping_ && dispatch_queue_.empty())
+            {
                 return;
             }
             job = std::move(dispatch_queue_.front());
@@ -153,7 +147,8 @@ void TraceSessionManager::StopDispatchThread()
         dispatch_stopping_ = true;
     }
     dispatch_queue_cv_.notify_all();
-    if (dispatch_thread_.joinable()) {
+    if (dispatch_thread_.joinable())
+    {
         dispatch_thread_.join();
     }
 }
@@ -201,41 +196,47 @@ std::string TraceSessionManager::DescribeRuntimeStats() const
     return oss.str();
 }
 
-TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent& span)
+TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent &span)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return PushLocked(span, NowSteadyMs());
 }
 
-TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent& span, int64_t now_ms)
+TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent &span, int64_t now_ms)
 {
     // 线程池是 trace 异步分发链路的硬依赖；缺失时直接拒绝，避免后续误报 accepted 后又静默丢数据。
     // TraceSessionManager 现在只认双缓冲写入器。既然主数据和分析结果都要走分段 append，
     // 那 thread_pool 和 buffered_trace_repo 缺一个都不能算链路可用。
-    if (!thread_pool_ || !buffered_trace_repo_) {
+    if (!thread_pool_ || !buffered_trace_repo_)
+    {
         return PushResult::RejectedUnavailable;
     }
     auto iter = index_by_trace_.find(span.trace_key);
     const bool trace_exists = (iter != index_by_trace_.end());
-    if (!trace_exists) {
+    if (!trace_exists)
+    {
         auto inflight_iter = dispatching_inflight_.find(span.trace_key);
-        if (inflight_iter != dispatching_inflight_.end()) {
+        if (inflight_iter != dispatching_inflight_.end())
+        {
             // dispatching inflight 代表这条 trace 已离开 manager、但还没进入 tombstone。
             // 第一步先按“延后吸收”处理，至少避免晚到 span 直接把旧 trace 复活成新 session。
             return PushResult::AcceptedDeferred;
         }
     }
-    if (!trace_exists && IsCompletedTombstoneAliveLocked(span.trace_key)) {
+    if (!trace_exists && IsCompletedTombstoneAliveLocked(span.trace_key))
+    {
         // 这条 trace 已经完成并处于短暂 TIME_WAIT。
         // 既然现在来的是晚到 span，那么直接幂等吸收即可，不能再把旧 trace 复活成新 session。
         return PushResult::Accepted;
     }
     RefreshOverloadState();
-    if (ShouldRejectIncomingTrace(trace_exists)) {
+    if (ShouldRejectIncomingTrace(trace_exists))
+    {
         return PushResult::RejectedOverload;
     }
 
-    if (iter == index_by_trace_.end()) {
+    if (iter == index_by_trace_.end())
+    {
         auto session = std::make_unique<TraceSession>(capacity_);
         session->trace_key = span.trace_key;
         session->created_at_ms = now_ms;
@@ -247,18 +248,29 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
         iter = index_by_trace_.find(span.trace_key);
     }
 
-    TraceSession& session = *sessions_[iter->second];
-    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater) {
+    TraceSession &session = *sessions_[iter->second];
+    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater)
+    {
         // ready retry 会话已经完成主数据收口；这时再并入新 span，会把内存里的 trace 和已入缓冲的 primary 语义撕裂。
         return PushResult::AcceptedDeferred;
     }
-    if (!session.span_ids.insert(span.span_id).second) {
-        // 发现重复 span_id 时先记录首个重复值，便于后续分发时标注异常来源。
-        if (!session.duplicate_span_id.has_value()) {
-            session.duplicate_span_id = span.span_id;
+    if (!session.span_ids.insert(span.span_id).second)
+    {
+        if (session.lifecycle_state == TraceSession::LifecycleState::Collecting)
+        {
+            // 发现重复 span_id 时先记录首个重复值，便于后续分发时标注异常来源。
+            if (!session.duplicate_span_id.has_value())
+            {
+                session.duplicate_span_id = span.span_id;
+            }
+            SealSessionLocked(session, TraceSession::SealReason::DuplicateSpan);
+            RefreshOverloadState();
+            return PushResult::Accepted;
         }
-        const bool dispatched = DispatchLocked(session.trace_key);
-        return dispatched ? PushResult::Accepted : PushResult::AcceptedDeferred;
+        else
+        {
+            return PushResult::Accepted;
+        }
     }
 
     // 先按到达顺序追加，后续聚合阶段再按 parent_id 重建结构。
@@ -267,31 +279,36 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
     total_buffered_spans_ += 1;
     session.token_count += token_estimator_.Estimate(span);
     session.last_update_ms = now_ms;
-    if (!already_sealed) {
+    if (!already_sealed)
+    {
         session.lifecycle_state = TraceSession::LifecycleState::Collecting;
         session.retry_count = 0;
         session.next_retry_tick = 0;
     }
 
-    if (already_sealed) {
+    if (already_sealed)
+    {
         // sealed 会话允许吸收短窗口内的 late span，但 deadline 固定，不续命。
         RefreshOverloadState();
         return PushResult::Accepted;
     }
 
-    if (span.trace_end.has_value() && span.trace_end.value()) {
+    if (span.trace_end.has_value() && span.trace_end.value())
+    {
         SealSessionLocked(session, TraceSession::SealReason::TraceEnd);
         RefreshOverloadState();
         return PushResult::Accepted;
     }
 
-    if (token_limit_ > 0 && session.token_count >= token_limit_) {
+    if (token_limit_ > 0 && session.token_count >= token_limit_)
+    {
         SealSessionLocked(session, TraceSession::SealReason::TokenLimit);
         RefreshOverloadState();
         return PushResult::Accepted;
     }
 
-    if (session.capacity > 0 && session.spans.size() >= session.capacity) {
+    if (session.capacity > 0 && session.spans.size() >= session.capacity)
+    {
         // 达到容量上限时先封口，再给一个最短 grace tick 吸收少量乱序 span。
         SealSessionLocked(session, TraceSession::SealReason::Capacity);
         RefreshOverloadState();
@@ -307,11 +324,13 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
     return PushResult::Accepted;
 }
 
-std::unique_ptr<TraceSession> TraceSessionManager::DetachSessionLocked(size_t trace_key, size_t* span_count)
+std::unique_ptr<TraceSession> TraceSessionManager::DetachSessionLocked(size_t trace_key, size_t *span_count)
 {
     auto iter = index_by_trace_.find(trace_key);
-    if (iter == index_by_trace_.end()) {
-        if (span_count) {
+    if (iter == index_by_trace_.end())
+    {
+        if (span_count)
+        {
             *span_count = 0;
         }
         return nullptr;
@@ -322,25 +341,33 @@ std::unique_ptr<TraceSession> TraceSessionManager::DetachSessionLocked(size_t tr
     const size_t local_span_count = session ? session->spans.size() : 0;
     index_by_trace_.erase(iter);
 
-    if (index < sessions_.size() - 1) {
+    if (index < sessions_.size() - 1)
+    {
         sessions_[index] = std::move(sessions_.back());
         sessions_.pop_back();
         index_by_trace_[sessions_[index]->trace_key] = index;
-    } else {
+    }
+    else
+    {
         sessions_.pop_back();
     }
 
-    if (active_sessions_ > 0) {
+    if (active_sessions_ > 0)
+    {
         active_sessions_ -= 1;
     }
-    if (total_buffered_spans_ >= local_span_count) {
+    if (total_buffered_spans_ >= local_span_count)
+    {
         total_buffered_spans_ -= local_span_count;
-    } else {
+    }
+    else
+    {
         total_buffered_spans_ = 0;
     }
     RefreshOverloadState();
 
-    if (span_count) {
+    if (span_count)
+    {
         *span_count = local_span_count;
     }
     return session;
@@ -348,7 +375,8 @@ std::unique_ptr<TraceSession> TraceSessionManager::DetachSessionLocked(size_t tr
 
 void TraceSessionManager::RestoreSessionLocked(std::unique_ptr<TraceSession> session, size_t span_count)
 {
-    if (!session) {
+    if (!session)
+    {
         return;
     }
     session->lifecycle_state = TraceSession::LifecycleState::ReadyRetryLater;
@@ -366,14 +394,16 @@ void TraceSessionManager::RestoreSessionLocked(std::unique_ptr<TraceSession> ses
     RefreshOverloadState();
 }
 
-bool TraceSessionManager::EnqueueDispatchJobLocked(DispatchJob* job)
+bool TraceSessionManager::EnqueueDispatchJobLocked(DispatchJob *job)
 {
-    if (!job || !job->session) {
+    if (!job || !job->session)
+    {
         return true;
     }
     {
         std::lock_guard<std::mutex> queue_lock(dispatch_queue_mutex_);
-        if (dispatch_stopping_ || dispatch_queue_.size() >= dispatch_queue_hard_limit_) {
+        if (dispatch_stopping_ || dispatch_queue_.size() >= dispatch_queue_hard_limit_)
+        {
             return false;
         }
         dispatch_queue_.push(std::move(*job));
@@ -387,29 +417,35 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
                                                size_t max_dispatch_per_tick)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (sessions_.empty() && completed_trace_expire_tick_.empty()) {
+    if (sessions_.empty() && completed_trace_expire_tick_.empty())
+    {
         return;
     }
-    if (idle_timeout_ms > 0 && idle_timeout_ms != idle_timeout_ms_) {
+    if (idle_timeout_ms > 0 && idle_timeout_ms != idle_timeout_ms_)
+    {
         // 运行中调整超时策略时重建时间轮，避免继续使用旧超时计划。
         idle_timeout_ms_ = idle_timeout_ms;
         timeout_ticks_ = ComputeTimeoutTicks();
         RebuildTimeWheel();
     }
 
-    if (last_tick_now_ms_ == 0) {
+    if (last_tick_now_ms_ == 0)
+    {
         last_tick_now_ms_ = now_ms;
     }
     int64_t elapsed_ms = now_ms - last_tick_now_ms_;
     uint64_t advance_ticks = 1;
-    if (elapsed_ms > 0 && wheel_tick_ms_ > 0) {
+    if (elapsed_ms > 0 && wheel_tick_ms_ > 0)
+    {
         advance_ticks = static_cast<uint64_t>(elapsed_ms / wheel_tick_ms_);
-        if (advance_ticks == 0) {
+        if (advance_ticks == 0)
+        {
             advance_ticks = 1;
         }
     }
     // 防止长时间阻塞后一次性补 tick 过多导致本轮回调卡死。
-    if (advance_ticks > wheel_size_) {
+    if (advance_ticks > wheel_size_)
+    {
         advance_ticks = wheel_size_;
     }
     last_tick_now_ms_ = now_ms;
@@ -419,66 +455,78 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
     std::unordered_set<size_t> scheduled_once;
     scheduled_once.reserve(expired_trace_keys.capacity() > 0 ? expired_trace_keys.capacity() : 8);
 
-    for (uint64_t step = 0; step < advance_ticks; ++step) {
+    for (uint64_t step = 0; step < advance_ticks; ++step)
+    {
         ++current_tick_;
         const size_t slot = static_cast<size_t>(current_tick_ % wheel_size_);
         SweepCompletedTombstonesLocked(slot);
         std::vector<TimeWheelNode> bucket = std::move(time_wheel_[slot]);
         time_wheel_[slot].clear();
 
-        for (auto& node : bucket) {
+        for (auto &node : bucket)
+        {
             auto idx_iter = index_by_trace_.find(node.trace_key);
-            if (idx_iter == index_by_trace_.end()) {
+            if (idx_iter == index_by_trace_.end())
+            {
                 // 会话已分发并从内存移除，旧节点自然失效。
                 continue;
             }
-            TraceSession& session = *sessions_[idx_iter->second];
-            if (session.session_epoch != node.epoch || session.timer_version != node.version) {
+            TraceSession &session = *sessions_[idx_iter->second];
+            if (session.session_epoch != node.epoch || session.timer_version != node.version)
+            {
                 // 非当前版本节点（旧计划）直接丢弃。
                 continue;
             }
-            if (node.expire_tick > current_tick_) {
+            if (node.expire_tick > current_tick_)
+            {
                 // 补 tick 场景下，如果还没到期，放回目标槽等待后续 tick。
                 time_wheel_[node.expire_tick % wheel_size_].push_back(node);
                 continue;
             }
             if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater &&
-                current_tick_ < session.next_retry_tick) {
+                current_tick_ < session.next_retry_tick)
+            {
                 // retry 会话只有到达 next_retry_tick 才允许重投，避免固定频率打桩。
                 time_wheel_[session.next_retry_tick % wheel_size_].push_back(node);
                 continue;
             }
             if (session.lifecycle_state == TraceSession::LifecycleState::Sealed &&
-                current_tick_ < session.sealed_deadline_tick) {
+                current_tick_ < session.sealed_deadline_tick)
+            {
                 // sealed 会话允许并入 late span，但 deadline 固定，不会因为后续 push 被重新向后推。
                 time_wheel_[session.sealed_deadline_tick % wheel_size_].push_back(node);
                 continue;
             }
-            if (max_dispatch_per_tick > 0 && expired_trace_keys.size() >= max_dispatch_per_tick) {
+            if (max_dispatch_per_tick > 0 && expired_trace_keys.size() >= max_dispatch_per_tick)
+            {
                 // 本轮达到上限时，将当前有效节点顺延一 tick，避免被直接丢失。
                 node.expire_tick = current_tick_ + 1;
                 time_wheel_[node.expire_tick % wheel_size_].push_back(node);
                 continue;
             }
-            if (scheduled_once.insert(node.trace_key).second) {
+            if (scheduled_once.insert(node.trace_key).second)
+            {
                 expired_trace_keys.push_back(node.trace_key);
             }
         }
     }
 
-    for (size_t trace_key : expired_trace_keys) {
+    for (size_t trace_key : expired_trace_keys)
+    {
         dispatch_count_.fetch_add(1, std::memory_order_relaxed);
 
         size_t span_count = 0;
         std::unique_ptr<TraceSession> session = DetachSessionLocked(trace_key, &span_count);
-        if (!session) {
+        if (!session)
+        {
             continue;
         }
 
         dispatching_inflight_[trace_key] = DispatchingInflightState{session->session_epoch};
         DispatchJob job;
         job.session = std::move(session);
-        if (EnqueueDispatchJobLocked(&job)) {
+        if (EnqueueDispatchJobLocked(&job))
+        {
             continue;
         }
 
@@ -490,7 +538,8 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
 
 uint64_t TraceSessionManager::ComputeTimeoutTicks() const
 {
-    if (idle_timeout_ms_ <= 0 || wheel_tick_ms_ <= 0) {
+    if (idle_timeout_ms_ <= 0 || wheel_tick_ms_ <= 0)
+    {
         return 1;
     }
     return static_cast<uint64_t>((idle_timeout_ms_ + wheel_tick_ms_ - 1) / wheel_tick_ms_);
@@ -506,10 +555,12 @@ void TraceSessionManager::AddCompletedTombstoneLocked(size_t trace_key)
 bool TraceSessionManager::IsCompletedTombstoneAliveLocked(size_t trace_key)
 {
     auto iter = completed_trace_expire_tick_.find(trace_key);
-    if (iter == completed_trace_expire_tick_.end()) {
+    if (iter == completed_trace_expire_tick_.end())
+    {
         return false;
     }
-    if (iter->second > current_tick_) {
+    if (iter->second > current_tick_)
+    {
         return true;
     }
     completed_trace_expire_tick_.erase(iter);
@@ -521,13 +572,16 @@ void TraceSessionManager::SweepCompletedTombstonesLocked(size_t slot)
     std::vector<size_t> bucket = std::move(completed_trace_wheel_[slot]);
     completed_trace_wheel_[slot].clear();
 
-    for (size_t trace_key : bucket) {
+    for (size_t trace_key : bucket)
+    {
         auto iter = completed_trace_expire_tick_.find(trace_key);
-        if (iter == completed_trace_expire_tick_.end()) {
+        if (iter == completed_trace_expire_tick_.end())
+        {
             // 已被新 tombstone 覆盖或已过期删除，旧 wheel 节点直接丢弃。
             continue;
         }
-        if (iter->second > current_tick_) {
+        if (iter->second > current_tick_)
+        {
             // 由于是取模回环，同一个槽里可能混着未来很多轮才真正到期的 tombstone。
             // 这里必须按真实 expire_tick 重新挂回去，不能因为扫到当前槽就提前遗忘。
             completed_trace_wheel_[iter->second % wheel_size_].push_back(trace_key);
@@ -537,7 +591,7 @@ void TraceSessionManager::SweepCompletedTombstonesLocked(size_t slot)
     }
 }
 
-void TraceSessionManager::ScheduleTimeoutNode(TraceSession& session)
+void TraceSessionManager::ScheduleTimeoutNode(TraceSession &session)
 {
     session.timer_version += 1;
     const uint64_t expire_tick = current_tick_ + timeout_ticks_;
@@ -550,7 +604,7 @@ void TraceSessionManager::ScheduleTimeoutNode(TraceSession& session)
     time_wheel_[slot].push_back(std::move(node));
 }
 
-void TraceSessionManager::ScheduleSealedNode(TraceSession& session)
+void TraceSessionManager::ScheduleSealedNode(TraceSession &session)
 {
     session.timer_version += 1;
     const uint64_t expire_tick =
@@ -564,7 +618,7 @@ void TraceSessionManager::ScheduleSealedNode(TraceSession& session)
     time_wheel_[slot].push_back(std::move(node));
 }
 
-void TraceSessionManager::ScheduleRetryNode(TraceSession& session)
+void TraceSessionManager::ScheduleRetryNode(TraceSession &session)
 {
     session.timer_version += 1;
     const uint64_t retry_tick =
@@ -578,20 +632,22 @@ void TraceSessionManager::ScheduleRetryNode(TraceSession& session)
     time_wheel_[slot].push_back(std::move(node));
 }
 
-void TraceSessionManager::ScheduleSessionNode(TraceSession& session)
+void TraceSessionManager::ScheduleSessionNode(TraceSession &session)
 {
-    if (session.lifecycle_state == TraceSession::LifecycleState::Sealed) {
+    if (session.lifecycle_state == TraceSession::LifecycleState::Sealed)
+    {
         ScheduleSealedNode(session);
         return;
     }
-    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater) {
+    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater)
+    {
         ScheduleRetryNode(session);
         return;
     }
     ScheduleTimeoutNode(session);
 }
 
-void TraceSessionManager::SealSessionLocked(TraceSession& session, TraceSession::SealReason reason)
+void TraceSessionManager::SealSessionLocked(TraceSession &session, TraceSession::SealReason reason)
 {
     session.lifecycle_state = TraceSession::LifecycleState::Sealed;
     session.seal_reason = reason;
@@ -601,11 +657,14 @@ void TraceSessionManager::SealSessionLocked(TraceSession& session, TraceSession:
 
 void TraceSessionManager::RebuildTimeWheel()
 {
-    for (auto& bucket : time_wheel_) {
+    for (auto &bucket : time_wheel_)
+    {
         bucket.clear();
     }
-    for (auto& session_ptr : sessions_) {
-        if (!session_ptr) {
+    for (auto &session_ptr : sessions_)
+    {
+        if (!session_ptr)
+        {
             continue;
         }
         // collecting / sealed / retry_later 三种时间语义不同，重建时必须按当前生命周期分别重排。
@@ -622,11 +681,13 @@ bool TraceSessionManager::Dispatch(size_t trace_key)
 bool TraceSessionManager::DispatchLocked(size_t trace_key)
 {
     // 双保险：正常路径已在 Push 入口拒绝无线程池情况；这里继续防御，避免未来别的路径直接调 Dispatch 时删掉 session。
-    if (!thread_pool_) {
+    if (!thread_pool_)
+    {
         return false;
     }
     auto iter = index_by_trace_.find(trace_key);
-    if (iter == index_by_trace_.end()) {
+    if (iter == index_by_trace_.end())
+    {
         return true;
     }
     dispatch_count_.fetch_add(1, std::memory_order_relaxed);
@@ -636,25 +697,33 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
     const size_t span_count = session ? session->spans.size() : 0;
     index_by_trace_.erase(iter);
 
-    if (index < sessions_.size() - 1) {
+    if (index < sessions_.size() - 1)
+    {
         // swap+pop_back：用最后一个元素覆盖被移除位置，保持容器紧凑并避免线性搬移。
         sessions_[index] = std::move(sessions_.back());
         sessions_.pop_back();
         index_by_trace_[sessions_[index]->trace_key] = index;
-    } else {
+    }
+    else
+    {
         sessions_.pop_back();
     }
-    if (active_sessions_ > 0) {
+    if (active_sessions_ > 0)
+    {
         active_sessions_ -= 1;
     }
-    if (total_buffered_spans_ >= span_count) {
+    if (total_buffered_spans_ >= span_count)
+    {
         total_buffered_spans_ -= span_count;
-    } else {
+    }
+    else
+    {
         total_buffered_spans_ = 0;
     }
     RefreshOverloadState();
 
-    auto rollback_session = [this, trace_key, span_count](std::unique_ptr<TraceSession> restored_session) {
+    auto rollback_session = [this, trace_key, span_count](std::unique_ptr<TraceSession> restored_session)
+    {
         restored_session->lifecycle_state = TraceSession::LifecycleState::ReadyRetryLater;
         restored_session->sealed_deadline_tick = 0;
         restored_session->last_update_ms = NowSteadyMs();
@@ -672,19 +741,22 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
     std::string trace_payload;
     TraceRepository::TraceSummary summary;
     std::vector<TraceRepository::TraceSpanRecord> span_records;
-    if (session) {
+    if (session)
+    {
         TraceIndex index = BuildTraceIndex(*session);
-        std::vector<const SpanEvent*> order;
+        std::vector<const SpanEvent *> order;
         trace_payload = SerializeTrace(index, &order);
         summary = BuildTraceSummary(*session, order);
         span_records = BuildSpanRecords(order);
     }
 
-    if (buffered_trace_repo_ && session && !session->primary_enqueued) {
+    if (buffered_trace_repo_ && session && !session->primary_enqueued)
+    {
         BufferedTraceRepository::TracePrimaryWrite primary_write;
         primary_write.summary = summary;
         primary_write.spans = span_records;
-        if (!buffered_trace_repo_->AppendPrimary(std::move(primary_write))) {
+        if (!buffered_trace_repo_->AppendPrimary(std::move(primary_write)))
+        {
             rollback_session(std::move(session));
             return false;
         }
@@ -692,11 +764,12 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
     }
 
     auto session_holder = std::make_shared<std::unique_ptr<TraceSession>>(std::move(session));
-    TraceSessionManager* manager = this;
-    BufferedTraceRepository* buffered_trace_repo = buffered_trace_repo_;
-    TraceAiProvider* trace_ai = trace_ai_;
-    INotifier* notifier = notifier_;
-    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, session_holder, trace_payload = std::move(trace_payload), summary = std::move(summary), span_records = std::move(span_records)]() mutable {
+    TraceSessionManager *manager = this;
+    BufferedTraceRepository *buffered_trace_repo = buffered_trace_repo_;
+    TraceAiProvider *trace_ai = trace_ai_;
+    INotifier *notifier = notifier_;
+    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, session_holder, trace_payload = std::move(trace_payload), summary = std::move(summary), span_records = std::move(span_records)]() mutable
+                              {
         if (!manager || !session_holder || !(*session_holder)) {
             return;
         }
@@ -766,8 +839,8 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         event.root_cause = analysis_ptr->root_cause;
         event.solution = analysis_ptr->solution;
         event.confidence = analysis_ptr->confidence;
-        notifier->notifyTraceAlert(event);
-    })) {
+        notifier->notifyTraceAlert(event); }))
+    {
         submit_fail_count_.fetch_add(1, std::memory_order_relaxed);
         std::unique_ptr<TraceSession> restored_session = std::move(*session_holder);
         rollback_session(std::move(restored_session));
@@ -781,7 +854,8 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
 void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
 {
     std::unique_ptr<TraceSession> session = std::move(job.session);
-    if (!session) {
+    if (!session)
+    {
         return;
     }
 
@@ -790,16 +864,18 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     const size_t span_count = session->spans.size();
 
     std::vector<TraceRepository::TraceSpanRecord> span_records;
-    const std::string* trace_payload_ptr = nullptr;
-    const TraceRepository::TraceSummary* summary_ptr = nullptr;
+    const std::string *trace_payload_ptr = nullptr;
+    const TraceRepository::TraceSummary *summary_ptr = nullptr;
 
     // 先吃 session 自己已经准备好的缓存。
     // 既然 submit 失败回滚时会把同一个 session 放回 manager，那么下次 retry 再进来时，
     // 应该优先复用 prepared 结果，而不是上来就把整条 trace 再建树、再算一遍。
-    if (session->prepared_trace_payload.has_value()) {
+    if (session->prepared_trace_payload.has_value())
+    {
         trace_payload_ptr = &session->prepared_trace_payload.value();
     }
-    if (session->prepared_summary.has_value()) {
+    if (session->prepared_summary.has_value())
+    {
         summary_ptr = &session->prepared_summary.value();
     }
 
@@ -810,61 +886,76 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     // 下面把“缺 payload / 缺 summary / 缺 primary”拆开处理。
     // 这样每个 if 都只表达一种缺口，而不是把三种意图揉成一个大 if 再在里面来回跳。
     std::optional<TraceIndex> trace_index;
-    std::vector<const SpanEvent*> order;
+    std::vector<const SpanEvent *> order;
     bool order_ready = false;
 
-    auto ensure_trace_index = [&]() -> const TraceIndex& {
-        if (!trace_index.has_value()) {
+    auto ensure_trace_index = [&]() -> const TraceIndex &
+    {
+        if (!trace_index.has_value())
+        {
             trace_index = BuildTraceIndex(*session);
         }
         return trace_index.value();
     };
 
-    auto ensure_order = [&]() -> const std::vector<const SpanEvent*>& {
-        if (order_ready) {
+    auto ensure_order = [&]() -> const std::vector<const SpanEvent *> &
+    {
+        if (order_ready)
+        {
             return order;
         }
 
         // 当前 DFS 顺序仍然依赖 SerializeTrace 的副作用产出。
         // 所以只要 summary / primary 还要用 order，就得走一次 SerializeTrace；
         // 但如果 payload 已经准备好了，这里只把序列化结果当“取 order 的代价”丢掉，不再额外拷贝回局部变量。
-        if (trace_payload_ptr == nullptr) {
+        if (trace_payload_ptr == nullptr)
+        {
             session->prepared_trace_payload = SerializeTrace(ensure_trace_index(), &order);
             trace_payload_ptr = &session->prepared_trace_payload.value();
-        } else {
+        }
+        else
+        {
             (void)SerializeTrace(ensure_trace_index(), &order);
         }
         order_ready = true;
         return order;
     };
 
-    if (need_payload) {
-        if (need_summary || need_primary) {
+    if (need_payload)
+    {
+        if (need_summary || need_primary)
+        {
             // 既然后面反正要 order，就直接在取 order 时把 payload 一并补齐，避免同一轮重复序列化两次。
             (void)ensure_order();
-        } else {
+        }
+        else
+        {
             session->prepared_trace_payload = SerializeTrace(ensure_trace_index(), nullptr);
             trace_payload_ptr = &session->prepared_trace_payload.value();
         }
     }
 
-    if (need_summary) {
-        const std::vector<const SpanEvent*>& ready_order = ensure_order();
+    if (need_summary)
+    {
+        const std::vector<const SpanEvent *> &ready_order = ensure_order();
         session->prepared_summary = BuildTraceSummary(*session, ready_order);
         summary_ptr = &session->prepared_summary.value();
     }
 
-    if (need_primary) {
-        const std::vector<const SpanEvent*>& ready_order = ensure_order();
+    if (need_primary)
+    {
+        const std::vector<const SpanEvent *> &ready_order = ensure_order();
         span_records = BuildSpanRecords(ready_order);
     }
 
     // 上面三个缺口都补完后，worker 与 append 路径只读 session 内部 prepared 数据即可。
     // 这样 trace_payload / summary 在本线程里就不用再多拷一份中间局部副本。
-    if (!trace_payload_ptr && session->prepared_trace_payload.has_value()) {
+    if (!trace_payload_ptr && session->prepared_trace_payload.has_value())
+    {
         trace_payload_ptr = &session->prepared_trace_payload.value();
     }
-    if (!summary_ptr && session->prepared_summary.has_value()) {
+    if (!summary_ptr && session->prepared_summary.has_value())
+    {
         summary_ptr = &session->prepared_summary.value();
     }
 
@@ -880,17 +971,20 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     // - 如果后面 worker submit 失败，session 会带着 prepared 缓存回滚回 manager；
     // - 下一次 retry 再进 ProcessDispatchJob 时，primary_enqueued=true，说明主数据已经成功入缓冲，
     //   这时就必须跳过 AppendPrimary，避免同一条 trace 重复写出第二份主数据。
-    if (buffered_trace_repo_ && !session->primary_enqueued) {
+    if (buffered_trace_repo_ && !session->primary_enqueued)
+    {
         BufferedTraceRepository::TracePrimaryWrite primary_write;
         // summary_ptr 指向 session 内部 prepared_summary。
         // 这里做一次值拷贝是必要的，因为写入器拿到的是独立 write 对象，不能直接借 session 内部对象跨层保存引用。
-        if (summary_ptr) {
+        if (summary_ptr)
+        {
             primary_write.summary = *summary_ptr;
         }
         // span_records 是本轮 dispatch 临时构建出来的主数据明细；
         // append 之后当前线程不再需要它，所以直接 move 进写入对象，避免再拷一份 vector 内容。
         primary_write.spans = std::move(span_records);
-        if (!buffered_trace_repo_->AppendPrimary(std::move(primary_write))) {
+        if (!buffered_trace_repo_->AppendPrimary(std::move(primary_write)))
+        {
             // AppendPrimary 失败说明“主数据首段”连缓冲写入器这一层都没进去。
             // 既然这时 trace 还停留在 dispatch 中间态，就不能让它继续留在 inflight，否则：
             // 1) manager 里查不到这条 session；
@@ -903,7 +997,8 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
             std::lock_guard<std::mutex> lock(mutex_);
             auto inflight_iter = dispatching_inflight_.find(trace_key);
             if (inflight_iter != dispatching_inflight_.end() &&
-                inflight_iter->second.session_epoch == session_epoch) {
+                inflight_iter->second.session_epoch == session_epoch)
+            {
                 dispatching_inflight_.erase(inflight_iter);
             }
             RestoreSessionLocked(std::move(session), span_count);
@@ -916,13 +1011,14 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     }
 
     auto session_holder = std::make_shared<std::unique_ptr<TraceSession>>(std::move(session));
-    TraceSessionManager* manager = this;
-    BufferedTraceRepository* buffered_trace_repo = buffered_trace_repo_;
-    TraceAiProvider* trace_ai = trace_ai_;
-    INotifier* notifier = notifier_;
-    const std::string* worker_trace_payload = trace_payload_ptr;
-    const TraceRepository::TraceSummary* worker_summary = summary_ptr;
-    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, session_holder, worker_trace_payload, worker_summary]() mutable {
+    TraceSessionManager *manager = this;
+    BufferedTraceRepository *buffered_trace_repo = buffered_trace_repo_;
+    TraceAiProvider *trace_ai = trace_ai_;
+    INotifier *notifier = notifier_;
+    const std::string *worker_trace_payload = trace_payload_ptr;
+    const TraceRepository::TraceSummary *worker_summary = summary_ptr;
+    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, session_holder, worker_trace_payload, worker_summary]() mutable
+                              {
         if (!manager || !session_holder || !(*session_holder) || !worker_trace_payload || !worker_summary) {
             return;
         }
@@ -992,14 +1088,15 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         event.root_cause = analysis_ptr->root_cause;
         event.solution = analysis_ptr->solution;
         event.confidence = analysis_ptr->confidence;
-        notifier->notifyTraceAlert(event);
-    })) {
+        notifier->notifyTraceAlert(event); }))
+    {
         submit_fail_count_.fetch_add(1, std::memory_order_relaxed);
         std::unique_ptr<TraceSession> restored_session = std::move(*session_holder);
         std::lock_guard<std::mutex> lock(mutex_);
         auto inflight_iter = dispatching_inflight_.find(trace_key);
         if (inflight_iter != dispatching_inflight_.end() &&
-            inflight_iter->second.session_epoch == session_epoch) {
+            inflight_iter->second.session_epoch == session_epoch)
+        {
             dispatching_inflight_.erase(inflight_iter);
         }
         RestoreSessionLocked(std::move(restored_session), span_count);
@@ -1010,7 +1107,8 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         std::lock_guard<std::mutex> lock(mutex_);
         auto inflight_iter = dispatching_inflight_.find(trace_key);
         if (inflight_iter != dispatching_inflight_.end() &&
-            inflight_iter->second.session_epoch == session_epoch) {
+            inflight_iter->second.session_epoch == session_epoch)
+        {
             dispatching_inflight_.erase(inflight_iter);
         }
         AddCompletedTombstoneLocked(trace_key);
@@ -1035,15 +1133,18 @@ void TraceSessionManager::RefreshOverloadState()
         active_sessions_ <= active_session_watermark_.low &&
         pending_tasks <= pending_task_watermark_.low;
 
-    if (hit_critical) {
+    if (hit_critical)
+    {
         overload_state_ = OverloadState::Critical;
         return;
     }
-    if (overload_state_ == OverloadState::Normal) {
+    if (overload_state_ == OverloadState::Normal)
+    {
         overload_state_ = hit_high ? OverloadState::Overload : OverloadState::Normal;
         return;
     }
-    if (back_to_low) {
+    if (back_to_low)
+    {
         overload_state_ = OverloadState::Normal;
         return;
     }
@@ -1052,28 +1153,34 @@ void TraceSessionManager::RefreshOverloadState()
 
 bool TraceSessionManager::ShouldRejectIncomingTrace(bool trace_exists) const
 {
-    if (overload_state_ == OverloadState::Normal) {
+    if (overload_state_ == OverloadState::Normal)
+    {
         return false;
     }
-    if (overload_state_ == OverloadState::Critical) {
+    if (overload_state_ == OverloadState::Critical)
+    {
         return true;
     }
     return !trace_exists;
 }
 
-TraceSessionManager::TraceIndex TraceSessionManager::BuildTraceIndex(const TraceSession& session)
+TraceSessionManager::TraceIndex TraceSessionManager::BuildTraceIndex(const TraceSession &session)
 {
     TraceIndex index;
     index.span_map.reserve(session.spans.size());
 
-    for (const auto& span : session.spans) {
+    for (const auto &span : session.spans)
+    {
         index.span_map[span.span_id] = &span;
     }
 
-    for (const auto& span : session.spans) {
-        if (span.parent_span_id.has_value()) {
+    for (const auto &span : session.spans)
+    {
+        if (span.parent_span_id.has_value())
+        {
             const size_t parent_id = span.parent_span_id.value();
-            if (index.span_map.find(parent_id) != index.span_map.end()) {
+            if (index.span_map.find(parent_id) != index.span_map.end())
+            {
                 index.children[parent_id].push_back(span.span_id);
                 continue;
             }
@@ -1085,7 +1192,7 @@ TraceSessionManager::TraceIndex TraceSessionManager::BuildTraceIndex(const Trace
     return index;
 }
 
-std::string TraceSessionManager::SerializeTrace(const TraceIndex& index, std::vector<const SpanEvent*>* order)
+std::string TraceSessionManager::SerializeTrace(const TraceIndex &index, std::vector<const SpanEvent *> *order)
 {
     nlohmann::json output;
     std::unordered_set<size_t> visited;
@@ -1093,89 +1200,110 @@ std::string TraceSessionManager::SerializeTrace(const TraceIndex& index, std::ve
     bool has_cycle = false;
     std::vector<size_t> cycle_spans;
 
-    auto build_node = [&index, order, &visited, &has_cycle, &cycle_spans](size_t span_id, const auto& self_ref) -> nlohmann::json {
+    auto build_node = [&index, order, &visited, &has_cycle, &cycle_spans](size_t span_id, const auto &self_ref) -> nlohmann::json
+    {
         nlohmann::json node;
-        if (!visited.insert(span_id).second) {
+        if (!visited.insert(span_id).second)
+        {
             // 发现环时仅记录异常，避免继续递归导致无限循环。
             has_cycle = true;
             cycle_spans.push_back(span_id);
             return node;
         }
         auto span_iter = index.span_map.find(span_id);
-        if (span_iter == index.span_map.end()) {
+        if (span_iter == index.span_map.end())
+        {
             return node;
         }
-        const SpanEvent& span = *span_iter->second;
-        if (order) {
+        const SpanEvent &span = *span_iter->second;
+        if (order)
+        {
             order->push_back(&span);
         }
 
         node["trace_id"] = span.trace_key;
         node["span_id"] = span.span_id;
-        if (span.parent_span_id.has_value()) {
+        if (span.parent_span_id.has_value())
+        {
             node["parent_id"] = span.parent_span_id.value();
-        } else {
+        }
+        else
+        {
             node["parent_id"] = nullptr;
         }
         node["name"] = span.name;
         node["service_name"] = span.service_name;
         node["start_time_ms"] = span.start_time_ms;
-        if (span.end_time.has_value()) {
+        if (span.end_time.has_value())
+        {
             node["end_time_ms"] = span.end_time.value();
-        } else {
+        }
+        else
+        {
             node["end_time_ms"] = nullptr;
         }
 
-        if (span.status.has_value()) {
-            switch (span.status.value()) {
-                case SpanEvent::Status::Unset:
-                    node["status"] = "UNSET";
-                    break;
-                case SpanEvent::Status::Ok:
-                    node["status"] = "OK";
-                    break;
-                case SpanEvent::Status::Error:
-                    node["status"] = "ERROR";
-                    break;
+        if (span.status.has_value())
+        {
+            switch (span.status.value())
+            {
+            case SpanEvent::Status::Unset:
+                node["status"] = "UNSET";
+                break;
+            case SpanEvent::Status::Ok:
+                node["status"] = "OK";
+                break;
+            case SpanEvent::Status::Error:
+                node["status"] = "ERROR";
+                break;
             }
-        } else {
+        }
+        else
+        {
             node["status"] = nullptr;
         }
 
-        if (span.kind.has_value()) {
-            switch (span.kind.value()) {
-                case SpanEvent::Kind::Internal:
-                    node["kind"] = "INTERNAL";
-                    break;
-                case SpanEvent::Kind::Server:
-                    node["kind"] = "SERVER";
-                    break;
-                case SpanEvent::Kind::Client:
-                    node["kind"] = "CLIENT";
-                    break;
-                case SpanEvent::Kind::Producer:
-                    node["kind"] = "PRODUCER";
-                    break;
-                case SpanEvent::Kind::Consumer:
-                    node["kind"] = "CONSUMER";
-                    break;
+        if (span.kind.has_value())
+        {
+            switch (span.kind.value())
+            {
+            case SpanEvent::Kind::Internal:
+                node["kind"] = "INTERNAL";
+                break;
+            case SpanEvent::Kind::Server:
+                node["kind"] = "SERVER";
+                break;
+            case SpanEvent::Kind::Client:
+                node["kind"] = "CLIENT";
+                break;
+            case SpanEvent::Kind::Producer:
+                node["kind"] = "PRODUCER";
+                break;
+            case SpanEvent::Kind::Consumer:
+                node["kind"] = "CONSUMER";
+                break;
             }
-        } else {
+        }
+        else
+        {
             node["kind"] = nullptr;
         }
 
         node["attributes"] = span.attributes;
 
         auto child_iter = index.children.find(span_id);
-        const std::vector<size_t>* children_ids = nullptr;
-        if (child_iter != index.children.end()) {
+        const std::vector<size_t> *children_ids = nullptr;
+        if (child_iter != index.children.end())
+        {
             children_ids = &child_iter->second;
         }
 
         node["children"] = nlohmann::json::array();
-        if (children_ids) {
+        if (children_ids)
+        {
             std::vector<size_t> ordered_children = *children_ids;
-            std::sort(ordered_children.begin(), ordered_children.end(), [&index](size_t left, size_t right) {
+            std::sort(ordered_children.begin(), ordered_children.end(), [&index](size_t left, size_t right)
+                      {
                 const auto left_iter = index.span_map.find(left);
                 const auto right_iter = index.span_map.find(right);
                 if (left_iter == index.span_map.end() || right_iter == index.span_map.end()) {
@@ -1186,11 +1314,12 @@ std::string TraceSessionManager::SerializeTrace(const TraceIndex& index, std::ve
                 if (left_span.start_time_ms != right_span.start_time_ms) {
                     return left_span.start_time_ms < right_span.start_time_ms;
                 }
-                return left_span.span_id < right_span.span_id;
-            });
-            for (size_t child_id : ordered_children) {
+                return left_span.span_id < right_span.span_id; });
+            for (size_t child_id : ordered_children)
+            {
                 nlohmann::json child_node = self_ref(child_id, self_ref);
-                if (!child_node.is_null() && !child_node.empty()) {
+                if (!child_node.is_null() && !child_node.empty())
+                {
                     node["children"].push_back(std::move(child_node));
                 }
             }
@@ -1200,19 +1329,23 @@ std::string TraceSessionManager::SerializeTrace(const TraceIndex& index, std::ve
     };
 
     output["spans"] = nlohmann::json::array();
-    for (size_t root_id : index.roots) {
+    for (size_t root_id : index.roots)
+    {
         nlohmann::json root_node = build_node(root_id, build_node);
-        if (!root_node.is_null() && !root_node.empty()) {
+        if (!root_node.is_null() && !root_node.empty())
+        {
             output["spans"].push_back(std::move(root_node));
         }
     }
-    if (has_cycle) {
+    if (has_cycle)
+    {
         // 记录位置（第一处）：
         // 1) 异常会写入当前序列化结果 output["anomalies"]，并随 trace_payload 继续流转。
         // 2) 当前实现不单独持久化 anomalies 表，因此排障时应优先看 AI 输入/日志中的 payload 内容。
-        //因为有环所以没有root所以就是dfs根本不会跑，导致order为空，ai无法具有分析性
+        // 因为有环所以没有root所以就是dfs根本不会跑，导致order为空，ai无法具有分析性
         nlohmann::json anomalies = nlohmann::json::array();
-        for (size_t span_id : cycle_spans) {
+        for (size_t span_id : cycle_spans)
+        {
             nlohmann::json item;
             item["type"] = "cycle_detected";
             item["span_id"] = span_id;
@@ -1224,8 +1357,8 @@ std::string TraceSessionManager::SerializeTrace(const TraceIndex& index, std::ve
     return output.dump();
 }
 
-TraceRepository::TraceSummary TraceSessionManager::BuildTraceSummary(const TraceSession& session,
-                                                                     const std::vector<const SpanEvent*>& order)
+TraceRepository::TraceSummary TraceSessionManager::BuildTraceSummary(const TraceSession &session,
+                                                                     const std::vector<const SpanEvent *> &order)
 {
     TraceRepository::TraceSummary summary;
     summary.trace_id = std::to_string(session.trace_key);
@@ -1236,9 +1369,11 @@ TraceRepository::TraceSummary TraceSessionManager::BuildTraceSummary(const Trace
     int64_t min_start = std::numeric_limits<int64_t>::max();
     int64_t max_end = std::numeric_limits<int64_t>::min();
     bool has_end = false;
-    for (const auto& span : session.spans) {
+    for (const auto &span : session.spans)
+    {
         min_start = std::min(min_start, span.start_time_ms);
-        if (span.end_time.has_value()) {
+        if (span.end_time.has_value())
+        {
             has_end = true;
             max_end = std::max(max_end, span.end_time.value());
         }
@@ -1255,16 +1390,18 @@ TraceRepository::TraceSummary TraceSessionManager::BuildTraceSummary(const Trace
 }
 
 std::vector<TraceRepository::TraceSpanRecord> TraceSessionManager::BuildSpanRecords(
-    const std::vector<const SpanEvent*>& order)
+    const std::vector<const SpanEvent *> &order)
 {
     std::vector<TraceRepository::TraceSpanRecord> span_records;
     span_records.reserve(order.size());
 
-    for (const SpanEvent* span_ptr : order) {
-        if (!span_ptr) {
+    for (const SpanEvent *span_ptr : order)
+    {
+        if (!span_ptr)
+        {
             continue;
         }
-        const SpanEvent& span = *span_ptr;
+        const SpanEvent &span = *span_ptr;
         TraceRepository::TraceSpanRecord record;
         record.trace_id = std::to_string(span.trace_key);
         record.span_id = std::to_string(span.span_id);
@@ -1276,19 +1413,23 @@ std::vector<TraceRepository::TraceSpanRecord> TraceSessionManager::BuildSpanReco
         record.start_time_ms = span.start_time_ms;
         record.duration_ms = span.end_time.has_value() ? (span.end_time.value() - span.start_time_ms) : 0;
 
-        if (!span.status.has_value()) {
+        if (!span.status.has_value())
+        {
             record.status = "UNSET";
-        } else {
-            switch (span.status.value()) {
-                case SpanEvent::Status::Unset:
-                    record.status = "UNSET";
-                    break;
-                case SpanEvent::Status::Ok:
-                    record.status = "OK";
-                    break;
-                case SpanEvent::Status::Error:
-                    record.status = "ERROR";
-                    break;
+        }
+        else
+        {
+            switch (span.status.value())
+            {
+            case SpanEvent::Status::Unset:
+                record.status = "UNSET";
+                break;
+            case SpanEvent::Status::Ok:
+                record.status = "OK";
+                break;
+            case SpanEvent::Status::Error:
+                record.status = "ERROR";
+                break;
             }
         }
 
@@ -1299,8 +1440,8 @@ std::vector<TraceRepository::TraceSpanRecord> TraceSessionManager::BuildSpanReco
     return span_records;
 }
 
-TraceRepository::TraceAnalysisRecord TraceSessionManager::BuildAnalysisRecord(const std::string& trace_id,
-                                                                              const LogAnalysisResult& analysis)
+TraceRepository::TraceAnalysisRecord TraceSessionManager::BuildAnalysisRecord(const std::string &trace_id,
+                                                                              const LogAnalysisResult &analysis)
 {
     TraceRepository::TraceAnalysisRecord analysis_record;
     nlohmann::json risk_json = analysis.risk_level;

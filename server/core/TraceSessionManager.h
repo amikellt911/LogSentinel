@@ -71,7 +71,9 @@ struct TraceSession
         // 容量打满：目的是及时截断内存增长，所以只给最短 grace。
         Capacity,
         // token 打满：和容量一样，属于保护性封口，不应该再等太久。
-        TokenLimit
+        TokenLimit,
+        // 发送重复span
+        DuplicateSpan,
     };
 
     enum class LifecycleState
