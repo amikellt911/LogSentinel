@@ -224,6 +224,28 @@ protected:
         return predicate();
     }
 
+    bool WaitUntilSessionSatisfies(TraceSessionManager& manager,
+                                   size_t trace_key,
+                                   const std::function<bool(const TraceSession&)>& predicate,
+                                   int timeout_ms = 1000)
+    {
+        // dispatch 线程改造后，sweep 返回并不等于“session 已经同步回滚完成”。
+        // 所以测试里如果要看 ReadyRetryLater / retry_count 这类状态，必须等回滚线程把 session 真正放回 manager。
+        return WaitUntil([&manager, trace_key, &predicate]() {
+            auto iter = manager.index_by_trace_.find(trace_key);
+            if (iter == manager.index_by_trace_.end()) {
+                return false;
+            }
+            if (iter->second >= manager.sessions_.size()) {
+                return false;
+            }
+            if (!manager.sessions_[iter->second]) {
+                return false;
+            }
+            return predicate(*manager.sessions_[iter->second]);
+        }, timeout_ms);
+    }
+
     void SweepOneTick(TraceSessionManager& manager,
                       int64_t now_ms,
                       int64_t idle_timeout_ms = 5000,
@@ -720,6 +742,11 @@ TEST_F(TraceSessionManagerUnitTest, SealedTraceRollsBackToReadyRetryLaterWhenSub
               TraceSession::LifecycleState::Sealed);
 
     SweepOneTick(manager, /*now_ms*/1500);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 123, [](const TraceSession& session) {
+        return session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater &&
+               session.retry_count == 1u &&
+               session.next_retry_tick == 3u;
+    }));
     EXPECT_EQ(manager.active_sessions_, 1u);
     EXPECT_EQ(manager.total_buffered_spans_, 1u);
     iter = manager.index_by_trace_.find(123);
@@ -757,6 +784,11 @@ TEST_F(TraceSessionManagerUnitTest, RetryDelayBackoffGrowsOnRepeatedSubmitFailur
     ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
     SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 124, [](const TraceSession& session) {
+        return session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater &&
+               session.retry_count == 1u &&
+               session.next_retry_tick == 3u;
+    }));
 
     auto iter = manager.index_by_trace_.find(124);
     ASSERT_NE(iter, manager.index_by_trace_.end());
@@ -765,6 +797,11 @@ TEST_F(TraceSessionManagerUnitTest, RetryDelayBackoffGrowsOnRepeatedSubmitFailur
     EXPECT_EQ(manager.sessions_[iter->second]->next_retry_tick, 3u);
 
     manager.SweepExpiredSessions(/*now_ms*/2000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 124, [](const TraceSession& session) {
+        return session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater &&
+               session.retry_count == 2u &&
+               session.next_retry_tick == 5u;
+    }));
 
     iter = manager.index_by_trace_.find(124);
     ASSERT_NE(iter, manager.index_by_trace_.end());
@@ -791,6 +828,11 @@ TEST_F(TraceSessionManagerUnitTest, RetryBackoffDoesNotRetryBeforeNextRetryTick)
     ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
     SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 125, [](const TraceSession& session) {
+        return session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater &&
+               session.retry_count == 1u &&
+               session.next_retry_tick == 3u;
+    }));
 
     auto iter = manager.index_by_trace_.find(125);
     ASSERT_NE(iter, manager.index_by_trace_.end());
@@ -800,6 +842,9 @@ TEST_F(TraceSessionManagerUnitTest, RetryBackoffDoesNotRetryBeforeNextRetryTick)
 
     // tick=3：允许第一次 retry，因此会再次失败并把 next_retry_tick 推到 5。
     manager.SweepExpiredSessions(/*now_ms*/2000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 125, [](const TraceSession& session) {
+        return session.retry_count == 2u && session.next_retry_tick == 5u;
+    }));
     iter = manager.index_by_trace_.find(125);
     ASSERT_NE(iter, manager.index_by_trace_.end());
     ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
@@ -808,6 +853,9 @@ TEST_F(TraceSessionManagerUnitTest, RetryBackoffDoesNotRetryBeforeNextRetryTick)
 
     // tick=4：还没到 next_retry_tick=5，不应该提前再次重试。
     manager.SweepExpiredSessions(/*now_ms*/2500, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 125, [](const TraceSession& session) {
+        return session.retry_count == 2u && session.next_retry_tick == 5u;
+    }));
     iter = manager.index_by_trace_.find(125);
     ASSERT_NE(iter, manager.index_by_trace_.end());
     ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
@@ -816,6 +864,9 @@ TEST_F(TraceSessionManagerUnitTest, RetryBackoffDoesNotRetryBeforeNextRetryTick)
 
     // tick=5：此时才允许第三次尝试，因此 retry_count 应增加到 3。
     manager.SweepExpiredSessions(/*now_ms*/3000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 125, [](const TraceSession& session) {
+        return session.retry_count == 3u && session.next_retry_tick == 9u;
+    }));
     iter = manager.index_by_trace_.find(125);
     ASSERT_NE(iter, manager.index_by_trace_.end());
     ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
@@ -846,6 +897,10 @@ TEST_F(TraceSessionManagerUnitTest, RetrySuccessDoesNotAppendPrimaryTwiceAfterSu
     EXPECT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
     SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 126, [](const TraceSession& session) {
+        return session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater &&
+               session.primary_enqueued;
+    }));
 
     auto iter = manager.index_by_trace_.find(126);
     ASSERT_NE(iter, manager.index_by_trace_.end());
@@ -892,6 +947,9 @@ TEST_F(TraceSessionManagerUnitTest, ReadyRetryLaterDoesNotMergeLateSpan)
     first.trace_end = true;
     ASSERT_EQ(manager.Push(first), TraceSessionManager::PushResult::Accepted);
     SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 127, [](const TraceSession& session) {
+        return session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater;
+    }));
 
     auto iter = manager.index_by_trace_.find(127);
     ASSERT_NE(iter, manager.index_by_trace_.end());
@@ -1004,6 +1062,9 @@ TEST_F(TraceSessionManagerUnitTest, RebuildTimeWheelKeepsReadyRetryLaterOnRetryS
     ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
     SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 124, [](const TraceSession& session) {
+        return session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater;
+    }));
 
     auto idx_iter = manager.index_by_trace_.find(124);
     ASSERT_NE(idx_iter, manager.index_by_trace_.end());
@@ -1375,6 +1436,11 @@ TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredWhenSubmitFails)
               TraceSession::LifecycleState::Sealed);
     
     SweepOneTick(manager, /*now_ms*/1000);
+    ASSERT_TRUE(WaitUntilSessionSatisfies(manager, 901, [](const TraceSession& session) {
+        return session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater &&
+               session.retry_count == 1u &&
+               session.next_retry_tick == 2u;
+    }));
     iter = manager.index_by_trace_.find(901);
     ASSERT_NE(iter, manager.index_by_trace_.end());
     EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state,

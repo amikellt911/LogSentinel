@@ -142,10 +142,7 @@ void TraceSessionManager::DispatchLoop()
             job = std::move(dispatch_queue_.front());
             dispatch_queue_.pop();
         }
-
-        // 第二步先只把线程和队列生命周期搭起来；真正的 dispatch 业务改造后续再接。
-        // 这里保留 job 所有权的基本流转，避免空转线程把队列骨架写死成不可扩展结构。
-        (void)job;
+        ProcessDispatchJob(std::move(job));
     }
 }
 
@@ -220,6 +217,14 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
     }
     auto iter = index_by_trace_.find(span.trace_key);
     const bool trace_exists = (iter != index_by_trace_.end());
+    if (!trace_exists) {
+        auto inflight_iter = dispatching_inflight_.find(span.trace_key);
+        if (inflight_iter != dispatching_inflight_.end()) {
+            // dispatching inflight 代表这条 trace 已离开 manager、但还没进入 tombstone。
+            // 第一步先按“延后吸收”处理，至少避免晚到 span 直接把旧 trace 复活成新 session。
+            return PushResult::AcceptedDeferred;
+        }
+    }
     if (!trace_exists && IsCompletedTombstoneAliveLocked(span.trace_key)) {
         // 这条 trace 已经完成并处于短暂 TIME_WAIT。
         // 既然现在来的是晚到 span，那么直接幂等吸收即可，不能再把旧 trace 复活成新 session。
@@ -300,6 +305,81 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent&
 
     // 当前仅做本地写入与分发占位，先返回成功；后续接入背压分支后再细分 AcceptedDeferred/RejectedOverload。
     return PushResult::Accepted;
+}
+
+std::unique_ptr<TraceSession> TraceSessionManager::DetachSessionLocked(size_t trace_key, size_t* span_count)
+{
+    auto iter = index_by_trace_.find(trace_key);
+    if (iter == index_by_trace_.end()) {
+        if (span_count) {
+            *span_count = 0;
+        }
+        return nullptr;
+    }
+
+    const size_t index = iter->second;
+    std::unique_ptr<TraceSession> session = std::move(sessions_[index]);
+    const size_t local_span_count = session ? session->spans.size() : 0;
+    index_by_trace_.erase(iter);
+
+    if (index < sessions_.size() - 1) {
+        sessions_[index] = std::move(sessions_.back());
+        sessions_.pop_back();
+        index_by_trace_[sessions_[index]->trace_key] = index;
+    } else {
+        sessions_.pop_back();
+    }
+
+    if (active_sessions_ > 0) {
+        active_sessions_ -= 1;
+    }
+    if (total_buffered_spans_ >= local_span_count) {
+        total_buffered_spans_ -= local_span_count;
+    } else {
+        total_buffered_spans_ = 0;
+    }
+    RefreshOverloadState();
+
+    if (span_count) {
+        *span_count = local_span_count;
+    }
+    return session;
+}
+
+void TraceSessionManager::RestoreSessionLocked(std::unique_ptr<TraceSession> session, size_t span_count)
+{
+    if (!session) {
+        return;
+    }
+    session->lifecycle_state = TraceSession::LifecycleState::ReadyRetryLater;
+    session->sealed_deadline_tick = 0;
+    session->last_update_ms = NowSteadyMs();
+    session->retry_count += 1;
+    session->next_retry_tick =
+        current_tick_ + ComputeRetryDelayTicks(session->retry_count);
+    const size_t trace_key = session->trace_key;
+    sessions_.push_back(std::move(session));
+    index_by_trace_[trace_key] = sessions_.size() - 1;
+    active_sessions_ += 1;
+    total_buffered_spans_ += span_count;
+    ScheduleSessionNode(*sessions_.back());
+    RefreshOverloadState();
+}
+
+bool TraceSessionManager::EnqueueDispatchJobLocked(DispatchJob* job)
+{
+    if (!job || !job->session) {
+        return true;
+    }
+    {
+        std::lock_guard<std::mutex> queue_lock(dispatch_queue_mutex_);
+        if (dispatch_stopping_ || dispatch_queue_.size() >= dispatch_queue_hard_limit_) {
+            return false;
+        }
+        dispatch_queue_.push(std::move(*job));
+    }
+    dispatch_queue_cv_.notify_one();
+    return true;
 }
 
 void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
@@ -387,7 +467,24 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
     }
 
     for (size_t trace_key : expired_trace_keys) {
-        DispatchLocked(trace_key);
+        dispatch_count_.fetch_add(1, std::memory_order_relaxed);
+
+        size_t span_count = 0;
+        std::unique_ptr<TraceSession> session = DetachSessionLocked(trace_key, &span_count);
+        if (!session) {
+            continue;
+        }
+
+        dispatching_inflight_[trace_key] = DispatchingInflightState{session->session_epoch};
+        DispatchJob job;
+        job.session = std::move(session);
+        if (EnqueueDispatchJobLocked(&job)) {
+            continue;
+        }
+
+        submit_fail_count_.fetch_add(1, std::memory_order_relaxed);
+        dispatching_inflight_.erase(trace_key);
+        RestoreSessionLocked(std::move(job.session), span_count);
     }
 }
 
@@ -578,7 +675,6 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
     if (session) {
         TraceIndex index = BuildTraceIndex(*session);
         std::vector<const SpanEvent*> order;
-        // 主数据要先于 AI 结果入缓冲区，所以这里先把 DFS 顺序和序列化结果准备好，避免后面出现“主数据空桶、分析有结果”的错位。
         trace_payload = SerializeTrace(index, &order);
         summary = BuildTraceSummary(*session, order);
         span_records = BuildSpanRecords(order);
@@ -595,10 +691,6 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         session->primary_enqueued = true;
     }
 
-    // ThreadPool 的任务类型是 std::function，要求可拷贝。
-    // 这里用 shared_ptr<unique_ptr<...>> 做一层 holder：
-    // 1) submit 成功时，任务副本共同持有这份 unique_ptr；
-    // 2) submit 失败时，当前线程还能把 unique_ptr 原样拿回来做回滚。
     auto session_holder = std::make_shared<std::unique_ptr<TraceSession>>(std::move(session));
     TraceSessionManager* manager = this;
     BufferedTraceRepository* buffered_trace_repo = buffered_trace_repo_;
@@ -609,8 +701,6 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
             return;
         }
         manager->worker_begin_count_.fetch_add(1, std::memory_order_relaxed);
-        // 说明：SerializeTrace 在检测到环时会把异常写入 payload.anomalies。
-        // 这份异常信息当前只通过 trace_payload 传给 AI 分析链路，不会单独落到 trace_span 表中。
 
         TraceRepository::TraceAnalysisRecord analysis_record;
         TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
@@ -622,7 +712,6 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
                 analysis_record = manager->BuildAnalysisRecord(summary.trace_id, analysis);
                 analysis_ptr = &analysis_record;
             } catch (const std::exception& e) {
-                // AI 调用失败时写入失败态 analysis，保证“失败可见”，便于后续在业务侧触发重试。
                 analysis_record.trace_id = summary.trace_id;
                 analysis_record.risk_level = "unknown";
                 analysis_record.summary = "AI_ANALYSIS_FAILED";
@@ -631,7 +720,6 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
                 analysis_record.confidence = 0.0;
                 analysis_ptr = &analysis_record;
             } catch (...) {
-                // 非标准异常同样写入失败态，避免出现“无分析记录”的黑盒状态。
                 analysis_record.trace_id = summary.trace_id;
                 analysis_record.risk_level = "unknown";
                 analysis_record.summary = "AI_ANALYSIS_FAILED";
@@ -643,11 +731,6 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
             manager->ai_total_ns_.fetch_add(NowSteadyNs() - ai_begin_ns, std::memory_order_relaxed);
         }
 
-        // prompt_debug 现状说明：
-        // 1) 持久层已具备 prompt_debug 表与 SaveSinglePromptDebug/Atomic 写入能力；
-        // 2) 当前先不在主链路写入（传 nullptr），避免在 MVP 阶段引入额外字段组装复杂度；
-        // 3) 后续做“分析重试”时，优先把当次 trace_payload 作为 input_json 落到 prompt_debug，
-        //    这样可直接重放请求，不需要再次从 trace_span 重新组装树结构。
         manager->analysis_enqueue_calls_.fetch_add(1, std::memory_order_relaxed);
         const uint64_t enqueue_begin_ns = NowSteadyNs();
         bool saved = true;
@@ -667,7 +750,6 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         }
 
         const std::string risk_level = toLowerCopy(analysis_ptr->risk_level);
-        // 告警策略放在聚合调度层，当前仅对 critical 发通知，避免 notifier 混入业务策略判断。
         if (risk_level != "critical") {
             return;
         }
@@ -687,8 +769,6 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         notifier->notifyTraceAlert(event);
     })) {
         submit_fail_count_.fetch_add(1, std::memory_order_relaxed);
-        // submit 失败时说明 ready trace 还没真正进入下游执行队列，这时候必须把会话塞回 manager，
-        // 否则客户端已经拿到 202，但服务端内部却把 trace 蒸发了。
         std::unique_ptr<TraceSession> restored_session = std::move(*session_holder);
         rollback_session(std::move(restored_session));
         return false;
@@ -696,6 +776,178 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
     AddCompletedTombstoneLocked(trace_key);
     submit_ok_count_.fetch_add(1, std::memory_order_relaxed);
     return true;
+}
+
+void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
+{
+    std::unique_ptr<TraceSession> session = std::move(job.session);
+    if (!session) {
+        return;
+    }
+
+    const size_t trace_key = session->trace_key;
+    const uint64_t session_epoch = session->session_epoch;
+    const size_t span_count = session->spans.size();
+
+    std::string trace_payload;
+    TraceRepository::TraceSummary summary;
+    std::vector<TraceRepository::TraceSpanRecord> span_records;
+
+    // 先吃 session 自己已经准备好的缓存。
+    // 既然 submit 失败回滚时会把同一个 session 放回 manager，那么下次 retry 再进来时，
+    // 应该优先复用 prepared 结果，而不是上来就把整条 trace 再建树、再算一遍。
+    const bool has_prepared_payload = session->prepared_trace_payload.has_value();
+    const bool has_prepared_summary = session->prepared_summary.has_value();
+    if (has_prepared_payload) {
+        trace_payload = session->prepared_trace_payload.value();
+    }
+    if (has_prepared_summary) {
+        summary = session->prepared_summary.value();
+    }
+
+    const bool need_payload = !has_prepared_payload;
+    const bool need_summary = !has_prepared_summary;
+    const bool need_primary = !session->primary_enqueued;
+    if (need_payload || need_summary || need_primary) {
+        TraceIndex index = BuildTraceIndex(*session);
+        std::vector<const SpanEvent*> order;
+
+        // 当前 order 还是挂在 SerializeTrace 的副作用上。
+        // 所以哪怕 payload 已经有缓存，只要这轮还要补 summary 或 primary，
+        // 这里仍然需要先走一次序列化来拿 DFS 顺序；只是临时 payload 会被直接丢弃，不再覆盖 prepared 缓存。
+        if (need_payload) {
+            trace_payload = SerializeTrace(index, &order);
+        } else {
+            (void)SerializeTrace(index, &order);
+        }
+        if (need_payload) {
+            session->prepared_trace_payload = trace_payload;
+        }
+        if (need_summary) {
+            summary = BuildTraceSummary(*session, order);
+            session->prepared_summary = summary;
+        }
+        if (need_primary) {
+            span_records = BuildSpanRecords(order);
+        }
+    }
+
+    if (buffered_trace_repo_ && !session->primary_enqueued) {
+        BufferedTraceRepository::TracePrimaryWrite primary_write;
+        primary_write.summary = summary;
+        primary_write.spans = std::move(span_records);
+        if (!buffered_trace_repo_->AppendPrimary(std::move(primary_write))) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto inflight_iter = dispatching_inflight_.find(trace_key);
+            if (inflight_iter != dispatching_inflight_.end() &&
+                inflight_iter->second.session_epoch == session_epoch) {
+                dispatching_inflight_.erase(inflight_iter);
+            }
+            RestoreSessionLocked(std::move(session), span_count);
+            return;
+        }
+        session->primary_enqueued = true;
+    }
+
+    auto session_holder = std::make_shared<std::unique_ptr<TraceSession>>(std::move(session));
+    TraceSessionManager* manager = this;
+    BufferedTraceRepository* buffered_trace_repo = buffered_trace_repo_;
+    TraceAiProvider* trace_ai = trace_ai_;
+    INotifier* notifier = notifier_;
+    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, session_holder, trace_payload = std::move(trace_payload), summary = std::move(summary)]() mutable {
+        if (!manager || !session_holder || !(*session_holder)) {
+            return;
+        }
+        manager->worker_begin_count_.fetch_add(1, std::memory_order_relaxed);
+
+        TraceRepository::TraceAnalysisRecord analysis_record;
+        TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
+        if (trace_ai) {
+            manager->ai_calls_.fetch_add(1, std::memory_order_relaxed);
+            const uint64_t ai_begin_ns = NowSteadyNs();
+            try {
+                LogAnalysisResult analysis = trace_ai->AnalyzeTrace(trace_payload);
+                analysis_record = manager->BuildAnalysisRecord(summary.trace_id, analysis);
+                analysis_ptr = &analysis_record;
+            } catch (const std::exception& e) {
+                analysis_record.trace_id = summary.trace_id;
+                analysis_record.risk_level = "unknown";
+                analysis_record.summary = "AI_ANALYSIS_FAILED";
+                analysis_record.root_cause = e.what();
+                analysis_record.solution = "请检查 AI 代理与模型服务状态，稍后重试该 trace 的分析。";
+                analysis_record.confidence = 0.0;
+                analysis_ptr = &analysis_record;
+            } catch (...) {
+                analysis_record.trace_id = summary.trace_id;
+                analysis_record.risk_level = "unknown";
+                analysis_record.summary = "AI_ANALYSIS_FAILED";
+                analysis_record.root_cause = "Unknown non-std exception";
+                analysis_record.solution = "请检查 AI 代理与模型服务状态，稍后重试该 trace 的分析。";
+                analysis_record.confidence = 0.0;
+                analysis_ptr = &analysis_record;
+            }
+            manager->ai_total_ns_.fetch_add(NowSteadyNs() - ai_begin_ns, std::memory_order_relaxed);
+        }
+
+        manager->analysis_enqueue_calls_.fetch_add(1, std::memory_order_relaxed);
+        const uint64_t enqueue_begin_ns = NowSteadyNs();
+        bool saved = true;
+        if (!buffered_trace_repo) {
+            saved = false;
+        } else {
+            BufferedTraceRepository::TraceAnalysisWrite analysis_write;
+            if (analysis_ptr) {
+                analysis_write.analysis = *analysis_ptr;
+            }
+            saved = buffered_trace_repo->AppendAnalysis(std::move(analysis_write));
+        }
+        manager->analysis_enqueue_total_ns_.fetch_add(NowSteadyNs() - enqueue_begin_ns, std::memory_order_relaxed);
+        manager->worker_done_count_.fetch_add(1, std::memory_order_relaxed);
+        if (!saved || !notifier || !analysis_ptr) {
+            return;
+        }
+
+        const std::string risk_level = toLowerCopy(analysis_ptr->risk_level);
+        if (risk_level != "critical") {
+            return;
+        }
+
+        TraceAlertEvent event;
+        event.trace_id = summary.trace_id;
+        event.service_name = summary.service_name;
+        event.start_time_ms = summary.start_time_ms;
+        event.duration_ms = summary.duration_ms;
+        event.span_count = summary.span_count;
+        event.token_count = summary.token_count;
+        event.risk_level = analysis_ptr->risk_level;
+        event.summary = analysis_ptr->summary;
+        event.root_cause = analysis_ptr->root_cause;
+        event.solution = analysis_ptr->solution;
+        event.confidence = analysis_ptr->confidence;
+        notifier->notifyTraceAlert(event);
+    })) {
+        submit_fail_count_.fetch_add(1, std::memory_order_relaxed);
+        std::unique_ptr<TraceSession> restored_session = std::move(*session_holder);
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto inflight_iter = dispatching_inflight_.find(trace_key);
+        if (inflight_iter != dispatching_inflight_.end() &&
+            inflight_iter->second.session_epoch == session_epoch) {
+            dispatching_inflight_.erase(inflight_iter);
+        }
+        RestoreSessionLocked(std::move(restored_session), span_count);
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto inflight_iter = dispatching_inflight_.find(trace_key);
+        if (inflight_iter != dispatching_inflight_.end() &&
+            inflight_iter->second.session_epoch == session_epoch) {
+            dispatching_inflight_.erase(inflight_iter);
+        }
+        AddCompletedTombstoneLocked(trace_key);
+    }
+    submit_ok_count_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void TraceSessionManager::RefreshOverloadState()

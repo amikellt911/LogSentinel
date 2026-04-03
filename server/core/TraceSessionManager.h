@@ -261,6 +261,14 @@ private:
     // 避免公开入口互相调用时重复加锁导致死锁。
     PushResult PushLocked(const SpanEvent& span, int64_t now_ms);
     bool DispatchLocked(size_t trace_key);
+    // 从 manager 主容器中摘出一条 session，后续交给 dispatch 线程锁外处理。
+    std::unique_ptr<TraceSession> DetachSessionLocked(size_t trace_key, size_t* span_count);
+    // dispatch 失败时把 session 放回 manager，并切到 ReadyRetryLater 语义等待后续重投。
+    void RestoreSessionLocked(std::unique_ptr<TraceSession> session, size_t span_count);
+    // 有界 dispatch queue 的最小入队入口；第一步先只表达“能否抢到分发通道”。
+    bool EnqueueDispatchJobLocked(DispatchJob* job);
+    // dispatch 线程消费 job 后继续沿用现有主链路逻辑；后续再逐步拆成更细阶段。
+    void ProcessDispatchJob(DispatchJob job);
     // 基于当前积压指标刷新 overload_state_，统一收口新老 trace 的准入门禁状态。
     void RefreshOverloadState();
     // 当前请求是否应该在入口被拒绝：Overload 拒新 trace，Critical 新老都拒。
