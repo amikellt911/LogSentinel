@@ -109,7 +109,7 @@
 - [ ] 将 `SweepExpiredSessions` 触发的 ready trace 改成“摘 session -> 标记 inflight -> 投递 dispatch 线程”
 - [ ] 明确 `dispatch queue submit` 失败回滚：移除 inflight、恢复 session、挂 `ReadyRetryLater`
 - [ ] 将 `DispatchLocked` 重构为“两段式”：锁内只摘 session / 改状态，锁外做建树、序列化、build、append、submit
-- [ ] 锁外处理时先看 prepared optional，再看 `primary_enqueued`，避免重复 `SerializeTrace` 和重复 `AppendPrimary`
+- [x] 锁外处理时先看 prepared optional，再看 `primary_enqueued`，避免重复 `SerializeTrace` 和重复 `AppendPrimary`
 - [ ] 收口 `primary_enqueued=true` 的重试路径：跳过 `AppendPrimary`，仅复用/补齐 `prepared_trace_payload` 与 `prepared_summary`
 - [x] 收口 `ProcessDispatchJob` 的 prepared 读取顺序：先读缓存，再补算缺失项，避免“为了补 primary 顺手重算 summary”这类无意义 CPU 开销
 - [ ] 明确 worker `submit` 失败回滚：移除 inflight、恢复 session、挂 retry，不重复 primary 主数据写入

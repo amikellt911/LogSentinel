@@ -789,54 +789,117 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     const uint64_t session_epoch = session->session_epoch;
     const size_t span_count = session->spans.size();
 
-    std::string trace_payload;
-    TraceRepository::TraceSummary summary;
     std::vector<TraceRepository::TraceSpanRecord> span_records;
+    const std::string* trace_payload_ptr = nullptr;
+    const TraceRepository::TraceSummary* summary_ptr = nullptr;
 
     // 先吃 session 自己已经准备好的缓存。
     // 既然 submit 失败回滚时会把同一个 session 放回 manager，那么下次 retry 再进来时，
     // 应该优先复用 prepared 结果，而不是上来就把整条 trace 再建树、再算一遍。
-    const bool has_prepared_payload = session->prepared_trace_payload.has_value();
-    const bool has_prepared_summary = session->prepared_summary.has_value();
-    if (has_prepared_payload) {
-        trace_payload = session->prepared_trace_payload.value();
+    if (session->prepared_trace_payload.has_value()) {
+        trace_payload_ptr = &session->prepared_trace_payload.value();
     }
-    if (has_prepared_summary) {
-        summary = session->prepared_summary.value();
+    if (session->prepared_summary.has_value()) {
+        summary_ptr = &session->prepared_summary.value();
     }
 
-    const bool need_payload = !has_prepared_payload;
-    const bool need_summary = !has_prepared_summary;
+    const bool need_payload = (trace_payload_ptr == nullptr);
+    const bool need_summary = (summary_ptr == nullptr);
     const bool need_primary = !session->primary_enqueued;
-    if (need_payload || need_summary || need_primary) {
-        TraceIndex index = BuildTraceIndex(*session);
-        std::vector<const SpanEvent*> order;
 
-        // 当前 order 还是挂在 SerializeTrace 的副作用上。
-        // 所以哪怕 payload 已经有缓存，只要这轮还要补 summary 或 primary，
-        // 这里仍然需要先走一次序列化来拿 DFS 顺序；只是临时 payload 会被直接丢弃，不再覆盖 prepared 缓存。
-        if (need_payload) {
-            trace_payload = SerializeTrace(index, &order);
+    // 下面把“缺 payload / 缺 summary / 缺 primary”拆开处理。
+    // 这样每个 if 都只表达一种缺口，而不是把三种意图揉成一个大 if 再在里面来回跳。
+    std::optional<TraceIndex> trace_index;
+    std::vector<const SpanEvent*> order;
+    bool order_ready = false;
+
+    auto ensure_trace_index = [&]() -> const TraceIndex& {
+        if (!trace_index.has_value()) {
+            trace_index = BuildTraceIndex(*session);
+        }
+        return trace_index.value();
+    };
+
+    auto ensure_order = [&]() -> const std::vector<const SpanEvent*>& {
+        if (order_ready) {
+            return order;
+        }
+
+        // 当前 DFS 顺序仍然依赖 SerializeTrace 的副作用产出。
+        // 所以只要 summary / primary 还要用 order，就得走一次 SerializeTrace；
+        // 但如果 payload 已经准备好了，这里只把序列化结果当“取 order 的代价”丢掉，不再额外拷贝回局部变量。
+        if (trace_payload_ptr == nullptr) {
+            session->prepared_trace_payload = SerializeTrace(ensure_trace_index(), &order);
+            trace_payload_ptr = &session->prepared_trace_payload.value();
         } else {
-            (void)SerializeTrace(index, &order);
+            (void)SerializeTrace(ensure_trace_index(), &order);
         }
-        if (need_payload) {
-            session->prepared_trace_payload = trace_payload;
-        }
-        if (need_summary) {
-            summary = BuildTraceSummary(*session, order);
-            session->prepared_summary = summary;
-        }
-        if (need_primary) {
-            span_records = BuildSpanRecords(order);
+        order_ready = true;
+        return order;
+    };
+
+    if (need_payload) {
+        if (need_summary || need_primary) {
+            // 既然后面反正要 order，就直接在取 order 时把 payload 一并补齐，避免同一轮重复序列化两次。
+            (void)ensure_order();
+        } else {
+            session->prepared_trace_payload = SerializeTrace(ensure_trace_index(), nullptr);
+            trace_payload_ptr = &session->prepared_trace_payload.value();
         }
     }
 
+    if (need_summary) {
+        const std::vector<const SpanEvent*>& ready_order = ensure_order();
+        session->prepared_summary = BuildTraceSummary(*session, ready_order);
+        summary_ptr = &session->prepared_summary.value();
+    }
+
+    if (need_primary) {
+        const std::vector<const SpanEvent*>& ready_order = ensure_order();
+        span_records = BuildSpanRecords(ready_order);
+    }
+
+    // 上面三个缺口都补完后，worker 与 append 路径只读 session 内部 prepared 数据即可。
+    // 这样 trace_payload / summary 在本线程里就不用再多拷一份中间局部副本。
+    if (!trace_payload_ptr && session->prepared_trace_payload.has_value()) {
+        trace_payload_ptr = &session->prepared_trace_payload.value();
+    }
+    if (!summary_ptr && session->prepared_summary.has_value()) {
+        summary_ptr = &session->prepared_summary.value();
+    }
+
+    // primary 指的是“主数据首段”：
+    // 1) trace_summary：给列表页、详情页和后续 analysis 结果做主键骨架；
+    // 2) span_records：给瀑布图/调用链详情提供原始 span 明细。
+    // 既然这两份数据是后续 AI analysis、告警和查询的基础，那么它们必须先 append 到 BufferedTraceRepository，
+    // 不能等 worker 线程里的 AI 分析跑完再写。否则一旦 AI 线程成功、主数据却还没进缓冲区，
+    // 就会出现“analysis 已有结果，但 trace_summary / trace_spans 还没有”的前后错位。
+    //
+    // 同时这里还要守住“只 append 一次”的约束：
+    // - 第一次 dispatch 时，primary_enqueued=false，所以会真正写 summary + spans；
+    // - 如果后面 worker submit 失败，session 会带着 prepared 缓存回滚回 manager；
+    // - 下一次 retry 再进 ProcessDispatchJob 时，primary_enqueued=true，说明主数据已经成功入缓冲，
+    //   这时就必须跳过 AppendPrimary，避免同一条 trace 重复写出第二份主数据。
     if (buffered_trace_repo_ && !session->primary_enqueued) {
         BufferedTraceRepository::TracePrimaryWrite primary_write;
-        primary_write.summary = summary;
+        // summary_ptr 指向 session 内部 prepared_summary。
+        // 这里做一次值拷贝是必要的，因为写入器拿到的是独立 write 对象，不能直接借 session 内部对象跨层保存引用。
+        if (summary_ptr) {
+            primary_write.summary = *summary_ptr;
+        }
+        // span_records 是本轮 dispatch 临时构建出来的主数据明细；
+        // append 之后当前线程不再需要它，所以直接 move 进写入对象，避免再拷一份 vector 内容。
         primary_write.spans = std::move(span_records);
         if (!buffered_trace_repo_->AppendPrimary(std::move(primary_write))) {
+            // AppendPrimary 失败说明“主数据首段”连缓冲写入器这一层都没进去。
+            // 既然这时 trace 还停留在 dispatch 中间态，就不能让它继续留在 inflight，否则：
+            // 1) manager 里查不到这条 session；
+            // 2) tombstone 也还没建立；
+            // 3) 晚到 span 会落在“旧 session 已摘走、新 session 还没回滚”的缝里，状态会乱。
+            // 所以这里必须在同一把 manager 锁里做三件事：
+            // - 删掉 inflight 标记
+            // - 把 session 放回 manager
+            // - 改成 ReadyRetryLater，挂上下一次 retry tick
             std::lock_guard<std::mutex> lock(mutex_);
             auto inflight_iter = dispatching_inflight_.find(trace_key);
             if (inflight_iter != dispatching_inflight_.end() &&
@@ -846,6 +909,9 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
             RestoreSessionLocked(std::move(session), span_count);
             return;
         }
+        // 只有 AppendPrimary 成功后，才能把 primary_enqueued 置 true。
+        // 这个位代表“summary + spans 已经成功送入 BufferedTraceRepository”，
+        // 不代表 analysis 已经完成，更不代表 SQLite flush 已经落盘。
         session->primary_enqueued = true;
     }
 
@@ -854,8 +920,10 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     BufferedTraceRepository* buffered_trace_repo = buffered_trace_repo_;
     TraceAiProvider* trace_ai = trace_ai_;
     INotifier* notifier = notifier_;
-    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, session_holder, trace_payload = std::move(trace_payload), summary = std::move(summary)]() mutable {
-        if (!manager || !session_holder || !(*session_holder)) {
+    const std::string* worker_trace_payload = trace_payload_ptr;
+    const TraceRepository::TraceSummary* worker_summary = summary_ptr;
+    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, session_holder, worker_trace_payload, worker_summary]() mutable {
+        if (!manager || !session_holder || !(*session_holder) || !worker_trace_payload || !worker_summary) {
             return;
         }
         manager->worker_begin_count_.fetch_add(1, std::memory_order_relaxed);
@@ -866,11 +934,11 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
             manager->ai_calls_.fetch_add(1, std::memory_order_relaxed);
             const uint64_t ai_begin_ns = NowSteadyNs();
             try {
-                LogAnalysisResult analysis = trace_ai->AnalyzeTrace(trace_payload);
-                analysis_record = manager->BuildAnalysisRecord(summary.trace_id, analysis);
+                LogAnalysisResult analysis = trace_ai->AnalyzeTrace(*worker_trace_payload);
+                analysis_record = manager->BuildAnalysisRecord(worker_summary->trace_id, analysis);
                 analysis_ptr = &analysis_record;
             } catch (const std::exception& e) {
-                analysis_record.trace_id = summary.trace_id;
+                analysis_record.trace_id = worker_summary->trace_id;
                 analysis_record.risk_level = "unknown";
                 analysis_record.summary = "AI_ANALYSIS_FAILED";
                 analysis_record.root_cause = e.what();
@@ -878,7 +946,7 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
                 analysis_record.confidence = 0.0;
                 analysis_ptr = &analysis_record;
             } catch (...) {
-                analysis_record.trace_id = summary.trace_id;
+                analysis_record.trace_id = worker_summary->trace_id;
                 analysis_record.risk_level = "unknown";
                 analysis_record.summary = "AI_ANALYSIS_FAILED";
                 analysis_record.root_cause = "Unknown non-std exception";
@@ -913,12 +981,12 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         }
 
         TraceAlertEvent event;
-        event.trace_id = summary.trace_id;
-        event.service_name = summary.service_name;
-        event.start_time_ms = summary.start_time_ms;
-        event.duration_ms = summary.duration_ms;
-        event.span_count = summary.span_count;
-        event.token_count = summary.token_count;
+        event.trace_id = worker_summary->trace_id;
+        event.service_name = worker_summary->service_name;
+        event.start_time_ms = worker_summary->start_time_ms;
+        event.duration_ms = worker_summary->duration_ms;
+        event.span_count = worker_summary->span_count;
+        event.token_count = worker_summary->token_count;
         event.risk_level = analysis_ptr->risk_level;
         event.summary = analysis_ptr->summary;
         event.root_cause = analysis_ptr->root_cause;
