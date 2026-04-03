@@ -180,6 +180,9 @@ public:
 
     size_t size() const;
     PushResult Push(const SpanEvent& span);
+    // 当前主链路不依赖这个公开 Dispatch 入口。
+    // 现在推荐的正常路径是：Push/Seal -> 时间轮 sweep -> dispatch queue -> ProcessDispatchJob。
+    // 这里暂时保留，主要是为了兼容少量旧测试/手工触发入口，后续若彻底无调用方再考虑继续收口。
     bool Dispatch(size_t trace_key);
     RuntimeStatsSnapshot SnapshotRuntimeStats() const;
     std::string DescribeRuntimeStats() const;

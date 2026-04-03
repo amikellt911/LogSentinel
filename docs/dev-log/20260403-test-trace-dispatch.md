@@ -84,3 +84,24 @@ Function Explanation:
 
 Pitfalls:
 - 只验证最终落库成功还不够；如果不先断言 `lifecycle_state=Sealed`、`seal_reason=DuplicateSpan`、`sealed_deadline_tick=1`，那么后面就算又被人偷偷改回“立刻 dispatch”，测试也可能继续绿，但保护语义已经被改坏了。
+
+---
+
+追加记录（2026-04-03，补公开 Dispatch 入口备注）：
+
+Git Commit Message:
+docs(core): 补充公开dispatch入口的当前定位注释
+
+Modification:
+- server/core/TraceSessionManager.h
+
+Learning Tips:
+
+Newbie Tips:
+- 公开接口还留在类上，不代表它仍然是主链路入口。很多时候保留一个旧入口只是为了兼容测试或人工操作，真正推荐的数据流已经换成了另一条线。
+
+Function Explanation:
+- `Dispatch(size_t trace_key)`：当前更多像一个兼容入口。真正线上推荐路径已经是 `Push -> Seal -> SweepExpiredSessions -> dispatch queue -> ProcessDispatchJob`。
+
+Pitfalls:
+- 如果后面有人只看函数名，不看注释，就很容易误以为“直接调 Dispatch”仍然是推荐用法；这样会绕开你前面刚收好的主链路理解。
