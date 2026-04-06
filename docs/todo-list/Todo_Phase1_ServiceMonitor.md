@@ -221,3 +221,5 @@
 - [x] 单测已补两条关键口径
   - [x] 同一分钟内 `OnTick()` 不提前发布活跃分钟数据
   - [x] 时间推进超过窗口后，旧分钟统计会退窗消失
+- [x] `main.cpp` 已新增 `--service-monitor-window-minutes`，联调时可临时把窗口压到 `1~2` 分钟，不必真等 30 分钟
+- [x] `server/tests/run_all_and_demo.sh` 已默认透传 `SERVICE_MONITOR_WINDOW_MINUTES=2`，一条命令即可直接观察退窗

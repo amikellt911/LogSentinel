@@ -24,6 +24,9 @@ PROXY_PORT="${PROXY_PORT:-8001}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 TRACE_AI_BASE_URL="${TRACE_AI_BASE_URL:-http://127.0.0.1:${PROXY_PORT}}"
 FRONTEND_URL="${FRONTEND_URL:-http://127.0.0.1:5173/service-prototype}"
+# 联调时默认把服务监控窗口压到 1 分钟，这样跑一轮 demo 就能很快看到进窗/退窗。
+# 如果你想恢复产品默认语义，可以在命令前覆盖同名环境变量。
+SERVICE_MONITOR_WINDOW_MINUTES="${SERVICE_MONITOR_WINDOW_MINUTES:-1}"
 WAIT_RETRY="${WAIT_RETRY:-60}"
 WAIT_SLEEP_SEC="${WAIT_SLEEP_SEC:-0.5}"
 STOP_RETRY="${STOP_RETRY:-40}"
@@ -221,12 +224,15 @@ PROXY_PID=$!
 wait_for_http_ready "${TRACE_AI_BASE_URL}/" "AI proxy" "${PROXY_PID}" "${PROXY_LOG}"
 
 log "step3: start LogSentinel on ${BASE_URL}"
+# 这里把小窗口参数直接收进联合脚本，是为了让你一条命令就能跑完联调。
+# 否则每次想验证退窗，都还得再手敲一遍后端启动参数，重复且容易忘。
 "${SERVER_BIN}" \
     --db "${DB_PATH}" \
     --port "${BACKEND_PORT}" \
     --no-auto-start-proxy \
     --trace-ai-provider mock \
     --trace-ai-base-url "${TRACE_AI_BASE_URL}" \
+    --service-monitor-window-minutes "${SERVICE_MONITOR_WINDOW_MINUTES}" \
     >"${BACKEND_LOG}" 2>&1 &
 BACKEND_PID=$!
 wait_for_http_ready "${BASE_URL}/service-monitor/runtime" "LogSentinel" "${BACKEND_PID}" "${BACKEND_LOG}"

@@ -303,6 +303,67 @@ feat(service-monitor): 接入服务监控30分钟单窗口时间窗
 
 - 继续在 `server/core/ServiceRuntimeAccumulator.h` 里补了每个公开接口和每个内部辅助函数的中文注释，重点解释“为什么 observation 先写桶、为什么只推进已封口分钟、为什么 recent/latest 不进窗”。
 - 继续在 `server/core/ServiceRuntimeAccumulator.cpp` 里补了核心函数的中文注释，尤其是 `OnPrimaryCommitted()`、`OnTick()`、`EnsureBucketForMinuteLocked()`、`ApplyBucketToWindowLocked()` 这些最容易把时间窗语义看混的地方。
+
+# 追加记录：2026-04-06 服务监控联调窗口启动参数
+
+## Git Commit Message
+
+feat(main): 增加服务监控窗口分钟数启动参数
+
+## Modification
+
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `server/src/main.cpp` 的参数解析处补了 `--service-monitor-window-minutes` 的中文注释，说明这个参数主要用于联调时把窗口临时压到 `1~2` 分钟，方便观察进窗和退窗。
+
+## Learning Tips
+
+### Newbie Tips
+
+产品默认值和联调时间尺度不一定要绑死。窗口对外语义可以继续默认 30 分钟，但启动时留一个小参数口子，联调和回归就不用真等半小时。
+
+### Function Explanation
+
+`std::stoi`：把命令行传进来的字符串解析成整数。这里配合参数校验，把 `--service-monitor-window-minutes` 直接转成 `int`，再传给运行态累加器。
+
+### Pitfalls
+
+这种联调参数最好只影响“运行时实例化配置”，不要反过来去改前端文案或协议字段。否则你只是为了方便测试，却会把展示语义一起搞乱。
+
+# 追加记录：2026-04-06 联合联调脚本默认透传小窗口
+
+## Git Commit Message
+
+feat(test): 联合联调脚本默认透传服务监控小窗口参数
+
+## Modification
+
+- `server/tests/run_all_and_demo.sh`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `server/tests/run_all_and_demo.sh` 里补了 `SERVICE_MONITOR_WINDOW_MINUTES` 的中文注释，说明为什么联合脚本默认压到 2 分钟，以及如何通过环境变量覆盖。
+- 在同一个脚本里补了后端启动命令前的中文注释，说明把 `--service-monitor-window-minutes` 收进脚本是为了省掉重复手敲启动参数。
+
+## Learning Tips
+
+### Newbie Tips
+
+联合脚本的价值就在于把“每次都一样的参数”收进去。既然联调退窗时几乎每次都要把窗口压小，那就不该让人反复手敲同一个启动参数。
+
+### Function Explanation
+
+`VAR="${VAR:-default}"`：这是 shell 里很常见的“环境变量优先，否则给默认值”的写法。这里让联合脚本默认用 2 分钟窗口，但你需要时仍然可以外部覆盖。
+
+### Pitfalls
+
+shell 的续行命令里不要把注释放在反斜杠链中间，不然很容易把整条命令解析坏。注释最好写在命令块上方，而不是塞进 `\` 续行里。
 - `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
 - `docs/dev-log/20260406-feat-service-runtime.md`
 
