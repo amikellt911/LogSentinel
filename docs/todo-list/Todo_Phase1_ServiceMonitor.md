@@ -190,7 +190,7 @@
 - [x] 先把原型页 overview 接真数据
 - [x] 再把全局异常操作排行接真数据
 - [x] 再把服务卡列表接真数据（当前先接基础统计字段，右侧详情继续保留 mock）
-- [ ] 最后把当前服务最近异常 Trace 样本接真数据
+- [x] 最后把当前服务最近异常 Trace 样本接真数据
 
 ### 暂不做
 - [ ] 不做旧 `ServiceMonitor.vue` 真联调
@@ -204,4 +204,5 @@
 - [x] 前端 `ServiceMonitorPrototype.vue` 已先把顶部 overview 接到 `/service-monitor/runtime`
 - [x] 前端 `ServiceMonitorPrototype.vue` 已把右下角全局异常操作排行接到 `/service-monitor/runtime`
 - [x] 左侧服务卡基础字段已接到 `/service-monitor/runtime/services_topk`
-- [ ] 右侧问题摘要、当前服务操作表、最近异常 Trace 样本 仍然保留 mock 数据
+- [x] 当前服务最近异常 Trace 样本 已接到 `/service-monitor/runtime/services_topk[].recent_samples`
+- [ ] 右侧问题摘要、当前服务操作表 仍然保留 mock 数据

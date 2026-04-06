@@ -118,6 +118,36 @@ feat(frontend): 接入服务监控原型页服务卡基础统计真数据
 
 后端 `services_topk` 是动态 top4，当前选中的服务名可能突然不在榜里。如果不在拉取后同步 `selectedServiceName`，右侧面板就会继续悬着一个已经不在左侧榜单里的旧 mock 服务。
 
+# 追加记录：2026-04-06 原型页最近异常 Trace 样本真数据接线
+
+## Git Commit Message
+
+feat(frontend): 接入服务监控原型页最近异常样本真数据
+
+## Modification
+
+- `client/src/views/ServiceMonitorPrototype.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/ServiceMonitorPrototype.vue` 的 `recentTraces` 数据适配处补了注释，说明后端已经按 `trace_id + service` 去重并裁成最近 3 条，前端这里只做字段名转换。
+
+## Learning Tips
+
+### Newbie Tips
+
+后端已经决定好的排序和去重规则，前端就别再重新算一遍。否则两边一旦口径不一致，页面上同一块数据就会在刷新后跳来跳去，很难排查。
+
+### Function Explanation
+
+数据适配层的作用就是“把后端结构翻译成当前页面结构”。这次 `recent_samples[] -> recentTraces[]` 的转换就是典型例子：模板完全不用改，变化都被收口在计算属性里。
+
+### Pitfalls
+
+当前是“有后端 recent_samples 就优先吃后端，没有才退回 mock”。所以如果某个服务进入 top4 但后端样本暂时还没回来，页面仍可能先看到 mock 样本。这是当前刻意保留的过渡态，不是 bug。
+
 # Learning Tips
 
 ## Newbie Tips

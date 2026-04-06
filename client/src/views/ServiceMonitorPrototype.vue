@@ -357,12 +357,22 @@ interface RuntimeGlobalOperationItem {
   avg_latency_ms: number
 }
 
+interface RuntimeRecentSampleItem {
+  trace_id: string
+  time_ms: number
+  operation_name: string
+  summary: string
+  duration_ms: number
+  risk_level: string
+}
+
 interface RuntimeServiceItem {
   service_name: string
   risk_level: string
   exception_count: number
   avg_latency_ms: number
   latest_exception_time_ms: number
+  recent_samples: RuntimeRecentSampleItem[]
 }
 
 interface ServiceRuntimeSnapshotResponse {
@@ -565,6 +575,15 @@ const services = computed<ServiceItem[]>(() => {
 
   return runtimeServices.value.map(runtimeService => {
     const mockDetail = mockServices.value.find(service => service.name === runtimeService.service_name)
+    const runtimeRecentTraces = runtimeService.recent_samples.map(sample => ({
+      traceId: sample.trace_id,
+      time: formatRuntimeTime(sample.time_ms),
+      operation: sample.operation_name,
+      summary: sample.summary,
+      durationMs: sample.duration_ms,
+      risk: mapRuntimeRisk(sample.risk_level)
+    }))
+
     return {
       name: runtimeService.service_name,
       risk: mapRuntimeRisk(runtimeService.risk_level),
@@ -574,7 +593,9 @@ const services = computed<ServiceItem[]>(() => {
       summary: mockDetail?.summary ?? '该服务已进入运行态列表，详细摘要与样本仍在下一刀接入。',
       issues: mockDetail?.issues ?? ['当前服务已接入基础统计，问题摘要模块下一刀再接真数据。'],
       operations: mockDetail?.operations ?? [],
-      recentTraces: mockDetail?.recentTraces ?? []
+      // recent_samples 已经由后端按 trace_id + service 去重并按时间倒序裁成最近 3 条；
+      // 这里前端只做字段名适配，不再重新发明一套筛选规则。
+      recentTraces: runtimeRecentTraces.length > 0 ? runtimeRecentTraces : (mockDetail?.recentTraces ?? [])
     }
   })
 })
