@@ -65,9 +65,18 @@ TEST(ServiceRuntimeAccumulatorTest, BuildSnapshotReturnsPublishedEmptySnapshotBy
 
 TEST(ServiceRuntimeAccumulatorTest, TickPublishesOverviewServicesAndGlobalOperationRanking)
 {
-    ServiceRuntimeAccumulator accumulator(/*service_top_k*/4, /*operation_top_k*/6, /*recent_sample_limit*/3);
+    int64_t now_ms = 0;
+    ServiceRuntimeAccumulator accumulator(/*service_top_k*/4,
+                                         /*operation_top_k*/6,
+                                         /*recent_sample_limit*/3,
+                                         /*window_minutes*/30,
+                                         [&now_ms]()
+                                         {
+                                             return now_ms;
+                                         });
 
     accumulator.OnPrimaryCommitted(MakePrimaryObservation());
+    now_ms = 60 * 1000;
     accumulator.OnTick();
 
     const ServiceRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
@@ -93,12 +102,86 @@ TEST(ServiceRuntimeAccumulatorTest, TickPublishesOverviewServicesAndGlobalOperat
     EXPECT_EQ(snapshot.global_operation_ranking[0].count, 2U);
 }
 
+TEST(ServiceRuntimeAccumulatorTest, TickOnlyPublishesSealedMinuteIntoWindow)
+{
+    int64_t now_ms = 0;
+    ServiceRuntimeAccumulator accumulator(/*service_top_k*/4,
+                                         /*operation_top_k*/6,
+                                         /*recent_sample_limit*/3,
+                                         /*window_minutes*/2,
+                                         [&now_ms]()
+                                         {
+                                             return now_ms;
+                                         });
+
+    accumulator.OnPrimaryCommitted(MakePrimaryObservation());
+    accumulator.OnTick();
+
+    // 当前还停留在第 0 分钟，说明 observation 只是先记进“活跃分钟桶”，
+    // 还没有形成已封口分钟，所以窗口统计此时不应该提前可见。
+    ServiceRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
+    EXPECT_EQ(snapshot.overview.abnormal_service_count, 0U);
+    EXPECT_EQ(snapshot.overview.abnormal_trace_count, 0U);
+    EXPECT_TRUE(snapshot.services_topk.empty());
+    EXPECT_TRUE(snapshot.global_operation_ranking.empty());
+
+    now_ms = 60 * 1000;
+    accumulator.OnTick();
+
+    // 时间推进到下一分钟后，第 0 分钟才算封口并真正进入窗口。
+    snapshot = accumulator.BuildSnapshot();
+    ASSERT_EQ(snapshot.overview.abnormal_service_count, 1U);
+    ASSERT_EQ(snapshot.overview.abnormal_trace_count, 1U);
+    ASSERT_EQ(snapshot.services_topk.size(), 1U);
+    ASSERT_EQ(snapshot.global_operation_ranking.size(), 1U);
+}
+
+TEST(ServiceRuntimeAccumulatorTest, TickEvictsExpiredMinuteFromWindow)
+{
+    int64_t now_ms = 0;
+    ServiceRuntimeAccumulator accumulator(/*service_top_k*/4,
+                                         /*operation_top_k*/6,
+                                         /*recent_sample_limit*/3,
+                                         /*window_minutes*/2,
+                                         [&now_ms]()
+                                         {
+                                             return now_ms;
+                                         });
+
+    accumulator.OnPrimaryCommitted(MakePrimaryObservation());
+
+    now_ms = 60 * 1000;
+    accumulator.OnTick();
+    ServiceRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
+    ASSERT_EQ(snapshot.overview.abnormal_trace_count, 1U);
+
+    now_ms = 3 * 60 * 1000;
+    accumulator.OnTick();
+
+    // 2 分钟窗口下，minute=0 的数据在时间推进到 minute=3 时已经滑出窗口，
+    // 所以 overview、服务榜和全局操作榜都应该退回空状态。
+    snapshot = accumulator.BuildSnapshot();
+    EXPECT_EQ(snapshot.overview.abnormal_service_count, 0U);
+    EXPECT_EQ(snapshot.overview.abnormal_trace_count, 0U);
+    EXPECT_TRUE(snapshot.services_topk.empty());
+    EXPECT_TRUE(snapshot.global_operation_ranking.empty());
+}
+
 TEST(ServiceRuntimeAccumulatorTest, TickPublishesRecentSamplesAfterAnalysisReady)
 {
-    ServiceRuntimeAccumulator accumulator(/*service_top_k*/4, /*operation_top_k*/6, /*recent_sample_limit*/3);
+    int64_t now_ms = 0;
+    ServiceRuntimeAccumulator accumulator(/*service_top_k*/4,
+                                         /*operation_top_k*/6,
+                                         /*recent_sample_limit*/3,
+                                         /*window_minutes*/30,
+                                         [&now_ms]()
+                                         {
+                                             return now_ms;
+                                         });
 
     accumulator.OnPrimaryCommitted(MakePrimaryObservation());
     accumulator.OnAnalysisReady(MakeAnalysisObservation());
+    now_ms = 60 * 1000;
     accumulator.OnTick();
 
     const ServiceRuntimeSnapshot snapshot = accumulator.BuildSnapshot();

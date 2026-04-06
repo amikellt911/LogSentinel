@@ -210,3 +210,14 @@
 - [x] 已补手工联调脚本 `server/tests/manual_service_monitor_demo.sh`，可直接复用复杂 trace fixture 灌数并拉 runtime JSON
 - [x] 已新增 `--no-auto-start-proxy` 开关，方便在受限环境下手动先起 proxy 再联调后端
 - [x] 已补联合启动脚本 `server/tests/run_all_and_demo.sh`，可自动编译后端、拉起独立 proxy、执行 demo，并在退出时统一清理后台进程
+
+### F. 2026-04-06：ServiceRuntimeAccumulator 时间窗第一刀
+- [x] `ServiceRuntimeAccumulator` 新增单窗口 `30` 分钟配置能力，默认窗口先固定为 30 分钟
+- [x] `OnPrimaryCommitted(...)` 不再直接改全局累计态，改为先写“当前活跃分钟桶”
+- [x] `OnTick()` 改为只推进“已经封口的分钟”，不把当前活跃分钟提前算进窗口
+- [x] `OnTick()` 已接入过期退窗：`minute - window_minutes` 的旧分钟会从窗口累计态里减掉
+- [x] `overview / services_topk / global_operation_ranking` 已改为从窗口累计态裁快照，不再吃进程期全量累计
+- [x] `recent_samples` 和 `latest_exception_time_ms` 明确保留为“最近态”，不走分钟桶
+- [x] 单测已补两条关键口径
+  - [x] 同一分钟内 `OnTick()` 不提前发布活跃分钟数据
+  - [x] 时间推进超过窗口后，旧分钟统计会退窗消失

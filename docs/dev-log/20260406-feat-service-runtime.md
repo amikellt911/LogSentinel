@@ -258,6 +258,51 @@ feat(test): 新增服务监控联合启动联调脚本
 ## Modification
 
 - `server/tests/run_all_and_demo.sh`
+
+# 追加记录：2026-04-06 服务监控 30 分钟单窗口时间窗
+
+## Git Commit Message
+
+feat(service-monitor): 接入服务监控30分钟单窗口时间窗
+
+## Modification
+
+- `server/core/ServiceRuntimeAccumulator.h`
+- `server/core/ServiceRuntimeAccumulator.cpp`
+- `server/tests/ServiceRuntimeAccumulator_test.cpp`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `server/core/ServiceRuntimeAccumulator.h` 里补了分钟桶、窗口累计态、最近态三者的职责注释，明确哪些字段进窗、哪些字段不进窗。
+- 在 `server/core/ServiceRuntimeAccumulator.cpp` 里补了 `OnPrimaryCommitted()`、`OnTick()`、`EnsureBucketForMinuteLocked()` 的注释，说明为什么 observation 先写活跃分钟桶、为什么只能把已封口分钟推进进窗口、为什么桶数量要比窗口分钟数多一个。
+- 在 `server/tests/ServiceRuntimeAccumulator_test.cpp` 里补了两条新测试的中文注释，分别锁定“同一分钟不提前发布”和“过期分钟会退窗”。
+
+## Learning Tips
+
+### Newbie Tips
+
+滑动窗口别直接在高频写路径上改“最终总数”。更稳的方式是先把这一分钟发生的增量记到分钟桶里，等分钟结束后再统一把这个桶并进窗口累计态。这样后面要做退窗时，才有东西可以减回去。
+
+“最近态”和“窗口累计态”不是一回事。像 `recent_samples`、`latest_exception_time_ms` 这种表达“最近一次/最近三条”的字段，强行塞进分钟桶反而会把语义搞乱。
+
+### Function Explanation
+
+`std::function<int64_t()>`：这里被用来注入“当前单调毫秒时间”的获取方式。生产环境走默认 `steady_clock`，测试里则可以喂一个手动推进的假时间，这样时间窗测试就不用真的等一分钟。
+
+`std::chrono::steady_clock`：单调时钟，只表示“经过了多久”，不会因为系统校时往回跳。做时间窗推进时，它比 `system_clock` 更适合。
+
+### Pitfalls
+
+如果桶数量和窗口分钟数完全相同，那么“当前活跃分钟”和“窗口里最老的那个分钟”可能会撞到同一个槽。这里专门把桶数设成 `window_minutes + 1`，就是为了给活跃分钟留一个独立槽位。
+
+时间窗如果只做“进窗”不做“退窗”，页面看起来会先正常，跑久了就会重新退化成“进程累计态”。这次把退窗一起接进来了，不然后面联调再看榜单会越来越脏。
+
+## 追加说明：函数级注释补齐
+
+- 继续在 `server/core/ServiceRuntimeAccumulator.h` 里补了每个公开接口和每个内部辅助函数的中文注释，重点解释“为什么 observation 先写桶、为什么只推进已封口分钟、为什么 recent/latest 不进窗”。
+- 继续在 `server/core/ServiceRuntimeAccumulator.cpp` 里补了核心函数的中文注释，尤其是 `OnPrimaryCommitted()`、`OnTick()`、`EnsureBucketForMinuteLocked()`、`ApplyBucketToWindowLocked()` 这些最容易把时间窗语义看混的地方。
 - `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
 - `docs/dev-log/20260406-feat-service-runtime.md`
 
