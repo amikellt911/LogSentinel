@@ -357,15 +357,24 @@ interface RuntimeGlobalOperationItem {
   avg_latency_ms: number
 }
 
+interface RuntimeServiceItem {
+  service_name: string
+  risk_level: string
+  exception_count: number
+  avg_latency_ms: number
+  latest_exception_time_ms: number
+}
+
 interface ServiceRuntimeSnapshotResponse {
   overview: RuntimeOverview
+  services_topk: RuntimeServiceItem[]
   global_operation_ranking: RuntimeGlobalOperationItem[]
 }
 
 const router = useRouter()
 
 // 这里故意把 mock 数据直接放在页面里，先验证“服务视角首页”的信息组织方式。
-const services = ref<ServiceItem[]>([
+const mockServices = ref<ServiceItem[]>([
   {
     name: 'order-service',
     risk: 'critical',
@@ -543,18 +552,41 @@ const services = ref<ServiceItem[]>([
 
 const selectedServiceName = ref('order-service')
 const runtimeOverview = ref<RuntimeOverview | null>(null)
+const runtimeServices = ref<RuntimeServiceItem[]>([])
 const runtimeGlobalOperationRanking = ref<RuntimeGlobalOperationItem[]>([])
 const overviewLoading = ref(false)
 
 // 用户点左侧卡片后，右边只看一个服务，避免页面退化成第二个 Trace 列表。
+// 左侧服务卡这一刀先吃后端的基础统计；右侧问题摘要、操作表和样本仍然继续复用 mock 详情。
+const services = computed<ServiceItem[]>(() => {
+  if (runtimeServices.value.length === 0) {
+    return mockServices.value
+  }
+
+  return runtimeServices.value.map(runtimeService => {
+    const mockDetail = mockServices.value.find(service => service.name === runtimeService.service_name)
+    return {
+      name: runtimeService.service_name,
+      risk: mapRuntimeRisk(runtimeService.risk_level),
+      exceptionCount: runtimeService.exception_count,
+      avgLatencyMs: runtimeService.avg_latency_ms,
+      latestExceptionTime: formatRuntimeTime(runtimeService.latest_exception_time_ms),
+      summary: mockDetail?.summary ?? '该服务已进入运行态列表，详细摘要与样本仍在下一刀接入。',
+      issues: mockDetail?.issues ?? ['当前服务已接入基础统计，问题摘要模块下一刀再接真数据。'],
+      operations: mockDetail?.operations ?? [],
+      recentTraces: mockDetail?.recentTraces ?? []
+    }
+  })
+})
+
 const selectedService = computed(() => {
   return services.value.find(service => service.name === selectedServiceName.value) ?? services.value[0]
 })
 
 const fallbackOverview = computed(() => {
-  const abnormalServices = services.value.filter(item => item.risk !== 'healthy').length
-  const abnormalTraces = services.value.reduce((sum, item) => sum + item.exceptionCount, 0)
-  const latestTime = services.value
+  const abnormalServices = mockServices.value.filter(item => item.risk !== 'healthy').length
+  const abnormalTraces = mockServices.value.reduce((sum, item) => sum + item.exceptionCount, 0)
+  const latestTime = mockServices.value
     .map(item => item.latestExceptionTime)
     .sort()
     .reverse()[0]
@@ -609,7 +641,7 @@ const operationRanking = computed(() => {
     }))
   }
 
-  return services.value
+  return mockServices.value
     .flatMap(service =>
       service.operations.map(operation => ({
         key: `${service.name}-${operation.name}`,
@@ -640,7 +672,14 @@ async function fetchRuntimeSnapshot() {
 
     const payload = (await response.json()) as ServiceRuntimeSnapshotResponse
     runtimeOverview.value = payload.overview ?? null
+    runtimeServices.value = payload.services_topk ?? []
     runtimeGlobalOperationRanking.value = payload.global_operation_ranking ?? []
+    if (runtimeServices.value.length > 0 &&
+        !runtimeServices.value.some(item => item.service_name === selectedServiceName.value)) {
+      // 左侧切成真服务榜后，当前选中项可能已经不在 top4 里。
+      // 这里把选中项同步到榜单第一名，避免右侧面板继续悬着一个已经不存在的 mock 服务名。
+      selectedServiceName.value = runtimeServices.value[0].service_name
+    }
   } catch (error) {
     console.error('Failed to fetch service runtime snapshot:', error)
   } finally {
@@ -650,6 +689,24 @@ async function fetchRuntimeSnapshot() {
 
 function goTraceExplorer() {
   router.push('/traces')
+}
+
+function mapRuntimeRisk(riskLevel: string): RiskKind {
+  switch (riskLevel.toLowerCase()) {
+    case 'error':
+      return 'critical'
+    case 'warning':
+      return 'warning'
+    default:
+      return 'healthy'
+  }
+}
+
+function formatRuntimeTime(timeMs: number): string {
+  if (timeMs <= 0) {
+    return '--:--:--'
+  }
+  return dayjs(timeMs).format('HH:mm:ss')
 }
 
 function riskText(risk: RiskKind): string {

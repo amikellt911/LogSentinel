@@ -87,6 +87,37 @@ feat(frontend): 接入服务监控原型页全局异常操作排行真数据
 
 后端这块 `global_operation_ranking[].count` 的语义是“异常 span 次数”，不是“异常链路数”。所以这次顺手把原型页右下角文案改成了“异常次数”，避免前后端口径打架。
 
+# 追加记录：2026-04-06 原型页服务卡基础统计真数据接线
+
+## Git Commit Message
+
+feat(frontend): 接入服务监控原型页服务卡基础统计真数据
+
+## Modification
+
+- `client/src/views/ServiceMonitorPrototype.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/ServiceMonitorPrototype.vue` 的 `services` 计算属性附近补了注释，明确“左侧服务卡吃后端基础统计，右侧详情继续复用 mock”。
+- 在 `fetchRuntimeSnapshot()` 里补了选中服务同步的注释，说明为什么切成后端 top4 后需要把失效的选中项挪到榜首服务。
+
+## Learning Tips
+
+### Newbie Tips
+
+前端从 mock 过渡到真接口时，别直接把旧对象全删掉。更稳的做法是“把真数据覆盖基础统计字段，把复杂详情继续挂在 mock 上”，这样联调范围能被切得很小。
+
+### Function Explanation
+
+`computed<ServiceItem[]>`：这里把后端 `services_topk` 转成页面原来就在用的 `ServiceItem` 形状。这样模板层不用一起大改，变化被收口在脚本的数据适配层。
+
+### Pitfalls
+
+后端 `services_topk` 是动态 top4，当前选中的服务名可能突然不在榜里。如果不在拉取后同步 `selectedServiceName`，右侧面板就会继续悬着一个已经不在左侧榜单里的旧 mock 服务。
+
 # Learning Tips
 
 ## Newbie Tips
