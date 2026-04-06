@@ -109,3 +109,91 @@
 - [x] 继续裁掉重复展示：删服务卡 mini trend，删顶部“当前最危险服务”总览卡
 - [x] 把新页面挂到左侧栏新增入口，便于直接切换对比旧页面
 - [ ] 等用户看完原型后，再决定哪些模块保留、哪些模块删掉或并回旧页面
+
+---
+
+## 2026-04-06：ServiceMonitor 真实运行态接入计划（先接原型页）
+
+### 已对齐的边界
+- [x] 本轮先接 `client/src/views/ServiceMonitorPrototype.vue`，旧 `client/src/views/ServiceMonitor.vue` 先不动
+- [x] `services_topk` 先取 4，不先追求全量分页
+- [x] 服务卡排序先按 `exception_count` 降序，再按 `latest_exception_time_ms` 降序
+- [x] 风险等级先收口为 3 档：`Safe(0)`、`Warning(1~5)`、`Error(>=6)`
+- [x] `avg_latency_ms` 先按“当前窗口内该服务所有异常 span 的平均耗时”
+- [x] `operation_ranking` 先按“窗口内异常 span 次数”统计，不做累计历史榜
+- [x] `recent_samples` 先按 `trace_id + service_name` 去重，每个服务只保留最近 3 条
+- [x] AI 摘要先直接复用 trace summary，不做按服务 prompt 拆分
+
+### 当前实现顺序
+
+#### A. 先把后端数据契约和骨架接出来
+- [ ] 定义 `ServiceRuntimeSnapshot`
+  - [ ] `overview`
+  - [ ] `services_topk[]`
+  - [ ] `global_operation_ranking[]`
+- [ ] 定义 `PrimaryObservation`
+  - [ ] `trace_id`
+  - [ ] `trace_end_time_ms`
+  - [ ] `trace_risk_level`
+  - [ ] `services[]`
+  - [ ] `services[].operations[]`
+- [ ] 定义 `AnalysisObservation`
+  - [ ] `trace_id`
+  - [ ] `trace_end_time_ms`
+  - [ ] `trace_risk_level`
+  - [ ] `trace_summary`
+  - [ ] `service_samples[]`
+- [ ] 定义累加器接口
+  - [ ] `OnPrimaryCommitted(...)`
+  - [ ] `OnAnalysisReady(...)`
+  - [ ] `OnTick(...)`
+  - [ ] `BuildSnapshot()`
+- [ ] 先把 handler 和路由接上，哪怕先返回空快照
+
+#### B. 第一批先做最稳的两块
+- [ ] 做 `overview`
+  - [ ] `abnormal_service_count`
+  - [ ] `abnormal_trace_count`
+  - [ ] `latest_exception_time_ms`
+- [ ] 做 `global_operation_ranking[]`
+  - [ ] `service_name`
+  - [ ] `operation_name`
+  - [ ] `count`
+  - [ ] 可选 `avg_latency_ms`
+
+#### C. 再做 `services_topk[]` 的统计部分
+- [ ] 维护 `service_name -> ServiceState` 的完整 map，不直接在线维护长期 topk 结构
+- [ ] 发布 snapshot 时再排序截取 top4
+- [ ] 先做 `service_basic`
+  - [ ] `service_name`
+  - [ ] `risk_level`
+  - [ ] `exception_count`
+  - [ ] `avg_latency_ms`
+  - [ ] `latest_exception_time_ms`
+- [ ] 再做 `operation_ranking[]`
+  - [ ] 当前服务内按异常 span 次数排序
+  - [ ] 第一版只取前若干项供前端展示
+
+#### D. 最后补 `recent_samples[3]`
+- [ ] `AnalysisObservation` 只负责最近样本和摘要，不再回写统计字段
+- [ ] 每个服务最多保留最近 3 条样本
+- [ ] 样本字段先收口为
+  - [ ] `trace_id`
+  - [ ] `time_ms`
+  - [ ] `operation_name`
+  - [ ] `summary`
+  - [ ] `duration_ms`
+  - [ ] `risk_level`
+- [ ] `operation_name` 先取该服务在该 trace 中的代表异常操作
+
+#### E. 前端联调顺序
+- [ ] 先把原型页 overview 接真数据
+- [ ] 再把全局异常操作排行接真数据
+- [ ] 再把服务卡列表接真数据
+- [ ] 最后把当前服务最近异常 Trace 样本接真数据
+
+### 暂不做
+- [ ] 不做旧 `ServiceMonitor.vue` 真联调
+- [ ] 不做服务级 AI prompt 改造
+- [ ] 不做分页、全量服务列表、复杂筛选
+- [ ] 不做长期在线优先队列 / 红黑树 topk 结构
