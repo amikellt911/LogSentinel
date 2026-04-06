@@ -91,6 +91,7 @@ int main(int argc, char* argv[])
     int trace_buffered_span_limit = 4096;
     int trace_active_session_limit = 1024;
     int service_monitor_window_minutes = 30;
+    int service_monitor_bucket_seconds = 3;
     bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
@@ -140,6 +141,10 @@ int main(int argc, char* argv[])
             // 服务监控默认还是按 30 分钟窗口跑，但联调时可以临时压到 1~2 分钟，
             // 这样不用真等半小时，就能看到榜单进窗和退窗的完整过程。
             service_monitor_window_minutes = std::stoi(argv[++i]);
+        } else if (arg == "--service-monitor-bucket-seconds" && i + 1 < argc) {
+            // 窗口总时长和桶粒度拆开后，答辩时就能继续保留“最近 30 分钟”语义，
+            // 同时把内部桶压到 3 秒，避免第一次显示必须傻等整整 1 分钟。
+            service_monitor_bucket_seconds = std::stoi(argv[++i]);
         }
     }
 
@@ -181,6 +186,10 @@ int main(int argc, char* argv[])
     }
     if (service_monitor_window_minutes <= 0) {
         std::cerr << "Fatal Error: --service-monitor-window-minutes must be > 0" << std::endl;
+        return -1;
+    }
+    if (service_monitor_bucket_seconds <= 0) {
+        std::cerr << "Fatal Error: --service-monitor-bucket-seconds must be > 0" << std::endl;
         return -1;
     }
 
@@ -297,7 +306,8 @@ int main(int argc, char* argv[])
     auto service_runtime_accumulator = std::make_shared<ServiceRuntimeAccumulator>(/*service_top_k*/4,
                                                                                   /*operation_top_k*/6,
                                                                                   /*recent_sample_limit*/3,
-                                                                                  static_cast<size_t>(service_monitor_window_minutes));
+                                                                                  static_cast<size_t>(service_monitor_window_minutes),
+                                                                                  static_cast<size_t>(service_monitor_bucket_seconds));
     std::shared_ptr<TraceSessionManager> trace_session_manager = std::make_shared<TraceSessionManager>(
         &tpool,
         buffered_trace_repo.get(),
@@ -320,7 +330,8 @@ int main(int argc, char* argv[])
               << ", buffered_span_limit=" << trace_buffered_span_limit
               << ", active_session_limit=" << trace_active_session_limit
               << ", worker_queue_size=" << worker_queue_size << std::endl;
-    std::cout << "Service monitor window enabled. window_minutes=" << service_monitor_window_minutes << std::endl;
+    std::cout << "Service monitor window enabled. window_minutes=" << service_monitor_window_minutes
+              << ", bucket_seconds=" << service_monitor_bucket_seconds << std::endl;
     TraceSessionManager* trace_session_manager_raw = trace_session_manager.get();
     loop.runEvery(trace_sweep_interval_sec, [trace_session_manager_raw, trace_idle_timeout_ms, trace_max_dispatch_per_tick]() {
         const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(

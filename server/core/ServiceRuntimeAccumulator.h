@@ -10,7 +10,7 @@
 #include <nlohmann/json.hpp>
 
 // 这些结构体直接描述“服务监控原型页最终要吃的 JSON 形状”。
-// 当前已经接入“30 分钟单窗口统计 + 最近态样本”这套实现，
+// 当前已经接入“单窗口统计 + 可配置秒级桶 + 最近态样本”这套实现，
 // 所以后端内部怎么维护分钟桶，对前端契约都不应该再有影响。
 
 struct ServiceRuntimeOverview
@@ -153,16 +153,17 @@ public:
                                        size_t operation_top_k = 6,
                                        size_t recent_sample_limit = 3,
                                        size_t window_minutes = 30,
+                                       size_t bucket_granularity_seconds = 3,
                                        MonotonicNowMsFn monotonic_now_ms_fn = {});
 
-    // 主链路提交成功后，先把这条 trace 的统计增量写进“当前活跃分钟桶”。
-    // 这里故意不直接改窗口累计态，因为当前分钟还没结束；只有分钟封口后，
-    // OnTick 才会把这个桶真正并进最近 30 分钟窗口。
+    // 主链路提交成功后，先把这条 trace 的统计增量写进“当前活跃桶”。
+    // 这里故意不直接改窗口累计态，因为当前桶还没封口；只有桶封口后，
+    // OnTick 才会把这个桶真正并进最近窗口。
     void OnPrimaryCommitted(const PrimaryObservation& observation);
     // AI 分析回来后，只补最近样本和最近时间，不回写窗口统计。
     // 这样同一条 trace 不会在“主链路成功”和“AI 后补”两个时机被重复记账。
     void OnAnalysisReady(const AnalysisObservation& observation);
-    // 定时推进已封口分钟，把分钟桶并进窗口累计态，再发布一份稳定快照。
+    // 定时推进已封口桶，把时间桶并进窗口累计态，再发布一份稳定快照。
     // handler 永远只读这份发布态，避免请求线程临时参与排序和窗口计算。
     void OnTick();
     // HTTP handler 只读最近一次已经发布好的快照，不在请求线程里现算窗口。
@@ -213,9 +214,9 @@ private:
         std::vector<ServiceRuntimeRecentSampleView> recent_samples;
     };
 
-    struct MinuteBucket
+    struct TimeBucket
     {
-        int64_t minute_id = -1;
+        int64_t bucket_id = -1;
         uint64_t abnormal_trace_count = 0;
         std::unordered_map<std::string, ServiceDelta> service_deltas;
     };
@@ -241,17 +242,17 @@ private:
     static void SubtractUnsigned(uint64_t& target, uint64_t delta);
     static void AddSigned(int64_t& target, int64_t delta);
     static void SubtractSigned(int64_t& target, int64_t delta);
-    // minute_id 通过 ring 取模命中槽位；槽下标只是地址，minute_id 才是真身份。
-    size_t BucketIndexForMinute(int64_t minute_id) const;
-    // 当前分钟只由单调时钟决定，不能靠“tick 响了多少次”自己数拍子。
-    int64_t CurrentMinuteLocked() const;
-    // 写 observation 时命中当前 minute 的槽；如果槽位被旧 minute 占用，就复用成新 minute。
-    MinuteBucket& EnsureBucketForMinuteLocked(int64_t minute_id);
-    // sweep 进窗/退窗时按 minute_id 找桶；如果槽里已经不是那个 minute，就说明这分钟不存在。
-    const MinuteBucket* FindBucketForMinuteLocked(int64_t minute_id) const;
-    // 把一个完整分钟的增量并进窗口，或者从窗口里减出去。
+    // bucket_id 通过 ring 取模命中槽位；槽下标只是地址，bucket_id 才是真身份。
+    size_t BucketIndexForBucketId(int64_t bucket_id) const;
+    // 当前属于哪个时间桶只由单调时钟和桶粒度共同决定，不能靠“tick 响了多少次”自己数拍子。
+    int64_t CurrentBucketIdLocked() const;
+    // 写 observation 时命中当前 bucket 的槽；如果槽位被旧 bucket 占用，就复用成新 bucket。
+    TimeBucket& EnsureBucketForBucketIdLocked(int64_t bucket_id);
+    // sweep 进窗/退窗时按 bucket_id 找桶；如果槽里已经不是那个 bucket，就说明这个时间桶不存在。
+    const TimeBucket* FindBucketForBucketIdLocked(int64_t bucket_id) const;
+    // 把一个完整时间桶的增量并进窗口，或者从窗口里减出去。
     // add_into_window=true 表示“进窗”，false 表示“退窗”。
-    void ApplyBucketToWindowLocked(const MinuteBucket& bucket, bool add_into_window);
+    void ApplyBucketToWindowLocked(const TimeBucket& bucket, bool add_into_window);
     // 当某个服务在窗口里的统计全退成 0 后，把它从窗口态里清掉，避免空服务长期挂着。
     void PruneWindowServiceLocked(const std::string& service_name);
     // 全局操作统计同理，退窗后如果次数和耗时都归零，就把这条 operation 清掉。
@@ -264,15 +265,18 @@ private:
     size_t operation_top_k_ = 6;
     size_t recent_sample_limit_ = 3;
     size_t window_minutes_ = 30;
+    size_t bucket_granularity_seconds_ = 3;
+    int64_t bucket_granularity_ms_ = 3000;
+    size_t window_bucket_count_ = 600;
     MonotonicNowMsFn monotonic_now_ms_fn_;
 
-    // active/sealed 共同描述分钟推进位置：
-    // active 表示当前还允许写 observation 的分钟，
-    // sealed 表示最后一个已经被并进窗口累计态的分钟。
-    int64_t active_minute_ = 0;
-    int64_t sealed_minute_ = -1;
-    // buckets_ 只存“某一分钟新发生了什么”的增量，不直接存前端视图。
-    std::vector<MinuteBucket> buckets_;
+    // active/sealed 共同描述时间桶推进位置：
+    // active 表示当前还允许写 observation 的桶，
+    // sealed 表示最后一个已经被并进窗口累计态的桶。
+    int64_t active_bucket_id_ = 0;
+    int64_t sealed_bucket_id_ = -1;
+    // buckets_ 只存“某个时间桶里新发生了什么”的增量，不直接存前端视图。
+    std::vector<TimeBucket> buckets_;
 
     // abnormal_trace_count_、window_services_、global_operations_ 共同组成“当前窗口累计态”。
     // 这些字段会随着 OnTick 的进窗/退窗一起增减，是服务榜和 overview 的真相来源。

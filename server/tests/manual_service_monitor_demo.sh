@@ -9,7 +9,7 @@ set -euo pipefail
 # 这个脚本现在只负责“起服务”和“管生命周期”，不再发送任何 trace：
 # 1) 编译 LogSentinel
 # 2) 拉起独立 Python proxy
-# 3) 拉起后端，并把服务监控窗口分钟数透传进去
+# 3) 拉起后端，并把服务监控窗口分钟数和桶粒度一起透传进去
 # 4) 直接运行时默认驻留，方便你打开前端观察
 # 5) 如果 DEMO_DETACH=1，就把运行信息写到 run_info.env 后退出，由外层包装脚本继续往下跑
 
@@ -29,6 +29,9 @@ BASE_URL="${BASE_URL:-http://127.0.0.1:${BACKEND_PORT}}"
 TRACE_AI_BASE_URL="${TRACE_AI_BASE_URL:-http://127.0.0.1:${PROXY_PORT}}"
 FRONTEND_URL="${FRONTEND_URL:-http://127.0.0.1:5173/service-prototype}"
 SERVICE_MONITOR_WINDOW_MINUTES="${SERVICE_MONITOR_WINDOW_MINUTES:-1}"
+# 联调默认把桶粒度压到 3 秒，这样服务监控不需要再傻等整整 1 分钟才首次出榜。
+# 这里仍然和窗口分钟数分开配置，避免把“最近 30 分钟”这种产品语义一起改掉。
+SERVICE_MONITOR_BUCKET_SECONDS="${SERVICE_MONITOR_BUCKET_SECONDS:-3}"
 WAIT_RETRY="${WAIT_RETRY:-60}"
 WAIT_SLEEP_SEC="${WAIT_SLEEP_SEC:-0.5}"
 STOP_RETRY="${STOP_RETRY:-40}"
@@ -185,6 +188,7 @@ BASE_URL='${BASE_URL}'
 TRACE_AI_BASE_URL='${TRACE_AI_BASE_URL}'
 FRONTEND_URL='${FRONTEND_URL}'
 SERVICE_MONITOR_WINDOW_MINUTES='${SERVICE_MONITOR_WINDOW_MINUTES}'
+SERVICE_MONITOR_BUCKET_SECONDS='${SERVICE_MONITOR_BUCKET_SECONDS}'
 BACKEND_PID='${BACKEND_PID}'
 PROXY_PID='${PROXY_PID}'
 EOF
@@ -249,6 +253,7 @@ log "step3: start LogSentinel on ${BASE_URL}"
     --trace-ai-provider mock \
     --trace-ai-base-url "${TRACE_AI_BASE_URL}" \
     --service-monitor-window-minutes "${SERVICE_MONITOR_WINDOW_MINUTES}" \
+    --service-monitor-bucket-seconds "${SERVICE_MONITOR_BUCKET_SECONDS}" \
     >"${BACKEND_LOG}" 2>&1 &
 BACKEND_PID=$!
 wait_for_http_ready "${BASE_URL}/service-monitor/runtime" "LogSentinel" "${BACKEND_PID}" "${BACKEND_LOG}"

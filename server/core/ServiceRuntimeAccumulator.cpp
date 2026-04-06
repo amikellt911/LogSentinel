@@ -28,11 +28,14 @@ ServiceRuntimeAccumulator::ServiceRuntimeAccumulator(size_t service_top_k,
                                                      size_t operation_top_k,
                                                      size_t recent_sample_limit,
                                                      size_t window_minutes,
+                                                     size_t bucket_granularity_seconds,
                                                      MonotonicNowMsFn monotonic_now_ms_fn)
     : service_top_k_(std::max<size_t>(1, service_top_k)),
       operation_top_k_(std::max<size_t>(1, operation_top_k)),
       recent_sample_limit_(std::max<size_t>(1, recent_sample_limit)),
       window_minutes_(std::max<size_t>(1, window_minutes)),
+      bucket_granularity_seconds_(std::max<size_t>(1, bucket_granularity_seconds)),
+      bucket_granularity_ms_(static_cast<int64_t>(bucket_granularity_seconds_) * 1000),
       monotonic_now_ms_fn_(std::move(monotonic_now_ms_fn))
 {
     if (!monotonic_now_ms_fn_)
@@ -40,11 +43,17 @@ ServiceRuntimeAccumulator::ServiceRuntimeAccumulator(size_t service_top_k,
         monotonic_now_ms_fn_ = &ServiceRuntimeAccumulator::DefaultMonotonicNowMs;
     }
 
-    // 分钟桶除了要保留“最近 window 分钟”之外，还必须额外留一个活跃写入分钟。
-    // 否则当前分钟和 window 边界上的最老分钟会打到同一个槽，导致还没退窗就被覆盖。
-    buckets_.resize(window_minutes_ + 1);
-    active_minute_ = CurrentMinuteLocked();
-    sealed_minute_ = active_minute_ - 1;
+    const int64_t window_duration_ms = static_cast<int64_t>(window_minutes_) * 60 * 1000;
+    // 窗口里到底要保留多少个已封口桶，不再写死等于“分钟数”，
+    // 而是由“窗口总时长 / 桶粒度”向上取整算出来。
+    window_bucket_count_ = static_cast<size_t>((window_duration_ms + bucket_granularity_ms_ - 1) /
+                                               bucket_granularity_ms_);
+
+    // 时间桶除了要保留“最近窗口覆盖范围”的已封口桶之外，还必须额外留一个活跃写入桶。
+    // 否则当前活跃桶和窗口边界上的最老封口桶会打到同一个槽，导致还没退窗就被覆盖。
+    buckets_.resize(window_bucket_count_ + 1);
+    active_bucket_id_ = CurrentBucketIdLocked();
+    sealed_bucket_id_ = active_bucket_id_ - 1;
 
     // 构造期先发布一个空快照，避免 HTTP 比主链路更早起来时返回缺字段 JSON。
     published_snapshot_ = BuildSnapshotLocked();
@@ -54,11 +63,11 @@ void ServiceRuntimeAccumulator::OnPrimaryCommitted(const PrimaryObservation& obs
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // 这里先只写“当前活跃分钟”的原料桶，不直接改窗口累计态。
-    // 既然当前分钟还没结束，那么它的数据还可能继续增长，提前发到前端会让榜单抖动。
-    const int64_t minute_id = CurrentMinuteLocked();
-    active_minute_ = std::max(active_minute_, minute_id);
-    MinuteBucket& bucket = EnsureBucketForMinuteLocked(minute_id);
+    // 这里先只写“当前活跃桶”的原料数据，不直接改窗口累计态。
+    // 既然当前桶还没封口，那么它的数据还可能继续增长，提前发到前端会让榜单抖动。
+    const int64_t bucket_id = CurrentBucketIdLocked();
+    active_bucket_id_ = std::max(active_bucket_id_, bucket_id);
+    TimeBucket& bucket = EnsureBucketForBucketIdLocked(bucket_id);
 
     bool trace_has_error = false;
     for (const auto& service_observation : observation.services)
@@ -68,7 +77,7 @@ void ServiceRuntimeAccumulator::OnPrimaryCommitted(const PrimaryObservation& obs
             continue;
         }
 
-        // recent/latest 是“最近态”，不走分钟窗；这里继续按全局最近时间更新。
+        // recent/latest 是“最近态”，不走时间窗；这里继续按全局最近时间更新。
         RecentServiceState& recent_service = recent_services_[service_observation.service_name];
         recent_service.service_name = service_observation.service_name;
         recent_service.latest_exception_time_ms =
@@ -102,7 +111,7 @@ void ServiceRuntimeAccumulator::OnPrimaryCommitted(const PrimaryObservation& obs
 
     if (trace_has_error)
     {
-        // overview 的异常链路数也是窗口统计，所以这里只给当前分钟桶记增量。
+        // overview 的异常链路数也是窗口统计，所以这里只给当前活跃桶记增量。
         ++bucket.abnormal_trace_count;
     }
 }
@@ -111,7 +120,7 @@ void ServiceRuntimeAccumulator::OnAnalysisReady(const AnalysisObservation& obser
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // analysis 路径不碰分钟窗统计，只补最近态样本。
+    // analysis 路径不碰时间窗统计，只补最近态样本。
     // 这样主链路统计和 AI 后补两条路径不会互相覆盖，也不会重复记 overview。
     for (const auto& service_sample : observation.service_samples)
     {
@@ -158,32 +167,32 @@ void ServiceRuntimeAccumulator::OnTick()
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    const int64_t now_minute = CurrentMinuteLocked();
-    // 只有“已经结束的分钟”才允许进窗。当前活跃分钟可能还在不断写入，
-    // 所以这里只推进到 now_minute - 1，避免把半分钟数据提前算进去。
-    for (int64_t minute = sealed_minute_ + 1; minute < now_minute; ++minute)
+    const int64_t now_bucket_id = CurrentBucketIdLocked();
+    // 只有“已经结束的桶”才允许进窗。当前活跃桶可能还在不断写入，
+    // 所以这里只推进到 now_bucket_id - 1，避免把半桶数据提前算进去。
+    for (int64_t bucket_id = sealed_bucket_id_ + 1; bucket_id < now_bucket_id; ++bucket_id)
     {
-        // 先把这个刚刚封口的分钟并进窗口。
-        if (const MinuteBucket* sealed_bucket = FindBucketForMinuteLocked(minute))
+        // 先把这个刚刚封口的桶并进窗口。
+        if (const TimeBucket* sealed_bucket = FindBucketForBucketIdLocked(bucket_id))
         {
             ApplyBucketToWindowLocked(*sealed_bucket, /*add_into_window*/true);
         }
 
-        // 再把“窗口长度之前”的老分钟退掉。
-        // 这样窗口里始终只保留最近 window_minutes 个已封口分钟。
-        const int64_t expired_minute = minute - static_cast<int64_t>(window_minutes_);
-        if (expired_minute >= 0)
+        // 再把“窗口桶数量之前”的老桶退掉。
+        // 这样窗口里始终只保留最近 window_bucket_count_ 个已封口桶。
+        const int64_t expired_bucket_id = bucket_id - static_cast<int64_t>(window_bucket_count_);
+        if (expired_bucket_id >= 0)
         {
-            if (const MinuteBucket* expired_bucket = FindBucketForMinuteLocked(expired_minute))
+            if (const TimeBucket* expired_bucket = FindBucketForBucketIdLocked(expired_bucket_id))
             {
                 ApplyBucketToWindowLocked(*expired_bucket, /*add_into_window*/false);
             }
         }
 
-        sealed_minute_ = minute;
+        sealed_bucket_id_ = bucket_id;
     }
 
-    active_minute_ = std::max(active_minute_, now_minute);
+    active_bucket_id_ = std::max(active_bucket_id_, now_bucket_id);
     published_snapshot_ = BuildSnapshotLocked();
 }
 
@@ -303,47 +312,47 @@ void ServiceRuntimeAccumulator::SubtractSigned(int64_t& target, int64_t delta)
     }
 }
 
-size_t ServiceRuntimeAccumulator::BucketIndexForMinute(int64_t minute_id) const
+size_t ServiceRuntimeAccumulator::BucketIndexForBucketId(int64_t bucket_id) const
 {
-    return static_cast<size_t>(minute_id % static_cast<int64_t>(buckets_.size()));
+    return static_cast<size_t>(bucket_id % static_cast<int64_t>(buckets_.size()));
 }
 
-int64_t ServiceRuntimeAccumulator::CurrentMinuteLocked() const
+int64_t ServiceRuntimeAccumulator::CurrentBucketIdLocked() const
 {
-    return monotonic_now_ms_fn_() / (60 * 1000);
+    return monotonic_now_ms_fn_() / bucket_granularity_ms_;
 }
 
-ServiceRuntimeAccumulator::MinuteBucket&
-ServiceRuntimeAccumulator::EnsureBucketForMinuteLocked(int64_t minute_id)
+ServiceRuntimeAccumulator::TimeBucket&
+ServiceRuntimeAccumulator::EnsureBucketForBucketIdLocked(int64_t bucket_id)
 {
-    MinuteBucket& bucket = buckets_[BucketIndexForMinute(minute_id)];
-    if (bucket.minute_id == minute_id)
+    TimeBucket& bucket = buckets_[BucketIndexForBucketId(bucket_id)];
+    if (bucket.bucket_id == bucket_id)
     {
         return bucket;
     }
 
-    // 这里假设分钟推进不会停摆超过整个窗口长度。
-    // 既然 tick 正常每 5 秒执行，那么旧 minute 在复用前应该已经完成了“进窗+退窗”。
+    // 这里假设时间桶推进不会停摆超过整个窗口覆盖长度。
+    // 既然 tick 会持续推进，那么旧 bucket 在复用前应该已经完成了“进窗+退窗”。
     // 如果未来真的要容忍长时间停摆，再把这里扩成 pending-retire 慢路径。
-    bucket = MinuteBucket{};
-    bucket.minute_id = minute_id;
+    bucket = TimeBucket{};
+    bucket.bucket_id = bucket_id;
     return bucket;
 }
 
-const ServiceRuntimeAccumulator::MinuteBucket*
-ServiceRuntimeAccumulator::FindBucketForMinuteLocked(int64_t minute_id) const
+const ServiceRuntimeAccumulator::TimeBucket*
+ServiceRuntimeAccumulator::FindBucketForBucketIdLocked(int64_t bucket_id) const
 {
-    const MinuteBucket& bucket = buckets_[BucketIndexForMinute(minute_id)];
-    if (bucket.minute_id != minute_id)
+    const TimeBucket& bucket = buckets_[BucketIndexForBucketId(bucket_id)];
+    if (bucket.bucket_id != bucket_id)
     {
         return nullptr;
     }
     return &bucket;
 }
 
-void ServiceRuntimeAccumulator::ApplyBucketToWindowLocked(const MinuteBucket& bucket, bool add_into_window)
+void ServiceRuntimeAccumulator::ApplyBucketToWindowLocked(const TimeBucket& bucket, bool add_into_window)
 {
-    // 这个函数是窗口系统的中心：同一份分钟原料既能“进窗”，也能“退窗”。
+    // 这个函数是窗口系统的中心：同一份时间桶原料既能“进窗”，也能“退窗”。
     // 所以 bucket 里只能存纯增量，不能存 summary、sample 这种不可逆的数据。
     if (add_into_window)
     {

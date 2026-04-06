@@ -51,7 +51,11 @@ AnalysisObservation MakeAnalysisObservation()
 
 TEST(ServiceRuntimeAccumulatorTest, BuildSnapshotReturnsPublishedEmptySnapshotByDefault)
 {
-    ServiceRuntimeAccumulator accumulator(/*service_top_k*/4, /*operation_top_k*/6, /*recent_sample_limit*/3);
+    ServiceRuntimeAccumulator accumulator(/*service_top_k*/4,
+                                         /*operation_top_k*/6,
+                                         /*recent_sample_limit*/3,
+                                         /*window_minutes*/30,
+                                         /*bucket_granularity_seconds*/3);
 
     // 刚构造时还没有任何 observation 输入，所以发布快照应该是一个稳定的空壳结构，
     // 这样 handler 即使比主链路更早启动，也不会返回缺字段的半成品 JSON。
@@ -70,13 +74,14 @@ TEST(ServiceRuntimeAccumulatorTest, TickPublishesOverviewServicesAndGlobalOperat
                                          /*operation_top_k*/6,
                                          /*recent_sample_limit*/3,
                                          /*window_minutes*/30,
+                                         /*bucket_granularity_seconds*/3,
                                          [&now_ms]()
                                          {
                                              return now_ms;
                                          });
 
     accumulator.OnPrimaryCommitted(MakePrimaryObservation());
-    now_ms = 60 * 1000;
+    now_ms = 3 * 1000;
     accumulator.OnTick();
 
     const ServiceRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
@@ -109,6 +114,7 @@ TEST(ServiceRuntimeAccumulatorTest, TickOnlyPublishesSealedMinuteIntoWindow)
                                          /*operation_top_k*/6,
                                          /*recent_sample_limit*/3,
                                          /*window_minutes*/2,
+                                         /*bucket_granularity_seconds*/3,
                                          [&now_ms]()
                                          {
                                              return now_ms;
@@ -117,18 +123,18 @@ TEST(ServiceRuntimeAccumulatorTest, TickOnlyPublishesSealedMinuteIntoWindow)
     accumulator.OnPrimaryCommitted(MakePrimaryObservation());
     accumulator.OnTick();
 
-    // 当前还停留在第 0 分钟，说明 observation 只是先记进“活跃分钟桶”，
-    // 还没有形成已封口分钟，所以窗口统计此时不应该提前可见。
+    // 当前还停留在第 0 个 3 秒桶里，说明 observation 只是先记进“活跃桶”，
+    // 还没有形成已封口桶，所以窗口统计此时不应该提前可见。
     ServiceRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
     EXPECT_EQ(snapshot.overview.abnormal_service_count, 0U);
     EXPECT_EQ(snapshot.overview.abnormal_trace_count, 0U);
     EXPECT_TRUE(snapshot.services_topk.empty());
     EXPECT_TRUE(snapshot.global_operation_ranking.empty());
 
-    now_ms = 60 * 1000;
+    now_ms = 3 * 1000;
     accumulator.OnTick();
 
-    // 时间推进到下一分钟后，第 0 分钟才算封口并真正进入窗口。
+    // 时间推进到下一个 3 秒桶后，第 0 个桶才算封口并真正进入窗口。
     snapshot = accumulator.BuildSnapshot();
     ASSERT_EQ(snapshot.overview.abnormal_service_count, 1U);
     ASSERT_EQ(snapshot.overview.abnormal_trace_count, 1U);
@@ -143,6 +149,7 @@ TEST(ServiceRuntimeAccumulatorTest, TickEvictsExpiredMinuteFromWindow)
                                          /*operation_top_k*/6,
                                          /*recent_sample_limit*/3,
                                          /*window_minutes*/2,
+                                         /*bucket_granularity_seconds*/3,
                                          [&now_ms]()
                                          {
                                              return now_ms;
@@ -150,15 +157,15 @@ TEST(ServiceRuntimeAccumulatorTest, TickEvictsExpiredMinuteFromWindow)
 
     accumulator.OnPrimaryCommitted(MakePrimaryObservation());
 
-    now_ms = 60 * 1000;
+    now_ms = 3 * 1000;
     accumulator.OnTick();
     ServiceRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
     ASSERT_EQ(snapshot.overview.abnormal_trace_count, 1U);
 
-    now_ms = 3 * 60 * 1000;
+    now_ms = (2 * 60 + 3) * 1000;
     accumulator.OnTick();
 
-    // 2 分钟窗口下，minute=0 的数据在时间推进到 minute=3 时已经滑出窗口，
+    // 2 分钟窗口 + 3 秒桶下，bucket=0 的数据在时间推进到 123 秒时已经滑出窗口，
     // 所以 overview、服务榜和全局操作榜都应该退回空状态。
     snapshot = accumulator.BuildSnapshot();
     EXPECT_EQ(snapshot.overview.abnormal_service_count, 0U);
@@ -174,6 +181,7 @@ TEST(ServiceRuntimeAccumulatorTest, TickPublishesRecentSamplesAfterAnalysisReady
                                          /*operation_top_k*/6,
                                          /*recent_sample_limit*/3,
                                          /*window_minutes*/30,
+                                         /*bucket_granularity_seconds*/3,
                                          [&now_ms]()
                                          {
                                              return now_ms;
@@ -181,7 +189,7 @@ TEST(ServiceRuntimeAccumulatorTest, TickPublishesRecentSamplesAfterAnalysisReady
 
     accumulator.OnPrimaryCommitted(MakePrimaryObservation());
     accumulator.OnAnalysisReady(MakeAnalysisObservation());
-    now_ms = 60 * 1000;
+    now_ms = 3 * 1000;
     accumulator.OnTick();
 
     const ServiceRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
@@ -191,4 +199,39 @@ TEST(ServiceRuntimeAccumulatorTest, TickPublishesRecentSamplesAfterAnalysisReady
     EXPECT_EQ(snapshot.services_topk[0].recent_samples[0].operation_name, "create-order");
     EXPECT_EQ(snapshot.services_topk[0].recent_samples[0].summary, "订单创建链路在库存确认阶段超时。");
     EXPECT_EQ(snapshot.services_topk[0].recent_samples[0].risk_level, "warning");
+}
+
+TEST(ServiceRuntimeAccumulatorTest, TickPublishesSealedThreeSecondBucketIntoWindow)
+{
+    int64_t now_ms = 0;
+    ServiceRuntimeAccumulator accumulator(/*service_top_k*/4,
+                                         /*operation_top_k*/6,
+                                         /*recent_sample_limit*/3,
+                                         /*window_minutes*/2,
+                                         /*bucket_granularity_seconds*/3,
+                                         [&now_ms]()
+                                         {
+                                             return now_ms;
+                                         });
+
+    accumulator.OnPrimaryCommitted(MakePrimaryObservation());
+    accumulator.OnTick();
+
+    // 3 秒桶下，t=0 这条 observation 仍然先写进活跃桶；
+    // 只要还停留在同一个 3 秒区间里，就不该提前出现在窗口快照中。
+    ServiceRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
+    EXPECT_EQ(snapshot.overview.abnormal_service_count, 0U);
+    EXPECT_EQ(snapshot.overview.abnormal_trace_count, 0U);
+    EXPECT_TRUE(snapshot.services_topk.empty());
+
+    now_ms = 3 * 1000;
+    accumulator.OnTick();
+
+    // 时间一旦推进到下一个 3 秒桶，上一桶就已经封口，应该立即进入窗口，
+    // 不需要再像旧版“分钟桶”那样额外等满 60 秒。
+    snapshot = accumulator.BuildSnapshot();
+    ASSERT_EQ(snapshot.overview.abnormal_service_count, 1U);
+    ASSERT_EQ(snapshot.overview.abnormal_trace_count, 1U);
+    ASSERT_EQ(snapshot.services_topk.size(), 1U);
+    ASSERT_EQ(snapshot.global_operation_ranking.size(), 1U);
 }

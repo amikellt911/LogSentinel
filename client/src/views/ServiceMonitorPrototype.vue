@@ -17,10 +17,10 @@
           <button
             class="rounded-lg border border-gray-700 bg-gray-900/70 px-4 py-2 text-sm text-gray-200 hover:bg-gray-800"
             type="button"
-            :disabled="overviewLoading"
-            @click="fetchRuntimeSnapshot"
+            :disabled="manualRefreshLoading"
+            @click="refreshRuntimeSnapshotManually"
           >
-            {{ overviewLoading ? '刷新中...' : '刷新' }}
+            {{ manualRefreshLoading ? '刷新中...' : '刷新' }}
           </button>
           <button
             class="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400"
@@ -435,7 +435,8 @@ const selectedServiceName = ref('')
 const runtimeOverview = ref<RuntimeOverview | null>(null)
 const runtimeServices = ref<RuntimeServiceItem[]>([])
 const runtimeGlobalOperationRanking = ref<RuntimeGlobalOperationItem[]>([])
-const overviewLoading = ref(false)
+const runtimeRequestInFlight = ref(false)
+const manualRefreshLoading = ref(false)
 const autoRefreshIntervalMs = 10_000
 let autoRefreshTimer: number | null = null
 
@@ -529,11 +530,13 @@ const maxRankingException = computed(() => {
 })
 
 async function fetchRuntimeSnapshot() {
-  if (overviewLoading.value) {
+  // 自动刷新和手动刷新都走同一个请求函数，但“是否正在请求”要和“按钮是否显示刷新中”拆开。
+  // 否则定时器后台轮询一触发，手动按钮就会一直被锁成“刷新中”，用户会以为自己点不了。
+  if (runtimeRequestInFlight.value) {
     return
   }
 
-  overviewLoading.value = true
+  runtimeRequestInFlight.value = true
   try {
     const response = await fetch('/api/service-monitor/runtime', { method: 'GET' })
     if (!response.ok) {
@@ -557,7 +560,22 @@ async function fetchRuntimeSnapshot() {
   } catch (error) {
     console.error('Failed to fetch service runtime snapshot:', error)
   } finally {
-    overviewLoading.value = false
+    runtimeRequestInFlight.value = false
+  }
+}
+
+async function refreshRuntimeSnapshotManually() {
+  // 手动按钮只表达“这次点击触发的刷新”。
+  // 自动轮询期间不再把按钮文案改成“刷新中”，避免页面一直像卡住了一样。
+  if (runtimeRequestInFlight.value) {
+    return
+  }
+
+  manualRefreshLoading.value = true
+  try {
+    await fetchRuntimeSnapshot()
+  } finally {
+    manualRefreshLoading.value = false
   }
 }
 
@@ -643,7 +661,8 @@ function serviceCardClass(service: ServiceItem): string {
 
 onMounted(() => {
   // 这个原型页现在主要用来观察时间窗进窗/退窗，所以只靠手点刷新太钝。
-  // 这里补一个 10 秒轮询：后端 5 秒发布一次快照，前端 10 秒拉一次，既能看到变化，也不至于刷太频。
+  // 这里补一个 10 秒轮询：后端 1 秒发布一次快照，前端 10 秒拉一次，既能看到变化，也不至于刷太频。
+  // 自动轮询只复用请求函数，不再去接管手动刷新按钮的 loading 文案。
   void fetchRuntimeSnapshot()
   autoRefreshTimer = window.setInterval(() => {
     void fetchRuntimeSnapshot()

@@ -519,3 +519,76 @@ perf(service-monitor): 将运行态快照发布周期压缩到1秒
 ### Pitfalls
 
 如果只盯着前端轮询周期，很容易误以为“页面慢就是前端刷得不够快”。这次专门把后端快照发布压到 `1s`，就是为了把“快照发布慢”和“分钟桶封口慢”这两个延迟拆开看，避免后面把锅甩错地方。
+
+# 追加记录：2026-04-06 服务监控桶粒度改成 3 秒并开放启动参数
+
+## Git Commit Message
+
+feat(service-monitor): 将时间窗桶粒度改成3秒并支持启动参数
+
+## Modification
+
+- `server/core/ServiceRuntimeAccumulator.h`
+- `server/core/ServiceRuntimeAccumulator.cpp`
+- `server/src/main.cpp`
+- `server/tests/ServiceRuntimeAccumulator_test.cpp`
+- `server/tests/manual_service_monitor_demo.sh`
+- `server/tests/run_all_and_demo.sh`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `server/core/ServiceRuntimeAccumulator.h` 里补了中文注释，把“分钟桶”统一收口成“可配置秒级桶”，说明为什么窗口桶数量要由“窗口总时长 / 桶粒度”自动算出来。
+- 在 `server/core/ServiceRuntimeAccumulator.cpp` 里补了中文注释，重点解释 `OnPrimaryCommitted()` 为什么先写活跃桶、`OnTick()` 为什么只推进已封口桶，以及 `window_bucket_count_ + 1` 为什么能避免活跃桶和最老封口桶撞槽。
+- 在 `server/src/main.cpp` 里补了 `--service-monitor-bucket-seconds` 的中文注释，说明它服务于答辩演示，不改“最近 30 分钟”这种产品语义。
+- 在 `server/tests/ServiceRuntimeAccumulator_test.cpp` 里补了 3 秒桶测试的中文注释，锁死“3 秒封口后立即进窗”这个新行为。
+- 在 `server/tests/manual_service_monitor_demo.sh` 和 `server/tests/run_all_and_demo.sh` 里补了环境变量注释，说明脚本为什么默认把桶粒度透传成 `3s`。
+
+## Learning Tips
+
+### Newbie Tips
+
+窗口长度和桶粒度不是同一个参数。`30min` 决定“最近多长时间”，`3s` 决定“多久封口一次”。把它们拆开之后，才能既保留产品语义，又把演示延迟压下来。
+
+### Function Explanation
+
+`window_bucket_count = ceil(window_duration / bucket_granularity)`：窗口里需要保留多少个已封口桶，不应该再写死等于“窗口分钟数”，而应该按总时长和桶粒度动态换算。
+
+### Pitfalls
+
+如果只把桶粒度从 60 秒改成 3 秒，但还继续拿“窗口分钟数”直接当桶数量，那么窗口总覆盖时长会被错误压缩，退窗时间也会立刻跑偏。
+
+# 追加记录：2026-04-06 服务监控手动刷新按钮与自动轮询解耦
+
+## Git Commit Message
+
+fix(frontend): 修复服务监控自动轮询长期占用刷新按钮状态
+
+## Modification
+
+- `client/src/views/ServiceMonitorPrototype.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/ServiceMonitorPrototype.vue` 的 `fetchRuntimeSnapshot()` 附近补了中文注释，说明为什么“请求并发保护”和“手动按钮 loading”必须拆开。
+- 在同文件的 `refreshRuntimeSnapshotManually()` 附近补了中文注释，说明手动刷新按钮只表达“这次点击触发的刷新”，不再被后台自动轮询长期占用。
+- 在 `onMounted()` 的自动轮询注释里同步更新了后端 1 秒发布的新口径，并明确自动轮询只复用请求函数，不再接管按钮文案。
+
+## Learning Tips
+
+### Newbie Tips
+
+自动刷新和手动刷新共用同一个请求函数没问题，但不要共用同一个“按钮文案状态”。否则后台轮询一触发，前台按钮就会一直显示“刷新中”，用户会直接以为页面卡了。
+
+### Function Explanation
+
+`runtimeRequestInFlight`：纯粹用来做请求并发保护，避免同一时刻叠两个 `/service-monitor/runtime` 请求。
+
+`manualRefreshLoading`：只服务手动刷新按钮文案。它不代表后台有没有自动轮询请求，只代表“用户刚刚手点了一次刷新”。
+
+### Pitfalls
+
+如果只保留一个 `loading` 状态同时给“按钮文案”和“自动轮询防重入”用，那它的语义一定会串。前端交互里最容易出这种问题：代码能跑，但用户观感像坏掉了一样。
