@@ -104,6 +104,10 @@ int main(int argc, char* argv[])
             auto_start_webhook_mock = true;
         } else if (arg == "--auto-start-proxy") {
             auto_start_proxy = true;
+        } else if (arg == "--no-auto-start-proxy") {
+            // 本地联调时默认自动拉起 proxy 很省事；但在某些受限环境里，
+            // 你可能更想手动先起一份 proxy，再让后端直接复用，这里给一个显式关闭开关。
+            auto_start_proxy = false;
         } else if (arg == "--auto-start-webhook-mock") {
             auto_start_webhook_mock = true;
         } else if (arg == "--trace-ai-provider" && i + 1 < argc) {

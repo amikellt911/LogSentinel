@@ -205,4 +205,8 @@
 - [x] 前端 `ServiceMonitorPrototype.vue` 已把右下角全局异常操作排行接到 `/service-monitor/runtime`
 - [x] 左侧服务卡基础字段已接到 `/service-monitor/runtime/services_topk`
 - [x] 当前服务最近异常 Trace 样本 已接到 `/service-monitor/runtime/services_topk[].recent_samples`
-- [ ] 右侧问题摘要、当前服务操作表 仍然保留 mock 数据
+- [x] 右侧当前服务操作表 已接到 `/service-monitor/runtime/services_topk[].operation_ranking`
+- [x] 右侧问题摘要与服务摘要 当前先由 `recent_samples[].summary` 派生，不额外新增后端字段
+- [x] 已补手工联调脚本 `server/tests/manual_service_monitor_demo.sh`，可直接复用复杂 trace fixture 灌数并拉 runtime JSON
+- [x] 已新增 `--no-auto-start-proxy` 开关，方便在受限环境下手动先起 proxy 再联调后端
+- [x] 已补联合启动脚本 `server/tests/run_all_and_demo.sh`，可自动编译后端、拉起独立 proxy、执行 demo，并在退出时统一清理后台进程

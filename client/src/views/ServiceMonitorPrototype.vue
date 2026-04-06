@@ -366,12 +366,19 @@ interface RuntimeRecentSampleItem {
   risk_level: string
 }
 
+interface RuntimeServiceOperationItem {
+  operation_name: string
+  count: number
+  avg_latency_ms: number
+}
+
 interface RuntimeServiceItem {
   service_name: string
   risk_level: string
   exception_count: number
   avg_latency_ms: number
   latest_exception_time_ms: number
+  operation_ranking: RuntimeServiceOperationItem[]
   recent_samples: RuntimeRecentSampleItem[]
 }
 
@@ -583,6 +590,18 @@ const services = computed<ServiceItem[]>(() => {
       durationMs: sample.duration_ms,
       risk: mapRuntimeRisk(sample.risk_level)
     }))
+    const runtimeIssues = runtimeService.recent_samples
+      .map(sample => sample.summary.trim())
+      .filter(summary => summary.length > 0)
+      .filter((summary, index, arr) => arr.indexOf(summary) === index)
+      .slice(0, 3)
+    const runtimeOperations = runtimeService.operation_ranking.map(operation => ({
+      name: operation.operation_name,
+      exceptions: operation.count,
+      avgLatencyMs: operation.avg_latency_ms,
+      highestRisk: mapRuntimeRisk(runtimeService.risk_level)
+    }))
+    const runtimeSummary = runtimeIssues[0] ?? ''
 
     return {
       name: runtimeService.service_name,
@@ -590,9 +609,13 @@ const services = computed<ServiceItem[]>(() => {
       exceptionCount: runtimeService.exception_count,
       avgLatencyMs: runtimeService.avg_latency_ms,
       latestExceptionTime: formatRuntimeTime(runtimeService.latest_exception_time_ms),
-      summary: mockDetail?.summary ?? '该服务已进入运行态列表，详细摘要与样本仍在下一刀接入。',
-      issues: mockDetail?.issues ?? ['当前服务已接入基础统计，问题摘要模块下一刀再接真数据。'],
-      operations: mockDetail?.operations ?? [],
+      // 服务摘要和右侧问题摘要当前先从 recent_samples 的 summary 派生，
+      // 这样不用额外改后端契约，也能先把整页从“半真半 mock”收口成可演示的真实链路。
+      summary: runtimeSummary || mockDetail?.summary || '当前没有可展示的异常摘要。',
+      issues: runtimeIssues.length > 0
+        ? runtimeIssues
+        : (mockDetail?.issues ?? ['当前没有可展示的异常问题摘要。']),
+      operations: runtimeOperations.length > 0 ? runtimeOperations : (mockDetail?.operations ?? []),
       // recent_samples 已经由后端按 trace_id + service 去重并按时间倒序裁成最近 3 条；
       // 这里前端只做字段名适配，不再重新发明一套筛选规则。
       recentTraces: runtimeRecentTraces.length > 0 ? runtimeRecentTraces : (mockDetail?.recentTraces ?? [])

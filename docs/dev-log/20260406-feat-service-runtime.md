@@ -148,6 +148,83 @@ feat(frontend): 接入服务监控原型页最近异常样本真数据
 
 当前是“有后端 recent_samples 就优先吃后端，没有才退回 mock”。所以如果某个服务进入 top4 但后端样本暂时还没回来，页面仍可能先看到 mock 样本。这是当前刻意保留的过渡态，不是 bug。
 
+# 追加记录：2026-04-06 原型页右侧详情剩余模块收口
+
+## Git Commit Message
+
+feat(frontend): 收口服务监控原型页右侧详情真数据适配
+
+## Modification
+
+- `client/src/views/ServiceMonitorPrototype.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/ServiceMonitorPrototype.vue` 的 `services` 数据适配层补了注释，说明服务摘要和右侧问题摘要当前先从 `recent_samples[].summary` 派生，不额外扩后端字段。
+
+## Learning Tips
+
+### Newbie Tips
+
+后端字段不够时，先看能不能从现有真字段稳定派生，而不是立刻扩接口。只要派生规则清楚、前后端都能解释，这种收口比临时加新字段更稳。
+
+### Function Explanation
+
+`.filter((summary, index, arr) => arr.indexOf(summary) === index)`：这是最朴素的去重写法。这里样本上限本来就只有 3，所以不用为了这点数据再上 `Set` 或额外容器。
+
+### Pitfalls
+
+当前右侧“最近问题摘要”并不是真正的服务级 AI prompt 产物，而是从最近样本 summary 派生出来的过渡态。演示没问题，但如果后面论文或答辩要强调“按服务分析”，就还得单独补服务级摘要能力。
+
+# 追加记录：2026-04-06 手工联调脚本与受限环境启动开关
+
+## Git Commit Message
+
+feat(test): 补充服务监控手工联调脚本与代理启动开关
+
+## Modification
+
+- `server/tests/manual_service_monitor_demo.sh`
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `server/tests/manual_service_monitor_demo.sh` 里补了整段中文注释，说明脚本只做三件事：灌复杂 trace、等待快照发布、拉 runtime JSON。
+- 在 `server/src/main.cpp` 里给 `--no-auto-start-proxy` 补了注释，说明这个开关只用于受限环境下手动先起 proxy 的联调场景，不改变默认开发行为。
+
+## Learning Tips
+
+### Newbie Tips
+
+联调脚本最值钱的不是“多自动化”，而是“别重复发明 payload”。既然仓库里已经有复杂 trace fixture，就应该直接复用它，避免后面一份脚本测的是 A 口径，另一份 fixture 测的是 B 口径。
+
+### Function Explanation
+
+`trap 'kill ...' EXIT`：shell 退出时自动清理后台进程。这里本来是为了把 proxy 和后端放在一个 shell 会话里收尾，不过最终真实 smoke 走的是“手动复用现成 proxy + 后端禁自动起 proxy”的路径。
+
+### Pitfalls
+
+这次联调顺手暴露了一个环境相关问题：在沙箱里直接跑 C++ 后端时，监听 socket 的系统调用会被拦成 `EPERM`。这不是业务逻辑 bug，所以最后那轮真实 smoke 是放到沙箱外完成的。
+
+## Smoke Result
+
+在沙箱外完成了一轮真实联调：
+
+- 后端启动命令：
+  - `./LogSentinel --no-auto-start-proxy --trace-ai-provider mock --trace-ai-base-url http://127.0.0.1:8001 --db /tmp/logsentinel_service_monitor_demo.db --port 18080`
+- 灌数脚本：
+  - `bash server/tests/manual_service_monitor_demo.sh http://127.0.0.1:18080`
+- 结果摘要：
+  - `overview.abnormal_service_count = 3`
+  - `overview.abnormal_trace_count = 1`
+  - `services_topk` 返回 `order-service / payment-service / bank-gateway`
+  - 每个服务都带回了 `operation_ranking` 和 `recent_samples`
+  - `global_operation_ranking` 返回 3 条异常操作
+
 # Learning Tips
 
 ## Newbie Tips
@@ -171,3 +248,36 @@ feat(frontend): 接入服务监控原型页最近异常样本真数据
 滑动窗口场景里不要急着上“长期在线优先队列 topk”。因为数据既会加也会减，旧节点很容易 stale。第一刀先用完整 map 聚合，再在发布快照时排序截取，逻辑更稳。
 
 当前服务监控统计还是“进程期累计态”，还不是最终的分钟桶窗口实现。如果后面前端标题已经写死“最近 30 分钟”，就必须尽快把时间窗退账接上，否则展示语义会漂。
+
+# 追加记录：2026-04-06 联合启动联调脚本
+
+## Git Commit Message
+
+feat(test): 新增服务监控联合启动联调脚本
+
+## Modification
+
+- `server/tests/run_all_and_demo.sh`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `server/tests/run_all_and_demo.sh` 顶部补了整段流程注释，明确脚本负责“编译后端、独立拉起 proxy、等待 ready、复用 demo、驻留供前端联调、退出清理”这几步。
+- 在 `server/tests/run_all_and_demo.sh` 的 `RUN_DIR`、`stop_process()`、`cleanup()`、`wait_for_http_ready()` 和 `hold_until_interrupt()` 附近补了中文注释，说明为什么要单独建临时目录、为什么先发 TERM、为什么 trap 阶段要关掉 `set -e`、为什么 readiness 直接打 HTTP、以及为什么 demo 跑完后不能立刻退出。
+
+## Learning Tips
+
+### Newbie Tips
+
+联调脚本最容易踩的坑不是“起不来”，而是“起得来但关不干净”。只要脚本里有后台进程，就必须先想清楚谁记录 PID、谁负责回收、遇到 Ctrl+C 时会不会留下孤儿进程。
+
+### Function Explanation
+
+`mktemp -d`：创建唯一的临时目录。这里用它把数据库和日志都收口到同一轮运行目录里，既避免多次联调互相覆盖，也方便出错时直接看现场。
+
+`trap cleanup EXIT INT TERM`：给 shell 绑定统一退出路径。既然脚本既可能正常结束，也可能被 Ctrl+C 或 kill 打断，那么清理逻辑就不能散落在多个分支里，应该集中在 trap 里做。
+
+### Pitfalls
+
+后端当前默认会自动拉起 proxy。如果联合脚本又手动起一份 proxy，但是忘了给后端传 `--no-auto-start-proxy`，那就不是“多一层保险”，而是两份进程争抢 8001，联调会直接变成端口冲突。
