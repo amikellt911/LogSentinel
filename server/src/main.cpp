@@ -331,9 +331,11 @@ int main(int argc, char* argv[])
             static_cast<size_t>(trace_max_dispatch_per_tick));
     });
     ServiceRuntimeAccumulator* service_runtime_accumulator_raw = service_runtime_accumulator.get();
-    // 服务监控快照先低频发布一版，避免前端频繁读时每次都在请求线程里重新排序裁切。
-    // 后面如果分钟桶窗口接进来，这个 tick 继续沿用，不需要再改 HTTP 层。
-    loop.runEvery(5.0, [service_runtime_accumulator_raw]() {
+    // 这里先把服务监控快照发布周期压到 1 秒，原因不是统计更“实时”了，
+    // 而是答辩演示时不希望前端明明已经过了分钟封口点，却还要额外再等 5 秒才看到榜单变化。
+    // 但是要注意：分钟桶仍然是“封口后才进窗”，所以这只能减少快照发布等待，
+    // 不能消除“当前活跃分钟必须等结束后才能显示”的那部分延迟。
+    loop.runEvery(1.0, [service_runtime_accumulator_raw]() {
         if (service_runtime_accumulator_raw) {
             service_runtime_accumulator_raw->OnTick();
         }
