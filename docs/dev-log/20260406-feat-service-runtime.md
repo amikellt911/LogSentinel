@@ -364,6 +364,38 @@ feat(test): 联合联调脚本默认透传服务监控小窗口参数
 ### Pitfalls
 
 shell 的续行命令里不要把注释放在反斜杠链中间，不然很容易把整条命令解析坏。注释最好写在命令块上方，而不是塞进 `\` 续行里。
+
+# 追加记录：2026-04-06 去除服务监控原型页运行态 mock fallback
+
+## Git Commit Message
+
+fix(frontend): 去除服务监控原型页运行态mock回退
+
+## Modification
+
+- `client/src/views/ServiceMonitorPrototype.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/ServiceMonitorPrototype.vue` 的 `services` 计算属性附近补了中文注释，明确这刀的目标是“后端真数据或空态”，不再偷偷回退到 mock。
+- 在 `fetchRuntimeSnapshot()` 里补了中文注释，说明当时间窗退空时为什么要把 `selectedServiceName` 一起清掉。
+- 在模板的空态块附近补了中文文案，明确当前服务榜、样本列表、问题摘要、操作表、全局排行在无数据时都应该显示空态。
+
+## Learning Tips
+
+### Newbie Tips
+
+联调时间窗时，页面绝对不能保留“没数据就回退 mock”的逻辑。否则后端已经退窗了，前端却还在显示假卡片，你根本分不清是时间窗没生效，还是页面在兜底骗人。
+
+### Function Explanation
+
+`computed(...)`：这里继续让页面展示完全由响应式数据驱动，但数据源改成了“只吃 runtime 快照”。没有快照数据时，直接回落到空数组和空态对象，而不是旧 mock。
+
+### Pitfalls
+
+右侧聚焦面板依赖 `selectedService`。如果服务榜退空了却不把当前选中值一起清掉，右侧就会继续挂着上一轮的旧服务，视觉上等价于“假数据没退掉”。
 - `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
 - `docs/dev-log/20260406-feat-service-runtime.md`
 

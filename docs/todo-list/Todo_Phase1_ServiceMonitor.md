@@ -191,6 +191,7 @@
 - [x] 再把全局异常操作排行接真数据
 - [x] 再把服务卡列表接真数据（当前先接基础统计字段，右侧详情继续保留 mock）
 - [x] 最后把当前服务最近异常 Trace 样本接真数据
+- [x] 退窗联调前已去掉 `ServiceMonitorPrototype.vue` 的运行态 mock fallback，后端没数据时直接显示空态
 
 ### 暂不做
 - [ ] 不做旧 `ServiceMonitor.vue` 真联调

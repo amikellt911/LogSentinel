@@ -58,6 +58,12 @@
             </div>
 
             <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div
+                v-if="services.length === 0"
+                class="rounded-2xl border border-dashed border-gray-700 bg-black/20 p-6 text-sm leading-7 text-gray-400 lg:col-span-2"
+              >
+                当前窗口内没有异常服务，说明服务榜已经退空；这时候不再回退到 mock。
+              </div>
               <button
                 v-for="service in services"
                 :key="service.name"
@@ -124,6 +130,12 @@
             </div>
 
             <div class="mt-5 space-y-4">
+              <div
+                v-if="selectedService.recentTraces.length === 0"
+                class="rounded-2xl border border-dashed border-gray-700 bg-black/20 p-4 text-sm leading-7 text-gray-400"
+              >
+                当前服务暂无最近异常 Trace 样本。
+              </div>
               <div
                 v-for="trace in selectedService.recentTraces"
                 :key="trace.traceId"
@@ -219,6 +231,12 @@
               <div class="text-sm uppercase tracking-[0.2em] text-gray-500">最近问题摘要</div>
               <ul class="mt-3 space-y-3">
                 <li
+                  v-if="selectedService.issues.length === 0"
+                  class="rounded-2xl border border-dashed border-gray-700 bg-black/20 px-4 py-3 text-sm leading-6 text-gray-400"
+                >
+                  当前服务暂无可展示的问题摘要。
+                </li>
+                <li
                   v-for="issue in selectedService.issues"
                   :key="issue"
                   class="rounded-2xl border border-gray-800 bg-black/20 px-4 py-3 text-sm leading-6 text-gray-300"
@@ -242,6 +260,12 @@
                   <div>操作</div>
                   <div>异常链路数</div>
                   <div>异常平均耗时</div>
+                </div>
+                <div
+                  v-if="selectedService.operations.length === 0"
+                  class="border-t border-gray-800 px-4 py-4 text-sm text-gray-400"
+                >
+                  当前服务暂无异常操作统计。
                 </div>
                 <div
                   v-for="operation in selectedService.operations"
@@ -283,6 +307,12 @@
             </div>
 
             <div class="mt-5 space-y-4">
+              <div
+                v-if="operationRanking.length === 0"
+                class="rounded-2xl border border-dashed border-gray-700 bg-black/20 p-4 text-sm leading-7 text-gray-400"
+              >
+                当前窗口内暂无全局异常操作排行。
+              </div>
               <div v-for="item in operationRanking" :key="item.key">
                 <div class="flex items-center justify-between text-sm">
                   <div>
@@ -389,199 +419,28 @@ interface ServiceRuntimeSnapshotResponse {
 }
 
 const router = useRouter()
+const emptyService: ServiceItem = {
+  name: '--',
+  risk: 'healthy',
+  exceptionCount: 0,
+  avgLatencyMs: 0,
+  latestExceptionTime: '--:--:--',
+  summary: '当前没有可展示的服务摘要。',
+  issues: [],
+  operations: [],
+  recentTraces: []
+}
 
-// 这里故意把 mock 数据直接放在页面里，先验证“服务视角首页”的信息组织方式。
-const mockServices = ref<ServiceItem[]>([
-  {
-    name: 'order-service',
-    risk: 'critical',
-    exceptionCount: 45,
-    avgLatencyMs: 44,
-    latestExceptionTime: '10:15:30',
-    summary: '订单创建链路最近频繁卡在支付确认与库存回调，超时后会触发整条请求失败。',
-    issues: [
-      '订单创建接口最近 30 分钟内出现多次下游超时，用户会感知到下单失败或长时间等待。',
-      '支付回调确认延迟抬高后，订单状态回写经常比预期慢一拍，造成页面状态不一致。',
-      '库存确认链路偶发锁竞争，导致支付成功后订单仍需等待库存服务最终回执。'
-    ],
-    operations: [
-      { name: 'create-order', exceptions: 12, avgLatencyMs: 44, highestRisk: 'critical' },
-      { name: 'pay-order', exceptions: 8, avgLatencyMs: 33, highestRisk: 'critical' },
-      { name: 'query-order', exceptions: 5, avgLatencyMs: 24, highestRisk: 'warning' }
-    ],
-    recentTraces: [
-      {
-        traceId: 'trace-order-20260319-001',
-        time: '10:15:30',
-        operation: 'create-order',
-        summary: '订单创建调用在支付确认阶段卡住，整条链路最终超时返回失败。',
-        durationMs: 1440,
-        risk: 'critical'
-      },
-      {
-        traceId: 'trace-order-20260319-002',
-        time: '10:12:48',
-        operation: 'pay-order',
-        summary: '支付成功后库存确认迟迟未回，订单状态更新明显滞后。',
-        durationMs: 932,
-        risk: 'warning'
-      },
-      {
-        traceId: 'trace-order-20260319-003',
-        time: '10:08:11',
-        operation: 'query-order',
-        summary: '订单查询接口受到上游重试影响，短时间内响应时间抬高。',
-        durationMs: 615,
-        risk: 'warning'
-      }
-    ]
-  },
-  {
-    name: 'product-service',
-    risk: 'warning',
-    exceptionCount: 18,
-    avgLatencyMs: 33,
-    latestExceptionTime: '10:13:10',
-    summary: '商品详情接口偶发慢查询，库存联查峰值时延明显升高，但整体仍可恢复。',
-    issues: [
-      '商品详情查询在高峰期会触发慢 SQL，用户主要感知是页面首屏加载变慢。',
-      '库存联查的缓存命中率下降后，平均耗时会被数据库读取直接拉高。'
-    ],
-    operations: [
-      { name: 'query-product-detail', exceptions: 9, avgLatencyMs: 31, highestRisk: 'warning' },
-      { name: 'search-product', exceptions: 5, avgLatencyMs: 26, highestRisk: 'warning' },
-      { name: 'query-product-stock', exceptions: 4, avgLatencyMs: 22, highestRisk: 'warning' }
-    ],
-    recentTraces: [
-      {
-        traceId: 'trace-product-20260319-001',
-        time: '10:13:10',
-        operation: 'query-product-detail',
-        summary: '商品详情查询在库存联查阶段出现慢 SQL，用户首屏加载变慢。',
-        durationMs: 482,
-        risk: 'warning'
-      },
-      {
-        traceId: 'trace-product-20260319-002',
-        time: '10:10:42',
-        operation: 'search-product',
-        summary: '搜索结果聚合查询命中数据库回源，导致响应抖动。',
-        durationMs: 355,
-        risk: 'warning'
-      },
-      {
-        traceId: 'trace-product-20260319-003',
-        time: '10:06:29',
-        operation: 'query-product-stock',
-        summary: '库存信息接口在高峰流量下连续出现中等延迟，没有形成彻底失败。',
-        durationMs: 298,
-        risk: 'warning'
-      }
-    ]
-  },
-  {
-    name: 'payment-service',
-    risk: 'warning',
-    exceptionCount: 12,
-    avgLatencyMs: 24,
-    latestExceptionTime: '10:12:02',
-    summary: '支付回调成功率基本稳定，但在第三方渠道抖动时会出现短暂重试堆积。',
-    issues: [
-      '第三方支付网关抖动时，回调确认会出现连续重试，影响订单状态回写速度。',
-      '支付通知落库路径仍然稳定，没有出现长时间积压。'
-    ],
-    operations: [
-      { name: 'payment-callback', exceptions: 6, avgLatencyMs: 28, highestRisk: 'warning' },
-      { name: 'confirm-payment', exceptions: 4, avgLatencyMs: 23, highestRisk: 'warning' },
-      { name: 'refund-payment', exceptions: 2, avgLatencyMs: 21, highestRisk: 'healthy' }
-    ],
-    recentTraces: [
-      {
-        traceId: 'trace-pay-20260319-001',
-        time: '10:12:02',
-        operation: 'payment-callback',
-        summary: '第三方渠道抖动导致支付回调重试增多，但最终仍能成功落库。',
-        durationMs: 522,
-        risk: 'warning'
-      },
-      {
-        traceId: 'trace-pay-20260319-002',
-        time: '10:07:37',
-        operation: 'confirm-payment',
-        summary: '支付确认接口在短时间内连续重试，平均耗时被明显拉高。',
-        durationMs: 406,
-        risk: 'warning'
-      },
-      {
-        traceId: 'trace-pay-20260319-003',
-        time: '10:03:26',
-        operation: 'refund-payment',
-        summary: '退款链路偶发慢响应，但没有看到大面积失败或积压。',
-        durationMs: 214,
-        risk: 'healthy'
-      }
-    ]
-  },
-  {
-    name: 'user-service',
-    risk: 'healthy',
-    exceptionCount: 6,
-    avgLatencyMs: 18,
-    latestExceptionTime: '10:09:41',
-    summary: '用户登录与鉴权整体平稳，仅有少量数据库抖动带来的瞬时慢响应。',
-    issues: [
-      '用户服务近期主要是少量数据库慢响应，没有形成持续故障。',
-      '鉴权链路没有出现批量失败，当前更像是普通波动。'
-    ],
-    operations: [
-      { name: 'login-user', exceptions: 3, avgLatencyMs: 18, highestRisk: 'healthy' },
-      { name: 'load-user-profile', exceptions: 2, avgLatencyMs: 16, highestRisk: 'healthy' },
-      { name: 'refresh-user-token', exceptions: 1, avgLatencyMs: 15, highestRisk: 'healthy' }
-    ],
-    recentTraces: [
-      {
-        traceId: 'trace-user-20260319-001',
-        time: '10:09:41',
-        operation: 'login-user',
-        summary: '登录接口偶发慢响应，但整体成功率稳定，没有形成持续告警。',
-        durationMs: 182,
-        risk: 'healthy'
-      },
-      {
-        traceId: 'trace-user-20260319-002',
-        time: '10:05:14',
-        operation: 'load-user-profile',
-        summary: '用户资料读取受缓存回填影响，个别请求略慢于平时。',
-        durationMs: 136,
-        risk: 'healthy'
-      },
-      {
-        traceId: 'trace-user-20260319-003',
-        time: '10:01:52',
-        operation: 'refresh-user-token',
-        summary: 'token 刷新链路整体稳定，仅有极少数请求延迟上浮。',
-        durationMs: 121,
-        risk: 'healthy'
-      }
-    ]
-  }
-])
-
-const selectedServiceName = ref('order-service')
+const selectedServiceName = ref('')
 const runtimeOverview = ref<RuntimeOverview | null>(null)
 const runtimeServices = ref<RuntimeServiceItem[]>([])
 const runtimeGlobalOperationRanking = ref<RuntimeGlobalOperationItem[]>([])
 const overviewLoading = ref(false)
 
-// 用户点左侧卡片后，右边只看一个服务，避免页面退化成第二个 Trace 列表。
-// 左侧服务卡这一刀先吃后端的基础统计；右侧问题摘要、操作表和样本仍然继续复用 mock 详情。
+// 这一刀把原型页的运行态展示彻底切成“后端真数据或空态”。
+// 既然后面要验证时间窗退场，那么页面就不能再偷偷回退到 mock，否则你肉眼根本看不出退窗是否生效。
 const services = computed<ServiceItem[]>(() => {
-  if (runtimeServices.value.length === 0) {
-    return mockServices.value
-  }
-
   return runtimeServices.value.map(runtimeService => {
-    const mockDetail = mockServices.value.find(service => service.name === runtimeService.service_name)
     const runtimeRecentTraces = runtimeService.recent_samples.map(sample => ({
       traceId: sample.trace_id,
       time: formatRuntimeTime(sample.time_ms),
@@ -609,47 +468,28 @@ const services = computed<ServiceItem[]>(() => {
       exceptionCount: runtimeService.exception_count,
       avgLatencyMs: runtimeService.avg_latency_ms,
       latestExceptionTime: formatRuntimeTime(runtimeService.latest_exception_time_ms),
-      // 服务摘要和右侧问题摘要当前先从 recent_samples 的 summary 派生，
-      // 这样不用额外改后端契约，也能先把整页从“半真半 mock”收口成可演示的真实链路。
-      summary: runtimeSummary || mockDetail?.summary || '当前没有可展示的异常摘要。',
-      issues: runtimeIssues.length > 0
-        ? runtimeIssues
-        : (mockDetail?.issues ?? ['当前没有可展示的异常问题摘要。']),
-      operations: runtimeOperations.length > 0 ? runtimeOperations : (mockDetail?.operations ?? []),
+      // 服务摘要和问题摘要当前仍然从 recent_samples 的 summary 派生，
+      // 但如果后端现在没有样本，就直接显示空态，不再偷偷回退到旧 mock。
+      summary: runtimeSummary || '当前没有可展示的异常摘要。',
+      issues: runtimeIssues,
+      operations: runtimeOperations,
       // recent_samples 已经由后端按 trace_id + service 去重并按时间倒序裁成最近 3 条；
       // 这里前端只做字段名适配，不再重新发明一套筛选规则。
-      recentTraces: runtimeRecentTraces.length > 0 ? runtimeRecentTraces : (mockDetail?.recentTraces ?? [])
+      recentTraces: runtimeRecentTraces
     }
   })
 })
 
 const selectedService = computed(() => {
-  return services.value.find(service => service.name === selectedServiceName.value) ?? services.value[0]
-})
-
-const fallbackOverview = computed(() => {
-  const abnormalServices = mockServices.value.filter(item => item.risk !== 'healthy').length
-  const abnormalTraces = mockServices.value.reduce((sum, item) => sum + item.exceptionCount, 0)
-  const latestTime = mockServices.value
-    .map(item => item.latestExceptionTime)
-    .sort()
-    .reverse()[0]
-
-  return {
-    abnormalServices,
-    abnormalTraces,
-    latestTime: latestTime ?? '--:--:--'
-  }
+  return services.value.find(service => service.name === selectedServiceName.value) ?? services.value[0] ?? emptyService
 })
 
 const overviewCards = computed(() => {
-  // 这一刀只把顶部总览接成真数据，下面服务卡和右侧详情先继续保留 mock，
-  // 这样我们能先验证前后端接口是否打通，不会一口气把整页状态管理改乱。
-  const abnormalServices = runtimeOverview.value?.abnormal_service_count ?? fallbackOverview.value.abnormalServices
-  const abnormalTraces = runtimeOverview.value?.abnormal_trace_count ?? fallbackOverview.value.abnormalTraces
+  const abnormalServices = runtimeOverview.value?.abnormal_service_count ?? 0
+  const abnormalTraces = runtimeOverview.value?.abnormal_trace_count ?? 0
   const latestTime = runtimeOverview.value && runtimeOverview.value.latest_exception_time_ms > 0
     ? dayjs(runtimeOverview.value.latest_exception_time_ms).format('HH:mm:ss')
-    : fallbackOverview.value.latestTime
+    : '--:--:--'
 
   return [
     {
@@ -674,28 +514,12 @@ const overviewCards = computed(() => {
 })
 
 const operationRanking = computed(() => {
-  // 右下角全局排行和顶部总览共用同一个后端快照接口。
-  // 这一刀只把“全局操作排行”接真数据，当前服务卡和右侧聚焦仍然继续吃 mock。
-  if (runtimeGlobalOperationRanking.value.length > 0) {
-    return runtimeGlobalOperationRanking.value.map(item => ({
-      key: `${item.service_name}-${item.operation_name}`,
-      service: item.service_name,
-      name: item.operation_name,
-      exceptions: item.count
-    }))
-  }
-
-  return mockServices.value
-    .flatMap(service =>
-      service.operations.map(operation => ({
-        key: `${service.name}-${operation.name}`,
-        service: service.name,
-        name: operation.name,
-        exceptions: operation.exceptions
-      }))
-    )
-    .sort((a, b) => b.exceptions - a.exceptions)
-    .slice(0, 6)
+  return runtimeGlobalOperationRanking.value.map(item => ({
+    key: `${item.service_name}-${item.operation_name}`,
+    service: item.service_name,
+    name: item.operation_name,
+    exceptions: item.count
+  }))
 })
 
 const maxRankingException = computed(() => {
@@ -723,6 +547,10 @@ async function fetchRuntimeSnapshot() {
       // 左侧切成真服务榜后，当前选中项可能已经不在 top4 里。
       // 这里把选中项同步到榜单第一名，避免右侧面板继续悬着一个已经不存在的 mock 服务名。
       selectedServiceName.value = runtimeServices.value[0].service_name
+    } else if (runtimeServices.value.length === 0) {
+      // 时间窗退空后不再回退到 mock，所以这里也要把选中服务清空，
+      // 让右侧面板老老实实进入空态，而不是继续挂着上一轮的旧服务名。
+      selectedServiceName.value = ''
     }
   } catch (error) {
     console.error('Failed to fetch service runtime snapshot:', error)
