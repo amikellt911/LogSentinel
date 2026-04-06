@@ -22,6 +22,7 @@ class ThreadPool;
 class BufferedTraceRepository;
 class TraceAiProvider;
 class INotifier;
+class ServiceRuntimeAccumulator;
 
 struct SpanEvent
 {
@@ -175,7 +176,8 @@ public:
                                  int64_t wheel_tick_ms = 500,
                                  size_t wheel_size = 512,
                                  size_t buffered_span_hard_limit = 4096,
-                                 size_t active_session_hard_limit = 1024);
+                                 size_t active_session_hard_limit = 1024,
+                                 ServiceRuntimeAccumulator* service_runtime_accumulator = nullptr);
     ~TraceSessionManager();
 
     size_t size() const;
@@ -200,6 +202,7 @@ private:
     BufferedTraceRepository* buffered_trace_repo_ = nullptr;
     TraceAiProvider* trace_ai_ = nullptr;
     INotifier* notifier_ = nullptr;
+    ServiceRuntimeAccumulator* service_runtime_accumulator_ = nullptr;
     size_t capacity_ = 0;
     size_t token_limit_ = 0;
     TokenEstimator token_estimator_;

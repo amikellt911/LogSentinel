@@ -62,6 +62,7 @@ add_library(util_module STATIC
 add_library(core_module STATIC
     core/AnalysisTask.cpp
     core/LogBatcher.cpp
+    core/ServiceRuntimeAccumulator.cpp
     core/TraceSessionManager.cpp
     core/TokenEstimator.cpp
 )
@@ -90,6 +91,7 @@ add_library(handler_module STATIC
   handlers/DashboardHandler.cpp
   handlers/HistoryHandler.cpp
   handlers/ConfigHandler.cpp
+  handlers/ServiceMonitorHandler.cpp
   handlers/TraceQueryHandler.cpp
 )
 target_include_directories(http_module PUBLIC
@@ -176,6 +178,10 @@ add_executable(test_log_handler
   tests/LogHandler_test.cpp
 )
 
+add_executable(test_service_runtime_accumulator
+  tests/ServiceRuntimeAccumulator_test.cpp
+)
+
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -203,6 +209,10 @@ target_link_libraries(test_log_handler PRIVATE
 GTest::gtest_main
 handler_module
 )
+target_link_libraries(test_service_runtime_accumulator PRIVATE
+GTest::gtest_main
+core_module
+)
 
 # 统一使用 gtest_discover_tests 注册，避免与 add_test 重复注册导致同一测试二进制被 CTest 跑两次。
 gtest_discover_tests(test_http_context)
@@ -211,6 +221,7 @@ gtest_discover_tests(test_trace_session_manager_unit)
 gtest_discover_tests(test_trace_session_manager_integration)
 gtest_discover_tests(test_sqlite_trace_repo)
 gtest_discover_tests(test_log_handler)
+gtest_discover_tests(test_service_runtime_accumulator)
 #-----------不同模块测试用例---------------
 #这些测试用例版本变动，用不了了
 # #http层测试用例

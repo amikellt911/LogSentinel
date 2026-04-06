@@ -20,8 +20,10 @@
 #include "handlers/TraceQueryHandler.h"
 #include "handlers/DashboardHandler.h"
 #include "handlers/HistoryHandler.h"
+#include "handlers/ServiceMonitorHandler.h"
 #include "handlers/ConfigHandler.h"
 #include "core/LogBatcher.h"
+#include "core/ServiceRuntimeAccumulator.h"
 #include "core/TraceSessionManager.h"
 #include "util/DevSubprocessManager.h"
 #include <filesystem>
@@ -279,6 +281,9 @@ int main(int argc, char* argv[])
     // Trace 读请求单独走查询线程池，避免前端查库任务和 AI/聚合任务抢同一条队列。
     // 当前先固定 1 条查询线程，把“执行通道分离”先做出来，后面再按压测结果调整线程数。
     ThreadPool query_tpool(static_cast<size_t>(num_query_threads), static_cast<size_t>(worker_queue_size));
+    auto service_runtime_accumulator = std::make_shared<ServiceRuntimeAccumulator>(/*service_top_k*/4,
+                                                                                  /*operation_top_k*/6,
+                                                                                  /*recent_sample_limit*/3);
     std::shared_ptr<TraceSessionManager> trace_session_manager = std::make_shared<TraceSessionManager>(
         &tpool,
         buffered_trace_repo.get(),
@@ -290,7 +295,8 @@ int main(int argc, char* argv[])
         trace_sweep_interval_ms,
         /*wheel_size*/512,
         static_cast<size_t>(trace_buffered_span_limit),
-        static_cast<size_t>(trace_active_session_limit));
+        static_cast<size_t>(trace_active_session_limit),
+        service_runtime_accumulator.get());
     const double trace_sweep_interval_sec = static_cast<double>(trace_sweep_interval_ms) / 1000.0;
     std::cout << "Trace session sweep enabled. sweep_interval_ms=" << trace_sweep_interval_ms
               << ", idle_timeout_ms=" << trace_idle_timeout_ms
@@ -308,6 +314,14 @@ int main(int argc, char* argv[])
             now_ms,
             trace_idle_timeout_ms,
             static_cast<size_t>(trace_max_dispatch_per_tick));
+    });
+    ServiceRuntimeAccumulator* service_runtime_accumulator_raw = service_runtime_accumulator.get();
+    // 服务监控快照先低频发布一版，避免前端频繁读时每次都在请求线程里重新排序裁切。
+    // 后面如果分钟桶窗口接进来，这个 tick 继续沿用，不需要再改 HTTP 层。
+    loop.runEvery(5.0, [service_runtime_accumulator_raw]() {
+        if (service_runtime_accumulator_raw) {
+            service_runtime_accumulator_raw->OnTick();
+        }
     });
     bool shutdown_stats_logged = false;
     loop.runEvery(0.1, [&loop, &shutdown_stats_logged, trace_session_manager_raw, buffered_trace_repo]() {
@@ -327,12 +341,16 @@ int main(int argc, char* argv[])
     
     std::shared_ptr<Router> router = std::make_shared<Router>();
     auto trace_query_handler = std::make_shared<TraceQueryHandler>(trace_read_repo, &query_tpool);
+    auto service_monitor_handler = std::make_shared<ServiceMonitorHandler>(service_runtime_accumulator);
 
     router->add("POST", "/traces/search", [trace_query_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         trace_query_handler->handleSearchTraces(req, resp, conn);
     });
     router->add("GET", "/traces/*", [trace_query_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         trace_query_handler->handleGetTraceDetail(req, resp, conn);
+    });
+    router->add("GET", "/service-monitor/runtime", [service_monitor_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        service_monitor_handler->handleGetRuntimeSnapshot(req, resp, conn);
     });
 
     // Config Handler

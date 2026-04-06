@@ -127,64 +127,64 @@
 ### 当前实现顺序
 
 #### A. 先把后端数据契约和骨架接出来
-- [ ] 定义 `ServiceRuntimeSnapshot`
-  - [ ] `overview`
-  - [ ] `services_topk[]`
-  - [ ] `global_operation_ranking[]`
-- [ ] 定义 `PrimaryObservation`
-  - [ ] `trace_id`
-  - [ ] `trace_end_time_ms`
-  - [ ] `trace_risk_level`
-  - [ ] `services[]`
-  - [ ] `services[].operations[]`
-- [ ] 定义 `AnalysisObservation`
-  - [ ] `trace_id`
-  - [ ] `trace_end_time_ms`
-  - [ ] `trace_risk_level`
-  - [ ] `trace_summary`
-  - [ ] `service_samples[]`
-- [ ] 定义累加器接口
-  - [ ] `OnPrimaryCommitted(...)`
-  - [ ] `OnAnalysisReady(...)`
-  - [ ] `OnTick(...)`
-  - [ ] `BuildSnapshot()`
-- [ ] 先把 handler 和路由接上，哪怕先返回空快照
+- [x] 定义 `ServiceRuntimeSnapshot`
+  - [x] `overview`
+  - [x] `services_topk[]`
+  - [x] `global_operation_ranking[]`
+- [x] 定义 `PrimaryObservation`
+  - [x] `trace_id`
+  - [x] `trace_end_time_ms`
+  - [x] `trace_risk_level`
+  - [x] `services[]`
+  - [x] `services[].operations[]`
+- [x] 定义 `AnalysisObservation`
+  - [x] `trace_id`
+  - [x] `trace_end_time_ms`
+  - [x] `trace_risk_level`
+  - [x] `trace_summary`
+  - [x] `service_samples[]`
+- [x] 定义累加器接口
+  - [x] `OnPrimaryCommitted(...)`
+  - [x] `OnAnalysisReady(...)`
+  - [x] `OnTick(...)`
+  - [x] `BuildSnapshot()`
+- [x] 把 handler 和路由接上，当前路径为 `/service-monitor/runtime`
 
 #### B. 第一批先做最稳的两块
-- [ ] 做 `overview`
-  - [ ] `abnormal_service_count`
-  - [ ] `abnormal_trace_count`
-  - [ ] `latest_exception_time_ms`
-- [ ] 做 `global_operation_ranking[]`
-  - [ ] `service_name`
-  - [ ] `operation_name`
-  - [ ] `count`
-  - [ ] 可选 `avg_latency_ms`
+- [x] 做 `overview`
+  - [x] `abnormal_service_count`
+  - [x] `abnormal_trace_count`
+  - [x] `latest_exception_time_ms`
+- [x] 做 `global_operation_ranking[]`
+  - [x] `service_name`
+  - [x] `operation_name`
+  - [x] `count`
+  - [x] `avg_latency_ms`
 
 #### C. 再做 `services_topk[]` 的统计部分
-- [ ] 维护 `service_name -> ServiceState` 的完整 map，不直接在线维护长期 topk 结构
-- [ ] 发布 snapshot 时再排序截取 top4
-- [ ] 先做 `service_basic`
-  - [ ] `service_name`
-  - [ ] `risk_level`
-  - [ ] `exception_count`
-  - [ ] `avg_latency_ms`
-  - [ ] `latest_exception_time_ms`
-- [ ] 再做 `operation_ranking[]`
-  - [ ] 当前服务内按异常 span 次数排序
-  - [ ] 第一版只取前若干项供前端展示
+- [x] 维护 `service_name -> ServiceState` 的完整 map，不直接在线维护长期 topk 结构
+- [x] 发布 snapshot 时再排序截取 top4
+- [x] 先做 `service_basic`
+  - [x] `service_name`
+  - [x] `risk_level`
+  - [x] `exception_count`
+  - [x] `avg_latency_ms`
+  - [x] `latest_exception_time_ms`
+- [x] 再做 `operation_ranking[]`
+  - [x] 当前服务内按异常 span 次数排序
+  - [x] 第一版先取前 6 项供前端展示
 
 #### D. 最后补 `recent_samples[3]`
-- [ ] `AnalysisObservation` 只负责最近样本和摘要，不再回写统计字段
-- [ ] 每个服务最多保留最近 3 条样本
-- [ ] 样本字段先收口为
-  - [ ] `trace_id`
-  - [ ] `time_ms`
-  - [ ] `operation_name`
-  - [ ] `summary`
-  - [ ] `duration_ms`
-  - [ ] `risk_level`
-- [ ] `operation_name` 先取该服务在该 trace 中的代表异常操作
+- [x] `AnalysisObservation` 只负责最近样本和摘要，不再回写统计字段
+- [x] 每个服务最多保留最近 3 条样本
+- [x] 样本字段先收口为
+  - [x] `trace_id`
+  - [x] `time_ms`
+  - [x] `operation_name`
+  - [x] `summary`
+  - [x] `duration_ms`
+  - [x] `risk_level`
+- [x] `operation_name` 先取该服务在该 trace 中的代表异常操作
 
 #### E. 前端联调顺序
 - [ ] 先把原型页 overview 接真数据
@@ -197,3 +197,8 @@
 - [ ] 不做服务级 AI prompt 改造
 - [ ] 不做分页、全量服务列表、复杂筛选
 - [ ] 不做长期在线优先队列 / 红黑树 topk 结构
+
+### 当前边界说明
+- [x] 这一刀已经把真实 observation、累加器、handler、路由和主链路接线打通，接口不再是纯空壳
+- [x] 当前统计先按“进程存活期累计态 + 周期发布快照”实现，分钟桶时间窗和过期退账下一刀再接
+- [ ] 前端 `ServiceMonitorPrototype.vue` 还没有开始吃这个新接口

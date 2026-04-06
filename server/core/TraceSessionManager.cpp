@@ -1,6 +1,7 @@
 #include "core/TraceSessionManager.h"
 #include "threadpool/ThreadPool.h"
 #include "ai/TraceAiProvider.h"
+#include "core/ServiceRuntimeAccumulator.h"
 #include "persistence/BufferedTraceRepository.h"
 #include "persistence/TraceRepository.h"
 #include "notification/INotifier.h"
@@ -35,6 +36,123 @@ namespace
                                          .count());
     }
 
+    int64_t ResolveTraceEndTimeMs(const TraceRepository::TraceSummary& summary)
+    {
+        if (summary.end_time_ms.has_value())
+        {
+            return summary.end_time_ms.value();
+        }
+        return summary.start_time_ms + summary.duration_ms;
+    }
+
+    bool IsErrorSpanRecord(const TraceRepository::TraceSpanRecord& record)
+    {
+        return toLowerCopy(record.status) == "error";
+    }
+
+    PrimaryObservation BuildPrimaryObservation(const TraceRepository::TraceSummary& summary,
+                                              const std::vector<TraceRepository::TraceSpanRecord>& span_records)
+    {
+        struct ServiceTempState
+        {
+            PrimaryServiceObservation service;
+            std::unordered_map<std::string, size_t> operation_index;
+        };
+
+        PrimaryObservation observation;
+        observation.trace_id = summary.trace_id;
+        observation.trace_end_time_ms = ResolveTraceEndTimeMs(summary);
+        observation.trace_risk_level = summary.risk_level;
+
+        std::unordered_map<std::string, ServiceTempState> services;
+        for (const auto& span_record : span_records)
+        {
+            if (!IsErrorSpanRecord(span_record) || span_record.service_name.empty())
+            {
+                continue;
+            }
+
+            ServiceTempState& temp_state = services[span_record.service_name];
+            temp_state.service.service_name = span_record.service_name;
+            temp_state.service.error_trace_hit = true;
+            temp_state.service.error_span_count += 1;
+            temp_state.service.error_span_duration_sum_ms += span_record.duration_ms;
+            temp_state.service.latest_exception_time_ms =
+                std::max(temp_state.service.latest_exception_time_ms,
+                         span_record.start_time_ms + span_record.duration_ms);
+
+            const std::string& operation_name = span_record.operation;
+            auto operation_iter = temp_state.operation_index.find(operation_name);
+            if (operation_iter == temp_state.operation_index.end())
+            {
+                PrimaryOperationObservation operation;
+                operation.operation_name = operation_name;
+                operation.error_span_count = 1;
+                operation.error_span_duration_sum_ms = span_record.duration_ms;
+                temp_state.service.operations.push_back(std::move(operation));
+                temp_state.operation_index[operation_name] = temp_state.service.operations.size() - 1;
+            }
+            else
+            {
+                PrimaryOperationObservation& operation =
+                    temp_state.service.operations[operation_iter->second];
+                operation.error_span_count += 1;
+                operation.error_span_duration_sum_ms += span_record.duration_ms;
+            }
+        }
+
+        for (auto& entry : services)
+        {
+            observation.services.push_back(std::move(entry.second.service));
+        }
+        return observation;
+    }
+
+    AnalysisObservation BuildAnalysisObservation(const TraceRepository::TraceSummary& summary,
+                                                 const std::vector<TraceRepository::TraceSpanRecord>& span_records,
+                                                 const std::string& summary_text,
+                                                 const std::string& risk_level)
+    {
+        AnalysisObservation observation;
+        observation.trace_id = summary.trace_id;
+        observation.trace_end_time_ms = ResolveTraceEndTimeMs(summary);
+        observation.trace_risk_level = risk_level;
+        observation.trace_summary = summary_text;
+
+        std::unordered_map<std::string, AnalysisServiceSample> service_samples;
+        for (const auto& span_record : span_records)
+        {
+            if (!IsErrorSpanRecord(span_record) || span_record.service_name.empty())
+            {
+                continue;
+            }
+
+            const int64_t sample_time_ms = span_record.start_time_ms + span_record.duration_ms;
+            AnalysisServiceSample& sample = service_samples[span_record.service_name];
+            const bool should_replace =
+                sample.service_name.empty() ||
+                span_record.duration_ms > sample.duration_ms ||
+                (span_record.duration_ms == sample.duration_ms && sample_time_ms > sample.sample_time_ms);
+
+            if (!should_replace)
+            {
+                continue;
+            }
+
+            sample.service_name = span_record.service_name;
+            sample.representative_operation_name = span_record.operation;
+            sample.sample_time_ms = sample_time_ms;
+            sample.duration_ms = span_record.duration_ms;
+            sample.sample_risk_level = risk_level;
+        }
+
+        for (auto& entry : service_samples)
+        {
+            observation.service_samples.push_back(std::move(entry.second));
+        }
+        return observation;
+    }
+
 }
 
 TraceSession::TraceSession(size_t capacity)
@@ -53,8 +171,9 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
                                          int64_t wheel_tick_ms,
                                          size_t wheel_size,
                                          size_t buffered_span_hard_limit,
-                                         size_t active_session_hard_limit)
-    : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
+                                         size_t active_session_hard_limit,
+                                         ServiceRuntimeAccumulator* service_runtime_accumulator)
+    : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
     time_wheel_.resize(wheel_size_);
@@ -948,6 +1067,39 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         span_records = BuildSpanRecords(ready_order);
     }
 
+    // 服务监控 observation 需要一份“这条 trace 的错误 span 平铺视图”。
+    // 第一刀先直接复用 span_records；如果当前是 retry 路径且主数据已入缓冲，就补建一份临时 records，
+    // 这样既不重复写主数据，也不用让服务监控再去理解 TraceSession 的内部结构。
+    std::vector<TraceRepository::TraceSpanRecord> observation_span_records;
+    const std::vector<TraceRepository::TraceSpanRecord>* observation_span_records_ptr = nullptr;
+    if (service_runtime_accumulator_)
+    {
+        if (!span_records.empty())
+        {
+            observation_span_records_ptr = &span_records;
+        }
+        else
+        {
+            const std::vector<const SpanEvent *>& ready_order = ensure_order();
+            observation_span_records = BuildSpanRecords(ready_order);
+            observation_span_records_ptr = &observation_span_records;
+        }
+    }
+
+    std::optional<PrimaryObservation> primary_observation;
+    if (service_runtime_accumulator_ && summary_ptr && observation_span_records_ptr)
+    {
+        primary_observation = BuildPrimaryObservation(*summary_ptr, *observation_span_records_ptr);
+    }
+    std::shared_ptr<std::vector<TraceRepository::TraceSpanRecord>> analysis_observation_span_records;
+    if (service_runtime_accumulator_ && observation_span_records_ptr)
+    {
+        // worker 线程会晚于当前函数返回才真正执行，所以这里必须把 observation 用到的 span 视图单独拷出去，
+        // 不能把局部 vector 的地址直接借给异步任务，否则 ProcessDispatchJob 退栈后就是悬空指针。
+        analysis_observation_span_records =
+            std::make_shared<std::vector<TraceRepository::TraceSpanRecord>>(*observation_span_records_ptr);
+    }
+
     // 上面三个缺口都补完后，worker 与 append 路径只读 session 内部 prepared 数据即可。
     // 这样 trace_payload / summary 在本线程里就不用再多拷一份中间局部副本。
     if (!trace_payload_ptr && session->prepared_trace_payload.has_value())
@@ -1015,9 +1167,10 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     BufferedTraceRepository *buffered_trace_repo = buffered_trace_repo_;
     TraceAiProvider *trace_ai = trace_ai_;
     INotifier *notifier = notifier_;
+    ServiceRuntimeAccumulator* service_runtime_accumulator = service_runtime_accumulator_;
     const std::string *worker_trace_payload = trace_payload_ptr;
     const TraceRepository::TraceSummary *worker_summary = summary_ptr;
-    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, session_holder, worker_trace_payload, worker_summary]() mutable
+    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, service_runtime_accumulator, session_holder, worker_trace_payload, worker_summary, analysis_observation_span_records]() mutable
                               {
         if (!manager || !session_holder || !(*session_holder) || !worker_trace_payload || !worker_summary) {
             return;
@@ -1067,6 +1220,15 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         }
         manager->analysis_enqueue_total_ns_.fetch_add(NowSteadyNs() - enqueue_begin_ns, std::memory_order_relaxed);
         manager->worker_done_count_.fetch_add(1, std::memory_order_relaxed);
+        if (service_runtime_accumulator && analysis_ptr && analysis_observation_span_records)
+        {
+            // AI 回来后只补最近样本，不再回写 overview / 服务统计，避免同一条 trace 重复记账。
+            service_runtime_accumulator->OnAnalysisReady(
+                BuildAnalysisObservation(*worker_summary,
+                                         *analysis_observation_span_records,
+                                         analysis_ptr->summary,
+                                         analysis_ptr->risk_level));
+        }
         if (!saved || !notifier || !analysis_ptr) {
             return;
         }
@@ -1112,6 +1274,12 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
             dispatching_inflight_.erase(inflight_iter);
         }
         AddCompletedTombstoneLocked(trace_key);
+    }
+    if (service_runtime_accumulator_ && primary_observation.has_value())
+    {
+        // 只有 worker submit 真成功后，才把这条 trace 记进服务监控统计。
+        // 这样前面如果发生 rollback / retry，就不会把“其实没成功进入后链路”的脏数据记进去。
+        service_runtime_accumulator_->OnPrimaryCommitted(primary_observation.value());
     }
     submit_ok_count_.fetch_add(1, std::memory_order_relaxed);
 }
