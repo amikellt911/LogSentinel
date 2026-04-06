@@ -187,7 +187,7 @@
 - [x] `operation_name` 先取该服务在该 trace 中的代表异常操作
 
 #### E. 前端联调顺序
-- [ ] 先把原型页 overview 接真数据
+- [x] 先把原型页 overview 接真数据
 - [ ] 再把全局异常操作排行接真数据
 - [ ] 再把服务卡列表接真数据
 - [ ] 最后把当前服务最近异常 Trace 样本接真数据
@@ -201,4 +201,5 @@
 ### 当前边界说明
 - [x] 这一刀已经把真实 observation、累加器、handler、路由和主链路接线打通，接口不再是纯空壳
 - [x] 当前统计先按“进程存活期累计态 + 周期发布快照”实现，分钟桶时间窗和过期退账下一刀再接
-- [ ] 前端 `ServiceMonitorPrototype.vue` 还没有开始吃这个新接口
+- [x] 前端 `ServiceMonitorPrototype.vue` 已先把顶部 overview 接到 `/service-monitor/runtime`
+- [ ] 服务卡、全局异常操作排行、最近异常 Trace 样本 仍然保留 mock 数据

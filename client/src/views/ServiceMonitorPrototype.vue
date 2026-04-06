@@ -17,8 +17,10 @@
           <button
             class="rounded-lg border border-gray-700 bg-gray-900/70 px-4 py-2 text-sm text-gray-200 hover:bg-gray-800"
             type="button"
+            :disabled="overviewLoading"
+            @click="fetchRuntimeOverview"
           >
-            刷新
+            {{ overviewLoading ? '刷新中...' : '刷新' }}
           </button>
           <button
             class="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400"
@@ -308,7 +310,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import dayjs from 'dayjs'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 type RiskKind = 'critical' | 'warning' | 'healthy'
@@ -339,6 +342,16 @@ interface ServiceItem {
   issues: string[]
   operations: OperationItem[]
   recentTraces: TraceSampleItem[]
+}
+
+interface RuntimeOverview {
+  abnormal_service_count: number
+  abnormal_trace_count: number
+  latest_exception_time_ms: number
+}
+
+interface ServiceRuntimeSnapshotResponse {
+  overview: RuntimeOverview
 }
 
 const router = useRouter()
@@ -521,19 +534,37 @@ const services = ref<ServiceItem[]>([
 ])
 
 const selectedServiceName = ref('order-service')
+const runtimeOverview = ref<RuntimeOverview | null>(null)
+const overviewLoading = ref(false)
 
 // 用户点左侧卡片后，右边只看一个服务，避免页面退化成第二个 Trace 列表。
 const selectedService = computed(() => {
   return services.value.find(service => service.name === selectedServiceName.value) ?? services.value[0]
 })
 
-const overviewCards = computed(() => {
+const fallbackOverview = computed(() => {
   const abnormalServices = services.value.filter(item => item.risk !== 'healthy').length
-  const highRiskEvents = services.value.reduce((sum, item) => sum + item.exceptionCount, 0)
+  const abnormalTraces = services.value.reduce((sum, item) => sum + item.exceptionCount, 0)
   const latestTime = services.value
     .map(item => item.latestExceptionTime)
     .sort()
     .reverse()[0]
+
+  return {
+    abnormalServices,
+    abnormalTraces,
+    latestTime: latestTime ?? '--:--:--'
+  }
+})
+
+const overviewCards = computed(() => {
+  // 这一刀只把顶部总览接成真数据，下面服务卡和右侧详情先继续保留 mock，
+  // 这样我们能先验证前后端接口是否打通，不会一口气把整页状态管理改乱。
+  const abnormalServices = runtimeOverview.value?.abnormal_service_count ?? fallbackOverview.value.abnormalServices
+  const abnormalTraces = runtimeOverview.value?.abnormal_trace_count ?? fallbackOverview.value.abnormalTraces
+  const latestTime = runtimeOverview.value && runtimeOverview.value.latest_exception_time_ms > 0
+    ? dayjs(runtimeOverview.value.latest_exception_time_ms).format('HH:mm:ss')
+    : fallbackOverview.value.latestTime
 
   return [
     {
@@ -544,7 +575,7 @@ const overviewCards = computed(() => {
     },
     {
       label: '异常链路数',
-      value: highRiskEvents,
+      value: abnormalTraces,
       desc: '这里把一条 trace 近似视为一次请求链路，按 trace + service 去重',
       valueClass: 'text-orange-400'
     },
@@ -574,6 +605,27 @@ const operationRanking = computed(() => {
 const maxRankingException = computed(() => {
   return Math.max(...operationRanking.value.map(item => item.exceptions), 1)
 })
+
+async function fetchRuntimeOverview() {
+  if (overviewLoading.value) {
+    return
+  }
+
+  overviewLoading.value = true
+  try {
+    const response = await fetch('/api/service-monitor/runtime', { method: 'GET' })
+    if (!response.ok) {
+      throw new Error(`service-monitor/runtime failed: ${response.status}`)
+    }
+
+    const payload = (await response.json()) as ServiceRuntimeSnapshotResponse
+    runtimeOverview.value = payload.overview ?? null
+  } catch (error) {
+    console.error('Failed to fetch service runtime overview:', error)
+  } finally {
+    overviewLoading.value = false
+  }
+}
 
 function goTraceExplorer() {
   router.push('/traces')
@@ -636,6 +688,10 @@ function serviceCardClass(service: ServiceItem): string {
     ? 'border-green-400/80 shadow-[0_0_28px_rgba(74,222,128,0.18)]'
     : 'border-gray-800 hover:border-green-400/40'
 }
+
+onMounted(() => {
+  void fetchRuntimeOverview()
+})
 </script>
 
 <style scoped>

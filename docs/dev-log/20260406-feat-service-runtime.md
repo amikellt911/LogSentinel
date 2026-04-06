@@ -14,6 +14,7 @@ feat(service-monitor): 新增服务监控运行态累加器与快照接口骨架
 - `server/tests/ServiceRuntimeAccumulator_test.cpp`
 - `server/CMakeLists.txt`
 - `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `client/src/views/ServiceMonitorPrototype.vue`
 
 # 这次补了哪些注释
 
@@ -22,6 +23,39 @@ feat(service-monitor): 新增服务监控运行态累加器与快照接口骨架
 - 在 `server/handlers/ServiceMonitorHandler.h` 和 `server/handlers/ServiceMonitorHandler.cpp` 里补了“为什么可以同步读快照、不需要线程池”的注释。
 - 在 `server/core/TraceSessionManager.cpp` 里补了 observation span 视图异步拷贝和成功后再记账的注释，避免后面再把悬空指针和重复记账问题踩一遍。
 - 在 `server/src/main.cpp` 里补了服务监控快照定时发布的注释，说明这条定时器当前只负责发布快照，后面分钟桶窗口仍复用它。
+- 在 `client/src/views/ServiceMonitorPrototype.vue` 里补了“为什么这一刀只接顶部 overview、下面继续保留 mock”的注释，避免后面联调时把整页状态一口气改乱。
+
+# 追加记录：2026-04-06 前端 overview 真数据接线
+
+## Git Commit Message
+
+feat(frontend): 接入服务监控原型页顶部总览真数据
+
+## Modification
+
+- `client/src/views/ServiceMonitorPrototype.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/ServiceMonitorPrototype.vue` 的 `overviewCards` 附近补了注释，明确“这一刀只接顶部总览，服务卡和右侧详情继续保留 mock”，避免前后端联调范围失控。
+
+## Learning Tips
+
+### Newbie Tips
+
+前后端联调不要一上来整页全接。先挑一块最独立、最容易验证的数据区，比如顶部总览。这样接口、时间格式、刷新按钮、兜底回退都会先暴露出来，调试面最小。
+
+### Function Explanation
+
+`onMounted`：组件挂载后执行。这里用它在页面第一次进入时主动拉一次 overview，避免用户还没点刷新就看到全是 mock 顶部数字。
+
+`dayjs(...).format('HH:mm:ss')`：把后端毫秒时间戳转成前端原型页当前正在用的时分秒字符串，避免顶部总览和下面 mock 列表的时间展示风格不一致。
+
+### Pitfalls
+
+当前 `npm run build` 仍会被仓库里已有的 TypeScript 旧问题拦住，不能把这次 overview 接线误判成构建失败。为了确认当前改动没有把页面语法打坏，这次额外跑了 `npx vite build`，结果通过。
 
 # Learning Tips
 
