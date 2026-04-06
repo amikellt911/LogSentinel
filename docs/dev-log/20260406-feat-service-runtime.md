@@ -290,6 +290,37 @@ fix(frontend): 将服务监控原型页自动刷新调整为3秒
 
 如果前端轮询远慢于后端进窗节奏，就会出现一种很迷惑的假象：后端 `/service-monitor/runtime` 已经有数据了，但页面还是空的。用户会误以为“前端根本没发请求”，其实只是轮询太钝。
 
+# 追加记录：2026-04-06 服务监控正式入口切换到原型页
+
+## Git Commit Message
+
+refactor(frontend): 将服务监控正式入口切换到原型页
+
+## Modification
+
+- `client/src/router/index.ts`
+- `client/src/layout/MainLayout.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/router/index.ts` 里补了中文注释，说明为什么 `/service` 现在直接指向 `ServiceMonitorPrototype.vue`，以及为什么保留 `/service-prototype -> /service` 的兼容重定向。
+
+## Learning Tips
+
+### Newbie Tips
+
+页面替换时，优先切正式入口，不要让“老入口 + 新入口”长期并存。否则用户、联调脚本和你自己都会搞混，到底哪个页面才是当前真版本。
+
+### Function Explanation
+
+`redirect: '/service'`：这里不是再保留一套页面，而是把旧地址统一跳到新正式入口。这样旧书签还能用，但系统里只有一个真实页面在工作。
+
+### Pitfalls
+
+如果只改路由，不改左侧菜单，用户仍然会以为系统里有两个“服务监控页面”。这次把导航入口一起收掉，就是为了避免这种语义脏掉的状态。
+
 # 追加记录：2026-04-06 服务监控 30 分钟单窗口时间窗
 
 ## Git Commit Message

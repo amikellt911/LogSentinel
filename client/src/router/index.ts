@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '../layout/MainLayout.vue'
-import ServiceMonitor from '../views/ServiceMonitor.vue'
 import ServiceMonitorPrototype from '../views/ServiceMonitorPrototype.vue'
 import Dashboard from '../views/Dashboard.vue'
 import LiveLogs from '../views/LiveLogs.vue'
@@ -23,12 +22,14 @@ const router = createRouter({
         {
           path: 'service',
           name: 'service',
-          component: ServiceMonitor
+          // 服务监控原型已经完成本轮验收，所以正式入口 /service 直接切到新页面。
+          // 旧 ServiceMonitor.vue 先不再暴露路由入口，避免用户继续点到老 mock 页面。
+          component: ServiceMonitorPrototype
         },
         {
+          // 兼容之前联调时保留下来的旧地址，统一重定向到正式入口。
           path: 'service-prototype',
-          name: 'service-prototype',
-          component: ServiceMonitorPrototype
+          redirect: '/service'
         },
         {
           path: 'logs',
