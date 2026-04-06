@@ -235,3 +235,4 @@
 - [x] `main.cpp` 已新增 `--service-monitor-bucket-seconds`
 - [x] 联调脚本已默认透传 `SERVICE_MONITOR_BUCKET_SECONDS=3`
 - [x] 原型页已拆开“自动轮询请求中”和“手动刷新按钮 loading”，自动刷新不再把按钮长期锁成“刷新中”
+- [x] 原型页自动刷新已从 `10s` 压到 `3s`，与后端 `3s` 桶粒度对齐，减少“数据已进窗但页面没拉到”的错觉

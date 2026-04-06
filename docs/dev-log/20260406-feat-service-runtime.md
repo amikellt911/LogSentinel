@@ -259,6 +259,37 @@ feat(test): 新增服务监控联合启动联调脚本
 
 - `server/tests/run_all_and_demo.sh`
 
+# 追加记录：2026-04-06 原型页自动刷新改为 3 秒
+
+## Git Commit Message
+
+fix(frontend): 将服务监控原型页自动刷新调整为3秒
+
+## Modification
+
+- `client/src/views/ServiceMonitorPrototype.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/ServiceMonitorPrototype.vue` 的 `autoRefreshIntervalMs` 附近补了中文注释，说明为什么前端轮询频率要和后端 `3s` 桶粒度对齐。
+- 在 `onMounted()` 的自动轮询注释里补了“后端 1 秒发布 + 3 秒桶 + 前端 3 秒拉取”的关系说明，避免后面再把轮询改回明显更钝的节奏。
+
+## Learning Tips
+
+### Newbie Tips
+
+前端自动刷新不是越慢越省事。既然服务监控页面的意义是看“最近状态”，那么它的轮询频率至少要和后端桶封口粒度一个量级，不然用户看到的就不是“统计慢”，而是“页面像没请求”。
+
+### Function Explanation
+
+`setInterval(..., 3000)` 在这里不是为了做实时系统，而是为了让页面拉取节奏和后端 `3s bucket` 基本对齐。这样一条异常 trace 进窗后，下一轮前端轮询通常就能看见。
+
+### Pitfalls
+
+如果前端轮询远慢于后端进窗节奏，就会出现一种很迷惑的假象：后端 `/service-monitor/runtime` 已经有数据了，但页面还是空的。用户会误以为“前端根本没发请求”，其实只是轮询太钝。
+
 # 追加记录：2026-04-06 服务监控 30 分钟单窗口时间窗
 
 ## Git Commit Message

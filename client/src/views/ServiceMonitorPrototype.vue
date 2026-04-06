@@ -437,7 +437,9 @@ const runtimeServices = ref<RuntimeServiceItem[]>([])
 const runtimeGlobalOperationRanking = ref<RuntimeGlobalOperationItem[]>([])
 const runtimeRequestInFlight = ref(false)
 const manualRefreshLoading = ref(false)
-const autoRefreshIntervalMs = 10_000
+// 前端轮询频率跟后端 3 秒桶对齐，避免服务监控已经进窗了，
+// 但页面还要再多等一轮 10 秒轮询才看见，导致答辩观感明显发钝。
+const autoRefreshIntervalMs = 3_000
 let autoRefreshTimer: number | null = null
 
 // 这一刀把原型页的运行态展示彻底切成“后端真数据或空态”。
@@ -661,7 +663,8 @@ function serviceCardClass(service: ServiceItem): string {
 
 onMounted(() => {
   // 这个原型页现在主要用来观察时间窗进窗/退窗，所以只靠手点刷新太钝。
-  // 这里补一个 10 秒轮询：后端 1 秒发布一次快照，前端 10 秒拉一次，既能看到变化，也不至于刷太频。
+  // 这里改成 3 秒轮询：后端 1 秒发布一次快照、桶粒度是 3 秒，
+  // 那么前端也按 3 秒拉一次，更容易在页面上直接观察到进窗和退窗。
   // 自动轮询只复用请求函数，不再去接管手动刷新按钮的 loading 文案。
   void fetchRuntimeSnapshot()
   autoRefreshTimer = window.setInterval(() => {
