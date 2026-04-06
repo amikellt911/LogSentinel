@@ -396,6 +396,39 @@ fix(frontend): 去除服务监控原型页运行态mock回退
 ### Pitfalls
 
 右侧聚焦面板依赖 `selectedService`。如果服务榜退空了却不把当前选中值一起清掉，右侧就会继续挂着上一轮的旧服务，视觉上等价于“假数据没退掉”。
+
+# 追加记录：2026-04-06 服务监控原型页自动刷新
+
+## Git Commit Message
+
+feat(frontend): 为服务监控原型页增加自动刷新
+
+## Modification
+
+- `client/src/views/ServiceMonitorPrototype.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/ServiceMonitorPrototype.vue` 的 `onMounted()` 附近补了中文注释，说明为什么把自动刷新定成 10 秒，以及它和后端 5 秒快照发布节奏的关系。
+- 在同一文件的 `onBeforeUnmount()` 附近补了中文注释，说明页面卸载时为什么必须清理定时器。
+
+## Learning Tips
+
+### Newbie Tips
+
+前端自动刷新别只看“想不想方便”，还要看后端发布节奏。后端现在 5 秒发一次快照，前端拉得比这个还快意义不大；10 秒刚好能看到变化，又不会无意义地频繁打接口。
+
+### Function Explanation
+
+`window.setInterval(...)`：浏览器定时器。这里定期触发 `fetchRuntimeSnapshot()`，让服务监控页在不手点刷新的情况下也能看到进窗和退窗。
+
+`onBeforeUnmount(...)`：组件销毁前的清理钩子。这里专门用来 `clearInterval`，避免页面切走后还继续后台轮询。
+
+### Pitfalls
+
+自动刷新和手动刷新共用同一个请求函数时，必须有并发保护。当前继续复用 `overviewLoading` 这个短路判断，避免网络慢时定时器又叠一层请求上去。
 - `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
 - `docs/dev-log/20260406-feat-service-runtime.md`
 

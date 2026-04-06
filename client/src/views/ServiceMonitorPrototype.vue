@@ -341,7 +341,7 @@
 
 <script setup lang="ts">
 import dayjs from 'dayjs'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 type RiskKind = 'critical' | 'warning' | 'healthy'
@@ -436,6 +436,8 @@ const runtimeOverview = ref<RuntimeOverview | null>(null)
 const runtimeServices = ref<RuntimeServiceItem[]>([])
 const runtimeGlobalOperationRanking = ref<RuntimeGlobalOperationItem[]>([])
 const overviewLoading = ref(false)
+const autoRefreshIntervalMs = 10_000
+let autoRefreshTimer: number | null = null
 
 // 这一刀把原型页的运行态展示彻底切成“后端真数据或空态”。
 // 既然后面要验证时间窗退场，那么页面就不能再偷偷回退到 mock，否则你肉眼根本看不出退窗是否生效。
@@ -640,7 +642,20 @@ function serviceCardClass(service: ServiceItem): string {
 }
 
 onMounted(() => {
+  // 这个原型页现在主要用来观察时间窗进窗/退窗，所以只靠手点刷新太钝。
+  // 这里补一个 10 秒轮询：后端 5 秒发布一次快照，前端 10 秒拉一次，既能看到变化，也不至于刷太频。
   void fetchRuntimeSnapshot()
+  autoRefreshTimer = window.setInterval(() => {
+    void fetchRuntimeSnapshot()
+  }, autoRefreshIntervalMs)
+})
+
+onBeforeUnmount(() => {
+  // 页面切走后把定时器清掉，避免这个原型页已经不在前台时还继续后台拉接口。
+  if (autoRefreshTimer !== null) {
+    window.clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
 })
 </script>
 
