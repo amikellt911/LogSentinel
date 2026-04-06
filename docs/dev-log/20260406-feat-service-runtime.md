@@ -429,6 +429,42 @@ feat(frontend): 为服务监控原型页增加自动刷新
 ### Pitfalls
 
 自动刷新和手动刷新共用同一个请求函数时，必须有并发保护。当前继续复用 `overviewLoading` 这个短路判断，避免网络慢时定时器又叠一层请求上去。
+
+# 追加记录：2026-04-06 服务监控联调脚本职责拆分
+
+## Git Commit Message
+
+refactor(test): 拆分服务监控联调起服务与发数脚本
+
+## Modification
+
+- `server/tests/manual_service_monitor_demo.sh`
+- `server/tests/post_random_trace_once.py`
+- `server/tests/run_all_and_demo.sh`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `server/tests/manual_service_monitor_demo.sh` 里补了整段中文注释，明确它现在只负责起服务、写 `run_info.env`、以及在默认模式下驻留。
+- 在 `server/tests/post_random_trace_once.py` 里补了中文注释，说明它只负责发送 1 条随机 `trace_key` 的复杂 trace，不参与起服务和拉 JSON。
+- 在 `server/tests/run_all_and_demo.sh` 里补了中文注释，说明它现在只是包装器：先起服务，再发一条随机 trace，再拉一次 runtime JSON。
+
+## Learning Tips
+
+### Newbie Tips
+
+联调脚本最忌讳“一个脚本把起服务、发数、校验、驻留全糊在一起”。一旦其中一段想复用或替换，整坨都得一起改。拆成“起服务脚本 + 发数脚本 + 包装器”之后，单独调试哪一段都更直接。
+
+### Function Explanation
+
+`source run_info.env`：把起服务脚本写出来的运行信息重新读进当前 shell。这样包装器就能拿到 PID、日志路径、URL，而不用再从日志里硬解析。
+
+`random.Random(seed_ms)`：先用时间毫秒做种子，再生成随机 `trace_key`。这样每次运行默认不一样，但需要复现时仍然可以把 `seed_ms` 打印出来。
+
+### Pitfalls
+
+detach 模式下最容易踩的坑就是“子脚本退出时把刚起好的进程一起清掉”。这次在起服务脚本里专门加了 `KEEP_CHILDREN_ON_EXIT`，只有把所有权交给外层包装器之后，EXIT trap 才不再回收子进程。
 - `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
 - `docs/dev-log/20260406-feat-service-runtime.md`
 

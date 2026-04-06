@@ -225,3 +225,7 @@
   - [x] 时间推进超过窗口后，旧分钟统计会退窗消失
 - [x] `main.cpp` 已新增 `--service-monitor-window-minutes`，联调时可临时把窗口压到 `1~2` 分钟，不必真等 30 分钟
 - [x] `server/tests/run_all_and_demo.sh` 已默认透传 `SERVICE_MONITOR_WINDOW_MINUTES=2`，一条命令即可直接观察退窗
+- [x] 联调脚本职责已拆分
+  - [x] `manual_service_monitor_demo.sh` 改为只负责起服务和管生命周期
+  - [x] `post_random_trace_once.py` 改为只负责发送 1 条随机 trace
+  - [x] `run_all_and_demo.sh` 保留为总包装器，负责串起前两者
