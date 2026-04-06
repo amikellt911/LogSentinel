@@ -3,6 +3,8 @@
 ## 项目最小上下文
 
 本项目是一个“C++ 高并发日志接入 + Trace 聚合 + 可选 AI 推理（Python proxy）+ 存储/查询/告警”的系统。
+当前已跑通的 Trace 主链路为：POST /logs/spans -> TraceSessionManager -> BufferedTraceRepository -> SqliteTraceRepository。
+当前 Trace 聚合采用“两阶段延迟关闭”语义：先通过 sealed grace window 吸收短暂乱序 Span，再通过 TIME_WAIT tombstone 拦截已完成 Trace 的晚到请求，避免重复落库。
 
 ## 禁止项与边界
 
@@ -24,7 +26,7 @@
 - 前端构建：`cd client && npm run build`（先 `vue-tsc` 类型检查，再打包）。
 - 后端构建：`cd server && cmake -B build -S . && cmake --build build`。
 - 运行后端：`./server/build/LogSentinel` 或 `./server/build/LogSentinel --db <path> --port <port>`。
-- AI 代理：`cd server/ai && pip install -r requirements.txt && cd proxy && python main.py`（监听 `127.0.0.1:8001`）。
+- AI 代理：`cd server/ai && pip install -r requirements.txt && cd proxy && python3 main.py`（监听 `127.0.0.1:8001`）。
 
 ## 编码风格与命名规范
 
@@ -39,8 +41,11 @@
 - 运行全部 C++ 测试：`cd server/build && ctest`。
 - 运行单个测试二进制：`./test_http_context`（或其他 `test_*` 可执行文件）。
 - Python 集成测试位于 `server/tests/*.py`；历史入口 `run_tests.py` 已迁移到 `server/tests/legacy/`。
-- 当前推荐的主入口是 `python server/tests/smoke_trace_spans.py --mode basic|advanced`。
-
+- 当前推荐的主入口是 `python3 server/tests/smoke_trace_spans.py --mode basic|advanced`。
+- 当前 Trace 主链路关键回归入口：
+  - ./server/build/test_trace_session_manager_unit
+  - ./server/build/test_trace_session_manager_integration
+- 注意：当前 trace_end / capacity / token_limit 不再代表“立即 dispatch”，而是先进入 sealed 状态；如果测试不跑 main.cpp 的定时 sweep，就需要手动推进 SweepExpiredSessions(...)。
 ## 提交与 PR 规范
 
 - 提交历史遵循 Conventional Commits（例如 `feat(frontend): 说明`、`fix(core): 说明`），描述简洁且中文。
@@ -61,9 +66,15 @@
 - **客观务实（反抽象术语）**：禁止使用“优雅、高效、解耦”等无意义的形容词。如果要提专业名词（如背压、零拷贝），必须立刻结合具体的内存读写、硬件机制或实际业务场景解释其物理意义。把复杂的概念扒光了揉碎了给我看。
 - **绝对诚实与理性（拒绝讨好）**：遇到不确定的问题或代码边界，优先搜索或查本地文件，绝不编造假消息，不会就是不会。禁止阿谀奉承，禁止使用戏剧化或震惊的词汇。如果发现我的思路或架构设计有问题，客观理性地指出并分析利弊，不要一味顺从。
 
+
 ### 1. 语言与输出格式
 - **纯文本复制**：如果涉及需要我直接复制到文档（如开题报告、论文）的内容，请去除 Markdown 列表符号（如 * - 1.）和缩进，使用“纯文本”块或直接分段输出，方便一键无脑复制。
-- **代码注释**：必须使用中文。对于纯粹的样板代码无需赘述；但在关键的变量定义、业务逻辑、状态流转、并发控制以及极端边界场景处，必须详细说明“这是什么东西，为什么这么写”。
+- **代码注释**：必须使用中文。只要改了代码，不管改动大小、不管是不是样板、不管是不是核心逻辑，都必须同步补注释，禁止出现“先把代码写完，注释以后再说”。
+  - 注释至少要说清楚“这段代码在干什么、为什么这么写”；只改一两行也一样，不能因为代码短、逻辑直白、文件简单就跳过。
+  - 如果涉及变量定义、业务逻辑、状态流转、并发控制、生命周期管理、跨线程/跨模块数据流、边界条件或异常分支，注释还要继续往下讲清楚“数据从哪来、由谁持有、在哪释放、为什么不能换成更直白的写法”。
+  - 只要提交的代码里有改动却没补对应注释，直接视为任务未完成；禁止用“样板代码不用注释”“这段一眼就能看懂”“后面统一补”这类理由跳过。
+  - 每次输出代码变更说明时，必须单独说明“这次补了哪些注释、落在哪些文件、对应哪段改动”；如果漏了，就要先补注释，再继续后续工作。
+- **短回复优先**：默认一次只说当前这一步最关键的 1-3 个点，不要一口气展开整套方案；只有在我明确要求“展开讲”或“继续”时，才逐步补充后续内容。
 
 ### 2. 任务执行（原子化工作流）
 - **单步推进**：执行任何技术任务或排查 Bug 时，严格遵循“原子化”原则。一次回答只做一件事，只分析一个模块，或只给出当前的一步逻辑。绝对不要自我延伸或一次性写出完整代码。
@@ -95,3 +106,12 @@
   - **Newbie Tips**：C++ 新手容易忽略的知识点。
   - **Function Explanation**：使用到的可能不熟悉的函数或库。
   - **Pitfalls**：常见坑点与规避原因。
+
+### 5. 协同开发模式 (Codex Collaborator)
+
+本项目支持将繁重的编码任务外包给本地的 Codex CLI 代理。当你提及特定的 Session ID 或 'cr No.' 时，必须立即激活 `codex-collaborator` 技能。
+
+**你的核心职责：**
+1. **技术主导 (Tech Lead)**: 负责全局架构把控。遇到复杂问题（如高并发、时间窗设计）必须先与我讨论定调。
+2. **代码审查 (Reviewer)**: Codex 产出代码后，你必须负责审查其逻辑，过滤无关废话，并强制在关键业务与生命周期处补全中文注释。
+3. **驯兽师 (Dispatcher)**: 通过执行带极严限制条件的静默命令来控制 Codex。在向 Codex 下发任何修改文件的命令前，**必须先使用大白话向我复述你的理解，只有我确认无误后才能放行执行。**

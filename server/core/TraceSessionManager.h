@@ -3,10 +3,13 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <queue>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -19,6 +22,7 @@ class ThreadPool;
 class BufferedTraceRepository;
 class TraceAiProvider;
 class INotifier;
+class ServiceRuntimeAccumulator;
 
 struct SpanEvent
 {
@@ -68,7 +72,9 @@ struct TraceSession
         // 容量打满：目的是及时截断内存增长，所以只给最短 grace。
         Capacity,
         // token 打满：和容量一样，属于保护性封口，不应该再等太久。
-        TokenLimit
+        TokenLimit,
+        // 发送重复span
+        DuplicateSpan,
     };
 
     enum class LifecycleState
@@ -116,6 +122,10 @@ struct TraceSession
     uint64_t next_retry_tick = 0;
     // 主数据（summary + spans）一旦已经送进缓冲写入器，submit 失败回滚后就不能重复送。
     bool primary_enqueued = false;
+    // 第一步先只缓存最值钱的两样：AI 输入 payload 和 webhook/analysis 还会复用的 summary。
+    // 既然 ready retry 会话已经不再吸收新 span，那么这两份 prepared 数据可以安全复用。
+    std::optional<std::string> prepared_trace_payload;
+    std::optional<TraceRepository::TraceSummary> prepared_summary;
 };
 
 class TraceSessionManager
@@ -166,11 +176,15 @@ public:
                                  int64_t wheel_tick_ms = 500,
                                  size_t wheel_size = 512,
                                  size_t buffered_span_hard_limit = 4096,
-                                 size_t active_session_hard_limit = 1024);
+                                 size_t active_session_hard_limit = 1024,
+                                 ServiceRuntimeAccumulator* service_runtime_accumulator = nullptr);
     ~TraceSessionManager();
 
     size_t size() const;
     PushResult Push(const SpanEvent& span);
+    // 当前主链路不依赖这个公开 Dispatch 入口。
+    // 现在推荐的正常路径是：Push/Seal -> 时间轮 sweep -> dispatch queue -> ProcessDispatchJob。
+    // 这里暂时保留，主要是为了兼容少量旧测试/手工触发入口，后续若彻底无调用方再考虑继续收口。
     bool Dispatch(size_t trace_key);
     RuntimeStatsSnapshot SnapshotRuntimeStats() const;
     std::string DescribeRuntimeStats() const;
@@ -188,6 +202,7 @@ private:
     BufferedTraceRepository* buffered_trace_repo_ = nullptr;
     TraceAiProvider* trace_ai_ = nullptr;
     INotifier* notifier_ = nullptr;
+    ServiceRuntimeAccumulator* service_runtime_accumulator_ = nullptr;
     size_t capacity_ = 0;
     size_t token_limit_ = 0;
     TokenEstimator token_estimator_;
@@ -211,6 +226,17 @@ private:
         size_t low = 0;
         size_t high = 0;
         size_t critical = 0;
+    };
+    struct DispatchingInflightState
+    {
+        // inflight 只负责拦截“这条 trace 正在分发中”，第一步先只记最小 epoch，
+        // 避免晚到 span 在 session 已摘出、tombstone 还没写入的窗口里把旧 trace 复活。
+        uint64_t session_epoch = 0;
+    };
+    struct DispatchJob
+    {
+        // 第二步先把 queue 骨架搭起来，job 直接持有 session 所有权，避免后面又回 manager 取一次。
+        std::unique_ptr<TraceSession> session;
     };
 
     // 构建 trace 的父子关系索引，后续用于树形遍历与序列化。
@@ -243,6 +269,14 @@ private:
     // 避免公开入口互相调用时重复加锁导致死锁。
     PushResult PushLocked(const SpanEvent& span, int64_t now_ms);
     bool DispatchLocked(size_t trace_key);
+    // 从 manager 主容器中摘出一条 session，后续交给 dispatch 线程锁外处理。
+    std::unique_ptr<TraceSession> DetachSessionLocked(size_t trace_key, size_t* span_count);
+    // dispatch 失败时把 session 放回 manager，并切到 ReadyRetryLater 语义等待后续重投。
+    void RestoreSessionLocked(std::unique_ptr<TraceSession> session, size_t span_count);
+    // 有界 dispatch queue 的最小入队入口；第一步先只表达“能否抢到分发通道”。
+    bool EnqueueDispatchJobLocked(DispatchJob* job);
+    // dispatch 线程消费 job 后继续沿用现有主链路逻辑；后续再逐步拆成更细阶段。
+    void ProcessDispatchJob(DispatchJob job);
     // 基于当前积压指标刷新 overload_state_，统一收口新老 trace 的准入门禁状态。
     void RefreshOverloadState();
     // 当前请求是否应该在入口被拒绝：Overload 拒新 trace，Critical 新老都拒。
@@ -259,6 +293,9 @@ private:
     void SealSessionLocked(TraceSession& session, TraceSession::SealReason reason);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
     void RebuildTimeWheel();
+    // dispatch 线程第一步只做生命周期与队列骨架占位，后面再逐步接业务逻辑。
+    void DispatchLoop();
+    void StopDispatchThread();
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。
     std::vector<std::unique_ptr<TraceSession>> sessions_;
     // 通过 trace_key 快速定位到 vector 下标，避免线性扫描带来的开销。
@@ -268,6 +305,9 @@ private:
     // completed tombstone 只记“最近刚完成过的 trace_key”，用于短时间内拦截 late span 复活旧 trace。
     // map 负责 O(1) 判断是否仍在 tombstone 窗口内，value 是它的过期 tick。
     std::unordered_map<size_t, uint64_t> completed_trace_expire_tick_;
+    // dispatching_inflight_ 记录“已离开 manager、但尚未进入 tombstone”的 trace。
+    // 第一步先只做轻量占位，不在这里再次持有 session 所有权，避免状态双持有。
+    std::unordered_map<size_t, DispatchingInflightState> dispatching_inflight_;
     // 和活跃 session 时间轮分开存，避免把“等待 dispatch”和“等待遗忘”两套语义塞进同一种节点。
     std::vector<std::vector<size_t>> completed_trace_wheel_;
     size_t wheel_size_ = 512;
@@ -289,6 +329,8 @@ private:
     Watermark buffered_span_watermark_;
     Watermark active_session_watermark_;
     Watermark pending_task_watermark_;
+    Watermark dispatch_queue_watermark_;
+    size_t dispatch_queue_hard_limit_ = 1;
     // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
     OverloadState overload_state_ = OverloadState::Normal;
     // 这批统计只服务“后链路是否真的跑了、各阶段墙钟耗时多少”，
@@ -302,6 +344,12 @@ private:
     std::atomic<uint64_t> ai_total_ns_{0};
     std::atomic<uint64_t> analysis_enqueue_calls_{0};
     std::atomic<uint64_t> analysis_enqueue_total_ns_{0};
+    // 独立 dispatch 线程的有界队列：第一步先占好结构，后面再把 sweep/dispatch 逐步接过来。
+    std::mutex dispatch_queue_mutex_;
+    std::condition_variable dispatch_queue_cv_;
+    std::queue<DispatchJob> dispatch_queue_;
+    bool dispatch_stopping_ = false;
+    std::thread dispatch_thread_;
     // TraceSessionManager 当前会被 HTTP 处理线程和主 loop 定时器线程同时访问，
     // 这把锁先用最保守的方式把内部状态机串行化，优先保证正确性。
     mutable std::mutex mutex_;

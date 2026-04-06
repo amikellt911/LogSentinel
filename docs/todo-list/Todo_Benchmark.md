@@ -18,6 +18,10 @@
 - [x] 为 `run_bench.sh` 自动摘出 `[TraceRuntimeStats] / [BufferedTraceRuntimeStats]`，避免每轮 benchmark 后手翻 server log
 - [x] 为 `run_bench.sh` 补受控停机与 shutdown snapshot，避免 worker/AI 积压太深时脚本一直卡在退出阶段
 - [x] 为 `SavePrimaryBatch` 补失败日志，输出 batch 边界 trace_id 和具体 SQLite 错误，避免 flush 失败时只看到 fail_count
+- [x] 新增升级版 wrk Lua 脚本：每个 wrk 线程维护 active trace 池，而不是单一 current trace
+- [x] 为 `run_flamegraph.sh` 增加脚本切换与 `TRACE_WRK_ROLE_PLAN / ACTIVE_POOL_SIZE` 透传，支持 active-pool 流量模型
+- [ ] 为升级版脚本补最小可复现参数和运行说明（优先 timeout/late-span 场景）
+- [ ] 跑最小对照实验：旧脚本 vs 升级版脚本，确认请求分布和复现能力差异
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 增加 `--worker-threads` 命令行参数支持

@@ -20,8 +20,10 @@
 #include "handlers/TraceQueryHandler.h"
 #include "handlers/DashboardHandler.h"
 #include "handlers/HistoryHandler.h"
+#include "handlers/ServiceMonitorHandler.h"
 #include "handlers/ConfigHandler.h"
 #include "core/LogBatcher.h"
+#include "core/ServiceRuntimeAccumulator.h"
 #include "core/TraceSessionManager.h"
 #include "util/DevSubprocessManager.h"
 #include <filesystem>
@@ -88,6 +90,8 @@ int main(int argc, char* argv[])
     int trace_max_dispatch_per_tick = 64;
     int trace_buffered_span_limit = 4096;
     int trace_active_session_limit = 1024;
+    int service_monitor_window_minutes = 30;
+    int service_monitor_bucket_seconds = 3;
     bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
@@ -102,6 +106,10 @@ int main(int argc, char* argv[])
             auto_start_webhook_mock = true;
         } else if (arg == "--auto-start-proxy") {
             auto_start_proxy = true;
+        } else if (arg == "--no-auto-start-proxy") {
+            // 本地联调时默认自动拉起 proxy 很省事；但在某些受限环境里，
+            // 你可能更想手动先起一份 proxy，再让后端直接复用，这里给一个显式关闭开关。
+            auto_start_proxy = false;
         } else if (arg == "--auto-start-webhook-mock") {
             auto_start_webhook_mock = true;
         } else if (arg == "--trace-ai-provider" && i + 1 < argc) {
@@ -129,6 +137,14 @@ int main(int argc, char* argv[])
             trace_buffered_span_limit = std::stoi(argv[++i]);
         } else if (arg == "--trace-active-session-limit" && i + 1 < argc) {
             trace_active_session_limit = std::stoi(argv[++i]);
+        } else if (arg == "--service-monitor-window-minutes" && i + 1 < argc) {
+            // 服务监控默认还是按 30 分钟窗口跑，但联调时可以临时压到 1~2 分钟，
+            // 这样不用真等半小时，就能看到榜单进窗和退窗的完整过程。
+            service_monitor_window_minutes = std::stoi(argv[++i]);
+        } else if (arg == "--service-monitor-bucket-seconds" && i + 1 < argc) {
+            // 窗口总时长和桶粒度拆开后，答辩时就能继续保留“最近 30 分钟”语义，
+            // 同时把内部桶压到 3 秒，避免第一次显示必须傻等整整 1 分钟。
+            service_monitor_bucket_seconds = std::stoi(argv[++i]);
         }
     }
 
@@ -166,6 +182,14 @@ int main(int argc, char* argv[])
     }
     if (trace_active_session_limit <= 0) {
         std::cerr << "Fatal Error: --trace-active-session-limit must be > 0" << std::endl;
+        return -1;
+    }
+    if (service_monitor_window_minutes <= 0) {
+        std::cerr << "Fatal Error: --service-monitor-window-minutes must be > 0" << std::endl;
+        return -1;
+    }
+    if (service_monitor_bucket_seconds <= 0) {
+        std::cerr << "Fatal Error: --service-monitor-bucket-seconds must be > 0" << std::endl;
         return -1;
     }
 
@@ -279,6 +303,11 @@ int main(int argc, char* argv[])
     // Trace 读请求单独走查询线程池，避免前端查库任务和 AI/聚合任务抢同一条队列。
     // 当前先固定 1 条查询线程，把“执行通道分离”先做出来，后面再按压测结果调整线程数。
     ThreadPool query_tpool(static_cast<size_t>(num_query_threads), static_cast<size_t>(worker_queue_size));
+    auto service_runtime_accumulator = std::make_shared<ServiceRuntimeAccumulator>(/*service_top_k*/4,
+                                                                                  /*operation_top_k*/6,
+                                                                                  /*recent_sample_limit*/3,
+                                                                                  static_cast<size_t>(service_monitor_window_minutes),
+                                                                                  static_cast<size_t>(service_monitor_bucket_seconds));
     std::shared_ptr<TraceSessionManager> trace_session_manager = std::make_shared<TraceSessionManager>(
         &tpool,
         buffered_trace_repo.get(),
@@ -290,7 +319,8 @@ int main(int argc, char* argv[])
         trace_sweep_interval_ms,
         /*wheel_size*/512,
         static_cast<size_t>(trace_buffered_span_limit),
-        static_cast<size_t>(trace_active_session_limit));
+        static_cast<size_t>(trace_active_session_limit),
+        service_runtime_accumulator.get());
     const double trace_sweep_interval_sec = static_cast<double>(trace_sweep_interval_ms) / 1000.0;
     std::cout << "Trace session sweep enabled. sweep_interval_ms=" << trace_sweep_interval_ms
               << ", idle_timeout_ms=" << trace_idle_timeout_ms
@@ -300,6 +330,8 @@ int main(int argc, char* argv[])
               << ", buffered_span_limit=" << trace_buffered_span_limit
               << ", active_session_limit=" << trace_active_session_limit
               << ", worker_queue_size=" << worker_queue_size << std::endl;
+    std::cout << "Service monitor window enabled. window_minutes=" << service_monitor_window_minutes
+              << ", bucket_seconds=" << service_monitor_bucket_seconds << std::endl;
     TraceSessionManager* trace_session_manager_raw = trace_session_manager.get();
     loop.runEvery(trace_sweep_interval_sec, [trace_session_manager_raw, trace_idle_timeout_ms, trace_max_dispatch_per_tick]() {
         const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -308,6 +340,16 @@ int main(int argc, char* argv[])
             now_ms,
             trace_idle_timeout_ms,
             static_cast<size_t>(trace_max_dispatch_per_tick));
+    });
+    ServiceRuntimeAccumulator* service_runtime_accumulator_raw = service_runtime_accumulator.get();
+    // 这里先把服务监控快照发布周期压到 1 秒，原因不是统计更“实时”了，
+    // 而是答辩演示时不希望前端明明已经过了分钟封口点，却还要额外再等 5 秒才看到榜单变化。
+    // 但是要注意：分钟桶仍然是“封口后才进窗”，所以这只能减少快照发布等待，
+    // 不能消除“当前活跃分钟必须等结束后才能显示”的那部分延迟。
+    loop.runEvery(1.0, [service_runtime_accumulator_raw]() {
+        if (service_runtime_accumulator_raw) {
+            service_runtime_accumulator_raw->OnTick();
+        }
     });
     bool shutdown_stats_logged = false;
     loop.runEvery(0.1, [&loop, &shutdown_stats_logged, trace_session_manager_raw, buffered_trace_repo]() {
@@ -327,12 +369,16 @@ int main(int argc, char* argv[])
     
     std::shared_ptr<Router> router = std::make_shared<Router>();
     auto trace_query_handler = std::make_shared<TraceQueryHandler>(trace_read_repo, &query_tpool);
+    auto service_monitor_handler = std::make_shared<ServiceMonitorHandler>(service_runtime_accumulator);
 
     router->add("POST", "/traces/search", [trace_query_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         trace_query_handler->handleSearchTraces(req, resp, conn);
     });
     router->add("GET", "/traces/*", [trace_query_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         trace_query_handler->handleGetTraceDetail(req, resp, conn);
+    });
+    router->add("GET", "/service-monitor/runtime", [service_monitor_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        service_monitor_handler->handleGetRuntimeSnapshot(req, resp, conn);
     });
 
     // Config Handler

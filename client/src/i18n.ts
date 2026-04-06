@@ -10,6 +10,7 @@ const messages = {
     },
     layout: {
       serviceMonitor: 'Service Monitor',
+      servicePrototype: 'Service Prototype',
       dashboard: 'System Status',
       logs: 'Live Logs',
       settings: 'Settings',
@@ -327,6 +328,7 @@ const messages = {
     },
     layout: {
       serviceMonitor: '服务监控',
+      servicePrototype: '服务监控原型',
       dashboard: '系统状态',
       logs: '实时日志',
       settings: '系统设置',
