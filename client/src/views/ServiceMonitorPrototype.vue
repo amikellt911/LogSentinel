@@ -18,7 +18,7 @@
             class="rounded-lg border border-gray-700 bg-gray-900/70 px-4 py-2 text-sm text-gray-200 hover:bg-gray-800"
             type="button"
             :disabled="overviewLoading"
-            @click="fetchRuntimeOverview"
+            @click="fetchRuntimeSnapshot"
           >
             {{ overviewLoading ? '刷新中...' : '刷新' }}
           </button>
@@ -291,7 +291,7 @@
                   </div>
                 <div class="text-right">
                   <div class="font-mono text-white">{{ item.exceptions }}</div>
-                  <div class="text-xs text-gray-500">异常链路数</div>
+                  <div class="text-xs text-gray-500">异常次数</div>
                 </div>
               </div>
                 <div class="mt-2 h-3 overflow-hidden rounded-full bg-gray-900/80">
@@ -350,8 +350,16 @@ interface RuntimeOverview {
   latest_exception_time_ms: number
 }
 
+interface RuntimeGlobalOperationItem {
+  service_name: string
+  operation_name: string
+  count: number
+  avg_latency_ms: number
+}
+
 interface ServiceRuntimeSnapshotResponse {
   overview: RuntimeOverview
+  global_operation_ranking: RuntimeGlobalOperationItem[]
 }
 
 const router = useRouter()
@@ -535,6 +543,7 @@ const services = ref<ServiceItem[]>([
 
 const selectedServiceName = ref('order-service')
 const runtimeOverview = ref<RuntimeOverview | null>(null)
+const runtimeGlobalOperationRanking = ref<RuntimeGlobalOperationItem[]>([])
 const overviewLoading = ref(false)
 
 // 用户点左侧卡片后，右边只看一个服务，避免页面退化成第二个 Trace 列表。
@@ -589,6 +598,17 @@ const overviewCards = computed(() => {
 })
 
 const operationRanking = computed(() => {
+  // 右下角全局排行和顶部总览共用同一个后端快照接口。
+  // 这一刀只把“全局操作排行”接真数据，当前服务卡和右侧聚焦仍然继续吃 mock。
+  if (runtimeGlobalOperationRanking.value.length > 0) {
+    return runtimeGlobalOperationRanking.value.map(item => ({
+      key: `${item.service_name}-${item.operation_name}`,
+      service: item.service_name,
+      name: item.operation_name,
+      exceptions: item.count
+    }))
+  }
+
   return services.value
     .flatMap(service =>
       service.operations.map(operation => ({
@@ -606,7 +626,7 @@ const maxRankingException = computed(() => {
   return Math.max(...operationRanking.value.map(item => item.exceptions), 1)
 })
 
-async function fetchRuntimeOverview() {
+async function fetchRuntimeSnapshot() {
   if (overviewLoading.value) {
     return
   }
@@ -620,8 +640,9 @@ async function fetchRuntimeOverview() {
 
     const payload = (await response.json()) as ServiceRuntimeSnapshotResponse
     runtimeOverview.value = payload.overview ?? null
+    runtimeGlobalOperationRanking.value = payload.global_operation_ranking ?? []
   } catch (error) {
-    console.error('Failed to fetch service runtime overview:', error)
+    console.error('Failed to fetch service runtime snapshot:', error)
   } finally {
     overviewLoading.value = false
   }
@@ -690,7 +711,7 @@ function serviceCardClass(service: ServiceItem): string {
 }
 
 onMounted(() => {
-  void fetchRuntimeOverview()
+  void fetchRuntimeSnapshot()
 })
 </script>
 

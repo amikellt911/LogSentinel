@@ -57,6 +57,36 @@ feat(frontend): 接入服务监控原型页顶部总览真数据
 
 当前 `npm run build` 仍会被仓库里已有的 TypeScript 旧问题拦住，不能把这次 overview 接线误判成构建失败。为了确认当前改动没有把页面语法打坏，这次额外跑了 `npx vite build`，结果通过。
 
+# 追加记录：2026-04-06 原型页全局异常操作排行真数据接线
+
+## Git Commit Message
+
+feat(frontend): 接入服务监控原型页全局异常操作排行真数据
+
+## Modification
+
+- `client/src/views/ServiceMonitorPrototype.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260406-feat-service-runtime.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/ServiceMonitorPrototype.vue` 的 `operationRanking` 附近补了注释，说明右下角全局排行和顶部 overview 共用同一个后端快照接口，当前仍然只把这一块切成真数据。
+
+## Learning Tips
+
+### Newbie Tips
+
+前端联调时，能复用同一个后端快照接口就别额外拆多个请求。这样刷新时机、错误处理和兜底逻辑都集中在一个地方，后面继续接服务卡时也更容易保持一致。
+
+### Function Explanation
+
+`computed`：依赖变了才重新算。这里让 `operationRanking` 在“有真数据时吃后端，没有真数据时退回 mock”之间自动切换，不需要额外手动同步两份展示状态。
+
+### Pitfalls
+
+后端这块 `global_operation_ranking[].count` 的语义是“异常 span 次数”，不是“异常链路数”。所以这次顺手把原型页右下角文案改成了“异常次数”，避免前后端口径打架。
+
 # Learning Tips
 
 ## Newbie Tips
