@@ -23,11 +23,12 @@ struct TraceAlertEvent
 };
 
 // WebhookChannel 表达“一个真正可发送的外部通知目标”。
-// 这里先只收口 provider/webhook_url/enabled 三个最小字段，
-// 后面如果要补 secret、keyword 或签名配置，再继续往这里扩。
+// 这里的 secret 是飞书签名校验用的共享密钥，不是公私钥体系里的私钥：
+// 如果为空，就按无签名 webhook 发送；如果非空，就在发送前自动补 timestamp/sign。
 struct WebhookChannel
 {
     std::string provider;
     std::string webhook_url;
     bool enabled = true;
+    std::string secret;
 };

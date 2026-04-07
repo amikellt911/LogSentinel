@@ -527,3 +527,43 @@ feat(test): 为随机 trace 发数脚本增加 critical 产出模式
 ### Pitfalls
 
 只改脚本帮助文案、不补一条最小测试是很危险的。因为这种“通过关键词触发风险等级”的逻辑很脆，后面哪怕有人把属性名、字段值或序列化文本改了，脚本表面上还能发送成功，但 webhook 就再也不会触发。先用测试锁住“critical 字样必须真的出现在生成 payload 里”，后面才不容易悄悄回退成 `error`。
+
+# 追加记录：2026-04-07 飞书 webhook 增加可选签名支持
+
+## Git Commit Message
+
+feat(notification): 为飞书 webhook 增加可选签名校验支持
+
+## Modification
+
+- `server/notification/NotifyTypes.h`
+- `server/notification/WebhookNotifier.h`
+- `server/notification/WebhookNotifier.cpp`
+- `server/tests/WebhookNotifier_test.cpp`
+- `server/tests/manual_webhook_notifier.cpp`
+- `server/src/main.cpp`
+- `server/CMakeLists.txt`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/notification/NotifyTypes.h` 里补了中文注释，说明 `WebhookChannel.secret` 是飞书签名用的共享密钥，不是公私钥体系里的私钥。
+- 在 `server/notification/WebhookNotifier.h` 和 `server/notification/WebhookNotifier.cpp` 里补了中文注释，说明为什么签名放在发送前包装层而不是 formatter 里，以及 `timestamp/sign` 的计算时机和职责边界。
+- 在 `server/src/main.cpp` 和 `server/tests/manual_webhook_notifier.cpp` 里补了中文注释，说明 `--webhook-secret` 为空和非空时的行为差异，以及为什么它先走临时直连入口而不是 Settings。
+- 在 `server/tests/WebhookNotifier_test.cpp` 里补了中文注释，说明新增测试锁的是“secret 存在时必须自动补 timestamp/sign”，而不是只检查字段有没有被随便塞进去。
+- 在 `server/CMakeLists.txt` 里通过显式链接 `OpenSSL::Crypto` 把签名依赖收口到通知模块，避免后续靠传递依赖侥幸编过。
+
+## Learning Tips
+
+### Newbie Tips
+
+飞书自定义机器人的“签名校验”不是公私钥，也不是你把 secret 原样塞进请求体。它本质上是共享密钥 HMAC：本地和飞书后台都拿同一个 secret，根据 `timestamp + "\n" + secret` 算一遍 HMAC-SHA256，再比对结果。
+
+### Function Explanation
+
+这次 `WebhookNotifier` 里新增的是“发送前包装层”：formatter 先负责业务消息体 `msg_type/content`，如果渠道是飞书且 `secret` 非空，notifier 再在最终发出的 JSON 外层补 `timestamp` 和 `sign`。这样平台消息模板和平台安全协议不会重新搅在一起。
+
+### Pitfalls
+
+签名这类功能如果不注入固定时间源，测试很容易变成“不知道为什么有时过有时不过”。这次给 `WebhookNotifier` 加 `NowSecondsFn`，就是为了在测试里把时间戳钉死，确保 `sign` 可以做精确断言，而不是退化成“只要字段存在就算通过”这种没意义的测试。

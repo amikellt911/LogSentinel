@@ -1,10 +1,15 @@
 #include "WebhookNotifier.h"
 
 #include <cpr/cpr.h>
+#include <nlohmann/json.hpp>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
 
 #include <chrono>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace
@@ -24,6 +29,62 @@ cpr::Session& getTlsSession()
         return s;
     }();
     return *session;
+}
+
+std::string toLowerCopy(std::string value)
+{
+    for (char& ch : value)
+    {
+        if (ch >= 'A' && ch <= 'Z')
+        {
+            ch = static_cast<char>(ch - 'A' + 'a');
+        }
+    }
+    return value;
+}
+
+bool isFeishuProvider(const std::string& provider)
+{
+    const std::string lowered = toLowerCopy(provider);
+    return lowered == "feishu" || lowered == "lark";
+}
+
+std::string base64Encode(const unsigned char* data, size_t size)
+{
+    if (size == 0)
+    {
+        return "";
+    }
+
+    std::string encoded;
+    encoded.resize(4 * ((static_cast<int>(size) + 2) / 3));
+    const int written = EVP_EncodeBlock(reinterpret_cast<unsigned char*>(encoded.data()),
+                                        data,
+                                        static_cast<int>(size));
+    if (written < 0)
+    {
+        throw std::runtime_error("EVP_EncodeBlock failed");
+    }
+    encoded.resize(static_cast<size_t>(written));
+    return encoded;
+}
+
+std::string computeFeishuSign(int64_t timestamp_seconds, const std::string& secret)
+{
+    const std::string string_to_sign = std::to_string(timestamp_seconds) + "\n" + secret;
+    unsigned int digest_length = 0;
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    if (HMAC(EVP_sha256(),
+             string_to_sign.data(),
+             static_cast<int>(string_to_sign.size()),
+             reinterpret_cast<const unsigned char*>(""),
+             0,
+             digest,
+             &digest_length) == nullptr)
+    {
+        throw std::runtime_error("HMAC(EVP_sha256) failed");
+    }
+    return base64Encode(digest, digest_length);
 }
 } // namespace
 
@@ -64,9 +125,12 @@ void WebhookNotifier::notifyTraceAlert(const TraceAlertEvent& event)
     }
 }
 
-WebhookNotifier::WebhookNotifier(std::vector<WebhookChannel> channels, PostJsonFn post_json_fn)
+WebhookNotifier::WebhookNotifier(std::vector<WebhookChannel> channels,
+                                 PostJsonFn post_json_fn,
+                                 NowSecondsFn now_seconds_fn)
     : channels_(std::move(channels)),
-      post_json_fn_(std::move(post_json_fn))
+      post_json_fn_(std::move(post_json_fn)),
+      now_seconds_fn_(std::move(now_seconds_fn))
 {
 }
 
@@ -77,23 +141,48 @@ WebhookNotifier::WebhookNotifier(std::vector<std::string> webhook_urls)
     {
         // 兼容旧主链：原来只有 URL 时，默认都按 generic 渠道处理，
         // 这样现有 mock webhook 和历史入口不用跟着这一刀一起重写。
-        channels_.push_back(WebhookChannel{"generic", std::move(webhook_url), true});
+        channels_.push_back(WebhookChannel{"generic", std::move(webhook_url), true, ""});
     }
+}
+
+std::string WebhookNotifier::maybeWrapFeishuSignedPayload(const WebhookChannel& channel,
+                                                          const std::string& body) const
+{
+    // 签名是发送前的协议包装，不是业务内容模板的一部分：
+    // formatter 只负责产出 msg_type/content，真正要不要补 timestamp/sign，
+    // 取决于这个渠道有没有 secret，以及 provider 是不是飞书。
+    if (!isFeishuProvider(channel.provider) || channel.secret.empty())
+    {
+        return body;
+    }
+
+    const int64_t timestamp_seconds = now_seconds_fn_
+                                          ? now_seconds_fn_()
+                                          : std::chrono::duration_cast<std::chrono::seconds>(
+                                                std::chrono::system_clock::now().time_since_epoch())
+                                                .count();
+
+    nlohmann::json payload = nlohmann::json::parse(body);
+    payload["timestamp"] = std::to_string(timestamp_seconds);
+    payload["sign"] = computeFeishuSign(timestamp_seconds, channel.secret);
+    return payload.dump();
 }
 
 void WebhookNotifier::postJson(const WebhookChannel& channel,
                                const std::string& body,
                                const std::string& log_prefix)
 {
+    const std::string wrapped_body = maybeWrapFeishuSignedPayload(channel, body);
+
     if (post_json_fn_)
     {
-        post_json_fn_(channel, body, log_prefix);
+        post_json_fn_(channel, wrapped_body, log_prefix);
         return;
     }
 
     cpr::Session& session = getTlsSession();
     session.SetUrl(cpr::Url{channel.webhook_url});
-    session.SetBody(cpr::Body{body});
+    session.SetBody(cpr::Body{wrapped_body});
     cpr::Response r = session.Post();
     if (!isHttpSuccess(r.status_code))
     {

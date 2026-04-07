@@ -95,6 +95,7 @@ int main(int argc, char* argv[])
     int service_monitor_bucket_seconds = 3;
     std::string webhook_provider;
     std::string webhook_url;
+    std::string webhook_secret;
     bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
@@ -154,6 +155,9 @@ int main(int argc, char* argv[])
             webhook_provider = argv[++i];
         } else if (arg == "--webhook-url" && i + 1 < argc) {
             webhook_url = argv[++i];
+        } else if (arg == "--webhook-secret" && i + 1 < argc) {
+            // secret 只在飞书签名校验开启时才需要；为空时继续走无签名 webhook。
+            webhook_secret = argv[++i];
         }
     }
 
@@ -290,13 +294,13 @@ int main(int argc, char* argv[])
     if (auto_start_webhook_mock) {
         // 开发时自动注入本地 mock webhook，避免“服务已经拉起，但压根没有通知目标”的调试盲区。
         // 这里显式按 generic 渠道注入，是为了让 mock webhook 和真实飞书 webhook 可以并存，而不是互相覆盖。
-        webhook_channels.push_back(WebhookChannel{"generic", "http://127.0.0.1:9999/webhook", true});
+        webhook_channels.push_back(WebhookChannel{"generic", "http://127.0.0.1:9999/webhook", true, ""});
     }
     if (!webhook_url.empty()) {
         // 这一步故意不去读 Settings/SQLite，而是在启动时直接拼一个临时渠道：
         // 目的就是先把“主链 critical 告警能不能真实打到外部平台”单独验通，
         // 避免把飞书格式问题、主链触发问题和配置生效问题搅在一起。
-        webhook_channels.push_back(WebhookChannel{webhook_provider, webhook_url, true});
+        webhook_channels.push_back(WebhookChannel{webhook_provider, webhook_url, true, webhook_secret});
     }
     if (!webhook_channels.empty()) {
         std::cout << "Webhook notifier enabled. channels=" << webhook_channels.size() << std::endl;

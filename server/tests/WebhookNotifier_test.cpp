@@ -46,9 +46,9 @@ TEST(FeishuWebhookFormatterTest, FormatsTraceAlertAsFeishuPostMessage)
 TEST(WebhookNotifierTest, NotifyTraceAlertSkipsDisabledChannelsAndUsesProviderFormatter)
 {
     std::vector<WebhookChannel> channels{
-        {"feishu", "https://example.test/feishu", true},
-        {"generic", "https://example.test/generic", true},
-        {"feishu", "https://example.test/disabled", false}
+        {"feishu", "https://example.test/feishu", true, ""},
+        {"generic", "https://example.test/generic", true, ""},
+        {"feishu", "https://example.test/disabled", false, ""}
     };
 
     struct PostedRequest
@@ -83,4 +83,35 @@ TEST(WebhookNotifierTest, NotifyTraceAlertSkipsDisabledChannelsAndUsesProviderFo
     EXPECT_EQ(posted_requests[1].channel.provider, "generic");
     EXPECT_EQ(generic_payload.at("event_type"), "trace_alert");
     EXPECT_EQ(generic_payload.at("data").at("trace_id"), "trace-123");
+}
+
+TEST(WebhookNotifierTest, NotifyTraceAlertAddsFeishuTimestampAndSignWhenSecretPresent)
+{
+    std::vector<WebhookChannel> channels{
+        {"feishu", "https://example.test/feishu", true, "demo"}
+    };
+
+    std::vector<std::string> posted_bodies;
+    WebhookNotifier notifier(
+        std::move(channels),
+        [&](const WebhookChannel&, const std::string& body, const std::string&)
+        {
+            posted_bodies.push_back(body);
+        },
+        []() -> int64_t
+        {
+            return 1599360473;
+        });
+
+    notifier.notifyTraceAlert(MakeTraceAlertEvent());
+
+    ASSERT_EQ(posted_bodies.size(), 1U);
+    const nlohmann::json payload = nlohmann::json::parse(posted_bodies.front());
+
+    // 这里锁的是飞书签名包装层：
+    // 1) secret 存在时，最终发出的 payload 外层必须带 timestamp/sign；
+    // 2) sign 结果要和飞书文档示例算法一致，避免“字段带了，但算法其实算错了”。
+    EXPECT_EQ(payload.at("timestamp"), "1599360473");
+    EXPECT_EQ(payload.at("sign"), "l1N0gAcBjdwBvGm1xMjOF0XSyaLRpR7tuO5dHfhAYc8=");
+    EXPECT_EQ(payload.at("msg_type"), "post");
 }

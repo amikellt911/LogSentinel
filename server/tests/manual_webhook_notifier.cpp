@@ -16,6 +16,7 @@ void printUsage(const char* argv0)
         << "Options:\n"
         << "  --provider <provider>      目标 provider，例如 feishu / generic\n"
         << "  --webhook-url <url>        真实 webhook 地址；也可通过 LOGSENTINEL_WEBHOOK_URL 环境变量传入\n"
+        << "  --webhook-secret <secret>  可选，飞书签名校验 secret；为空时按无签名 webhook 发送\n"
         << "  --trace-id <id>            自定义 trace_id，默认 trace-manual-demo\n"
         << "  --level <level>            风险级别，默认 critical\n"
         << "  --summary <text>           摘要文案\n"
@@ -54,6 +55,7 @@ int main(int argc, char** argv)
 {
     std::string provider = "feishu";
     std::string webhook_url;
+    std::string webhook_secret;
     TraceAlertEvent event = makeDefaultEvent();
 
     if (const char* env_url = std::getenv("LOGSENTINEL_WEBHOOK_URL"))
@@ -86,6 +88,12 @@ int main(int argc, char** argv)
         else if (arg == "--webhook-url")
         {
             webhook_url = requireValue("--webhook-url");
+        }
+        else if (arg == "--webhook-secret")
+        {
+            // 这里把 secret 保留在手工联调入口，是为了测试“签名开关打开后的真实飞书机器人”。
+            // 如果不传，就继续覆盖无签名机器人路径，方便本地最小联调。
+            webhook_secret = requireValue("--webhook-secret");
         }
         else if (arg == "--trace-id")
         {
@@ -146,7 +154,7 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    WebhookChannel channel{provider, webhook_url, true};
+    WebhookChannel channel{provider, webhook_url, true, webhook_secret};
     WebhookNotifier notifier(std::vector<WebhookChannel>{channel});
 
     std::cout << "[manual-webhook] provider=" << provider

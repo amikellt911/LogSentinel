@@ -34,3 +34,8 @@
 - [x] 先补脚本测试，锁 `critical` 模式下生成的 trace 一定带有显式 critical 标记
 - [x] 运行 Python 测试验证脚本改动无回归
 - [x] 追加本次 critical 发数脚本改造 dev-log 记录
+- [x] 为 `WebhookChannel` 增加可选 `secret` 字段，并把飞书签名链接进 notifier 发送路径
+- [x] 先补 `WebhookNotifier` 单测，锁 `secret` 存在时必须自动追加 `timestamp/sign`
+- [x] 为主程序临时参数和手工联调入口补 `--webhook-secret`
+- [x] 编译并运行通知层测试，确认签名改动无回归
+- [x] 追加本次飞书签名支持 dev-log 记录

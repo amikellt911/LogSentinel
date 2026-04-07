@@ -46,6 +46,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(MiniMuduo googletest cpr nlohmann_json)
 find_package(SQLite3 REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 #--------------模块管理------------------
 add_library(http_module STATIC
@@ -136,6 +137,7 @@ target_link_libraries(persistence_module PUBLIC SQLite::SQLite3 ai_module)
 target_link_libraries(notification_module PUBLIC
   cpr::cpr
   nlohmann_json::nlohmann_json
+  OpenSSL::Crypto
   persistence_module
 )
 target_link_libraries(handler_module PUBLIC
