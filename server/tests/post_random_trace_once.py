@@ -20,7 +20,7 @@ def post_span(base_url: str, payload: dict) -> None:
         print(body)
 
 
-def build_complex_trace(trace_key: int, now_ms: int) -> list[dict]:
+def build_complex_trace(trace_key: int, now_ms: int, force_critical: bool = False) -> list[dict]:
     root_span_id = trace_key * 10 + 1
     auth_span_id = trace_key * 10 + 2
     order_span_id = trace_key * 10 + 3
@@ -48,6 +48,16 @@ def build_complex_trace(trace_key: int, now_ms: int) -> list[dict]:
 
     # 这里继续复用之前复杂 fixture 的拓扑：
     # 多服务、多层级、并行分叉、局部错误都保留，只把 trace_key 变成时间种子的随机值。
+    # 如果 force_critical=True，就显式往 trace 文本里塞 critical 标记，
+    # 这样 mock trace AI 不需要猜，就能稳定命中 critical 分支，用于 webhook 端到端联调。
+    bank_error_type = "upstream-timeout"
+    payment_retry = "1"
+    root_alert_hint = "demo"
+    if force_critical:
+        bank_error_type = "critical-upstream-timeout"
+        payment_retry = "critical-retry"
+        root_alert_hint = "critical"
+
     return [
         {
             "trace_key": trace_key,
@@ -107,7 +117,7 @@ def build_complex_trace(trace_key: int, now_ms: int) -> list[dict]:
             "attributes": {
                 "http.method": "POST",
                 "http.route": "/bank/authorize",
-                "error.type": "upstream-timeout",
+                "error.type": bank_error_type,
             },
         },
         {
@@ -137,7 +147,7 @@ def build_complex_trace(trace_key: int, now_ms: int) -> list[dict]:
             "kind": "CLIENT",
             "attributes": {
                 "payment.channel": "bank-transfer",
-                "payment.retry": "1",
+                "payment.retry": payment_retry,
             },
         },
         {
@@ -185,6 +195,7 @@ def build_complex_trace(trace_key: int, now_ms: int) -> list[dict]:
                 "http.method": "POST",
                 "http.route": "/api/v1/checkout-complex",
                 "tenant": "demo",
+                "alert.hint": root_alert_hint,
             },
         },
     ]
@@ -206,6 +217,11 @@ def main() -> int:
         default=None,
         help="可选，手动指定毫秒种子；默认取当前时间毫秒。",
     )
+    parser.add_argument(
+        "--critical",
+        action="store_true",
+        help="显式注入 critical 标记，确保 mock trace AI 稳定产出 critical 风险级别。",
+    )
     args = parser.parse_args()
 
     seed_ms = args.seed_ms if args.seed_ms is not None else int(time.time() * 1000)
@@ -220,7 +236,7 @@ def main() -> int:
     print(f"[post-random-trace-once] trace_key={trace_key}")
 
     try:
-        for payload in build_complex_trace(trace_key, now_ms):
+        for payload in build_complex_trace(trace_key, now_ms, force_critical=args.critical):
             post_span(args.base_url, payload)
     except urllib.error.HTTPError as exc:
         print(f"[post-random-trace-once] http error: status={exc.code}")

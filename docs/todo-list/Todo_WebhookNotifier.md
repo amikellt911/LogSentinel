@@ -26,3 +26,11 @@
 - [x] 补全 webhook 失败日志，输出 transport error code/message，避免 `Status: 0` 时无法定位
 - [x] 编译并验证 `manual_webhook_notifier` 在开启 HTTPS 后仍可正常构建和打印 `--help`
 - [x] 追加本次 HTTPS 与错误日志修正 dev-log 记录
+- [x] 在 `main.cpp` 增加临时 `--webhook-provider/--webhook-url` 启动参数，先绕开 Settings 打通真实外发
+- [x] 主程序启动时将临时 webhook 参数映射为 `WebhookChannel`，与本地 mock webhook 共存
+- [x] 编译验证 `LogSentinel` 主程序在新增 webhook 启动参数后无回归
+- [x] 追加本次主程序临时 webhook 直连入口 dev-log 记录
+- [x] 为 `post_random_trace_once.py` 增加可控的 critical 产出模式，便于 webhook 端到端联调
+- [x] 先补脚本测试，锁 `critical` 模式下生成的 trace 一定带有显式 critical 标记
+- [x] 运行 Python 测试验证脚本改动无回归
+- [x] 追加本次 critical 发数脚本改造 dev-log 记录

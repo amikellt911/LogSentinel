@@ -464,3 +464,66 @@ fix(notification): 打开 webhook https 支持并补全传输层错误日志
 ### Pitfalls
 
 如果一开始为了简化依赖把 `cpr/curl` 编成 `HTTP-only`，那本地 mock webhook 看起来都能跑，但一旦接真实平台（飞书、Slack、钉钉），只要对方要求 `https`，你就会得到一种很迷惑的现象：程序没崩、payload 也像对的，但消息永远到不了。这个坑不把 TLS 支持打开，前面调模板全是白费。
+
+# 追加记录：2026-04-07 主程序增加临时 webhook 直连入口
+
+## Git Commit Message
+
+feat(server): 为主程序增加临时 webhook 直连启动参数
+
+## Modification
+
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/src/main.cpp` 的参数解析里补了中文注释，说明为什么先增加临时 `--webhook-provider/--webhook-url`，而不是直接把 Settings 这条线一起接上。
+- 在 `server/src/main.cpp` 的 notifier 初始化处补了中文注释，说明为什么启动时直接把临时参数映射成 `WebhookChannel`，以及为什么它要和本地 mock webhook 共存。
+
+## Learning Tips
+
+### Newbie Tips
+
+当你要把一个真实外部能力接进主程序时，先给主程序一个“临时直连入口”通常比立刻接完整配置系统更稳。这样能先证明主链、消息模板和外部平台本身都是通的，再回头接 Settings，问题定位会轻松很多。
+
+### Function Explanation
+
+这次主程序新增的 `--webhook-provider` 和 `--webhook-url` 只负责启动时临时构造一个 `WebhookChannel`。它们不会回写数据库，也不会改变 Settings 的最终设计，只是给 `WebhookNotifier` 提供一个短路径，让 `critical trace -> 外部 webhook` 这条链能先真实跑起来。
+
+### Pitfalls
+
+如果只加 `--webhook-url` 不加 `--webhook-provider`，或者反过来只传 provider 不传 url，启动时应该立刻失败，而不是默默退回默认值。因为这类参数一旦半残，会让你以为“主链没有触发通知”，实际上只是初始化阶段配置就已经脏了。
+
+# 追加记录：2026-04-07 随机 trace 发数脚本增加 critical 模式
+
+## Git Commit Message
+
+feat(test): 为随机 trace 发数脚本增加 critical 产出模式
+
+## Modification
+
+- `server/tests/post_random_trace_once.py`
+- `server/tests/post_random_trace_once_test.py`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/tests/post_random_trace_once.py` 里补了中文注释，说明为什么 `force_critical` 要显式往 trace 文本里塞 `critical` 标记，以及这样做和 mock trace AI 风险判定的关系。
+- 在 `server/tests/post_random_trace_once_test.py` 里补了中文注释，说明这条测试锁的是“脚本能不能稳定产出 critical 语义”，不是网络发送结果。
+
+## Learning Tips
+
+### Newbie Tips
+
+如果下游风险判定是基于文本关键词的 mock 逻辑，那联调脚本就不能只靠“有几个 ERROR span”去赌它会不会变成 `critical`。最稳的做法是给脚本一个明确开关，让它在需要时显式注入 `critical` 标记，这样测试和演示都可控。
+
+### Function Explanation
+
+这次新增的 `--critical` 开关不会改脚本默认行为。默认仍然发送原来的复杂异常 trace；只有显式传 `--critical` 时，脚本才会把 `bank/payment/root` 这几个位置的属性改成带 `critical` 的文本，从而让 mock trace AI 在 `analyze_trace()` 里稳定命中 `risk_level = critical`。
+
+### Pitfalls
+
+只改脚本帮助文案、不补一条最小测试是很危险的。因为这种“通过关键词触发风险等级”的逻辑很脆，后面哪怕有人把属性名、字段值或序列化文本改了，脚本表面上还能发送成功，但 webhook 就再也不会触发。先用测试锁住“critical 字样必须真的出现在生成 payload 里”，后面才不容易悄悄回退成 `error`。
