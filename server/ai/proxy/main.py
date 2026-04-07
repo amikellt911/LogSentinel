@@ -136,7 +136,15 @@ async def analyze_trace(provider_name: str, request: Request):
             trace_text=trace_text,
             prompt=TRACE_PROMPT_TEMPLATE,
         )
-        return {"provider": provider_name, "analysis": result}
+        # Trace 路由现在允许 provider 附带 usage 元数据，目的是把 token 计量从 analysis JSON 里拆出来。
+        # 既然 analysis 是业务结果，usage 就应该作为外层 sibling 字段单独返回，便于 C++ 统一解析。
+        if isinstance(result, dict) and "analysis" in result:
+            return {
+                "provider": provider_name,
+                "analysis": result.get("analysis"),
+                "usage": result.get("usage"),
+            }
+        return {"provider": provider_name, "analysis": result, "usage": None}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"分析过程中发生错误: {e}")
 

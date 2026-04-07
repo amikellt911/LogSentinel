@@ -246,3 +246,11 @@
 - [x] 底部折线图继续只保留两条线：接入速率 / AI 完成速率
 - [x] 菜单与页面显示文案先改成“系统监控”，文件名 `Dashboard.vue` 暂时不动
 - [x] 背压卡已去掉 `queuePercent` 副文案，只保留综合背压状态，避免和后端多因素判定口径打架
+
+### H. 2026-04-07：Trace AI usage 回传与 token 真值入口
+- [x] 先只补 Trace AI 主链，不改数据库 schema，不顺手接 Dashboard 真指标
+- [x] Python proxy 的 `/analyze/trace/{provider}` 外层响应补 `usage`
+- [x] Gemini provider 把官方 `usage_metadata` 归一化成内部统一字段
+- [x] C++ `TraceAiProvider` 返回“analysis + optional usage”，不再只有 `LogAnalysisResult`
+- [x] `TraceSessionManager` 告警事件 token_count 优先吃 provider usage，缺失时继续回退本地估算
+- [x] 单测补 usage 命中与 usage 缺失两条口径

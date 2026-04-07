@@ -50,6 +50,18 @@ namespace
         return toLowerCopy(record.status) == "error";
     }
 
+    size_t ResolveAlertTokenCount(const TraceRepository::TraceSummary& summary,
+                                  const std::optional<TraceAiUsage>& usage)
+    {
+        // 告警里的 token_count 先优先吃 provider usage。既然模型已经告诉我们真实 total_tokens，
+        // 那就不该继续用 Push 路径上的字符数近似值。只有 usage 缺失时，才回退到现有 summary.token_count。
+        if (usage.has_value() && usage->total_tokens > 0)
+        {
+            return usage->total_tokens;
+        }
+        return summary.token_count;
+    }
+
     PrimaryObservation BuildPrimaryObservation(const TraceRepository::TraceSummary& summary,
                                               const std::vector<TraceRepository::TraceSpanRecord>& span_records)
     {
@@ -896,13 +908,15 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
 
         TraceRepository::TraceAnalysisRecord analysis_record;
         TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
+        size_t alert_token_count = summary.token_count;
         if (trace_ai) {
             manager->ai_calls_.fetch_add(1, std::memory_order_relaxed);
             const uint64_t ai_begin_ns = NowSteadyNs();
             try {
-                LogAnalysisResult analysis = trace_ai->AnalyzeTrace(trace_payload);
-                analysis_record = manager->BuildAnalysisRecord(summary.trace_id, analysis);
+                TraceAiResponse ai_response = trace_ai->AnalyzeTrace(trace_payload);
+                analysis_record = manager->BuildAnalysisRecord(summary.trace_id, ai_response.analysis);
                 analysis_ptr = &analysis_record;
+                alert_token_count = ResolveAlertTokenCount(summary, ai_response.usage);
             } catch (const std::exception& e) {
                 analysis_record.trace_id = summary.trace_id;
                 analysis_record.risk_level = "unknown";
@@ -952,7 +966,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         event.start_time_ms = summary.start_time_ms;
         event.duration_ms = summary.duration_ms;
         event.span_count = summary.span_count;
-        event.token_count = summary.token_count;
+        event.token_count = alert_token_count;
         event.risk_level = analysis_ptr->risk_level;
         event.summary = analysis_ptr->summary;
         event.root_cause = analysis_ptr->root_cause;
@@ -1179,13 +1193,17 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
 
         TraceRepository::TraceAnalysisRecord analysis_record;
         TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
+        size_t alert_token_count = worker_summary->token_count;
         if (trace_ai) {
             manager->ai_calls_.fetch_add(1, std::memory_order_relaxed);
             const uint64_t ai_begin_ns = NowSteadyNs();
             try {
-                LogAnalysisResult analysis = trace_ai->AnalyzeTrace(*worker_trace_payload);
-                analysis_record = manager->BuildAnalysisRecord(worker_summary->trace_id, analysis);
+                TraceAiResponse ai_response = trace_ai->AnalyzeTrace(*worker_trace_payload);
+                analysis_record = manager->BuildAnalysisRecord(worker_summary->trace_id, ai_response.analysis);
                 analysis_ptr = &analysis_record;
+                // worker_summary 指向的是已经落完 primary 的只读摘要，这里不能回写它本体。
+                // 所以后面发告警时单独走 alert_token_count，避免为了一个展示口径去改数据库主记录。
+                alert_token_count = ResolveAlertTokenCount(*worker_summary, ai_response.usage);
             } catch (const std::exception& e) {
                 analysis_record.trace_id = worker_summary->trace_id;
                 analysis_record.risk_level = "unknown";
@@ -1244,7 +1262,7 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         event.start_time_ms = worker_summary->start_time_ms;
         event.duration_ms = worker_summary->duration_ms;
         event.span_count = worker_summary->span_count;
-        event.token_count = worker_summary->token_count;
+        event.token_count = alert_token_count;
         event.risk_level = analysis_ptr->risk_level;
         event.summary = analysis_ptr->summary;
         event.root_cause = analysis_ptr->root_cause;

@@ -17,7 +17,7 @@ class AIProvider(ABC):
         pass
 
     @abstractmethod
-    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
+    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> Any:
         """
         执行一次 Trace 聚合结果的分析任务。
         """

@@ -16,7 +16,7 @@ MockTraceAi::MockTraceAi()
 // 析构函数默认即可，网络会话在方法内部创建与销毁，避免跨线程共享状态。
 MockTraceAi::~MockTraceAi() = default;
 
-LogAnalysisResult MockTraceAi::AnalyzeTrace(const std::string& trace_payload)
+TraceAiResponse MockTraceAi::AnalyzeTrace(const std::string& trace_payload)
 {
     // 这里沿用 MockAI 的请求方式，方便复用错误处理习惯与调试流程。
     cpr::Session session_;
@@ -78,5 +78,9 @@ LogAnalysisResult MockTraceAi::AnalyzeTrace(const std::string& trace_payload)
         throw std::runtime_error("Trace AI Validation Error: Invalid risk_level '" + risk + "'");
     }
 
-    return analysis_json.get<LogAnalysisResult>();
+    TraceAiResponse response;
+    response.analysis = analysis_json.get<LogAnalysisResult>();
+    // mock 路径当前不回 usage，目的是继续覆盖“provider usage 缺失 -> 本地估算回退”的主链分支。
+    response.usage.reset();
+    return response;
 }

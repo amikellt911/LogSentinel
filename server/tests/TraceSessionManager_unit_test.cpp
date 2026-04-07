@@ -17,6 +17,7 @@
 #include "notification/INotifier.h"
 #include "persistence/BufferedTraceRepository.h"
 #include "persistence/TraceRepository.h"
+#include "core/TokenEstimator.h"
 #include "threadpool/ThreadPool.h"
 #include <nlohmann/json.hpp>
 
@@ -154,20 +155,24 @@ public:
 class StubTraceAi : public TraceAiProvider
 {
 public:
-    LogAnalysisResult result{
-        .summary = "stub-summary",
-        .risk_level = RiskLevel::UNKNOWN,
-        .root_cause = "stub-root-cause",
-        .solution = "stub-solution",
+    TraceAiResponse response{
+        .analysis =
+            LogAnalysisResult{
+                .summary = "stub-summary",
+                .risk_level = RiskLevel::UNKNOWN,
+                .root_cause = "stub-root-cause",
+                .solution = "stub-solution",
+            },
+        .usage = std::nullopt,
     };
     std::atomic<bool> called{false};
     std::string last_payload;
 
-    LogAnalysisResult AnalyzeTrace(const std::string& trace_payload) override
+    TraceAiResponse AnalyzeTrace(const std::string& trace_payload) override
     {
         last_payload = trace_payload;
         called.store(true, std::memory_order_release);
-        return result;
+        return response;
     }
 };
 
@@ -668,7 +673,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
 
     SpanEvent critical_span = MakeSpan(66, 601, 1000);
     critical_span.trace_end = true;
-    ai.result.risk_level = RiskLevel::CRITICAL;
+    ai.response.analysis.risk_level = RiskLevel::CRITICAL;
     ASSERT_EQ(manager.Push(critical_span), TraceSessionManager::PushResult::Accepted);
     SweepTraceEndSealWindow(manager);
     ASSERT_TRUE(WaitUntil([&notifier]() {
@@ -679,7 +684,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
 
     // 第二段改为 non-critical，验证策略过滤是否生效。这里重置标记是为了避免第一次调用结果污染第二次断言。
     notifier.notify_trace_alert_called.store(false, std::memory_order_release);
-    ai.result.risk_level = RiskLevel::WARNING;
+    ai.response.analysis.risk_level = RiskLevel::WARNING;
 
     SpanEvent warning_span = MakeSpan(67, 602, 1100);
     warning_span.trace_end = true;
@@ -687,6 +692,70 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
     SweepTraceEndSealWindow(manager);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.last_summary.trace_id == "67"; }));
     EXPECT_FALSE(notifier.notify_trace_alert_called.load(std::memory_order_acquire));
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchNotificationUsesProviderUsageTokenCountWhenPresent)
+{
+    // 目的：锁定 trace AI 已经返回 usage 时，告警里的 token_count 要优先吃真 usage，
+    // 不能继续沿用 Push 路径上的本地近似估算，否则系统监控和真实模型账单会长期偏差。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    StubTraceAi ai;
+    SpyNotifier notifier;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0, &notifier);
+
+    ai.response.analysis.risk_level = RiskLevel::CRITICAL;
+    ai.response.usage = TraceAiUsage{
+        .input_tokens = 120,
+        .output_tokens = 45,
+        .total_tokens = 165,
+    };
+
+    SpanEvent span = MakeSpan(168, 1601, 1000);
+    span.trace_end = true;
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&notifier]() {
+        return notifier.notify_trace_alert_called.load(std::memory_order_acquire);
+    }));
+    EXPECT_EQ(notifier.last_event.trace_id, "168");
+    EXPECT_EQ(notifier.last_event.token_count, 165u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchNotificationFallsBackToEstimatedTokenCountWhenUsageMissing)
+{
+    // 目的：锁定 usage 缺失时继续走当前近似估算，避免 mock/旧 provider 直接把 token_count 变成 0。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    StubTraceAi ai;
+    SpyNotifier notifier;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0, &notifier);
+
+    ai.response.analysis.risk_level = RiskLevel::CRITICAL;
+    ai.response.usage.reset();
+
+    SpanEvent span = MakeSpan(169, 1602, 1000);
+    span.name = "long-operation-name-for-token-estimation";
+    span.service_name = "service-with-some-length";
+    span.trace_end = true;
+    TokenEstimator estimator;
+    const size_t expected_token_count = estimator.Estimate(span);
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&notifier]() {
+        return notifier.notify_trace_alert_called.load(std::memory_order_acquire);
+    }));
+    EXPECT_EQ(notifier.last_event.trace_id, "169");
+    EXPECT_EQ(notifier.last_event.token_count, expected_token_count);
+    EXPECT_GT(notifier.last_event.token_count, 0u);
 
     pool.shutdown();
 }
@@ -699,7 +768,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchNotifiesAfterAnalysisEnqueueEvenIfBa
     FakeTraceRepository repo;
     repo.save_atomic_return = false;
     StubTraceAi ai;
-    ai.result.risk_level = RiskLevel::CRITICAL;
+    ai.response.analysis.risk_level = RiskLevel::CRITICAL;
     SpyNotifier notifier;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0, &notifier);

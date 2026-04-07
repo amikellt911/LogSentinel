@@ -23,19 +23,23 @@ std::unique_ptr<BufferedTraceRepository> MakeBufferedTraceRepository(TraceReposi
 class FixedTraceAi : public TraceAiProvider
 {
 public:
-    LogAnalysisResult result{
-        .summary = "fixed-trace-summary",
-        .risk_level = RiskLevel::WARNING,
-        .root_cause = "fixed-root-cause",
-        .solution = "fixed-solution",
+    TraceAiResponse response{
+        .analysis =
+            LogAnalysisResult{
+                .summary = "fixed-trace-summary",
+                .risk_level = RiskLevel::WARNING,
+                .root_cause = "fixed-root-cause",
+                .solution = "fixed-solution",
+            },
+        .usage = std::nullopt,
     };
 
     std::string last_payload;
 
-    LogAnalysisResult AnalyzeTrace(const std::string& trace_payload) override
+    TraceAiResponse AnalyzeTrace(const std::string& trace_payload) override
     {
         last_payload = trace_payload;
-        return result;
+        return response;
     }
 };
 }
@@ -413,8 +417,8 @@ TEST_F(TraceSessionManagerIntegrationTest, BufferedMainPathPersistsPrimaryAndAna
     EXPECT_EQ(summary->start_time_ms, 1000);
     EXPECT_EQ(summary->duration_ms, 400);
     EXPECT_EQ(summary->span_count, 2);
-    // summary 在 Dispatch 前先入 primary 缓冲，因此这里仍应保持主数据阶段的默认风险等级。
-    EXPECT_EQ(summary->risk_level, "unknown");
+    // analysis flush 成功后，SQLite 会把最终 risk_level 回写到 trace_summary，列表页直接读主表即可拿到最新等级。
+    EXPECT_EQ(summary->risk_level, "warning");
 
     auto root_row = QuerySpan("1010");
     ASSERT_TRUE(root_row.has_value());
@@ -588,6 +592,8 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnDuplicateSpanId)
     SpanEvent dup = MakeSpan(3, 300, std::nullopt);
     EXPECT_EQ(manager.Push(dup), TraceSessionManager::PushResult::Accepted);
 
+    // duplicate_span 当前走“1 tick 封口后异步 dispatch”语义，所以这里也要手动推进一次 protection seal window。
+    SweepProtectionSealWindow(manager);
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_analysis;", 1, std::chrono::seconds(3)));
