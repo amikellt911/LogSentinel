@@ -245,3 +245,4 @@
 - [x] `TokenMetricsCard` 去掉“节省比例 / 预估成本”，改成总 token / 输入 token / 输出 token / 平均每次 AI 调用 token
 - [x] 底部折线图继续只保留两条线：接入速率 / AI 完成速率
 - [x] 菜单与页面显示文案先改成“系统监控”，文件名 `Dashboard.vue` 暂时不动
+- [x] 背压卡已去掉 `queuePercent` 副文案，只保留综合背压状态，避免和后端多因素判定口径打架

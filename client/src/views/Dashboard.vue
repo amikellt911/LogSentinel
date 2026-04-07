@@ -51,7 +51,6 @@
         :value="$t(`dashboard.${systemStore.backpressureStatus.toLowerCase()}`)"
         :icon="Warning"
         :status-color="backpressureColor"
-        :subValue="$t('dashboard.queue') + ': ' + systemStore.queuePercent + '%'"
       />
     </div>
 
@@ -99,6 +98,8 @@ const backpressureColor = computed(() => {
       default: return 'text-gray-500'
    }
 })
+// 背压状态现在只显示综合结论，不再附带单一 queue 百分比。
+// 因为后端背压已经是多因素联合判断，再把某一个队列占用塞成副文案，反而会把语义讲脏。
 
 function formatNumber(num: number) {
   return new Intl.NumberFormat('en-US').format(num)
