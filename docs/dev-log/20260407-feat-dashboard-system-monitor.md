@@ -323,3 +323,39 @@ refactor(core): 让系统监控快照在 OnTick 预构建并发布
 ### Pitfalls
 
 如果只改了实现，不补“失败测试先锁发布语义”，很容易把“OnTick 发布快照”和“请求时现场拼快照”两种行为混着存在，表面看页面都能出数，但锁竞争、时序和测试口径会越来越乱。先让测试明确区分“已发布”和“未发布”两个状态，后面的重构才不会偷跑偏。
+
+# 追加记录：2026-04-07 ServiceRuntimeAccumulator 改成原子发布快照
+
+## Git Commit Message
+
+refactor(core): 让服务监控快照在 OnTick 原子发布
+
+## Modification
+
+- `server/core/ServiceRuntimeAccumulator.h`
+- `server/core/ServiceRuntimeAccumulator.cpp`
+- `server/handlers/ServiceMonitorHandler.cpp`
+- `server/tests/ServiceRuntimeAccumulator_test.cpp`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/core/ServiceRuntimeAccumulator.h` 里补了中文注释，说明 `BuildSnapshot()` 现在为什么只返回 `OnTick()` 已经原子发布好的成品快照。
+- 在 `server/core/ServiceRuntimeAccumulator.cpp` 里补了中文注释，说明为什么服务监控也把“窗口推进 + topk 排序 + 快照发布”统一收口到 `OnTick()`，以及为什么请求线程不该再进窗口锁。
+- 在 `server/handlers/ServiceMonitorHandler.cpp` 里补了中文注释，说明 `/service-monitor/runtime` 现在读取的是已经发布好的内存快照，不再现场参与排序和裁切。
+- 在 `server/tests/ServiceRuntimeAccumulator_test.cpp` 里补了中文注释，说明新增测试锁的是“analysis 虽然已经写进最近态内部状态，但在下一次 `OnTick()` 发布前，请求侧仍然只能看到旧快照”。
+
+## Learning Tips
+
+### Newbie Tips
+
+服务监控这类页面比系统监控更适合走“定时推进 -> 定时发布 -> 请求只读”的模式。因为它本来就有时间窗、退窗、服务榜和操作榜排序，如果再让 HTTP 请求线程现场拼装一次，锁竞争和时序口径都会越来越乱。
+
+### Function Explanation
+
+这次服务监控也用到了 `std::shared_ptr<const ServiceRuntimeSnapshot>` 配合 `std::atomic_store_explicit / std::atomic_load_explicit`。写侧在 `OnTick()` 持锁推进完窗口后统一生成成品快照，再用 `release` 语义发布；读侧用 `acquire` 语义拿当前指针后直接拷一份返回。这样请求线程不会再碰 `window_services_ / recent_services_ / global_operations_` 这些内部真相状态。
+
+### Pitfalls
+
+如果只把 `published_snapshot_` 换成原子指针，却不补“下一次 `OnTick()` 发布前仍应返回旧快照”的测试，那么很容易又把 `OnAnalysisReady()` 之类的内部状态变化泄漏到请求路径上。页面表面还能出数，但“已发布快照”和“内部最新状态”两套语义会重新混在一起。

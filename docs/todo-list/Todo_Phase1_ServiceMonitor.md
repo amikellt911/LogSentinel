@@ -232,6 +232,7 @@
 - [x] 服务监控后端快照发布周期已从 `5s` 压到 `1s`，减少答辩演示时“分钟已封口但榜单还没刷新”的额外等待
 - [x] 服务监控桶粒度已从“固定 1 分钟”改成“启动参数控制”，当前默认 `3s`
 - [x] `ServiceRuntimeAccumulator` 已按“窗口分钟数 + 桶粒度秒数”自动计算窗口桶数量，不再把窗口长度直接当桶数量
+- [x] `ServiceRuntimeAccumulator` 已改成 `OnTick()` 预构建并原子发布快照，`/service-monitor/runtime` 请求侧只读已发布成品
 - [x] `main.cpp` 已新增 `--service-monitor-bucket-seconds`
 - [x] 联调脚本已默认透传 `SERVICE_MONITOR_BUCKET_SECONDS=3`
 - [x] 原型页已拆开“自动轮询请求中”和“手动刷新按钮 loading”，自动刷新不再把按钮长期锁成“刷新中”

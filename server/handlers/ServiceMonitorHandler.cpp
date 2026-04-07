@@ -15,8 +15,8 @@ void ServiceMonitorHandler::handleGetRuntimeSnapshot(const HttpRequest&,
         snapshot = accumulator_->BuildSnapshot();
     }
 
-    // 这里直接同步返回，因为读的是已经发布好的内存快照；
-    // 既没有 SQLite，也没有线程池排队，走 IO 线程就够了。
+    // 这里直接同步返回，因为读的是 OnTick 已经原子发布好的成品快照；
+    // handler 线程不再进服务监控那把窗口锁，也不再现场排序服务榜和操作榜。
     resp->setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
     resp->addCorsHeaders();
     resp->setHeader("Content-Type", "application/json");

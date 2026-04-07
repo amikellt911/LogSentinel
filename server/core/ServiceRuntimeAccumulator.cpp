@@ -56,7 +56,8 @@ ServiceRuntimeAccumulator::ServiceRuntimeAccumulator(size_t service_top_k,
     sealed_bucket_id_ = active_bucket_id_ - 1;
 
     // 构造期先发布一个空快照，避免 HTTP 比主链路更早起来时返回缺字段 JSON。
-    published_snapshot_ = BuildSnapshotLocked();
+    std::lock_guard<std::mutex> lock(mutex_);
+    PublishSnapshotLocked();
 }
 
 void ServiceRuntimeAccumulator::OnPrimaryCommitted(const PrimaryObservation& observation)
@@ -193,14 +194,23 @@ void ServiceRuntimeAccumulator::OnTick()
     }
 
     active_bucket_id_ = std::max(active_bucket_id_, now_bucket_id);
-    published_snapshot_ = BuildSnapshotLocked();
+
+    // 服务监控这里本来就在 OnTick 里推进时间窗、退窗、排序服务榜和操作榜。
+    // 既然这些活都已经在定时线程里做了，那就顺手把成品快照一起发布掉，
+    // 不要再让请求线程为了读榜单重新抢锁、重新跑一遍裁切逻辑。
+    PublishSnapshotLocked();
 }
 
 ServiceRuntimeSnapshot ServiceRuntimeAccumulator::BuildSnapshot() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::shared_ptr<const ServiceRuntimeSnapshot> snapshot =
+        std::atomic_load_explicit(&published_snapshot_, std::memory_order_acquire);
+    if (!snapshot)
+    {
+        return {};
+    }
     // 外部永远只拿已经发布好的快照，避免 handler 线程现场去跑排序和裁切。
-    return published_snapshot_;
+    return *snapshot;
 }
 
 std::string ServiceRuntimeAccumulator::ComputeServiceRiskLevel(uint64_t exception_count)
@@ -546,4 +556,12 @@ ServiceRuntimeSnapshot ServiceRuntimeAccumulator::BuildSnapshotLocked() const
     }
     snapshot.global_operation_ranking = std::move(global_operation_views);
     return snapshot;
+}
+
+void ServiceRuntimeAccumulator::PublishSnapshotLocked()
+{
+    auto snapshot = std::make_shared<ServiceRuntimeSnapshot>(BuildSnapshotLocked());
+    std::atomic_store_explicit(&published_snapshot_,
+                               std::shared_ptr<const ServiceRuntimeSnapshot>(std::move(snapshot)),
+                               std::memory_order_release);
 }
