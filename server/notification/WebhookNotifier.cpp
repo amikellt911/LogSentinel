@@ -1,99 +1,106 @@
 #include "WebhookNotifier.h"
+
 #include <cpr/cpr.h>
+
 #include <chrono>
 #include <iostream>
+#include <memory>
+#include <utility>
+
 namespace
 {
-    int64_t currentUnixMs()
-    {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::system_clock::now().time_since_epoch())
-            .count();
-    }
+bool isHttpSuccess(long status_code)
+{
+    return status_code >= 200 && status_code < 300;
+}
 
-    bool isHttpSuccess(long status_code)
+cpr::Session& getTlsSession()
+{
+    static thread_local std::unique_ptr<cpr::Session> session = []()
     {
-        return status_code >= 200 && status_code < 300;
-    }
-
-    cpr::Session &getTlsSession()
-    {
-        static thread_local std::unique_ptr<cpr::Session> session = []()
-        {
-            auto s = std::make_unique<cpr::Session>();
-            s->SetTimeout(std::chrono::seconds(5));
-            s->SetHeader(cpr::Header{{"Content-Type", "application/json"}});
-            return s;
-        }();
-        return *session;
-    }
-
-    void postJsonToWebhookUrls(const std::vector<std::string>& urls, const std::string& body, const std::string& log_prefix)
-    {
-        cpr::Session &session = getTlsSession();
-        for (const auto &url : urls)
-        {
-            session.SetUrl(cpr::Url{url});
-            session.SetBody(cpr::Body{body});
-            cpr::Response r = session.Post();
-            if (!isHttpSuccess(r.status_code))
-            {
-                // 这里不抛异常是为了保证多目标发送时“尽力而为”，一个失败不影响其他目标。
-                std::cerr << "[" << log_prefix << "] Target: " << url
-                          << " | Status: " << r.status_code
-                          << " | Msg: " << r.text << std::endl;
-            }
-        }
-    }
-
-    nlohmann::json buildTraceAlertPayload(const TraceAlertEvent& event)
-    {
-        const int64_t sent_at_ms = currentUnixMs();
-
-        nlohmann::json payload;
-        payload["schema_version"] = "1.0";
-        payload["event_type"] = "trace_alert";
-        payload["event_id"] = "trace_alert:" + event.trace_id + ":" + std::to_string(sent_at_ms);
-        payload["sent_at_ms"] = sent_at_ms;
-        payload["source"] = "LogSentinel";
-        payload["data"] = {
-            {"trace_id", event.trace_id},
-            {"service_name", event.service_name},
-            {"start_time_ms", event.start_time_ms},
-            {"duration_ms", event.duration_ms},
-            {"span_count", event.span_count},
-            {"token_count", event.token_count},
-            {"risk_level", event.risk_level},
-            {"summary", event.summary},
-            {"root_cause", event.root_cause},
-            {"solution", event.solution},
-            {"confidence", event.confidence}
-        };
-        return payload;
-    }
+        auto s = std::make_unique<cpr::Session>();
+        s->SetTimeout(std::chrono::seconds(5));
+        s->SetHeader(cpr::Header{{"Content-Type", "application/json"}});
+        return s;
+    }();
+    return *session;
+}
 } // namespace
 
-void WebhookNotifier::notify(const std::string &trace_id, const nlohmann::json &content)
+void WebhookNotifier::notify(const std::string& trace_id, const nlohmann::json& content)
 {
     nlohmann::json notify_content;
     notify_content["trace_id"] = trace_id;
     notify_content["content"] = content;
     notify_content["type"] = "Single_Alert";
-    std::string body = notify_content.dump();
-    postJsonToWebhookUrls(urls_, body, "Webhook Error");
+
+    const std::string body = notify_content.dump();
+    for (const auto& channel : channels_)
+    {
+        if (!channel.enabled || channel.webhook_url.empty())
+        {
+            continue;
+        }
+
+        // 旧 notify 接口继续保留给 generic webhook 使用；
+        // 这一步先不强行把历史单条通知语义扩成飞书模板，避免把旧接口和 trace_alert 搅在一起。
+        postJson(channel, body, "Webhook Error");
+    }
 }
 
-void WebhookNotifier::notifyTraceAlert(const TraceAlertEvent &event)
+void WebhookNotifier::notifyTraceAlert(const TraceAlertEvent& event)
 {
-    nlohmann::json payload = buildTraceAlertPayload(event);
-    postJsonToWebhookUrls(urls_, payload.dump(), "Webhook TraceAlert Error");
+    for (const auto& channel : channels_)
+    {
+        if (!channel.enabled || channel.webhook_url.empty())
+        {
+            continue;
+        }
+
+        const std::shared_ptr<const IWebhookFormatter> formatter =
+            ResolveWebhookFormatter(channel.provider);
+        const nlohmann::json payload = formatter->FormatTraceAlert(event);
+        postJson(channel, payload.dump(), "Webhook TraceAlert Error");
+    }
+}
+
+WebhookNotifier::WebhookNotifier(std::vector<WebhookChannel> channels, PostJsonFn post_json_fn)
+    : channels_(std::move(channels)),
+      post_json_fn_(std::move(post_json_fn))
+{
 }
 
 WebhookNotifier::WebhookNotifier(std::vector<std::string> webhook_urls)
-    : urls_(std::move(webhook_urls))
 {
-    // 可能会有多线程问题，所以不如直接局部变量或者tls
-    //  session_=std::make_unique<cpr::Session>();
-    //  session_->SetHeader(cpr::Header({"Content-Type","application/json"}));
-    //  session_->SetTimeout(std::chrono::seconds());
+    channels_.reserve(webhook_urls.size());
+    for (auto& webhook_url : webhook_urls)
+    {
+        // 兼容旧主链：原来只有 URL 时，默认都按 generic 渠道处理，
+        // 这样现有 mock webhook 和历史入口不用跟着这一刀一起重写。
+        channels_.push_back(WebhookChannel{"generic", std::move(webhook_url), true});
+    }
+}
+
+void WebhookNotifier::postJson(const WebhookChannel& channel,
+                               const std::string& body,
+                               const std::string& log_prefix)
+{
+    if (post_json_fn_)
+    {
+        post_json_fn_(channel, body, log_prefix);
+        return;
+    }
+
+    cpr::Session& session = getTlsSession();
+    session.SetUrl(cpr::Url{channel.webhook_url});
+    session.SetBody(cpr::Body{body});
+    cpr::Response r = session.Post();
+    if (!isHttpSuccess(r.status_code))
+    {
+        // 这里不抛异常是为了保证多目标发送时“尽力而为”，一个失败不影响其他目标。
+        std::cerr << "[" << log_prefix << "] Provider: " << channel.provider
+                  << " | Target: " << channel.webhook_url
+                  << " | Status: " << r.status_code
+                  << " | Msg: " << r.text << std::endl;
+    }
 }

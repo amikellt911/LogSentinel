@@ -85,6 +85,7 @@ add_library(ai_module STATIC
   ai/TraceAiFactory.cpp
 )
 add_library(notification_module STATIC
+  notification/WebhookFormatters.cpp
   notification/WebhookNotifier.cpp
 )
 add_library(handler_module STATIC
@@ -191,6 +192,10 @@ add_executable(test_dashboard_handler
   tests/DashboardHandler_test.cpp
 )
 
+add_executable(test_webhook_notifier
+  tests/WebhookNotifier_test.cpp
+)
+
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -230,6 +235,10 @@ target_link_libraries(test_dashboard_handler PRIVATE
 GTest::gtest_main
 handler_module
 )
+target_link_libraries(test_webhook_notifier PRIVATE
+GTest::gtest_main
+notification_module
+)
 
 # 统一使用 gtest_discover_tests 注册，避免与 add_test 重复注册导致同一测试二进制被 CTest 跑两次。
 gtest_discover_tests(test_http_context)
@@ -238,6 +247,7 @@ gtest_discover_tests(test_trace_session_manager_unit)
 gtest_discover_tests(test_trace_session_manager_integration)
 gtest_discover_tests(test_sqlite_trace_repo)
 gtest_discover_tests(test_log_handler)
+gtest_discover_tests(test_webhook_notifier)
 gtest_discover_tests(test_service_runtime_accumulator)
 gtest_discover_tests(test_system_runtime_accumulator)
 gtest_discover_tests(test_dashboard_handler)

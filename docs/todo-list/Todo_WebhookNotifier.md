@@ -12,3 +12,9 @@
 - [x] 编译验证通知模块改动无回归
 - [x] 追加本次 TraceAlertEvent 发送实现 dev-log 记录
 - [x] 将 risk_level 过滤策略迁移到 TraceSessionManager，WebhookNotifier 仅负责发送
+- [x] 将 `WebhookNotifier` 入参从纯 URL 列表升级为 `WebhookChannel(provider/webhook_url/enabled)` 渠道列表
+- [x] 拆出 `IWebhookFormatter / GenericWebhookFormatter / FeishuWebhookFormatter`，避免在 notifier 内硬编码平台分支
+- [x] 先补 `WebhookNotifier` 单测，锁飞书 `post` 模板、`enabled=false` 跳过和 provider 分流语义
+- [x] 维持现有 `cpr` 发送逻辑不动，只把 payload 组装与发送通道解耦
+- [x] 编译并运行 `WebhookNotifier` 测试，确认通知层结构改造无回归
+- [x] 追加本次飞书 formatter 改造 dev-log 记录

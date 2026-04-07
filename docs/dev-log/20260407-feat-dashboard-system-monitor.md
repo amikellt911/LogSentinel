@@ -359,3 +359,44 @@ refactor(core): 让服务监控快照在 OnTick 原子发布
 ### Pitfalls
 
 如果只把 `published_snapshot_` 换成原子指针，却不补“下一次 `OnTick()` 发布前仍应返回旧快照”的测试，那么很容易又把 `OnAnalysisReady()` 之类的内部状态变化泄漏到请求路径上。页面表面还能出数，但“已发布快照”和“内部最新状态”两套语义会重新混在一起。
+
+# 追加记录：2026-04-07 WebhookNotifier 增加 formatter 分层并接入飞书 post 模板
+
+## Git Commit Message
+
+feat(notification): 为 webhook 通知增加飞书 formatter 分层
+
+## Modification
+
+- `server/notification/NotifyTypes.h`
+- `server/notification/WebhookFormatters.h`
+- `server/notification/WebhookFormatters.cpp`
+- `server/notification/WebhookNotifier.h`
+- `server/notification/WebhookNotifier.cpp`
+- `server/tests/WebhookNotifier_test.cpp`
+- `server/CMakeLists.txt`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/notification/NotifyTypes.h` 里补了中文注释，说明 `WebhookChannel` 为什么先只收口成 `provider/webhook_url/enabled` 三个字段。
+- 在 `server/notification/WebhookFormatters.h` 里补了中文注释，说明 formatter 层只负责“领域事件 -> 平台 payload”，不负责 HTTP 发送。
+- 在 `server/notification/WebhookFormatters.cpp` 里补了中文注释，说明飞书第一版为什么先收口成最小 `post` 模板，以及 provider 未知时为什么统一回退到 generic formatter。
+- 在 `server/notification/WebhookNotifier.h` 里补了中文注释，说明为什么保留旧 `vector<string>` 构造函数，以及测试用 `PostJsonFn` 为什么只用于隔离网络副作用。
+- 在 `server/notification/WebhookNotifier.cpp` 里补了中文注释，说明为什么 `notifyTraceAlert()` 现在先按 `enabled` 过滤，再按 `provider` 选 formatter，最后统一走同一套 `cpr` 发送逻辑。
+- 在 `server/tests/WebhookNotifier_test.cpp` 里补了中文注释，说明两条测试分别锁飞书 `post` 模板和 `enabled/provider` 分流语义。
+
+## Learning Tips
+
+### Newbie Tips
+
+这里最容易走歪的是“一看到平台差异就急着写一堆 notifier 子类”。如果真正变化的只有 payload 结构，而 HTTP 发送流程、超时、错误日志都一样，那更适合拆 formatter，而不是先堆大继承树。
+
+### Function Explanation
+
+这次 `WebhookNotifier` 里新增的 `PostJsonFn` 不是为了业务层可配置，而是为了测试隔离网络副作用。生产环境下它为空，代码继续走 `thread_local cpr::Session`；测试里才注入一个 lambda，把 `channel/body/log_prefix` 记下来断言，不必真起 HTTP 服务。
+
+### Pitfalls
+
+如果只在 `WebhookNotifier` 里加 `if (provider == "feishu")`，短期也能跑，但后面一旦要补签名、钉钉或 generic 老协议兼容，平台差异会很快把发送逻辑和 payload 逻辑搅在一起。先把 formatter 边界立住，后面再接 Settings 或真实飞书联调时，改动面才不会继续扩散。
