@@ -427,7 +427,9 @@ int main(int argc, char* argv[])
     router->add("GET", "/results/*", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         handler->handleGetResult(req, resp, conn);
     });
-    auto dashboard_handler = std::make_shared<DashboardHandler>(persistence,&tpool);
+    // /dashboard 这一刀正式切到 SystemRuntimeAccumulator 快照。
+    // 这样系统监控页先吃到主链路埋点的真值，不再绕回 SQLite 旧 dashboard 统计。
+    auto dashboard_handler = std::make_shared<DashboardHandler>(system_runtime_accumulator);
     router->add("GET", "/dashboard", [dashboard_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         dashboard_handler->handleGetStats(req, resp, conn);
     });

@@ -266,6 +266,7 @@
 - [x] 再实现 `SystemRuntimeAccumulator` 最小逻辑：原子累计、固定样本 ring、定时采样序列
 - [x] `SystemRuntimeAccumulator` 已把 `ai_call_total` 和 `ai_completion_total` 拆成 started/completed 两个成熟时机
 - [x] AI 延迟样本已改成“一次调用一条复合样本”，不再拆成两套独立窗口
-- [ ] 把 `/dashboard` 从旧 `SqliteLogRepository::getDashboardStats()` 切到新快照
+- [x] 把 `/dashboard` 从旧 `SqliteLogRepository::getDashboardStats()` 切到新快照
+- [ ] 前端 `system.ts` 改为读取系统监控快照，不再消费旧的 dashboard mock 结构
 - [ ] 先把主链现成真指标接进来：总接收日志数、AI 调用总数、AI 推理延迟、token 总量、背压状态
 - [ ] 再补“系统监控缺口埋点”：AI 线程池排队等待时间、接入速率 / AI 完成速率采样

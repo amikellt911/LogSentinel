@@ -216,3 +216,40 @@ feat(core): 接入系统监控主链埋点与背压状态同步
 ### Pitfalls
 
 `/logs/spans` 成功返回 `202` 只能说明“入口已经接住这条 span”，不能说明后面的 sealed grace、worker submit、AI 调用都已经成功。所以系统监控里的“总处理日志数”和 Trace 聚合是否最终成功是两回事，测试也要按这两个成熟时机分开锁，不能混成一条断言。
+
+# 追加记录：2026-04-07 Dashboard 读源切换到系统运行态快照
+
+## Git Commit Message
+
+refactor(handler): 让 dashboard 直接读取系统运行态快照
+
+## Modification
+
+- `server/handlers/DashboardHandler.h`
+- `server/handlers/DashboardHandler.cpp`
+- `server/src/main.cpp`
+- `server/CMakeLists.txt`
+- `server/tests/DashboardHandler_test.cpp`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/handlers/DashboardHandler.h` 里补了中文注释，说明为什么 dashboard 不再依赖 SQLite 和线程池，而是直接读 `SystemRuntimeAccumulator` 快照。
+- 在 `server/handlers/DashboardHandler.cpp` 里补了中文注释，说明这一步为什么要同步返回内存快照、为什么这一刀只切读源不顺手扩字段。
+- 在 `server/src/main.cpp` 里补了中文注释，说明 `/dashboard` 现在正式切到系统运行态快照，不再绕回旧的数据库统计。
+- 在 `server/tests/DashboardHandler_test.cpp` 里保留并补充了中文注释，说明这条测试锁的是“handler 已经不再返回旧 dashboard 结构，而是直接吐 overview/token_stats/timeseries”。
+
+## Learning Tips
+
+### Newbie Tips
+
+如果一个页面要展示的是内存里的实时运行态，就不要再习惯性绕回数据库。数据库更适合查历史结果、分页列表、已落库事实；实时状态页更适合直接读进程内快照，这样延迟低，语义也不会被历史数据拖脏。
+
+### Function Explanation
+
+这次 `DashboardHandler` 从“SQLite 查询 + 线程池异步回发”改成了“同步读取内存快照再直接返回”。原因不是图省事，而是系统监控快照本来就已经在内存里，并且 `BuildSnapshot()` 本身已经把需要的累计值、当前值和折线图点整理好了，再丢进线程池只会多一层无意义搬运。
+
+### Pitfalls
+
+从旧 handler 切到新快照时，最容易漏的是测试和 CMake。只改 `DashboardHandler.cpp` 不把新测试 target 挂进 `CMakeLists.txt`，编译阶段根本不会帮你兜住“接口已经换了，但没人验证 JSON 结构”的问题。
