@@ -23,6 +23,7 @@ class BufferedTraceRepository;
 class TraceAiProvider;
 class INotifier;
 class ServiceRuntimeAccumulator;
+class SystemRuntimeAccumulator;
 
 struct SpanEvent
 {
@@ -177,7 +178,10 @@ public:
                                  size_t wheel_size = 512,
                                  size_t buffered_span_hard_limit = 4096,
                                  size_t active_session_hard_limit = 1024,
-                                 ServiceRuntimeAccumulator* service_runtime_accumulator = nullptr);
+                                 ServiceRuntimeAccumulator* service_runtime_accumulator = nullptr,
+                                 // system_runtime_accumulator 只负责系统运行态埋点，
+                                 // 不参与 Trace 聚合/分发语义判断，所以和服务监控累加器一样保持可选注入。
+                                 SystemRuntimeAccumulator* system_runtime_accumulator = nullptr);
     ~TraceSessionManager();
 
     size_t size() const;
@@ -203,6 +207,8 @@ private:
     TraceAiProvider* trace_ai_ = nullptr;
     INotifier* notifier_ = nullptr;
     ServiceRuntimeAccumulator* service_runtime_accumulator_ = nullptr;
+    // 系统监控只吃主链埋点快照，不应该反过来驱动 TraceSessionManager 的状态机。
+    SystemRuntimeAccumulator* system_runtime_accumulator_ = nullptr;
     size_t capacity_ = 0;
     size_t token_limit_ = 0;
     TokenEstimator token_estimator_;

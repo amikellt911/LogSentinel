@@ -2,8 +2,48 @@
 
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <stdexcept>
 #include <vector>
+
+namespace {
+std::optional<TraceAiUsage> ParseTraceUsage(const nlohmann::json& response_json)
+{
+    // usage 是 proxy 外层的可选元数据。既然不是所有 provider 都会回它，
+    // 那这里缺失时直接返回空，让上层继续走估算回退，不把“无 usage”当成协议错误。
+    if (!response_json.contains("usage") || response_json["usage"].is_null()) {
+        return std::nullopt;
+    }
+    if (!response_json["usage"].is_object()) {
+        throw std::runtime_error("Trace AI Protocol Error: invalid 'usage' payload type");
+    }
+
+    const auto& usage_json = response_json["usage"];
+    TraceAiUsage usage;
+    if (usage_json.contains("input_tokens")) {
+        usage.input_tokens = usage_json["input_tokens"].get<size_t>();
+    }
+    if (usage_json.contains("output_tokens")) {
+        usage.output_tokens = usage_json["output_tokens"].get<size_t>();
+    }
+    if (usage_json.contains("total_tokens")) {
+        usage.total_tokens = usage_json["total_tokens"].get<size_t>();
+    }
+    if (usage_json.contains("cached_tokens")) {
+        usage.cached_tokens = usage_json["cached_tokens"].get<size_t>();
+    }
+    if (usage_json.contains("thoughts_tokens")) {
+        usage.thoughts_tokens = usage_json["thoughts_tokens"].get<size_t>();
+    }
+
+    // total_tokens 是系统监控和告警最常用的稳定字段；如果 provider 没单独给，
+    // 先按 input + output 回退，保证上层至少拿到一条可用主口径。
+    if (usage.total_tokens == 0) {
+        usage.total_tokens = usage.input_tokens + usage.output_tokens;
+    }
+    return usage;
+}
+} // namespace
 
 TraceProxyAi::TraceProxyAi(std::string base_url, TraceAiBackend backend, int timeout_ms)
     : timeout_ms_(timeout_ms > 0 ? timeout_ms : 10000)
@@ -16,7 +56,7 @@ TraceProxyAi::TraceProxyAi(std::string base_url, TraceAiBackend backend, int tim
 
 TraceProxyAi::~TraceProxyAi() = default;
 
-LogAnalysisResult TraceProxyAi::AnalyzeTrace(const std::string& trace_payload)
+TraceAiResponse TraceProxyAi::AnalyzeTrace(const std::string& trace_payload)
 {
     cpr::Session session;
     session.SetHeader(cpr::Header{{"Content-Type", "text/plain"}});
@@ -40,6 +80,8 @@ LogAnalysisResult TraceProxyAi::AnalyzeTrace(const std::string& trace_payload)
     if (!response_json.contains("analysis")) {
         throw std::runtime_error("Trace AI Protocol Error: missing 'analysis' field");
     }
+
+    const std::optional<TraceAiUsage> usage = ParseTraceUsage(response_json);
 
     nlohmann::json analysis_json;
     try {
@@ -67,5 +109,8 @@ LogAnalysisResult TraceProxyAi::AnalyzeTrace(const std::string& trace_payload)
         throw std::runtime_error("Trace AI Validation Error: invalid risk_level '" + risk + "'");
     }
 
-    return analysis_json.get<LogAnalysisResult>();
+    TraceAiResponse response;
+    response.analysis = analysis_json.get<LogAnalysisResult>();
+    response.usage = usage;
+    return response;
 }

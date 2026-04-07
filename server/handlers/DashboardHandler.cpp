@@ -1,77 +1,73 @@
 #include "handlers/DashboardHandler.h"
-#include "persistence/SqliteLogRepository.h"
-#include "threadpool/ThreadPool.h"
-#include "MiniMuduo/net/EventLoop.h"
-DashboardHandler::DashboardHandler(std::shared_ptr<SqliteLogRepository> repo, ThreadPool *tpool)
-    : repo_(repo),
-      tpool_(tpool)
+
+#include <iostream>
+
+#include <nlohmann/json.hpp>
+
+namespace
+{
+nlohmann::json BuildDashboardSnapshotJson(const SystemRuntimeSnapshot& snapshot)
+{
+    nlohmann::json body;
+    body["overview"] = {
+        {"total_logs", snapshot.overview.total_logs},
+        {"ai_call_total", snapshot.overview.ai_call_total},
+        {"ai_queue_wait_ms", snapshot.overview.ai_queue_wait_ms},
+        {"ai_inference_latency_ms", snapshot.overview.ai_inference_latency_ms},
+        {"memory_rss_mb", snapshot.overview.memory_rss_mb},
+        {"backpressure_status", snapshot.overview.backpressure_status},
+    };
+    body["token_stats"] = {
+        {"input_tokens", snapshot.token_stats.input_tokens},
+        {"output_tokens", snapshot.token_stats.output_tokens},
+        {"total_tokens", snapshot.token_stats.total_tokens},
+        {"avg_tokens_per_call", snapshot.token_stats.avg_tokens_per_call},
+    };
+
+    nlohmann::json timeseries = nlohmann::json::array();
+    for (const auto& point : snapshot.timeseries)
+    {
+        timeseries.push_back({
+            {"time_ms", point.time_ms},
+            {"ingest_rate", point.ingest_rate},
+            {"ai_completion_rate", point.ai_completion_rate},
+        });
+    }
+    body["timeseries"] = std::move(timeseries);
+    return body;
+}
+} // namespace
+
+DashboardHandler::DashboardHandler(std::shared_ptr<SystemRuntimeAccumulator> runtime_accumulator)
+    : runtime_accumulator_(std::move(runtime_accumulator))
 {
 }
 
-void DashboardHandler::handleGetStats(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
+void DashboardHandler::handleGetStats(const HttpRequest& req,
+                                      HttpResponse* resp,
+                                      const MiniMuduo::net::TcpConnectionPtr& conn)
 {
-    std::weak_ptr<MiniMuduo::net::TcpConnection> weakConn = conn;
-    
-    auto work = [repo = repo_, weakConn]()
-    {
-        try 
-        {
-            DashboardStats stats = repo->getDashboardStats();
-            nlohmann::json j = stats; // 序列化
-            std::string jsonStr = j.dump();
+    (void)req;
+    (void)conn;
 
-            if (auto conn = weakConn.lock())
-            {
-                auto loop = conn->getLoop();
-                // 这里的捕获列表要把 jsonStr 移动进去
-                loop->queueInLoop([weakConn, jsonStr = std::move(jsonStr)]()
-                {
-                    // IO 线程只负责发送,getDashboardStats只能在Worker 线程
-                    auto conn = weakConn.lock();
-                    if (conn)
-                    {
-                        HttpResponse response;
-                        response.setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
-                        response.addCorsHeaders(); // 记得加 CORS
-                        response.setHeader("Content-Type", "application/json");
-                        response.setBody(jsonStr);
-
-                        MiniMuduo::net::Buffer buf;
-                        response.appendToBuffer(&buf);
-                        conn->send(std::move(buf));
-                    }
-                });
-            }
-        }
-        catch (const std::exception &e)
-        {
-            // 错误处理也要回 IO 线程发
-            std::cerr << "[Worker Error] getStats: " << e.what() << '\n';
-            if (auto conn = weakConn.lock()) {
-                conn->getLoop()->queueInLoop([weakConn](){
-                    auto conn = weakConn.lock();
-                    if(conn) {
-                        HttpResponse errResp;
-                        errResp.setStatusCode(HttpResponse::HttpStatusCode::k500InternalServerError);
-                        errResp.addCorsHeaders();
-                        errResp.setBody("{\"error\": \"Internal DB Error\"}");
-                        MiniMuduo::net::Buffer buf;
-                        errResp.appendToBuffer(&buf);
-                        conn->send(std::move(buf));
-                    }
-                });
-            }
-        }
-    };
-
-    if (tpool_->submit(std::move(work)))
+    try
     {
-        resp->isHandledAsync = true;
-    }
-    else
-    {
-        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
+        // Dashboard 现在只读 OnTick 已经发布好的内存快照，不再把一次简单查询丢进 SQLite + 线程池，
+        // 也不再在请求线程现场拼 overview/token/timeseries。这样读路径只拿成品，锁竞争会更小。
+        const SystemRuntimeSnapshot snapshot = runtime_accumulator_->BuildSnapshot();
+        const std::string json_str = BuildDashboardSnapshotJson(snapshot).dump();
+
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
         resp->addCorsHeaders();
-        resp->body_ = "{\"error\": \"Get Stats Server is overloaded\"}";
+        resp->setHeader("Content-Type", "application/json");
+        resp->setBody(json_str);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[DashboardHandler] build snapshot failed: " << e.what() << '\n';
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k500InternalServerError);
+        resp->addCorsHeaders();
+        resp->setHeader("Content-Type", "application/json");
+        resp->setBody("{\"error\":\"Internal Dashboard Error\"}");
     }
 }

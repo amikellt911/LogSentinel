@@ -15,8 +15,10 @@
 #include "core/TraceSessionManager.h"
 #undef private
 #include "notification/INotifier.h"
+#include "core/SystemRuntimeAccumulator.h"
 #include "persistence/BufferedTraceRepository.h"
 #include "persistence/TraceRepository.h"
+#include "core/TokenEstimator.h"
 #include "threadpool/ThreadPool.h"
 #include <nlohmann/json.hpp>
 
@@ -154,20 +156,24 @@ public:
 class StubTraceAi : public TraceAiProvider
 {
 public:
-    LogAnalysisResult result{
-        .summary = "stub-summary",
-        .risk_level = RiskLevel::UNKNOWN,
-        .root_cause = "stub-root-cause",
-        .solution = "stub-solution",
+    TraceAiResponse response{
+        .analysis =
+            LogAnalysisResult{
+                .summary = "stub-summary",
+                .risk_level = RiskLevel::UNKNOWN,
+                .root_cause = "stub-root-cause",
+                .solution = "stub-solution",
+            },
+        .usage = std::nullopt,
     };
     std::atomic<bool> called{false};
     std::string last_payload;
 
-    LogAnalysisResult AnalyzeTrace(const std::string& trace_payload) override
+    TraceAiResponse AnalyzeTrace(const std::string& trace_payload) override
     {
         last_payload = trace_payload;
         called.store(true, std::memory_order_release);
-        return result;
+        return response;
     }
 };
 
@@ -668,7 +674,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
 
     SpanEvent critical_span = MakeSpan(66, 601, 1000);
     critical_span.trace_end = true;
-    ai.result.risk_level = RiskLevel::CRITICAL;
+    ai.response.analysis.risk_level = RiskLevel::CRITICAL;
     ASSERT_EQ(manager.Push(critical_span), TraceSessionManager::PushResult::Accepted);
     SweepTraceEndSealWindow(manager);
     ASSERT_TRUE(WaitUntil([&notifier]() {
@@ -679,7 +685,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
 
     // 第二段改为 non-critical，验证策略过滤是否生效。这里重置标记是为了避免第一次调用结果污染第二次断言。
     notifier.notify_trace_alert_called.store(false, std::memory_order_release);
-    ai.result.risk_level = RiskLevel::WARNING;
+    ai.response.analysis.risk_level = RiskLevel::WARNING;
 
     SpanEvent warning_span = MakeSpan(67, 602, 1100);
     warning_span.trace_end = true;
@@ -687,6 +693,160 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSendsNotificationOnlyForCriticalRisk
     SweepTraceEndSealWindow(manager);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.last_summary.trace_id == "67"; }));
     EXPECT_FALSE(notifier.notify_trace_alert_called.load(std::memory_order_acquire));
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchNotificationUsesProviderUsageTokenCountWhenPresent)
+{
+    // 目的：锁定 trace AI 已经返回 usage 时，告警里的 token_count 要优先吃真 usage，
+    // 不能继续沿用 Push 路径上的本地近似估算，否则系统监控和真实模型账单会长期偏差。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    StubTraceAi ai;
+    SpyNotifier notifier;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0, &notifier);
+
+    ai.response.analysis.risk_level = RiskLevel::CRITICAL;
+    ai.response.usage = TraceAiUsage{
+        .input_tokens = 120,
+        .output_tokens = 45,
+        .total_tokens = 165,
+    };
+
+    SpanEvent span = MakeSpan(168, 1601, 1000);
+    span.trace_end = true;
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&notifier]() {
+        return notifier.notify_trace_alert_called.load(std::memory_order_acquire);
+    }));
+    EXPECT_EQ(notifier.last_event.trace_id, "168");
+    EXPECT_EQ(notifier.last_event.token_count, 165u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchNotificationFallsBackToEstimatedTokenCountWhenUsageMissing)
+{
+    // 目的：锁定 usage 缺失时继续走当前近似估算，避免 mock/旧 provider 直接把 token_count 变成 0。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    StubTraceAi ai;
+    SpyNotifier notifier;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0, &notifier);
+
+    ai.response.analysis.risk_level = RiskLevel::CRITICAL;
+    ai.response.usage.reset();
+
+    SpanEvent span = MakeSpan(169, 1602, 1000);
+    span.name = "long-operation-name-for-token-estimation";
+    span.service_name = "service-with-some-length";
+    span.trace_end = true;
+    TokenEstimator estimator;
+    const size_t expected_token_count = estimator.Estimate(span);
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&notifier]() {
+        return notifier.notify_trace_alert_called.load(std::memory_order_acquire);
+    }));
+    EXPECT_EQ(notifier.last_event.trace_id, "169");
+    EXPECT_EQ(notifier.last_event.token_count, expected_token_count);
+    EXPECT_GT(notifier.last_event.token_count, 0u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, SystemRuntimeAccumulatorTracksAiLifecycleAndUsageAfterAiCompletion)
+{
+    // 目的：锁 started/completed 分离口径。
+    // started 应该在真正调 AI 前记一次，completed + token + 最近延迟样本应在 AI 收尾后再记。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    StubTraceAi ai;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    int64_t now_ms = 0;
+    SystemRuntimeAccumulator system_runtime_accumulator(/*latency_sample_limit*/4,
+                                                       /*series_limit*/8,
+                                                       [&now_ms]() { return now_ms; },
+                                                       []() { return 0ULL; });
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                &ai,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*wheel_size*/64,
+                                /*buffered_span_hard_limit*/1024,
+                                /*active_session_hard_limit*/128,
+                                nullptr,
+                                &system_runtime_accumulator);
+
+    ai.response.usage = TraceAiUsage{
+        .input_tokens = 8,
+        .output_tokens = 5,
+        .total_tokens = 13,
+    };
+
+    SpanEvent span = MakeSpan(170, 1701, 1000);
+    span.trace_end = true;
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&system_runtime_accumulator]() {
+        return system_runtime_accumulator.BuildSnapshot().overview.ai_call_total == 1u &&
+               system_runtime_accumulator.BuildSnapshot().token_stats.total_tokens == 13u;
+    }));
+
+    now_ms = 1000;
+    system_runtime_accumulator.OnTick();
+    const SystemRuntimeSnapshot snapshot = system_runtime_accumulator.BuildSnapshot();
+    EXPECT_EQ(snapshot.overview.ai_call_total, 1u);
+    EXPECT_EQ(snapshot.token_stats.input_tokens, 8u);
+    EXPECT_EQ(snapshot.token_stats.output_tokens, 5u);
+    EXPECT_EQ(snapshot.token_stats.total_tokens, 13u);
+    ASSERT_FALSE(snapshot.timeseries.empty());
+    EXPECT_EQ(snapshot.timeseries.back().ai_completion_rate, 1u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, RefreshOverloadStatePublishesSystemBackpressureStatus)
+{
+    // 目的：锁系统监控吃到的是综合背压结论，而不是前端自己猜一个字符串。
+    ThreadPool pool(1, 16);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    SystemRuntimeAccumulator system_runtime_accumulator(/*latency_sample_limit*/4,
+                                                       /*series_limit*/8,
+                                                       []() { return 0LL; },
+                                                       []() { return 0ULL; });
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*wheel_size*/64,
+                                /*buffered_span_hard_limit*/1024,
+                                /*active_session_hard_limit*/5,
+                                nullptr,
+                                &system_runtime_accumulator);
+
+    ASSERT_EQ(manager.Push(MakeSpan(201, 2001, 1000)), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(MakeSpan(202, 2002, 1000)), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(MakeSpan(203, 2003, 1000)), TraceSessionManager::PushResult::Accepted);
+
+    const SystemRuntimeSnapshot snapshot = system_runtime_accumulator.BuildSnapshot();
+    EXPECT_EQ(snapshot.overview.backpressure_status, "Active");
 
     pool.shutdown();
 }
@@ -699,7 +859,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchNotifiesAfterAnalysisEnqueueEvenIfBa
     FakeTraceRepository repo;
     repo.save_atomic_return = false;
     StubTraceAi ai;
-    ai.result.risk_level = RiskLevel::CRITICAL;
+    ai.response.analysis.risk_level = RiskLevel::CRITICAL;
     SpyNotifier notifier;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0, &notifier);

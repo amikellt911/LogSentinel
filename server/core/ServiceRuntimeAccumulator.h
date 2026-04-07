@@ -1,7 +1,9 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -167,6 +169,7 @@ public:
     // handler 永远只读这份发布态，避免请求线程临时参与排序和窗口计算。
     void OnTick();
     // HTTP handler 只读最近一次已经发布好的快照，不在请求线程里现算窗口。
+    // 这里返回的是 OnTick 已经原子发布出去的成品副本，而不是现场重新拼装。
     ServiceRuntimeSnapshot BuildSnapshot() const;
 
 private:
@@ -259,6 +262,8 @@ private:
     void PruneGlobalOperationLocked(const std::string& global_key);
     // 这里只负责把“窗口累计态 + 最近态”裁成前端 JSON 结构，不再修改内部状态。
     ServiceRuntimeSnapshot BuildSnapshotLocked() const;
+    // OnTick 在持锁状态下统一构建并发布新快照；请求线程之后只读已发布指针。
+    void PublishSnapshotLocked();
 
     mutable std::mutex mutex_;
     size_t service_top_k_ = 4;
@@ -286,5 +291,5 @@ private:
     std::unordered_map<std::string, WindowServiceState> window_services_;
     std::unordered_map<std::string, RecentServiceState> recent_services_;
     std::unordered_map<std::string, GlobalOperationState> global_operations_;
-    ServiceRuntimeSnapshot published_snapshot_;
+    std::shared_ptr<const ServiceRuntimeSnapshot> published_snapshot_;
 };

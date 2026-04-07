@@ -232,8 +232,43 @@
 - [x] 服务监控后端快照发布周期已从 `5s` 压到 `1s`，减少答辩演示时“分钟已封口但榜单还没刷新”的额外等待
 - [x] 服务监控桶粒度已从“固定 1 分钟”改成“启动参数控制”，当前默认 `3s`
 - [x] `ServiceRuntimeAccumulator` 已按“窗口分钟数 + 桶粒度秒数”自动计算窗口桶数量，不再把窗口长度直接当桶数量
+- [x] `ServiceRuntimeAccumulator` 已改成 `OnTick()` 预构建并原子发布快照，`/service-monitor/runtime` 请求侧只读已发布成品
 - [x] `main.cpp` 已新增 `--service-monitor-bucket-seconds`
 - [x] 联调脚本已默认透传 `SERVICE_MONITOR_BUCKET_SECONDS=3`
 - [x] 原型页已拆开“自动轮询请求中”和“手动刷新按钮 loading”，自动刷新不再把按钮长期锁成“刷新中”
 - [x] 原型页自动刷新已从 `10s` 压到 `3s`，与后端 `3s` 桶粒度对齐，减少“数据已进窗但页面没拉到”的错觉
 - [x] 正式入口 `/service` 已切到 `ServiceMonitorPrototype.vue`，旧 `/service-prototype` 仅保留重定向兼容
+
+### G. 2026-04-07：Dashboard 先收口成系统监控骨架
+- [x] 先不接后端真数据，只先把页面语义从“Dashboard 混合页”收口成“系统运行态页”
+- [x] 顶部 6 张卡收口为：总处理日志数 / AI 调用总数 / AI 队列等待时间 / AI 推理延迟 / 内存占用 / 背压状态
+- [x] 去掉明显 mock 味的副文案，例如 `+12.5% vs last hour`、`⚡ Fast`、`~0.8s avg`
+- [x] `TokenMetricsCard` 去掉“节省比例 / 预估成本”，改成总 token / 输入 token / 输出 token / 平均每次 AI 调用 token
+- [x] 底部折线图继续只保留两条线：接入速率 / AI 完成速率
+- [x] 菜单与页面显示文案先改成“系统监控”，文件名 `Dashboard.vue` 暂时不动
+- [x] 背压卡已去掉 `queuePercent` 副文案，只保留综合背压状态，避免和后端多因素判定口径打架
+
+### H. 2026-04-07：Trace AI usage 回传与 token 真值入口
+- [x] 先只补 Trace AI 主链，不改数据库 schema，不顺手接 Dashboard 真指标
+- [x] Python proxy 的 `/analyze/trace/{provider}` 外层响应补 `usage`
+- [x] Gemini provider 把官方 `usage_metadata` 归一化成内部统一字段
+- [x] C++ `TraceAiProvider` 返回“analysis + optional usage”，不再只有 `LogAnalysisResult`
+- [x] `TraceSessionManager` 告警事件 token_count 优先吃 provider usage，缺失时继续回退本地估算
+- [x] 单测补 usage 命中与 usage 缺失两条口径
+
+### I. 2026-04-07：SystemMonitor 后端第一刀（骨架 + 真指标入口）
+- [x] 先新增 `SystemRuntimeAccumulator`，定义系统监控快照契约：overview / token_stats / timeseries
+- [x] 先写 `SystemRuntimeAccumulator` 失败测试，锁空快照、累计值、差分速率、固定样本平均
+- [x] 把 `SystemRuntimeAccumulator` 注入 `LogHandler + TraceSessionManager + main.cpp`
+- [x] `/logs/spans` 成功接收后写入 `RecordAcceptedLogs(...)`
+- [x] AI 调用开始/完成分别写入 `RecordAiCallStarted(...)` 与 `RecordAiCallCompleted(...)`
+- [x] `RefreshOverloadState()` 同步写入系统监控背压状态
+- [x] 补主链接线回归测试，只锁主链埋点口径，不顺手切 `/dashboard`
+- [x] 再实现 `SystemRuntimeAccumulator` 最小逻辑：原子累计、固定样本 ring、定时采样序列
+- [x] `SystemRuntimeAccumulator` 已把 `ai_call_total` 和 `ai_completion_total` 拆成 started/completed 两个成熟时机
+- [x] AI 延迟样本已改成“一次调用一条复合样本”，不再拆成两套独立窗口
+- [x] 把 `/dashboard` 从旧 `SqliteLogRepository::getDashboardStats()` 切到新快照
+- [x] 前端 `system.ts` 改为读取系统监控快照，不再消费旧的 dashboard mock 结构
+- [x] 先把主链现成真指标接进来：总接收日志数、AI 调用总数、AI 推理延迟、token 总量、背压状态
+- [x] 再补“系统监控缺口埋点”：AI 线程池排队等待时间、接入速率 / AI 完成速率采样
+- [x] `SystemRuntimeAccumulator` 改成 `OnTick()` 预构建已发布快照，`/dashboard` 请求侧只读成品

@@ -24,6 +24,7 @@
 #include "handlers/ConfigHandler.h"
 #include "core/LogBatcher.h"
 #include "core/ServiceRuntimeAccumulator.h"
+#include "core/SystemRuntimeAccumulator.h"
 #include "core/TraceSessionManager.h"
 #include "util/DevSubprocessManager.h"
 #include <filesystem>
@@ -303,6 +304,7 @@ int main(int argc, char* argv[])
     // Trace 读请求单独走查询线程池，避免前端查库任务和 AI/聚合任务抢同一条队列。
     // 当前先固定 1 条查询线程，把“执行通道分离”先做出来，后面再按压测结果调整线程数。
     ThreadPool query_tpool(static_cast<size_t>(num_query_threads), static_cast<size_t>(worker_queue_size));
+    auto system_runtime_accumulator = std::make_shared<SystemRuntimeAccumulator>();
     auto service_runtime_accumulator = std::make_shared<ServiceRuntimeAccumulator>(/*service_top_k*/4,
                                                                                   /*operation_top_k*/6,
                                                                                   /*recent_sample_limit*/3,
@@ -320,7 +322,8 @@ int main(int argc, char* argv[])
         /*wheel_size*/512,
         static_cast<size_t>(trace_buffered_span_limit),
         static_cast<size_t>(trace_active_session_limit),
-        service_runtime_accumulator.get());
+        service_runtime_accumulator.get(),
+        system_runtime_accumulator.get());
     const double trace_sweep_interval_sec = static_cast<double>(trace_sweep_interval_ms) / 1000.0;
     std::cout << "Trace session sweep enabled. sweep_interval_ms=" << trace_sweep_interval_ms
               << ", idle_timeout_ms=" << trace_idle_timeout_ms
@@ -349,6 +352,14 @@ int main(int argc, char* argv[])
     loop.runEvery(1.0, [service_runtime_accumulator_raw]() {
         if (service_runtime_accumulator_raw) {
             service_runtime_accumulator_raw->OnTick();
+        }
+    });
+    SystemRuntimeAccumulator* system_runtime_accumulator_raw = system_runtime_accumulator.get();
+    // 这一步先把系统监控埋点和定时采样链接通，但还不切 /dashboard 的旧 handler。
+    // 这样可以先把主链统计口径做稳，再在下一刀只替换读取入口，避免这轮范围继续扩大。
+    loop.runEvery(1.0, [system_runtime_accumulator_raw]() {
+        if (system_runtime_accumulator_raw) {
+            system_runtime_accumulator_raw->OnTick();
         }
     });
     bool shutdown_stats_logged = false;
@@ -401,7 +412,11 @@ int main(int argc, char* argv[])
     //所以需要加上mutable或shared_ptr,因为他是指针，在const中，让他不会改变指向，但是可以改变值
     //LogHandler handler(&tpool,persistence,ai_client, notifier);
     // 注入 config_repo
-    auto handler = std::make_shared<LogHandler>(&tpool, persistence, batcher, trace_session_manager.get());
+    auto handler = std::make_shared<LogHandler>(&tpool,
+                                                persistence,
+                                                batcher,
+                                                trace_session_manager.get(),
+                                                system_runtime_accumulator.get());
 
     router->add("POST", "/logs", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         handler->handlePost(req, resp, conn);
@@ -412,7 +427,9 @@ int main(int argc, char* argv[])
     router->add("GET", "/results/*", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         handler->handleGetResult(req, resp, conn);
     });
-    auto dashboard_handler = std::make_shared<DashboardHandler>(persistence,&tpool);
+    // /dashboard 这一刀正式切到 SystemRuntimeAccumulator 快照。
+    // 这样系统监控页先吃到主链路埋点的真值，不再绕回 SQLite 旧 dashboard 统计。
+    auto dashboard_handler = std::make_shared<DashboardHandler>(system_runtime_accumulator);
     router->add("GET", "/dashboard", [dashboard_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         dashboard_handler->handleGetStats(req, resp, conn);
     });

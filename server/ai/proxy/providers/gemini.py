@@ -82,12 +82,63 @@ class GeminiProvider(AIProvider):
             # 返回一个符合 JSON 结构的错误信息，以免前端解析失败
             return '{"summary": "Error calling AI", "risk_level": "critical", "root_cause": "API Error", "solution": "Check logs"}'
 
-    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
+    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
         """
         Trace 分析：当前先复用单次 analyze 的结构化输出路径。
-        这样可以保证 C++ 侧拿到同一套字段（summary/risk_level/root_cause/solution）。
+        但是 Trace 链路后续还要拿 usage 做 token 监控，所以这里单独补一层外层元数据返回。
         """
-        return self.analyze(log_text=trace_text, prompt=prompt, api_key=api_key, model=model)
+        try:
+            client, target_model = self._get_client_and_model(api_key, model)
+        except ValueError as e:
+            print(f"[Gemini] Trace 分析失败: {e}")
+            return {
+                "analysis": {
+                    "summary": "AI 未配置 (API Key Missing)",
+                    "risk_level": "unknown",
+                    "root_cause": "Configuration Error",
+                    "solution": "Configure API Key in Settings",
+                },
+                "usage": None,
+            }
+
+        full_prompt = f"{prompt}\n\nLog to analyze:\n{trace_text}"
+        try:
+            response = client.models.generate_content(
+                model=target_model,
+                contents=full_prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "response_schema": LogAnalysisResult
+                }
+            )
+            # Gemini 官方 usage_metadata 字段名不稳定地偏向 prompt/candidates/total 这套，
+            # 这里统一归一化成 input/output/total，避免 C++ 侧感知 provider 差异。
+            usage_metadata = getattr(response, "usage_metadata", None)
+            usage = None
+            if usage_metadata is not None:
+                usage = {
+                    "input_tokens": int(getattr(usage_metadata, "prompt_token_count", 0) or 0),
+                    "output_tokens": int(getattr(usage_metadata, "candidates_token_count", 0) or 0),
+                    "total_tokens": int(getattr(usage_metadata, "total_token_count", 0) or 0),
+                    "cached_tokens": int(getattr(usage_metadata, "cached_content_token_count", 0) or 0),
+                    "thoughts_tokens": int(getattr(usage_metadata, "thoughts_token_count", 0) or 0),
+                }
+
+            return {
+                "analysis": response.text,
+                "usage": usage,
+            }
+        except Exception as e:
+            print(f"Error calling Gemini API for trace analysis: {e}")
+            return {
+                "analysis": json.dumps({
+                    "summary": "Error calling AI",
+                    "risk_level": "critical",
+                    "root_cause": "API Error",
+                    "solution": "Check logs"
+                }),
+                "usage": None,
+            }
 
     def chat(self, history: List[Dict[str, Any]], new_message: str) -> str:
         """

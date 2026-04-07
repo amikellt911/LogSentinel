@@ -201,6 +201,45 @@ TEST(ServiceRuntimeAccumulatorTest, TickPublishesRecentSamplesAfterAnalysisReady
     EXPECT_EQ(snapshot.services_topk[0].recent_samples[0].risk_level, "warning");
 }
 
+TEST(ServiceRuntimeAccumulatorTest, BuildSnapshotKeepsPreviousPublishedViewUntilNextTick)
+{
+    int64_t now_ms = 0;
+    ServiceRuntimeAccumulator accumulator(/*service_top_k*/4,
+                                         /*operation_top_k*/6,
+                                         /*recent_sample_limit*/3,
+                                         /*window_minutes*/30,
+                                         /*bucket_granularity_seconds*/3,
+                                         [&now_ms]()
+                                         {
+                                             return now_ms;
+                                         });
+
+    accumulator.OnPrimaryCommitted(MakePrimaryObservation());
+    now_ms = 3 * 1000;
+    accumulator.OnTick();
+
+    // 先把“只有窗口统计、还没有 recent sample”的版本发布出去。
+    ServiceRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
+    ASSERT_EQ(snapshot.services_topk.size(), 1U);
+    EXPECT_TRUE(snapshot.services_topk[0].recent_samples.empty());
+
+    accumulator.OnAnalysisReady(MakeAnalysisObservation());
+
+    // analysis 已经补进了最近态内部状态，但还没到下一次 OnTick 发布，
+    // 所以请求侧现在仍然只能看到上一版已经发布好的快照，不能偷看到半成品 recent sample。
+    snapshot = accumulator.BuildSnapshot();
+    ASSERT_EQ(snapshot.services_topk.size(), 1U);
+    EXPECT_TRUE(snapshot.services_topk[0].recent_samples.empty());
+
+    accumulator.OnTick();
+
+    // 只有下一次 OnTick 重新发布后，请求侧才应该看到补齐后的 recent sample。
+    snapshot = accumulator.BuildSnapshot();
+    ASSERT_EQ(snapshot.services_topk.size(), 1U);
+    ASSERT_EQ(snapshot.services_topk[0].recent_samples.size(), 1U);
+    EXPECT_EQ(snapshot.services_topk[0].recent_samples[0].trace_id, "trace-1");
+}
+
 TEST(ServiceRuntimeAccumulatorTest, TickPublishesSealedThreeSecondBucketIntoWindow)
 {
     int64_t now_ms = 0;

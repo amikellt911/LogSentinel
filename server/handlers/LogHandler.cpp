@@ -1,6 +1,7 @@
 #include "handlers/LogHandler.h"
 #include "core/LogBatcher.h"
 #include "core/AnalysisTask.h"
+#include "core/SystemRuntimeAccumulator.h"
 #include "core/TraceSessionManager.h"
 #include "MiniMuduo/net/EventLoop.h"
 #include "persistence/SqliteLogRepository.h"
@@ -240,11 +241,13 @@ bool ParseOptionalAttributes(const nlohmann::json& body,
 LogHandler::LogHandler(ThreadPool *tpool,
                        std::shared_ptr<SqliteLogRepository> repo,
                        std::shared_ptr<LogBatcher> batcher,
-                       TraceSessionManager* trace_session_manager)
+                       TraceSessionManager* trace_session_manager,
+                       SystemRuntimeAccumulator* system_runtime_accumulator)
     : tpool_(tpool),
       batcher_(batcher),
       repo_(repo),
-      trace_session_manager_(trace_session_manager)
+      trace_session_manager_(trace_session_manager),
+      system_runtime_accumulator_(system_runtime_accumulator)
 {
 }
 
@@ -365,6 +368,11 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
         {"trace_key", span.trace_key},
         {"span_id", span.span_id}
     };
+    if (system_runtime_accumulator_) {
+        // 这里记的是“入口成功接住了多少条 span”，不是 trace 最终是否已经聚合完成。
+        // 既然请求已经被系统接受，那么系统监控顶部“总处理日志数”就应该立刻反映这一条入口流量。
+        system_runtime_accumulator_->RecordAcceptedLogs(1);
+    }
     if (push_result == TraceSessionManager::PushResult::AcceptedDeferred) {
         // 这里明确告诉调用方：数据已经被服务端接住，但由于下游暂时拥堵，内部会稍后重投。
         response_body["deferred"] = true;

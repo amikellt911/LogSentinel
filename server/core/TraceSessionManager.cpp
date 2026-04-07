@@ -2,6 +2,7 @@
 #include "threadpool/ThreadPool.h"
 #include "ai/TraceAiProvider.h"
 #include "core/ServiceRuntimeAccumulator.h"
+#include "core/SystemRuntimeAccumulator.h"
 #include "persistence/BufferedTraceRepository.h"
 #include "persistence/TraceRepository.h"
 #include "notification/INotifier.h"
@@ -48,6 +49,32 @@ namespace
     bool IsErrorSpanRecord(const TraceRepository::TraceSpanRecord& record)
     {
         return toLowerCopy(record.status) == "error";
+    }
+
+    size_t ResolveAlertTokenCount(const TraceRepository::TraceSummary& summary,
+                                  const std::optional<TraceAiUsage>& usage)
+    {
+        // 告警里的 token_count 先优先吃 provider usage。既然模型已经告诉我们真实 total_tokens，
+        // 那就不该继续用 Push 路径上的字符数近似值。只有 usage 缺失时，才回退到现有 summary.token_count。
+        if (usage.has_value() && usage->total_tokens > 0)
+        {
+            return usage->total_tokens;
+        }
+        return summary.token_count;
+    }
+
+    SystemBackpressureStatus ToSystemBackpressureStatus(TraceSessionManager::OverloadState overload_state)
+    {
+        switch (overload_state)
+        {
+        case TraceSessionManager::OverloadState::Normal:
+            return SystemBackpressureStatus::Normal;
+        case TraceSessionManager::OverloadState::Overload:
+            return SystemBackpressureStatus::Active;
+        case TraceSessionManager::OverloadState::Critical:
+            return SystemBackpressureStatus::Full;
+        }
+        return SystemBackpressureStatus::Normal;
     }
 
     PrimaryObservation BuildPrimaryObservation(const TraceRepository::TraceSummary& summary,
@@ -172,8 +199,9 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
                                          size_t wheel_size,
                                          size_t buffered_span_hard_limit,
                                          size_t active_session_hard_limit,
-                                         ServiceRuntimeAccumulator* service_runtime_accumulator)
-    : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
+                                         ServiceRuntimeAccumulator* service_runtime_accumulator,
+                                         SystemRuntimeAccumulator* system_runtime_accumulator)
+    : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
     time_wheel_.resize(wheel_size_);
@@ -887,22 +915,37 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
     BufferedTraceRepository *buffered_trace_repo = buffered_trace_repo_;
     TraceAiProvider *trace_ai = trace_ai_;
     INotifier *notifier = notifier_;
-    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, session_holder, trace_payload = std::move(trace_payload), summary = std::move(summary), span_records = std::move(span_records)]() mutable
+    SystemRuntimeAccumulator* system_runtime_accumulator = system_runtime_accumulator_;
+    const uint64_t worker_enqueue_ns = NowSteadyNs();
+    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, system_runtime_accumulator, worker_enqueue_ns, session_holder, trace_payload = std::move(trace_payload), summary = std::move(summary), span_records = std::move(span_records)]() mutable
                               {
         if (!manager || !session_holder || !(*session_holder)) {
             return;
         }
         manager->worker_begin_count_.fetch_add(1, std::memory_order_relaxed);
+        const uint64_t worker_begin_ns = NowSteadyNs();
+        const uint64_t queue_wait_ms =
+            worker_begin_ns >= worker_enqueue_ns ? (worker_begin_ns - worker_enqueue_ns) / 1000000ULL : 0;
 
         TraceRepository::TraceAnalysisRecord analysis_record;
         TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
+        size_t alert_token_count = summary.token_count;
+        std::optional<TraceAiUsage> completed_usage;
         if (trace_ai) {
+            if (system_runtime_accumulator) {
+                // AI 调用总数表达的是“真正开始发起模型调用”的次数。
+                // 所以 started 记在 worker 真开始调 AnalyzeTrace 之前，而不是 trace 刚被系统接住时。
+                system_runtime_accumulator->RecordAiCallStarted();
+            }
             manager->ai_calls_.fetch_add(1, std::memory_order_relaxed);
             const uint64_t ai_begin_ns = NowSteadyNs();
+            uint64_t inference_latency_ms = 0;
             try {
-                LogAnalysisResult analysis = trace_ai->AnalyzeTrace(trace_payload);
-                analysis_record = manager->BuildAnalysisRecord(summary.trace_id, analysis);
+                TraceAiResponse ai_response = trace_ai->AnalyzeTrace(trace_payload);
+                analysis_record = manager->BuildAnalysisRecord(summary.trace_id, ai_response.analysis);
                 analysis_ptr = &analysis_record;
+                alert_token_count = ResolveAlertTokenCount(summary, ai_response.usage);
+                completed_usage = ai_response.usage;
             } catch (const std::exception& e) {
                 analysis_record.trace_id = summary.trace_id;
                 analysis_record.risk_level = "unknown";
@@ -920,7 +963,14 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
                 analysis_record.confidence = 0.0;
                 analysis_ptr = &analysis_record;
             }
-            manager->ai_total_ns_.fetch_add(NowSteadyNs() - ai_begin_ns, std::memory_order_relaxed);
+            const uint64_t ai_end_ns = NowSteadyNs();
+            manager->ai_total_ns_.fetch_add(ai_end_ns - ai_begin_ns, std::memory_order_relaxed);
+            inference_latency_ms = ai_end_ns >= ai_begin_ns ? (ai_end_ns - ai_begin_ns) / 1000000ULL : 0;
+            if (system_runtime_accumulator) {
+                // queue_wait 和 inference_latency 都属于同一次 AI 调用的收尾结果。
+                // 这里在调用结束后一次性提交，避免把两张延迟卡拆成两个成熟时机不同的半成品。
+                system_runtime_accumulator->RecordAiCallCompleted(queue_wait_ms, inference_latency_ms, completed_usage);
+            }
         }
 
         manager->analysis_enqueue_calls_.fetch_add(1, std::memory_order_relaxed);
@@ -952,7 +1002,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         event.start_time_ms = summary.start_time_ms;
         event.duration_ms = summary.duration_ms;
         event.span_count = summary.span_count;
-        event.token_count = summary.token_count;
+        event.token_count = alert_token_count;
         event.risk_level = analysis_ptr->risk_level;
         event.summary = analysis_ptr->summary;
         event.root_cause = analysis_ptr->root_cause;
@@ -1168,24 +1218,41 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     TraceAiProvider *trace_ai = trace_ai_;
     INotifier *notifier = notifier_;
     ServiceRuntimeAccumulator* service_runtime_accumulator = service_runtime_accumulator_;
+    SystemRuntimeAccumulator* system_runtime_accumulator = system_runtime_accumulator_;
     const std::string *worker_trace_payload = trace_payload_ptr;
     const TraceRepository::TraceSummary *worker_summary = summary_ptr;
-    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, service_runtime_accumulator, session_holder, worker_trace_payload, worker_summary, analysis_observation_span_records]() mutable
+    const uint64_t worker_enqueue_ns = NowSteadyNs();
+    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, service_runtime_accumulator, system_runtime_accumulator, worker_enqueue_ns, session_holder, worker_trace_payload, worker_summary, analysis_observation_span_records]() mutable
                               {
         if (!manager || !session_holder || !(*session_holder) || !worker_trace_payload || !worker_summary) {
             return;
         }
         manager->worker_begin_count_.fetch_add(1, std::memory_order_relaxed);
+        const uint64_t worker_begin_ns = NowSteadyNs();
+        const uint64_t queue_wait_ms =
+            worker_begin_ns >= worker_enqueue_ns ? (worker_begin_ns - worker_enqueue_ns) / 1000000ULL : 0;
 
         TraceRepository::TraceAnalysisRecord analysis_record;
         TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
+        size_t alert_token_count = worker_summary->token_count;
+        std::optional<TraceAiUsage> completed_usage;
         if (trace_ai) {
+            if (system_runtime_accumulator) {
+                // 系统监控里的 AI 调用总数要落在“真正准备调模型”的时间点，
+                // 不能在 submit 成功时就提前加，否则排队中断或后续没进入模型都算脏数据。
+                system_runtime_accumulator->RecordAiCallStarted();
+            }
             manager->ai_calls_.fetch_add(1, std::memory_order_relaxed);
             const uint64_t ai_begin_ns = NowSteadyNs();
+            uint64_t inference_latency_ms = 0;
             try {
-                LogAnalysisResult analysis = trace_ai->AnalyzeTrace(*worker_trace_payload);
-                analysis_record = manager->BuildAnalysisRecord(worker_summary->trace_id, analysis);
+                TraceAiResponse ai_response = trace_ai->AnalyzeTrace(*worker_trace_payload);
+                analysis_record = manager->BuildAnalysisRecord(worker_summary->trace_id, ai_response.analysis);
                 analysis_ptr = &analysis_record;
+                // worker_summary 指向的是已经落完 primary 的只读摘要，这里不能回写它本体。
+                // 所以后面发告警时单独走 alert_token_count，避免为了一个展示口径去改数据库主记录。
+                alert_token_count = ResolveAlertTokenCount(*worker_summary, ai_response.usage);
+                completed_usage = ai_response.usage;
             } catch (const std::exception& e) {
                 analysis_record.trace_id = worker_summary->trace_id;
                 analysis_record.risk_level = "unknown";
@@ -1203,7 +1270,14 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
                 analysis_record.confidence = 0.0;
                 analysis_ptr = &analysis_record;
             }
-            manager->ai_total_ns_.fetch_add(NowSteadyNs() - ai_begin_ns, std::memory_order_relaxed);
+            const uint64_t ai_end_ns = NowSteadyNs();
+            manager->ai_total_ns_.fetch_add(ai_end_ns - ai_begin_ns, std::memory_order_relaxed);
+            inference_latency_ms = ai_end_ns >= ai_begin_ns ? (ai_end_ns - ai_begin_ns) / 1000000ULL : 0;
+            if (system_runtime_accumulator) {
+                // 这里把排队等待和真实推理耗时作为同一条完成样本写进去。
+                // 前者在 worker 开始时就能算，但只有到 AI 收尾时，这条调用样本才算真正成熟。
+                system_runtime_accumulator->RecordAiCallCompleted(queue_wait_ms, inference_latency_ms, completed_usage);
+            }
         }
 
         manager->analysis_enqueue_calls_.fetch_add(1, std::memory_order_relaxed);
@@ -1244,7 +1318,7 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         event.start_time_ms = worker_summary->start_time_ms;
         event.duration_ms = worker_summary->duration_ms;
         event.span_count = worker_summary->span_count;
-        event.token_count = worker_summary->token_count;
+        event.token_count = alert_token_count;
         event.risk_level = analysis_ptr->risk_level;
         event.summary = analysis_ptr->summary;
         event.root_cause = analysis_ptr->root_cause;
@@ -1304,19 +1378,26 @@ void TraceSessionManager::RefreshOverloadState()
     if (hit_critical)
     {
         overload_state_ = OverloadState::Critical;
-        return;
     }
-    if (overload_state_ == OverloadState::Normal)
+    else if (overload_state_ == OverloadState::Normal)
     {
         overload_state_ = hit_high ? OverloadState::Overload : OverloadState::Normal;
-        return;
     }
-    if (back_to_low)
+    else if (back_to_low)
     {
         overload_state_ = OverloadState::Normal;
-        return;
     }
-    overload_state_ = hit_high ? OverloadState::Overload : OverloadState::Overload;
+    else
+    {
+        overload_state_ = OverloadState::Overload;
+    }
+
+    if (system_runtime_accumulator_)
+    {
+        // 系统监控只展示“综合背压结论”，不直接暴露 manager 内部的高水位实现细节。
+        // 所以这里统一把内部 overload_state 映射成前端更容易解释的 Normal/Active/Full 三档。
+        system_runtime_accumulator_->UpdateBackpressureStatus(ToSystemBackpressureStatus(overload_state_));
+    }
 }
 
 bool TraceSessionManager::ShouldRejectIncomingTrace(bool trace_exists) const

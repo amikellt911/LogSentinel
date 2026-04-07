@@ -1,68 +1,56 @@
 <template>
   <div class="h-full flex flex-col p-6 space-y-6 overflow-y-auto custom-scrollbar">
 
-    <!-- 顶部：6 个性能指标卡片 -->
+    <!-- 顶部：这里只保留系统运行态卡片，不再混业务风险和演示味很重的副文案。 -->
+    <!-- 这一刀已经改成直接读取后端系统运行态快照，不再继续消费旧 dashboard mock 字段。 -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      <!-- Row 1: Performance -->
       <MetricCard
         :title="$t('dashboard.totalLogs')"
         :value="formatNumber(systemStore.totalLogsProcessed)"
         :icon="Files"
         status-color="text-success"
-        subValue="+12.5% vs last hour"
       />
       <MetricCard
         :title="$t('dashboard.netLatency')"
-        :value="systemStore.netLatency"
+        :value="formatNumber(systemStore.aiQueueWaitMs)"
         unit="ms"
         :icon="Lightning"
         status-color="text-success"
-        subValue="⚡ Fast"
       />
       <MetricCard
         :title="$t('dashboard.aiLatency')"
-        :value="systemStore.aiLatency"
+        :value="formatNumber(systemStore.aiInferenceLatencyMs)"
         unit="ms"
         :icon="Timer"
         status-color="text-warning"
-        subValue="~0.8s avg"
       />
 
-      <!-- Row 2: Health -->
       <MetricCard
         :title="$t('dashboard.aiTrigger')"
-        :value="formatNumber(systemStore.aiTriggerCount)"
+        :value="formatNumber(systemStore.aiCallTotal)"
         :icon="Cpu"
         status-color="text-primary"
         :unit="$t('dashboard.calls')"
       />
       <MetricCard
         :title="$t('dashboard.memory')"
-        :value="systemStore.memoryPercent + '%'"
+        :value="formatNumber(systemStore.memoryRssMb)"
+        unit="MB"
         :icon="Histogram"
-        :status-color="systemStore.memoryPercent > 80 ? 'text-danger' : 'text-success'"
-      >
-         <div class="w-full bg-gray-700 h-1.5 mt-3 rounded-full overflow-hidden">
-            <div
-              class="h-full transition-all duration-500"
-              :class="systemStore.memoryPercent > 80 ? 'bg-red-500' : 'bg-green-500'"
-              :style="{ width: systemStore.memoryPercent + '%' }"
-            ></div>
-         </div>
-      </MetricCard>
+        status-color="text-primary"
+      />
       <MetricCard
         :title="$t('dashboard.backpressure')"
         :value="$t(`dashboard.${systemStore.backpressureStatus.toLowerCase()}`)"
         :icon="Warning"
         :status-color="backpressureColor"
-        :subValue="$t('dashboard.queue') + ': ' + systemStore.queuePercent + '%'"
       />
     </div>
 
-    <!-- 中部：4 个 Token 指标卡片 -->
+    <!-- 中部：Token 卡片只展示真实可累计的 token 指标，先不再混成本和节省比例。 -->
     <TokenMetricsCard />
 
-    <!-- 底部：实时吞吐量图表 -->
+    <!-- 底部：系统吞吐图只保留入口和出口两条线，避免混进第三种语义把图看花。 -->
     <div class="min-h-[350px] bg-gray-800/30 border border-gray-700 rounded p-4 relative flex flex-col">
       <div class="flex justify-between items-center mb-4">
         <h3 class="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
@@ -91,11 +79,10 @@ import { useI18n } from 'vue-i18n'
 const { t, locale } = useI18n()
 const systemStore = useSystemStore()
 
-// Refs
+// 图表实例只负责系统吞吐趋势，不再承担业务风险之类的混合展示。
 const chartRef = ref<HTMLElement | null>(null)
 let myChart: echarts.ECharts | null = null
 
-// Computeds
 const backpressureColor = computed(() => {
    switch(systemStore.backpressureStatus) {
       case 'Normal': return 'text-success'
@@ -104,6 +91,11 @@ const backpressureColor = computed(() => {
       default: return 'text-gray-500'
    }
 })
+// 背压状态现在只显示综合结论，不再附带单一 queue 百分比。
+// 因为后端背压已经是多因素联合判断，再把某一个队列占用塞成副文案，反而会把语义讲脏。
+
+// 内存卡这一步直接显示“当前进程 RSS MB”，不再用假的百分比进度条。
+// 这样用户看到的是 LogSentinel 进程自己吃了多少内存，而不是来源不清的整机占用率。
 
 function formatNumber(num: number) {
   return new Intl.NumberFormat('en-US').format(num)
@@ -143,9 +135,8 @@ function updateMainChart() {
   })
 }
 
-// Watchers
 watch(locale, () => {
-   // Re-render charts for language update
+   // 语言切换后重建图表实例，避免图例和 tooltip 仍然停留在旧文案。
    nextTick(() => {
       myChart?.dispose()
       initCharts()
@@ -157,12 +148,12 @@ watch(() => systemStore.chartData, () => {
   updateMainChart()
 }, { deep: true })
 
-// Lifecycle
 const resizeHandler = () => {
    myChart?.resize()
 }
 
 onMounted(() => {
+  // 这页现在定位成“系统监控”，所以首屏只需要初始化吞吐图和当前快照数据，不做额外动画逻辑。
   initCharts()
   window.addEventListener('resize', resizeHandler)
   updateMainChart() // Initial draw

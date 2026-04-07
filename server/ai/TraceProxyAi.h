@@ -14,7 +14,9 @@ public:
                           int timeout_ms = 10000);
     ~TraceProxyAi() override;
 
-    LogAnalysisResult AnalyzeTrace(const std::string& trace_payload) override;
+    // 代理返回现在既包含结构化 analysis，也可能带 usage 元数据。
+    // 所以这里直接把两者一起还给上层，避免 manager 再自己反序列化 HTTP JSON。
+    TraceAiResponse AnalyzeTrace(const std::string& trace_payload) override;
 
 private:
     std::string analyze_trace_url_;
