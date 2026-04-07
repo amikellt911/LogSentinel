@@ -24,19 +24,11 @@
           <span>{{ $t('layout.dashboard') }}</span>
         </el-menu-item>
 
-        <el-menu-item index="/logs">
-          <el-icon><Monitor /></el-icon>
-          <span>{{ $t('layout.logs') }}</span>
-        </el-menu-item>
-
+        <!-- 本轮答辩只保留已经联调验收过的主链页面：
+             Live Logs / Benchmark 先从前台导航收掉，避免用户误点进半成品。 -->
         <el-menu-item index="/traces">
           <el-icon><Clock /></el-icon>
           <span>{{ $t('layout.traceExplorer') }}</span>
-        </el-menu-item>
-
-        <el-menu-item index="/benchmark">
-          <el-icon><Lightning /></el-icon>
-          <span>{{ $t('layout.benchmark') }}</span>
         </el-menu-item>
 
         <el-menu-item index="/settings">
@@ -109,7 +101,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSystemStore } from '../stores/system'
-import { Odometer, Monitor, Setting, Clock, Lightning } from '@element-plus/icons-vue'
+import { Odometer, Monitor, Setting, Clock } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 
@@ -121,9 +113,7 @@ const currentRouteName = computed(() => {
   switch (route.name) {
     case 'service': return t('layout.serviceMonitor')
     case 'dashboard': return t('layout.dashboard')
-    case 'logs': return t('layout.logs')
     case 'traces': return t('layout.traceExplorer')
-    case 'benchmark': return t('layout.benchmark')
     case 'settings': return t('layout.settings')
     default: return t('layout.dashboard')
   }

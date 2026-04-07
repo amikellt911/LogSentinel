@@ -2,9 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '../layout/MainLayout.vue'
 import ServiceMonitorPrototype from '../views/ServiceMonitorPrototype.vue'
 import Dashboard from '../views/Dashboard.vue'
-import LiveLogs from '../views/LiveLogs.vue'
 import TraceExplorer from '../views/TraceExplorer.vue'
-import Benchmark from '../views/Benchmark.vue'
 import Settings from '../views/Settings.vue'
 
 const router = createRouter({
@@ -32,19 +30,19 @@ const router = createRouter({
           redirect: '/service'
         },
         {
-          path: 'logs',
-          name: 'logs',
-          component: LiveLogs
-        },
-        {
           path: 'traces',
           name: 'traces',
           component: TraceExplorer
         },
         {
+          // 这两个页面本轮不再作为正式演示入口，但先不删文件：
+          // 旧地址统一重定向到稳定页面，避免历史书签或手输 URL 直接落到半成品。
+          path: 'logs',
+          redirect: '/traces'
+        },
+        {
           path: 'benchmark',
-          name: 'benchmark',
-          component: Benchmark
+          redirect: '/'
         },
         {
           path: 'settings',

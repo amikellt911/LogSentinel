@@ -567,3 +567,35 @@ feat(notification): 为飞书 webhook 增加可选签名校验支持
 ### Pitfalls
 
 签名这类功能如果不注入固定时间源，测试很容易变成“不知道为什么有时过有时不过”。这次给 `WebhookNotifier` 加 `NowSecondsFn`，就是为了在测试里把时间戳钉死，确保 `sign` 可以做精确断言，而不是退化成“只要字段存在就算通过”这种没意义的测试。
+
+# 追加记录：2026-04-07 前端导航收口（隐藏 Live Logs / Benchmark）
+
+## Git Commit Message
+
+refactor(frontend): 收口前端导航并隐藏未完成页面入口
+
+## Modification
+
+- `client/src/router/index.ts`
+- `client/src/layout/MainLayout.vue`
+- `docs/todo-list/Todo_Frontend_Refactoring.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/router/index.ts` 里补了中文注释，说明为什么 `/logs` 和 `/benchmark` 不直接删除，而是先重定向到稳定页面。
+- 在 `client/src/layout/MainLayout.vue` 里补了中文注释，说明为什么侧边栏现在只保留已经联调验收过的主链页面入口。
+
+## Learning Tips
+
+### Newbie Tips
+
+收口半成品页面时，优先做“隐藏入口 + 保留兜底重定向”，不要一上来就物理删文件。因为答辩前最怕的是演示路径稳定性被你自己删坏，而不是仓库里多留两个暂时不用的页面文件。
+
+### Function Explanation
+
+Vue Router 里的 `redirect` 适合拿来做这种“旧地址还存在，但不再作为正式入口”的场景。这样历史书签、浏览器地址栏手输、甚至别人口头记错路径时，都不会直接落到半成品页面。
+
+### Pitfalls
+
+如果你只删侧边栏，不处理旧路由，那么用户仍然可以靠地址栏直接进入页面，这种“表面隐藏、实际还能进”的状态在演示时最容易翻车。所以导航收口和路由收口必须一起做。
