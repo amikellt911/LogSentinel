@@ -30,8 +30,10 @@ FetchContent_Declare(
 set(CPR_USE_SYSTEM_CURL OFF)
 set(CPR_USE_SYSTEM_LIB_PSL ON)
 set(CURL_USE_LIBPSL OFF)
-set(CPR_ENABLE_CURL_HTTP_ONLY ON)
-set(CPR_ENABLE_SSL OFF)
+# 真实飞书 webhook 走的是 https，所以这里不能继续把 cpr/curl 编成 HTTP-only。
+# 本地 mock webhook 仍然可以继续用 http，打开 TLS 只是在出站能力上补齐 https。
+set(CPR_ENABLE_CURL_HTTP_ONLY OFF)
+set(CPR_ENABLE_SSL ON)
 set(BUILD_CURL_EXE OFF CACHE INTERNAL "Disable curl executable")
 set(BUILD_EXAMPLES OFF CACHE INTERNAL "Disable examples")
 set(CURL_HIDDEN_SYMBOLS ON CACHE INTERNAL "Hide symbols")

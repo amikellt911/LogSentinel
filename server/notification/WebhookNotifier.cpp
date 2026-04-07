@@ -98,9 +98,13 @@ void WebhookNotifier::postJson(const WebhookChannel& channel,
     if (!isHttpSuccess(r.status_code))
     {
         // 这里不抛异常是为了保证多目标发送时“尽力而为”，一个失败不影响其他目标。
+        // 但仅打印 status/text 不够，因为像 TLS/DNS/连接失败这类传输层错误通常会表现成
+        // status=0，真正有价值的信息在 cpr::Error 里，所以这里要把 code/message 一起打出来。
         std::cerr << "[" << log_prefix << "] Provider: " << channel.provider
                   << " | Target: " << channel.webhook_url
                   << " | Status: " << r.status_code
+                  << " | ErrorCode: " << static_cast<int>(r.error.code)
+                  << " | ErrorMsg: " << r.error.message
                   << " | Msg: " << r.text << std::endl;
     }
 }

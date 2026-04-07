@@ -22,3 +22,7 @@
 - [x] 手工联调入口默认构造一条假 `TraceAlertEvent`，不依赖主链、Settings 或数据库
 - [x] 编译并验证手工联调入口至少能正常打印 `--help`
 - [x] 追加本次 webhook 手工联调入口 dev-log 记录
+- [x] 重新打开 `cpr/curl` 的 HTTPS 支持，允许真实飞书 webhook 通过 TLS 发送
+- [x] 补全 webhook 失败日志，输出 transport error code/message，避免 `Status: 0` 时无法定位
+- [x] 编译并验证 `manual_webhook_notifier` 在开启 HTTPS 后仍可正常构建和打印 `--help`
+- [x] 追加本次 HTTPS 与错误日志修正 dev-log 记录

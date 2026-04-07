@@ -432,3 +432,35 @@ feat(notification): 为 webhook 通知增加飞书 formatter 分层
 ### Pitfalls
 
 如果只在 `WebhookNotifier` 里加 `if (provider == "feishu")`，短期也能跑，但后面一旦要补签名、钉钉或 generic 老协议兼容，平台差异会很快把发送逻辑和 payload 逻辑搅在一起。先把 formatter 边界立住，后面再接 Settings 或真实飞书联调时，改动面才不会继续扩散。
+
+# 追加记录：2026-04-07 WebhookNotifier 补齐 HTTPS 支持与 transport error 日志
+
+## Git Commit Message
+
+fix(notification): 打开 webhook https 支持并补全传输层错误日志
+
+## Modification
+
+- `server/CMakeLists.txt`
+- `server/notification/WebhookNotifier.cpp`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/CMakeLists.txt` 里补了中文注释，说明真实飞书 webhook 走的是 `https`，不能继续把 `cpr/curl` 编成 `HTTP-only`。
+- 在 `server/notification/WebhookNotifier.cpp` 里补了中文注释，说明为什么 `status=0` 这类失败必须把 `cpr::Error` 的 `code/message` 一起打出来，单看 `status/text` 不足以定位 TLS、DNS、连接失败这类传输层问题。
+
+## Learning Tips
+
+### Newbie Tips
+
+`HTTP 200/400/500` 这类状态码只覆盖“请求已经发到对端并拿到了 HTTP 响应”的场景。像 TLS 握手失败、DNS 失败、连接被拒绝这种问题，很多 HTTP 客户端会直接给你一个 `status=0`，真正能说明问题的是底层 transport error。
+
+### Function Explanation
+
+这次 `WebhookNotifier` 打出来的 `ErrorCode/ErrorMsg` 来自 `cpr::Response.error`。`status_code` 表示 HTTP 层结果，`error.code/error.message` 表示请求在更底层的发送过程中有没有失败。两者不是同一层语义，调外部 webhook 时必须一起看。
+
+### Pitfalls
+
+如果一开始为了简化依赖把 `cpr/curl` 编成 `HTTP-only`，那本地 mock webhook 看起来都能跑，但一旦接真实平台（飞书、Slack、钉钉），只要对方要求 `https`，你就会得到一种很迷惑的现象：程序没崩、payload 也像对的，但消息永远到不了。这个坑不把 TLS 支持打开，前面调模板全是白费。
