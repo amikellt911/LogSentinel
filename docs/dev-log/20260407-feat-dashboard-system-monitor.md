@@ -105,3 +105,38 @@ feat(ai): 补齐 Trace AI usage 回传并接入告警 token 真值口径
 ### Pitfalls
 
 不要为了省一个局部变量，就把“临时 token_count”塞进 `confidence` 或别的无关字段桥接。那种写法短期能跑，长期一定把语义搞脏，后面谁读到这个字段都会被误导。正确做法是明确保留一个单独的局部状态，或者等真正需要持久化时再扩正式结构。
+
+# 追加记录：2026-04-07 SystemRuntimeAccumulator 第一刀（骨架 + TDD）
+
+## Git Commit Message
+
+feat(core): 新增系统监控运行态累加器骨架
+
+## Modification
+
+- `server/core/SystemRuntimeAccumulator.h`
+- `server/core/SystemRuntimeAccumulator.cpp`
+- `server/tests/SystemRuntimeAccumulator_test.cpp`
+- `server/CMakeLists.txt`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/core/SystemRuntimeAccumulator.h` 里补了中文注释，说明 `overview / token_stats / timeseries` 三块快照各自服务哪一片系统监控 UI，以及为什么 `RecordAcceptedLogs / RecordAiCompletion / OnTick` 这样拆入口。
+- 在 `server/core/SystemRuntimeAccumulator.cpp` 里补了中文注释，说明为什么速率采样坚持“单调总数做差分”、为什么两张延迟卡吃固定样本平均、为什么 `OnTick()` 里顺手采 RSS 而不是在热路径读系统信息。
+- 在 `server/tests/SystemRuntimeAccumulator_test.cpp` 里补了中文注释，说明四条测试分别锁空快照、累计值+平均值、单调差分速率、固定样本窗口这四个口径。
+
+## Learning Tips
+
+### Newbie Tips
+
+系统监控和服务监控虽然都叫“运行态”，但后端模型完全不一样。服务监控更像“业务事件进窗再退窗”；系统监控更像“原子累计 + 当前状态 + 定时采样”，别一上来把两者硬套成同一套分钟桶。
+
+### Function Explanation
+
+`std::atomic<T>` 这里主要用在“单调累计”和“当前状态覆盖”两类值上，所以第一版直接用 `memory_order_relaxed` 就够了。因为这里不靠某个原子变量去发布别的复杂对象，也不拿它当同步门闩，只需要数值最终稳定可读。
+
+### Pitfalls
+
+系统吞吐图最容易犯的错是“每秒把总数清零再读”。这种写法表面直观，实际会把热路径写入和采样线程绑在一起。更稳的做法是一直维护单调总数，定时器只做差分采样，这样写路径就只剩 `fetch_add`，不会引入额外的清零同步。

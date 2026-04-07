@@ -254,3 +254,11 @@
 - [x] C++ `TraceAiProvider` 返回“analysis + optional usage”，不再只有 `LogAnalysisResult`
 - [x] `TraceSessionManager` 告警事件 token_count 优先吃 provider usage，缺失时继续回退本地估算
 - [x] 单测补 usage 命中与 usage 缺失两条口径
+
+### I. 2026-04-07：SystemMonitor 后端第一刀（骨架 + 真指标入口）
+- [x] 先新增 `SystemRuntimeAccumulator`，定义系统监控快照契约：overview / token_stats / timeseries
+- [x] 先写 `SystemRuntimeAccumulator` 失败测试，锁空快照、累计值、差分速率、固定样本平均
+- [x] 再实现 `SystemRuntimeAccumulator` 最小逻辑：原子累计、固定样本 ring、定时采样序列
+- [ ] 把 `/dashboard` 从旧 `SqliteLogRepository::getDashboardStats()` 切到新快照
+- [ ] 先把主链现成真指标接进来：总接收日志数、AI 调用总数、AI 推理延迟、token 总量、背压状态
+- [ ] 再补“系统监控缺口埋点”：AI 线程池排队等待时间、接入速率 / AI 完成速率采样
