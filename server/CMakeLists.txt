@@ -30,8 +30,10 @@ FetchContent_Declare(
 set(CPR_USE_SYSTEM_CURL OFF)
 set(CPR_USE_SYSTEM_LIB_PSL ON)
 set(CURL_USE_LIBPSL OFF)
-set(CPR_ENABLE_CURL_HTTP_ONLY ON)
-set(CPR_ENABLE_SSL OFF)
+# 真实飞书 webhook 走的是 https，所以这里不能继续把 cpr/curl 编成 HTTP-only。
+# 本地 mock webhook 仍然可以继续用 http，打开 TLS 只是在出站能力上补齐 https。
+set(CPR_ENABLE_CURL_HTTP_ONLY OFF)
+set(CPR_ENABLE_SSL ON)
 set(BUILD_CURL_EXE OFF CACHE INTERNAL "Disable curl executable")
 set(BUILD_EXAMPLES OFF CACHE INTERNAL "Disable examples")
 set(CURL_HIDDEN_SYMBOLS ON CACHE INTERNAL "Hide symbols")
@@ -44,6 +46,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(MiniMuduo googletest cpr nlohmann_json)
 find_package(SQLite3 REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 #--------------模块管理------------------
 add_library(http_module STATIC
@@ -85,6 +88,7 @@ add_library(ai_module STATIC
   ai/TraceAiFactory.cpp
 )
 add_library(notification_module STATIC
+  notification/WebhookFormatters.cpp
   notification/WebhookNotifier.cpp
 )
 add_library(handler_module STATIC
@@ -133,6 +137,7 @@ target_link_libraries(persistence_module PUBLIC SQLite::SQLite3 ai_module)
 target_link_libraries(notification_module PUBLIC
   cpr::cpr
   nlohmann_json::nlohmann_json
+  OpenSSL::Crypto
   persistence_module
 )
 target_link_libraries(handler_module PUBLIC
@@ -191,6 +196,16 @@ add_executable(test_dashboard_handler
   tests/DashboardHandler_test.cpp
 )
 
+add_executable(test_webhook_notifier
+  tests/WebhookNotifier_test.cpp
+)
+
+# 这个目标是给真实 webhook 手工联调用的独立入口，不注册进 CTest，
+# 避免构建机或本地一跑测试就误把真实消息发到外部平台。
+add_executable(manual_webhook_notifier
+  tests/manual_webhook_notifier.cpp
+)
+
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -230,6 +245,13 @@ target_link_libraries(test_dashboard_handler PRIVATE
 GTest::gtest_main
 handler_module
 )
+target_link_libraries(test_webhook_notifier PRIVATE
+GTest::gtest_main
+notification_module
+)
+target_link_libraries(manual_webhook_notifier PRIVATE
+notification_module
+)
 
 # 统一使用 gtest_discover_tests 注册，避免与 add_test 重复注册导致同一测试二进制被 CTest 跑两次。
 gtest_discover_tests(test_http_context)
@@ -238,6 +260,7 @@ gtest_discover_tests(test_trace_session_manager_unit)
 gtest_discover_tests(test_trace_session_manager_integration)
 gtest_discover_tests(test_sqlite_trace_repo)
 gtest_discover_tests(test_log_handler)
+gtest_discover_tests(test_webhook_notifier)
 gtest_discover_tests(test_service_runtime_accumulator)
 gtest_discover_tests(test_system_runtime_accumulator)
 gtest_discover_tests(test_dashboard_handler)

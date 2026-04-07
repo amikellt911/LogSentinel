@@ -93,6 +93,9 @@ int main(int argc, char* argv[])
     int trace_active_session_limit = 1024;
     int service_monitor_window_minutes = 30;
     int service_monitor_bucket_seconds = 3;
+    std::string webhook_provider;
+    std::string webhook_url;
+    std::string webhook_secret;
     bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
@@ -146,6 +149,15 @@ int main(int argc, char* argv[])
             // 窗口总时长和桶粒度拆开后，答辩时就能继续保留“最近 30 分钟”语义，
             // 同时把内部桶压到 3 秒，避免第一次显示必须傻等整整 1 分钟。
             service_monitor_bucket_seconds = std::stoi(argv[++i]);
+        } else if (arg == "--webhook-provider" && i + 1 < argc) {
+            // 这两个参数是主程序阶段的临时直连入口，先让“critical trace -> 真实飞书”
+            // 单独跑通；后面再把同一套 WebhookChannel 正式接回 Settings/SQLite。
+            webhook_provider = argv[++i];
+        } else if (arg == "--webhook-url" && i + 1 < argc) {
+            webhook_url = argv[++i];
+        } else if (arg == "--webhook-secret" && i + 1 < argc) {
+            // secret 只在飞书签名校验开启时才需要；为空时继续走无签名 webhook。
+            webhook_secret = argv[++i];
         }
     }
 
@@ -191,6 +203,12 @@ int main(int argc, char* argv[])
     }
     if (service_monitor_bucket_seconds <= 0) {
         std::cerr << "Fatal Error: --service-monitor-bucket-seconds must be > 0" << std::endl;
+        return -1;
+    }
+    if ((webhook_provider.empty() && !webhook_url.empty()) ||
+        (!webhook_provider.empty() && webhook_url.empty())) {
+        std::cerr << "Fatal Error: --webhook-provider and --webhook-url must be provided together"
+                  << std::endl;
         return -1;
     }
 
@@ -272,13 +290,28 @@ int main(int argc, char* argv[])
     MiniMuduo::net::InetAddress addr(port);
     testServer server(&loop, addr, num_io_threads);
     auto config_repo = std::make_shared<SqliteConfigRepository>(db_path);
-    //std::vector<std::string> urls = config_repo->getActiveWebhookUrls();
-    std::vector<std::string> urls;
+    std::vector<WebhookChannel> webhook_channels;
     if (auto_start_webhook_mock) {
-        // 开发时自动注入本地 webhook 地址，避免“服务已拉起但通知目标为空”的调试盲区。
-        urls.push_back("http://127.0.0.1:9999/webhook");
+        // 开发时自动注入本地 mock webhook，避免“服务已经拉起，但压根没有通知目标”的调试盲区。
+        // 这里显式按 generic 渠道注入，是为了让 mock webhook 和真实飞书 webhook 可以并存，而不是互相覆盖。
+        webhook_channels.push_back(WebhookChannel{"generic", "http://127.0.0.1:9999/webhook", true, ""});
     }
-    std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(urls);
+    if (!webhook_url.empty()) {
+        // 这一步故意不去读 Settings/SQLite，而是在启动时直接拼一个临时渠道：
+        // 目的就是先把“主链 critical 告警能不能真实打到外部平台”单独验通，
+        // 避免把飞书格式问题、主链触发问题和配置生效问题搅在一起。
+        webhook_channels.push_back(WebhookChannel{webhook_provider, webhook_url, true, webhook_secret});
+    }
+    if (!webhook_channels.empty()) {
+        std::cout << "Webhook notifier enabled. channels=" << webhook_channels.size() << std::endl;
+        for (const auto& channel : webhook_channels) {
+            std::cout << "  - provider=" << channel.provider
+                      << ", url=" << channel.webhook_url
+                      << ", enabled=" << (channel.enabled ? "true" : "false")
+                      << std::endl;
+        }
+    }
+    std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(std::move(webhook_channels));
     std::shared_ptr<TraceAiProvider> trace_ai;
     const bool enable_trace_ai = auto_start_proxy || trace_ai_provider_explicit;
     if (enable_trace_ai) {

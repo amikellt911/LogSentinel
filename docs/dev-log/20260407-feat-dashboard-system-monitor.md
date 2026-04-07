@@ -33,6 +33,38 @@ refactor(frontend): 收口系统监控页面骨架与文案
 
 ## Git Commit Message
 
+feat(notification): 新增独立 webhook 手工联调入口
+
+## Modification
+
+- `server/tests/manual_webhook_notifier.cpp`
+- `server/CMakeLists.txt`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/tests/manual_webhook_notifier.cpp` 里补了中文注释，说明为什么这条入口故意只构造假 `TraceAlertEvent`，以及为什么它要和主链、Settings、数据库解耦。
+- 在 `server/CMakeLists.txt` 里补了中文注释，说明 `manual_webhook_notifier` 是手工联调目标，不注册进 CTest，避免自动化测试误发真实外部消息。
+
+## Learning Tips
+
+### Newbie Tips
+
+真实 webhook 联调入口最好和主程序入口分开。这样出问题时，变量只剩消息模板、HTTP 发送和平台返回，不会把 Settings、生效逻辑、数据库配置一起卷进来。
+
+### Function Explanation
+
+这次新增的 `manual_webhook_notifier` 不是单元测试，而是一个独立的手工联调可执行文件。它通过命令行参数构造一条假的 `TraceAlertEvent`，然后直接调用 `WebhookNotifier::notifyTraceAlert`，专门用来验证飞书等外部 webhook 的真实送达链路。
+
+### Pitfalls
+
+不要把真实外部 webhook 联调入口注册进 CTest。否则你一旦执行 `ctest` 或 CI 跑全量测试，就可能把真实告警消息发到外部群里，测试环境和生产联调边界会立刻变脏。
+
+# 追加记录：2026-04-07 Dashboard 前端切到系统运行态真快照
+
+## Git Commit Message
+
 refactor(frontend): 移除系统监控背压卡的队列百分比副文案
 
 ## Modification
@@ -359,3 +391,179 @@ refactor(core): 让服务监控快照在 OnTick 原子发布
 ### Pitfalls
 
 如果只把 `published_snapshot_` 换成原子指针，却不补“下一次 `OnTick()` 发布前仍应返回旧快照”的测试，那么很容易又把 `OnAnalysisReady()` 之类的内部状态变化泄漏到请求路径上。页面表面还能出数，但“已发布快照”和“内部最新状态”两套语义会重新混在一起。
+
+# 追加记录：2026-04-07 WebhookNotifier 增加 formatter 分层并接入飞书 post 模板
+
+## Git Commit Message
+
+feat(notification): 为 webhook 通知增加飞书 formatter 分层
+
+## Modification
+
+- `server/notification/NotifyTypes.h`
+- `server/notification/WebhookFormatters.h`
+- `server/notification/WebhookFormatters.cpp`
+- `server/notification/WebhookNotifier.h`
+- `server/notification/WebhookNotifier.cpp`
+- `server/tests/WebhookNotifier_test.cpp`
+- `server/CMakeLists.txt`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/notification/NotifyTypes.h` 里补了中文注释，说明 `WebhookChannel` 为什么先只收口成 `provider/webhook_url/enabled` 三个字段。
+- 在 `server/notification/WebhookFormatters.h` 里补了中文注释，说明 formatter 层只负责“领域事件 -> 平台 payload”，不负责 HTTP 发送。
+- 在 `server/notification/WebhookFormatters.cpp` 里补了中文注释，说明飞书第一版为什么先收口成最小 `post` 模板，以及 provider 未知时为什么统一回退到 generic formatter。
+- 在 `server/notification/WebhookNotifier.h` 里补了中文注释，说明为什么保留旧 `vector<string>` 构造函数，以及测试用 `PostJsonFn` 为什么只用于隔离网络副作用。
+- 在 `server/notification/WebhookNotifier.cpp` 里补了中文注释，说明为什么 `notifyTraceAlert()` 现在先按 `enabled` 过滤，再按 `provider` 选 formatter，最后统一走同一套 `cpr` 发送逻辑。
+- 在 `server/tests/WebhookNotifier_test.cpp` 里补了中文注释，说明两条测试分别锁飞书 `post` 模板和 `enabled/provider` 分流语义。
+
+## Learning Tips
+
+### Newbie Tips
+
+这里最容易走歪的是“一看到平台差异就急着写一堆 notifier 子类”。如果真正变化的只有 payload 结构，而 HTTP 发送流程、超时、错误日志都一样，那更适合拆 formatter，而不是先堆大继承树。
+
+### Function Explanation
+
+这次 `WebhookNotifier` 里新增的 `PostJsonFn` 不是为了业务层可配置，而是为了测试隔离网络副作用。生产环境下它为空，代码继续走 `thread_local cpr::Session`；测试里才注入一个 lambda，把 `channel/body/log_prefix` 记下来断言，不必真起 HTTP 服务。
+
+### Pitfalls
+
+如果只在 `WebhookNotifier` 里加 `if (provider == "feishu")`，短期也能跑，但后面一旦要补签名、钉钉或 generic 老协议兼容，平台差异会很快把发送逻辑和 payload 逻辑搅在一起。先把 formatter 边界立住，后面再接 Settings 或真实飞书联调时，改动面才不会继续扩散。
+
+# 追加记录：2026-04-07 WebhookNotifier 补齐 HTTPS 支持与 transport error 日志
+
+## Git Commit Message
+
+fix(notification): 打开 webhook https 支持并补全传输层错误日志
+
+## Modification
+
+- `server/CMakeLists.txt`
+- `server/notification/WebhookNotifier.cpp`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/CMakeLists.txt` 里补了中文注释，说明真实飞书 webhook 走的是 `https`，不能继续把 `cpr/curl` 编成 `HTTP-only`。
+- 在 `server/notification/WebhookNotifier.cpp` 里补了中文注释，说明为什么 `status=0` 这类失败必须把 `cpr::Error` 的 `code/message` 一起打出来，单看 `status/text` 不足以定位 TLS、DNS、连接失败这类传输层问题。
+
+## Learning Tips
+
+### Newbie Tips
+
+`HTTP 200/400/500` 这类状态码只覆盖“请求已经发到对端并拿到了 HTTP 响应”的场景。像 TLS 握手失败、DNS 失败、连接被拒绝这种问题，很多 HTTP 客户端会直接给你一个 `status=0`，真正能说明问题的是底层 transport error。
+
+### Function Explanation
+
+这次 `WebhookNotifier` 打出来的 `ErrorCode/ErrorMsg` 来自 `cpr::Response.error`。`status_code` 表示 HTTP 层结果，`error.code/error.message` 表示请求在更底层的发送过程中有没有失败。两者不是同一层语义，调外部 webhook 时必须一起看。
+
+### Pitfalls
+
+如果一开始为了简化依赖把 `cpr/curl` 编成 `HTTP-only`，那本地 mock webhook 看起来都能跑，但一旦接真实平台（飞书、Slack、钉钉），只要对方要求 `https`，你就会得到一种很迷惑的现象：程序没崩、payload 也像对的，但消息永远到不了。这个坑不把 TLS 支持打开，前面调模板全是白费。
+
+# 追加记录：2026-04-07 主程序增加临时 webhook 直连入口
+
+## Git Commit Message
+
+feat(server): 为主程序增加临时 webhook 直连启动参数
+
+## Modification
+
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/src/main.cpp` 的参数解析里补了中文注释，说明为什么先增加临时 `--webhook-provider/--webhook-url`，而不是直接把 Settings 这条线一起接上。
+- 在 `server/src/main.cpp` 的 notifier 初始化处补了中文注释，说明为什么启动时直接把临时参数映射成 `WebhookChannel`，以及为什么它要和本地 mock webhook 共存。
+
+## Learning Tips
+
+### Newbie Tips
+
+当你要把一个真实外部能力接进主程序时，先给主程序一个“临时直连入口”通常比立刻接完整配置系统更稳。这样能先证明主链、消息模板和外部平台本身都是通的，再回头接 Settings，问题定位会轻松很多。
+
+### Function Explanation
+
+这次主程序新增的 `--webhook-provider` 和 `--webhook-url` 只负责启动时临时构造一个 `WebhookChannel`。它们不会回写数据库，也不会改变 Settings 的最终设计，只是给 `WebhookNotifier` 提供一个短路径，让 `critical trace -> 外部 webhook` 这条链能先真实跑起来。
+
+### Pitfalls
+
+如果只加 `--webhook-url` 不加 `--webhook-provider`，或者反过来只传 provider 不传 url，启动时应该立刻失败，而不是默默退回默认值。因为这类参数一旦半残，会让你以为“主链没有触发通知”，实际上只是初始化阶段配置就已经脏了。
+
+# 追加记录：2026-04-07 随机 trace 发数脚本增加 critical 模式
+
+## Git Commit Message
+
+feat(test): 为随机 trace 发数脚本增加 critical 产出模式
+
+## Modification
+
+- `server/tests/post_random_trace_once.py`
+- `server/tests/post_random_trace_once_test.py`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/tests/post_random_trace_once.py` 里补了中文注释，说明为什么 `force_critical` 要显式往 trace 文本里塞 `critical` 标记，以及这样做和 mock trace AI 风险判定的关系。
+- 在 `server/tests/post_random_trace_once_test.py` 里补了中文注释，说明这条测试锁的是“脚本能不能稳定产出 critical 语义”，不是网络发送结果。
+
+## Learning Tips
+
+### Newbie Tips
+
+如果下游风险判定是基于文本关键词的 mock 逻辑，那联调脚本就不能只靠“有几个 ERROR span”去赌它会不会变成 `critical`。最稳的做法是给脚本一个明确开关，让它在需要时显式注入 `critical` 标记，这样测试和演示都可控。
+
+### Function Explanation
+
+这次新增的 `--critical` 开关不会改脚本默认行为。默认仍然发送原来的复杂异常 trace；只有显式传 `--critical` 时，脚本才会把 `bank/payment/root` 这几个位置的属性改成带 `critical` 的文本，从而让 mock trace AI 在 `analyze_trace()` 里稳定命中 `risk_level = critical`。
+
+### Pitfalls
+
+只改脚本帮助文案、不补一条最小测试是很危险的。因为这种“通过关键词触发风险等级”的逻辑很脆，后面哪怕有人把属性名、字段值或序列化文本改了，脚本表面上还能发送成功，但 webhook 就再也不会触发。先用测试锁住“critical 字样必须真的出现在生成 payload 里”，后面才不容易悄悄回退成 `error`。
+
+# 追加记录：2026-04-07 飞书 webhook 增加可选签名支持
+
+## Git Commit Message
+
+feat(notification): 为飞书 webhook 增加可选签名校验支持
+
+## Modification
+
+- `server/notification/NotifyTypes.h`
+- `server/notification/WebhookNotifier.h`
+- `server/notification/WebhookNotifier.cpp`
+- `server/tests/WebhookNotifier_test.cpp`
+- `server/tests/manual_webhook_notifier.cpp`
+- `server/src/main.cpp`
+- `server/CMakeLists.txt`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/notification/NotifyTypes.h` 里补了中文注释，说明 `WebhookChannel.secret` 是飞书签名用的共享密钥，不是公私钥体系里的私钥。
+- 在 `server/notification/WebhookNotifier.h` 和 `server/notification/WebhookNotifier.cpp` 里补了中文注释，说明为什么签名放在发送前包装层而不是 formatter 里，以及 `timestamp/sign` 的计算时机和职责边界。
+- 在 `server/src/main.cpp` 和 `server/tests/manual_webhook_notifier.cpp` 里补了中文注释，说明 `--webhook-secret` 为空和非空时的行为差异，以及为什么它先走临时直连入口而不是 Settings。
+- 在 `server/tests/WebhookNotifier_test.cpp` 里补了中文注释，说明新增测试锁的是“secret 存在时必须自动补 timestamp/sign”，而不是只检查字段有没有被随便塞进去。
+- 在 `server/CMakeLists.txt` 里通过显式链接 `OpenSSL::Crypto` 把签名依赖收口到通知模块，避免后续靠传递依赖侥幸编过。
+
+## Learning Tips
+
+### Newbie Tips
+
+飞书自定义机器人的“签名校验”不是公私钥，也不是你把 secret 原样塞进请求体。它本质上是共享密钥 HMAC：本地和飞书后台都拿同一个 secret，根据 `timestamp + "\n" + secret` 算一遍 HMAC-SHA256，再比对结果。
+
+### Function Explanation
+
+这次 `WebhookNotifier` 里新增的是“发送前包装层”：formatter 先负责业务消息体 `msg_type/content`，如果渠道是飞书且 `secret` 非空，notifier 再在最终发出的 JSON 外层补 `timestamp` 和 `sign`。这样平台消息模板和平台安全协议不会重新搅在一起。
+
+### Pitfalls
+
+签名这类功能如果不注入固定时间源，测试很容易变成“不知道为什么有时过有时不过”。这次给 `WebhookNotifier` 加 `NowSecondsFn`，就是为了在测试里把时间戳钉死，确保 `sign` 可以做精确断言，而不是退化成“只要字段存在就算通过”这种没意义的测试。

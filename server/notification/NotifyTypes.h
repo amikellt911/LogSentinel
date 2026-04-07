@@ -21,3 +21,14 @@ struct TraceAlertEvent
     std::string solution;
     double confidence = 0.0;
 };
+
+// WebhookChannel 表达“一个真正可发送的外部通知目标”。
+// 这里的 secret 是飞书签名校验用的共享密钥，不是公私钥体系里的私钥：
+// 如果为空，就按无签名 webhook 发送；如果非空，就在发送前自动补 timestamp/sign。
+struct WebhookChannel
+{
+    std::string provider;
+    std::string webhook_url;
+    bool enabled = true;
+    std::string secret;
+};
