@@ -174,3 +174,45 @@ refactor(core): 细化系统监控 AI 调用成熟时机与延迟样本口径
 ### Pitfalls
 
 如果一上来就把两张延迟卡拆成两套完全独立的统计路径，短期看也能出平均值，但后面一旦想加更多阶段、更多解释字段，语义就会越来越散。复合样本的价值就在于：一次调用产生的多个阶段耗时，始终作为一个整体被记录和理解。
+
+# 追加记录：2026-04-07 SystemMonitor 主链接线（先接埋点，不切 dashboard）
+
+## Git Commit Message
+
+feat(core): 接入系统监控主链埋点与背压状态同步
+
+## Modification
+
+- `server/handlers/LogHandler.h`
+- `server/handlers/LogHandler.cpp`
+- `server/core/TraceSessionManager.h`
+- `server/core/TraceSessionManager.cpp`
+- `server/src/main.cpp`
+- `server/tests/LogHandler_test.cpp`
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/handlers/LogHandler.h` 里补了中文注释，说明为什么系统监控累加器保持可选注入、当前只负责埋点不参与 Trace 主链判断。
+- 在 `server/handlers/LogHandler.cpp` 里补了中文注释，说明为什么 `/logs/spans` 成功接收后就该记录总处理日志数，而不是等 trace 最终聚合完成。
+- 在 `server/core/TraceSessionManager.h` 里补了中文注释，说明 `SystemRuntimeAccumulator` 的职责边界，以及它为什么不该反向驱动 TraceSessionManager 状态机。
+- 在 `server/core/TraceSessionManager.cpp` 里补了中文注释，说明为什么 `RecordAiCallStarted()` 记在真正调模型前、为什么 `queue_wait_ms + inference_latency_ms` 要在 AI 收尾后一次性作为复合样本提交、为什么背压状态要做内部状态到前端三档结论的映射。
+- 在 `server/src/main.cpp` 里补了中文注释，说明这一步只先把系统监控埋点和定时采样接进主链，还没有切 `/dashboard` 读取入口。
+- 在 `server/tests/LogHandler_test.cpp` 里补了中文注释，说明 `/logs/spans` 成功接收和“trace 已经真正 dispatch/聚合完成”不是同一个成熟时机。
+- 在 `server/tests/TraceSessionManager_unit_test.cpp` 里补了中文注释，说明 started/completed/token/backpressure 这几条系统监控口径分别锁什么。
+
+## Learning Tips
+
+### Newbie Tips
+
+系统监控里的很多数字看起来都是“总数”，但成熟时机并不一样。`ai_call_total` 表达的是“真正开始调模型了多少次”，`ai_completion_total` 表达的是“真正完成了多少次调用”；如果两者都在同一个时间点加一，后面根本看不出队列堆积、调用失败或中途回滚。
+
+### Function Explanation
+
+这次在 `TraceSessionManager` 里新增的是“埋点接线”，不是业务语义改造。也就是说：Push/Seal/Dispatch/AI/Alert 的行为没有换，只是在已有时间线的关键节点上，把系统监控需要的 started/completed/token/backpressure 信息挂出去。
+
+### Pitfalls
+
+`/logs/spans` 成功返回 `202` 只能说明“入口已经接住这条 span”，不能说明后面的 sealed grace、worker submit、AI 调用都已经成功。所以系统监控里的“总处理日志数”和 Trace 聚合是否最终成功是两回事，测试也要按这两个成熟时机分开锁，不能混成一条断言。

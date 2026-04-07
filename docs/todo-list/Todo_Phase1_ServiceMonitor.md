@@ -258,6 +258,11 @@
 ### I. 2026-04-07：SystemMonitor 后端第一刀（骨架 + 真指标入口）
 - [x] 先新增 `SystemRuntimeAccumulator`，定义系统监控快照契约：overview / token_stats / timeseries
 - [x] 先写 `SystemRuntimeAccumulator` 失败测试，锁空快照、累计值、差分速率、固定样本平均
+- [x] 把 `SystemRuntimeAccumulator` 注入 `LogHandler + TraceSessionManager + main.cpp`
+- [x] `/logs/spans` 成功接收后写入 `RecordAcceptedLogs(...)`
+- [x] AI 调用开始/完成分别写入 `RecordAiCallStarted(...)` 与 `RecordAiCallCompleted(...)`
+- [x] `RefreshOverloadState()` 同步写入系统监控背压状态
+- [x] 补主链接线回归测试，只锁主链埋点口径，不顺手切 `/dashboard`
 - [x] 再实现 `SystemRuntimeAccumulator` 最小逻辑：原子累计、固定样本 ring、定时采样序列
 - [x] `SystemRuntimeAccumulator` 已把 `ai_call_total` 和 `ai_completion_total` 拆成 started/completed 两个成熟时机
 - [x] AI 延迟样本已改成“一次调用一条复合样本”，不再拆成两套独立窗口

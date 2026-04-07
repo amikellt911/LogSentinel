@@ -15,6 +15,7 @@
 #include "core/TraceSessionManager.h"
 #undef private
 #include "notification/INotifier.h"
+#include "core/SystemRuntimeAccumulator.h"
 #include "persistence/BufferedTraceRepository.h"
 #include "persistence/TraceRepository.h"
 #include "core/TokenEstimator.h"
@@ -756,6 +757,96 @@ TEST_F(TraceSessionManagerUnitTest, DispatchNotificationFallsBackToEstimatedToke
     EXPECT_EQ(notifier.last_event.trace_id, "169");
     EXPECT_EQ(notifier.last_event.token_count, expected_token_count);
     EXPECT_GT(notifier.last_event.token_count, 0u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, SystemRuntimeAccumulatorTracksAiLifecycleAndUsageAfterAiCompletion)
+{
+    // 目的：锁 started/completed 分离口径。
+    // started 应该在真正调 AI 前记一次，completed + token + 最近延迟样本应在 AI 收尾后再记。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    StubTraceAi ai;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    int64_t now_ms = 0;
+    SystemRuntimeAccumulator system_runtime_accumulator(/*latency_sample_limit*/4,
+                                                       /*series_limit*/8,
+                                                       [&now_ms]() { return now_ms; },
+                                                       []() { return 0ULL; });
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                &ai,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*wheel_size*/64,
+                                /*buffered_span_hard_limit*/1024,
+                                /*active_session_hard_limit*/128,
+                                nullptr,
+                                &system_runtime_accumulator);
+
+    ai.response.usage = TraceAiUsage{
+        .input_tokens = 8,
+        .output_tokens = 5,
+        .total_tokens = 13,
+    };
+
+    SpanEvent span = MakeSpan(170, 1701, 1000);
+    span.trace_end = true;
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&system_runtime_accumulator]() {
+        return system_runtime_accumulator.BuildSnapshot().overview.ai_call_total == 1u &&
+               system_runtime_accumulator.BuildSnapshot().token_stats.total_tokens == 13u;
+    }));
+
+    now_ms = 1000;
+    system_runtime_accumulator.OnTick();
+    const SystemRuntimeSnapshot snapshot = system_runtime_accumulator.BuildSnapshot();
+    EXPECT_EQ(snapshot.overview.ai_call_total, 1u);
+    EXPECT_EQ(snapshot.token_stats.input_tokens, 8u);
+    EXPECT_EQ(snapshot.token_stats.output_tokens, 5u);
+    EXPECT_EQ(snapshot.token_stats.total_tokens, 13u);
+    ASSERT_FALSE(snapshot.timeseries.empty());
+    EXPECT_EQ(snapshot.timeseries.back().ai_completion_rate, 1u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, RefreshOverloadStatePublishesSystemBackpressureStatus)
+{
+    // 目的：锁系统监控吃到的是综合背压结论，而不是前端自己猜一个字符串。
+    ThreadPool pool(1, 16);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    SystemRuntimeAccumulator system_runtime_accumulator(/*latency_sample_limit*/4,
+                                                       /*series_limit*/8,
+                                                       []() { return 0LL; },
+                                                       []() { return 0ULL; });
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*wheel_size*/64,
+                                /*buffered_span_hard_limit*/1024,
+                                /*active_session_hard_limit*/5,
+                                nullptr,
+                                &system_runtime_accumulator);
+
+    ASSERT_EQ(manager.Push(MakeSpan(201, 2001, 1000)), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(MakeSpan(202, 2002, 1000)), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(MakeSpan(203, 2003, 1000)), TraceSessionManager::PushResult::Accepted);
+
+    const SystemRuntimeSnapshot snapshot = system_runtime_accumulator.BuildSnapshot();
+    EXPECT_EQ(snapshot.overview.backpressure_status, "Active");
 
     pool.shutdown();
 }

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/TraceSessionManager.h"
+#include "core/SystemRuntimeAccumulator.h"
 #include "handlers/LogHandler.h"
 #include "persistence/BufferedTraceRepository.h"
 #include "persistence/TraceRepository.h"
@@ -165,7 +166,7 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostReturns503AndRetryAfterWhenManage
     pool.shutdown();
 }
 
-TEST_F(LogHandlerTracePostTest, HandleTracePostReturns202AndDeferredBodyWhenDispatchIsDeferred)
+TEST_F(LogHandlerTracePostTest, HandleTracePostReturns202WithoutDeferredBeforeSealedTraceActuallyDispatches)
 {
     ThreadPool pool(1, 0);
     FakeTraceRepository repo;
@@ -183,9 +184,49 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostReturns202AndDeferredBodyWhenDisp
     EXPECT_EQ(body.at("accepted"), true);
     EXPECT_EQ(body.at("trace_key"), 3);
     EXPECT_EQ(body.at("span_id"), 301);
-    EXPECT_EQ(body.at("deferred"), true);
-    EXPECT_EQ(body.at("message"), "Trace accepted; internal dispatch deferred");
+    // 这里不能再要求 handler 立即返回 deferred。
+    // 既然 trace_end 现在先进入 sealed grace window，那么 HTTP 返回发生在真正 dispatch 之前，
+    // handler 只能确认“入口已经收下了这条 span”，不能抢先承诺后面的 submit 结果。
+    EXPECT_EQ(body.contains("deferred"), false);
+    EXPECT_EQ(body.contains("message"), false);
     EXPECT_EQ(resp.headers_.count("Retry-After"), 0u);
+
+    pool.shutdown();
+}
+
+TEST_F(LogHandlerTracePostTest, HandleTracePostRecordsAcceptedLogsIntoSystemRuntimeAccumulator)
+{
+    // 目的：锁定 /logs/spans 只要被系统成功接住，就应该累计系统监控里的总处理日志数。
+    // 这里不要求 trace 立刻聚合完成，因为 SystemMonitor 这张卡表达的是“入口成功接住了多少条日志/span”。
+    ThreadPool pool(1, 16);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    SystemRuntimeAccumulator system_runtime_accumulator(/*latency_sample_limit*/4,
+                                                       /*series_limit*/8,
+                                                       []() { return 0LL; },
+                                                       []() { return 0ULL; });
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                /*capacity*/ 8,
+                                /*token_limit*/ 0,
+                                nullptr,
+                                /*idle_timeout_ms*/ 5000,
+                                /*wheel_tick_ms*/ 500,
+                                /*wheel_size*/ 64,
+                                /*buffered_span_hard_limit*/ 1024,
+                                /*active_session_hard_limit*/ 128,
+                                nullptr,
+                                &system_runtime_accumulator);
+    LogHandler handler(nullptr, nullptr, nullptr, &manager, &system_runtime_accumulator);
+    HttpRequest req = MakeTraceRequest(4, 401, false);
+    HttpResponse resp;
+
+    handler.handleTracePost(req, &resp, nullptr);
+
+    ASSERT_EQ(resp.statusCode_, HttpResponse::HttpStatusCode::k202Acceptd);
+    const SystemRuntimeSnapshot snapshot = system_runtime_accumulator.BuildSnapshot();
+    EXPECT_EQ(snapshot.overview.total_logs, 1u);
 
     pool.shutdown();
 }
