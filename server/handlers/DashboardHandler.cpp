@@ -52,8 +52,8 @@ void DashboardHandler::handleGetStats(const HttpRequest& req,
 
     try
     {
-        // Dashboard 现在只读内存快照，不再把一次简单查询丢进 SQLite + 线程池。
-        // 这一刀的目标只是切换读源，让页面先拿到系统运行态真值；更复杂的埋点扩展留在后面补。
+        // Dashboard 现在只读 OnTick 已经发布好的内存快照，不再把一次简单查询丢进 SQLite + 线程池，
+        // 也不再在请求线程现场拼 overview/token/timeseries。这样读路径只拿成品，锁竞争会更小。
         const SystemRuntimeSnapshot snapshot = runtime_accumulator_->BuildSnapshot();
         const std::string json_str = BuildDashboardSnapshotJson(snapshot).dump();
 

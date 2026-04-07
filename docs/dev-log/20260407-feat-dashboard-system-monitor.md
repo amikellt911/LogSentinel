@@ -287,3 +287,39 @@ feat(frontend): 让系统监控页面读取真实运行态快照
 ### Pitfalls
 
 内存卡如果继续沿用旧的 `memoryPercent + 进度条`，页面看起来会像“宿主机资源面板”，但后端现在拿到的其实是进程 RSS。进程内存和整机百分比不是一个量纲，前端如果不跟着改口径，用户看到的就是一张表面正常、实际语义完全错位的卡片。
+
+# 追加记录：2026-04-07 SystemRuntimeAccumulator 改成 OnTick 发布快照
+
+## Git Commit Message
+
+refactor(core): 让系统监控快照在 OnTick 预构建并发布
+
+## Modification
+
+- `server/core/SystemRuntimeAccumulator.h`
+- `server/core/SystemRuntimeAccumulator.cpp`
+- `server/handlers/DashboardHandler.cpp`
+- `server/tests/SystemRuntimeAccumulator_test.cpp`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/core/SystemRuntimeAccumulator.h` 里补了中文注释，说明 `BuildSnapshot()` 为什么不再现场拼装，而是只返回上一次 `OnTick` 已经发布好的成品快照。
+- 在 `server/core/SystemRuntimeAccumulator.cpp` 里补了中文注释，说明为什么把快照构建时机前移到 `OnTick()`、为什么请求线程只读已发布对象、以及这和降低读路径锁竞争的关系。
+- 在 `server/handlers/DashboardHandler.cpp` 里补了中文注释，说明 `/dashboard` 现在读取的是 `OnTick` 已经发布好的内存快照，不再在请求线程现场拼 `overview/token/timeseries`。
+- 在 `server/tests/SystemRuntimeAccumulator_test.cpp` 里补了中文注释，说明新增测试锁的是“未经过 OnTick 发布前，请求侧仍然只能看到上一版快照”。
+
+## Learning Tips
+
+### Newbie Tips
+
+“定时器采样”和“HTTP 请求返回”虽然都能拿到同一份数据，但不代表应该在两个地方都做一遍同样的拼装工作。只要页面轮询节奏和后端采样节奏接近，把快照构建固定放到 `OnTick()` 里，读路径就会更轻，锁竞争也更容易收敛。
+
+### Function Explanation
+
+这次用到的是 `std::shared_ptr<const SystemRuntimeSnapshot>` 配合 `std::atomic_store_explicit / std::atomic_load_explicit`。写侧在 `OnTick()` 里生成一份新的成品快照，然后用 `release` 语义发布；读侧用 `acquire` 语义拿到当前快照指针后再拷一份返回。这样请求线程不用自己再去摸那些样本窗口和折线图历史。
+
+### Pitfalls
+
+如果只改了实现，不补“失败测试先锁发布语义”，很容易把“OnTick 发布快照”和“请求时现场拼快照”两种行为混着存在，表面看页面都能出数，但锁竞争、时序和测试口径会越来越乱。先让测试明确区分“已发布”和“未发布”两个状态，后面的重构才不会偷跑偏。

@@ -119,6 +119,8 @@ SystemRuntimeAccumulator::SystemRuntimeAccumulator(size_t latency_sample_limit,
       latency_samples_(latency_sample_limit),
       last_sample_time_ms_(time_provider_())
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+    PublishSnapshotLocked();
 }
 
 void SystemRuntimeAccumulator::RecordAcceptedLogs(uint64_t count)
@@ -190,9 +192,25 @@ void SystemRuntimeAccumulator::OnTick()
     last_ingest_total_ = current_ingest_total;
     last_ai_completion_total_ = current_ai_completion_total;
     last_sample_time_ms_ = now_ms;
+
+    // 这里把 snapshot 的构建时机前移到 OnTick：
+    // 既然采样线程本来就已经拿着这把锁更新速率点和最近样本，那么顺手把成品快照一起发布掉更划算。
+    // 后面的 HTTP 请求只读已发布成品，不再每次现场拼 overview/token/timeseries。
+    PublishSnapshotLocked();
 }
 
 SystemRuntimeSnapshot SystemRuntimeAccumulator::BuildSnapshot() const
+{
+    const std::shared_ptr<const SystemRuntimeSnapshot> snapshot =
+        std::atomic_load_explicit(&published_snapshot_, std::memory_order_acquire);
+    if (!snapshot)
+    {
+        return {};
+    }
+    return *snapshot;
+}
+
+SystemRuntimeSnapshot SystemRuntimeAccumulator::BuildSnapshotLocked() const
 {
     SystemRuntimeSnapshot snapshot;
     snapshot.overview.total_logs = total_logs_.load(std::memory_order_relaxed);
@@ -210,11 +228,18 @@ SystemRuntimeSnapshot SystemRuntimeAccumulator::BuildSnapshot() const
             snapshot.token_stats.total_tokens / snapshot.overview.ai_call_total;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
     // 这两张延迟卡现在故意吃“固定样本平均”，不是全局累计平均。
     // 这样页面既不会像最后一条样本那样乱跳，也不会因为历史太长而完全失去敏感度。
     snapshot.overview.ai_queue_wait_ms = latency_samples_.AverageQueueWaitMs();
     snapshot.overview.ai_inference_latency_ms = latency_samples_.AverageInferenceLatencyMs();
     snapshot.timeseries = timeseries_;
     return snapshot;
+}
+
+void SystemRuntimeAccumulator::PublishSnapshotLocked()
+{
+    auto snapshot = std::make_shared<SystemRuntimeSnapshot>(BuildSnapshotLocked());
+    std::atomic_store_explicit(&published_snapshot_,
+                               std::shared_ptr<const SystemRuntimeSnapshot>(std::move(snapshot)),
+                               std::memory_order_release);
 }

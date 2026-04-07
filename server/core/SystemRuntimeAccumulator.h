@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -87,6 +88,8 @@ public:
     // 3) 把结果裁进固定长度序列，供系统监控折线图直接读取。
     void OnTick();
 
+    // BuildSnapshot 现在只返回“上一次 OnTick 已经发布好的成品快照”。
+    // 请求线程不再现场拼 overview/token/timeseries，避免和采样线程重复抢同一份复合状态锁。
     SystemRuntimeSnapshot BuildSnapshot() const;
 
 private:
@@ -116,6 +119,8 @@ private:
     static int64_t DefaultNowMs();
     static uint64_t DefaultReadProcessRssBytes();
     static std::string ToStatusString(SystemBackpressureStatus status);
+    SystemRuntimeSnapshot BuildSnapshotLocked() const;
+    void PublishSnapshotLocked();
 
     TimeProvider time_provider_;
     MemoryProvider memory_provider_;
@@ -137,4 +142,5 @@ private:
     uint64_t last_ingest_total_ = 0;
     uint64_t last_ai_completion_total_ = 0;
     int64_t last_sample_time_ms_ = 0;
+    std::shared_ptr<const SystemRuntimeSnapshot> published_snapshot_;
 };
