@@ -237,3 +237,11 @@
 - [x] 原型页已拆开“自动轮询请求中”和“手动刷新按钮 loading”，自动刷新不再把按钮长期锁成“刷新中”
 - [x] 原型页自动刷新已从 `10s` 压到 `3s`，与后端 `3s` 桶粒度对齐，减少“数据已进窗但页面没拉到”的错觉
 - [x] 正式入口 `/service` 已切到 `ServiceMonitorPrototype.vue`，旧 `/service-prototype` 仅保留重定向兼容
+
+### G. 2026-04-07：Dashboard 先收口成系统监控骨架
+- [x] 先不接后端真数据，只先把页面语义从“Dashboard 混合页”收口成“系统运行态页”
+- [x] 顶部 6 张卡收口为：总处理日志数 / AI 调用总数 / AI 队列等待时间 / AI 推理延迟 / 内存占用 / 背压状态
+- [x] 去掉明显 mock 味的副文案，例如 `+12.5% vs last hour`、`⚡ Fast`、`~0.8s avg`
+- [x] `TokenMetricsCard` 去掉“节省比例 / 预估成本”，改成总 token / 输入 token / 输出 token / 平均每次 AI 调用 token
+- [x] 底部折线图继续只保留两条线：接入速率 / AI 完成速率
+- [x] 菜单与页面显示文案先改成“系统监控”，文件名 `Dashboard.vue` 暂时不动
