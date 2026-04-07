@@ -60,8 +60,10 @@ TEST(SystemRuntimeAccumulatorTest, TickPublishesCountersLatencyAveragesAndRates)
                                          });
 
     accumulator.RecordAcceptedLogs(5);
-    accumulator.RecordAiCompletion(/*queue_wait_ms*/40, /*inference_latency_ms*/200, MakeUsage(10, 15, 25));
-    accumulator.RecordAiCompletion(/*queue_wait_ms*/20, /*inference_latency_ms*/100, MakeUsage(20, 30, 50));
+    accumulator.RecordAiCallStarted();
+    accumulator.RecordAiCallCompleted(/*queue_wait_ms*/40, /*inference_latency_ms*/200, MakeUsage(10, 15, 25));
+    accumulator.RecordAiCallStarted();
+    accumulator.RecordAiCallCompleted(/*queue_wait_ms*/20, /*inference_latency_ms*/100, MakeUsage(20, 30, 50));
     accumulator.UpdateBackpressureStatus(SystemBackpressureStatus::Active);
 
     now_ms = 1000;
@@ -104,7 +106,8 @@ TEST(SystemRuntimeAccumulatorTest, TickUsesMonotonicTotalsToComputePerSecondRate
                                          });
 
     accumulator.RecordAcceptedLogs(3);
-    accumulator.RecordAiCompletion(/*queue_wait_ms*/10, /*inference_latency_ms*/20, std::nullopt);
+    accumulator.RecordAiCallStarted();
+    accumulator.RecordAiCallCompleted(/*queue_wait_ms*/10, /*inference_latency_ms*/20, std::nullopt);
     now_ms = 1000;
     accumulator.OnTick();
 
@@ -133,11 +136,50 @@ TEST(SystemRuntimeAccumulatorTest, RecentLatencyUsesFixedSampleWindowInsteadOfGl
                                              return static_cast<uint64_t>(0);
                                          });
 
-    accumulator.RecordAiCompletion(/*queue_wait_ms*/10, /*inference_latency_ms*/100, std::nullopt);
-    accumulator.RecordAiCompletion(/*queue_wait_ms*/20, /*inference_latency_ms*/200, std::nullopt);
-    accumulator.RecordAiCompletion(/*queue_wait_ms*/100, /*inference_latency_ms*/400, std::nullopt);
+    accumulator.RecordAiCallStarted();
+    accumulator.RecordAiCallCompleted(/*queue_wait_ms*/10, /*inference_latency_ms*/100, std::nullopt);
+    accumulator.RecordAiCallStarted();
+    accumulator.RecordAiCallCompleted(/*queue_wait_ms*/20, /*inference_latency_ms*/200, std::nullopt);
+    accumulator.RecordAiCallStarted();
+    accumulator.RecordAiCallCompleted(/*queue_wait_ms*/100, /*inference_latency_ms*/400, std::nullopt);
 
     const SystemRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
     EXPECT_EQ(snapshot.overview.ai_queue_wait_ms, 60U);
     EXPECT_EQ(snapshot.overview.ai_inference_latency_ms, 300U);
+}
+
+TEST(SystemRuntimeAccumulatorTest, AiCallTotalAndAiCompletionTotalUseDifferentMaturityPoints)
+{
+    int64_t now_ms = 0;
+    SystemRuntimeAccumulator accumulator(/*latency_sample_limit*/4,
+                                         /*series_limit*/8,
+                                         [&now_ms]()
+                                         {
+                                             return now_ms;
+                                         },
+                                         []()
+                                         {
+                                             return static_cast<uint64_t>(0);
+                                         });
+
+    accumulator.RecordAiCallStarted();
+    accumulator.RecordAiCallStarted();
+    now_ms = 1000;
+    accumulator.OnTick();
+
+    // 这条测试专门锁“调用已发起”和“调用已完成”不是同一件事。
+    // 如果以后系统出现大量正在跑/失败/超时的 AI 任务，ai_call_total 和完成吞吐就会自然分叉。
+    SystemRuntimeSnapshot snapshot = accumulator.BuildSnapshot();
+    EXPECT_EQ(snapshot.overview.ai_call_total, 2U);
+    ASSERT_EQ(snapshot.timeseries.size(), 1U);
+    EXPECT_EQ(snapshot.timeseries[0].ai_completion_rate, 0U);
+
+    accumulator.RecordAiCallCompleted(/*queue_wait_ms*/30, /*inference_latency_ms*/120, std::nullopt);
+    now_ms = 2000;
+    accumulator.OnTick();
+
+    snapshot = accumulator.BuildSnapshot();
+    EXPECT_EQ(snapshot.overview.ai_call_total, 2U);
+    ASSERT_EQ(snapshot.timeseries.size(), 2U);
+    EXPECT_EQ(snapshot.timeseries[1].ai_completion_rate, 1U);
 }

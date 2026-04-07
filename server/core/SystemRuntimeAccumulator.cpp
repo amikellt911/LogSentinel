@@ -12,12 +12,13 @@ uint64_t BytesToMb(uint64_t bytes)
 }
 } // namespace
 
-SystemRuntimeAccumulator::FixedSampleRing::FixedSampleRing(size_t capacity)
-    : values(capacity, 0)
+SystemRuntimeAccumulator::FixedLatencySampleWindow::FixedLatencySampleWindow(size_t capacity)
+    : values(capacity)
 {
 }
 
-void SystemRuntimeAccumulator::FixedSampleRing::Push(uint64_t value)
+void SystemRuntimeAccumulator::FixedLatencySampleWindow::Push(uint64_t queue_wait_ms,
+                                                             uint64_t inference_latency_ms)
 {
     if (values.empty())
     {
@@ -26,26 +27,40 @@ void SystemRuntimeAccumulator::FixedSampleRing::Push(uint64_t value)
 
     if (size < values.size())
     {
-        values[next_index] = value;
-        sum += value;
+        values[next_index].queue_wait_ms = queue_wait_ms;
+        values[next_index].inference_latency_ms = inference_latency_ms;
+        queue_wait_sum += queue_wait_ms;
+        inference_latency_sum += inference_latency_ms;
         ++size;
         next_index = (next_index + 1) % values.size();
         return;
     }
 
-    sum -= values[next_index];
-    values[next_index] = value;
-    sum += value;
+    queue_wait_sum -= values[next_index].queue_wait_ms;
+    inference_latency_sum -= values[next_index].inference_latency_ms;
+    values[next_index].queue_wait_ms = queue_wait_ms;
+    values[next_index].inference_latency_ms = inference_latency_ms;
+    queue_wait_sum += queue_wait_ms;
+    inference_latency_sum += inference_latency_ms;
     next_index = (next_index + 1) % values.size();
 }
 
-uint64_t SystemRuntimeAccumulator::FixedSampleRing::Average() const
+uint64_t SystemRuntimeAccumulator::FixedLatencySampleWindow::AverageQueueWaitMs() const
 {
     if (size == 0)
     {
         return 0;
     }
-    return sum / size;
+    return queue_wait_sum / size;
+}
+
+uint64_t SystemRuntimeAccumulator::FixedLatencySampleWindow::AverageInferenceLatencyMs() const
+{
+    if (size == 0)
+    {
+        return 0;
+    }
+    return inference_latency_sum / size;
 }
 
 int64_t SystemRuntimeAccumulator::DefaultNowMs()
@@ -101,8 +116,7 @@ SystemRuntimeAccumulator::SystemRuntimeAccumulator(size_t latency_sample_limit,
     : time_provider_(time_provider ? std::move(time_provider) : DefaultNowMs),
       memory_provider_(memory_provider ? std::move(memory_provider) : DefaultReadProcessRssBytes),
       series_limit_(series_limit > 0 ? series_limit : 60),
-      queue_wait_samples_(latency_sample_limit),
-      inference_latency_samples_(latency_sample_limit),
+      latency_samples_(latency_sample_limit),
       last_sample_time_ms_(time_provider_())
 {
 }
@@ -113,11 +127,15 @@ void SystemRuntimeAccumulator::RecordAcceptedLogs(uint64_t count)
     ingest_total_.fetch_add(count, std::memory_order_relaxed);
 }
 
-void SystemRuntimeAccumulator::RecordAiCompletion(uint64_t queue_wait_ms,
-                                                  uint64_t inference_latency_ms,
-                                                  std::optional<TraceAiUsage> usage)
+void SystemRuntimeAccumulator::RecordAiCallStarted()
 {
     ai_call_total_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void SystemRuntimeAccumulator::RecordAiCallCompleted(uint64_t queue_wait_ms,
+                                                    uint64_t inference_latency_ms,
+                                                    std::optional<TraceAiUsage> usage)
+{
     ai_completion_total_.fetch_add(1, std::memory_order_relaxed);
 
     if (usage.has_value())
@@ -128,8 +146,9 @@ void SystemRuntimeAccumulator::RecordAiCompletion(uint64_t queue_wait_ms,
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    queue_wait_samples_.Push(queue_wait_ms);
-    inference_latency_samples_.Push(inference_latency_ms);
+    // 这里在一次短锁里把“同一调用的排队时间 + 推理时间”一起写进最近样本窗口。
+    // 既然这两个值天然成对出现，那就不要拆成两套彼此独立的窗口，否则后面解释口径会越来越脏。
+    latency_samples_.Push(queue_wait_ms, inference_latency_ms);
 }
 
 void SystemRuntimeAccumulator::UpdateBackpressureStatus(SystemBackpressureStatus status)
@@ -194,8 +213,8 @@ SystemRuntimeSnapshot SystemRuntimeAccumulator::BuildSnapshot() const
     std::lock_guard<std::mutex> lock(mutex_);
     // 这两张延迟卡现在故意吃“固定样本平均”，不是全局累计平均。
     // 这样页面既不会像最后一条样本那样乱跳，也不会因为历史太长而完全失去敏感度。
-    snapshot.overview.ai_queue_wait_ms = queue_wait_samples_.Average();
-    snapshot.overview.ai_inference_latency_ms = inference_latency_samples_.Average();
+    snapshot.overview.ai_queue_wait_ms = latency_samples_.AverageQueueWaitMs();
+    snapshot.overview.ai_inference_latency_ms = latency_samples_.AverageInferenceLatencyMs();
     snapshot.timeseries = timeseries_;
     return snapshot;
 }

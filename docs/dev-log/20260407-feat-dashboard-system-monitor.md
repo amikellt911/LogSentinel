@@ -140,3 +140,37 @@ feat(core): 新增系统监控运行态累加器骨架
 ### Pitfalls
 
 系统吞吐图最容易犯的错是“每秒把总数清零再读”。这种写法表面直观，实际会把热路径写入和采样线程绑在一起。更稳的做法是一直维护单调总数，定时器只做差分采样，这样写路径就只剩 `fetch_add`，不会引入额外的清零同步。
+
+# 追加记录：2026-04-07 SystemRuntimeAccumulator 口径细化（AI started/completed + 复合延迟样本）
+
+## Git Commit Message
+
+refactor(core): 细化系统监控 AI 调用成熟时机与延迟样本口径
+
+## Modification
+
+- `server/core/SystemRuntimeAccumulator.h`
+- `server/core/SystemRuntimeAccumulator.cpp`
+- `server/tests/SystemRuntimeAccumulator_test.cpp`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/core/SystemRuntimeAccumulator.h` 里补了中文注释，说明为什么把 `RecordAiCallStarted()` 和 `RecordAiCallCompleted()` 拆开，以及为什么“排队等待 + 推理耗时”要作为同一次 AI 调用的一条复合样本推进窗口。
+- 在 `server/core/SystemRuntimeAccumulator.cpp` 里补了中文注释，说明为什么完成态样本在一次短锁里统一写入，而不是把两张延迟卡拆成两套独立窗口。
+- 在 `server/tests/SystemRuntimeAccumulator_test.cpp` 里补了中文注释，说明新增测试锁的是“调用已发起”和“调用已完成”不是同一成熟时机。
+
+## Learning Tips
+
+### Newbie Tips
+
+“已经发起了多少次 AI 调用”和“已经完成了多少次 AI 调用”看起来只差一个单词，但它们在系统监控里是两种完全不同的信号。前者更像入口压力，后者更像实际吞吐；如果把两者一直混成一个数，后面遇到队列堆积或超时时就看不出问题到底卡在哪一段。
+
+### Function Explanation
+
+这次把延迟样本从“两套独立数值窗口”改成了“一条样本里同时带 queue_wait_ms 和 inference_latency_ms”。这样做不是为了省变量，而是为了保留“它们来自同一次 AI 调用”这层语义，后面如果要扩展更多阶段耗时，也能继续沿着这个样本结构往里加。
+
+### Pitfalls
+
+如果一上来就把两张延迟卡拆成两套完全独立的统计路径，短期看也能出平均值，但后面一旦想加更多阶段、更多解释字段，语义就会越来越散。复合样本的价值就在于：一次调用产生的多个阶段耗时，始终作为一个整体被记录和理解。

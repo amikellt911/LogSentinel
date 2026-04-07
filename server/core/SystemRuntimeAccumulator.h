@@ -67,11 +67,16 @@ public:
     // 这里不做时间窗，只做单调总数，后续由 OnTick 做差分采样。
     void RecordAcceptedLogs(uint64_t count = 1);
 
+    // “AI 调用总数”和“AI 完成吞吐”不是同一时间点成熟的数据，所以这里拆成 started/completed 两步。
+    // started 在真正准备调模型前记一次，completed 在模型调用收尾时记一次，
+    // 这样后面系统监控才能区分“已经发起了多少次”和“真正完成了多少次”。
+    void RecordAiCallStarted();
+
     // AI 完成一次调用后，把排队等待、真实推理耗时和可选 usage 一起记进系统运行态。
-    // 这里的两张延迟卡吃的是固定样本平均，而不是全局累计平均。
-    void RecordAiCompletion(uint64_t queue_wait_ms,
-                            uint64_t inference_latency_ms,
-                            std::optional<TraceAiUsage> usage);
+    // 这里的两张延迟卡吃的是“最近 N 次完成调用”的固定样本平均，而不是全局累计平均。
+    void RecordAiCallCompleted(uint64_t queue_wait_ms,
+                               uint64_t inference_latency_ms,
+                               std::optional<TraceAiUsage> usage);
 
     // 背压状态先只收口成系统综合结论，避免前端把单一队列占用率误当成背压定义。
     void UpdateBackpressureStatus(SystemBackpressureStatus status);
@@ -85,19 +90,27 @@ public:
     SystemRuntimeSnapshot BuildSnapshot() const;
 
 private:
-    struct FixedSampleRing
+    struct AiLatencySample
     {
-        explicit FixedSampleRing(size_t capacity = 0);
+        uint64_t queue_wait_ms = 0;
+        uint64_t inference_latency_ms = 0;
+    };
 
-        // 固定样本 ring 只保留最近 N 条延迟样本，目的是让页面看到“最近体感”，
-        // 而不是被全局历史平均拉钝。
-        void Push(uint64_t value);
-        uint64_t Average() const;
+    struct FixedLatencySampleWindow
+    {
+        explicit FixedLatencySampleWindow(size_t capacity = 0);
 
-        std::vector<uint64_t> values;
+        // 这里故意把“排队等待”和“推理耗时”放在同一条样本里推进窗口。
+        // 因为它们都属于同一次 AI 调用；如果拆成两套独立窗口，就会在后续扩展里失去“同一次调用”的配对语义。
+        void Push(uint64_t queue_wait_ms, uint64_t inference_latency_ms);
+        uint64_t AverageQueueWaitMs() const;
+        uint64_t AverageInferenceLatencyMs() const;
+
+        std::vector<AiLatencySample> values;
         size_t next_index = 0;
         size_t size = 0;
-        uint64_t sum = 0;
+        uint64_t queue_wait_sum = 0;
+        uint64_t inference_latency_sum = 0;
     };
 
     static int64_t DefaultNowMs();
@@ -119,8 +132,7 @@ private:
     std::atomic<SystemBackpressureStatus> backpressure_status_{SystemBackpressureStatus::Normal};
 
     mutable std::mutex mutex_;
-    FixedSampleRing queue_wait_samples_;
-    FixedSampleRing inference_latency_samples_;
+    FixedLatencySampleWindow latency_samples_;
     std::vector<SystemMetricPoint> timeseries_;
     uint64_t last_ingest_total_ = 0;
     uint64_t last_ai_completion_total_ = 0;
