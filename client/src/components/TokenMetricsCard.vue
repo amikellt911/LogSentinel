@@ -8,7 +8,7 @@
             {{ $t('aiEngine.totalTokens') }}
           </div>
           <div class="text-2xl font-bold text-blue-400 font-mono">
-            {{ formatNumber(metrics.totalTokens) }}
+            {{ formatNumber(systemStore.totalTokens) }}
           </div>
           <div class="text-xs text-gray-500 mt-1">
             {{ $t('aiEngine.tokens') }}
@@ -30,7 +30,7 @@
             {{ $t('aiEngine.input') }}
           </div>
           <div class="text-2xl font-bold text-green-400 font-mono">
-            {{ formatNumber(metrics.inputTokens) }}
+            {{ formatNumber(systemStore.inputTokens) }}
           </div>
           <div class="text-xs text-gray-500 mt-1">
             {{ $t('aiEngine.tokens') }}
@@ -52,7 +52,7 @@
             {{ $t('aiEngine.output') }}
           </div>
           <div class="text-2xl font-bold text-yellow-400 font-mono">
-            {{ formatNumber(metrics.outputTokens) }}
+            {{ formatNumber(systemStore.outputTokens) }}
           </div>
           <div class="text-xs text-gray-500 mt-1">
             {{ $t('aiEngine.tokens') }}
@@ -74,7 +74,7 @@
             {{ $t('aiEngine.avgTokensPerCall') }}
           </div>
           <div class="text-2xl font-bold text-purple-400 font-mono">
-            {{ formatNumber(metrics.avgTokensPerCall) }}
+            {{ formatNumber(systemStore.avgTokensPerCall) }}
           </div>
           <div class="text-xs text-gray-500 mt-1">
             {{ $t('dashboard.calls') }}
@@ -91,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive } from 'vue'
+import { useSystemStore } from '../stores/system'
 import { DataLine, TrendCharts, Coin, Document } from '@element-plus/icons-vue'
 
 /**
@@ -99,21 +99,9 @@ import { DataLine, TrendCharts, Coin, Document } from '@element-plus/icons-vue'
  * 只保留总量、输入、输出和平均每次 AI 调用 token，
  * 不再继续混节省比例、预估成本这种容易误导演示口径的字段。
  */
-interface TokenMetrics {
-  totalTokens: number            // 总 Token 数
-  inputTokens: number            // 输入 Token 数
-  outputTokens: number           // 输出 Token 数
-  avgTokensPerCall: number       // 平均每次 AI 调用的 Token 数
-}
-
-// 这一刀只改展示骨架，不接后端真数据，所以这里先保留本地 mock 值。
-// 后面接真实 runtime stats 时，直接把这组字段替换成后端快照即可。
-const metrics = reactive<TokenMetrics>({
-  totalTokens: 245760,
-  inputTokens: 180224,
-  outputTokens: 65536,
-  avgTokensPerCall: 512
-})
+// Token 卡片现在直接读取系统监控 store 的真值，不再在组件内部留一套本地 mock。
+// 这样 token 的 provider 真值/估算回退逻辑只在后端和 store 里维护一次，展示层不再重复发明状态。
+const systemStore = useSystemStore()
 
 /**
  * 格式化数字（添加千分位分隔符）

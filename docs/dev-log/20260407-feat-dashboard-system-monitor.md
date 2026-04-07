@@ -253,3 +253,37 @@ refactor(handler): 让 dashboard 直接读取系统运行态快照
 ### Pitfalls
 
 从旧 handler 切到新快照时，最容易漏的是测试和 CMake。只改 `DashboardHandler.cpp` 不把新测试 target 挂进 `CMakeLists.txt`，编译阶段根本不会帮你兜住“接口已经换了，但没人验证 JSON 结构”的问题。
+
+# 追加记录：2026-04-07 Dashboard 前端切到系统运行态真快照
+
+## Git Commit Message
+
+feat(frontend): 让系统监控页面读取真实运行态快照
+
+## Modification
+
+- `client/src/stores/system.ts`
+- `client/src/views/Dashboard.vue`
+- `client/src/components/TokenMetricsCard.vue`
+- `docs/todo-list/Todo_Phase1_ServiceMonitor.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/stores/system.ts` 里补了中文注释，说明 dashboard 为什么从旧 `DashboardStatsResponse` 切到 `overview / token_stats / timeseries` 三段快照，以及为什么前端不再自己生成假图表和假内存值。
+- 在 `client/src/views/Dashboard.vue` 里补了中文注释，说明顶部卡片已经直接读取真实 runtime stats、为什么内存卡改成 `RSS MB`、以及为什么背压卡不再附带单队列百分比。
+- 在 `client/src/components/TokenMetricsCard.vue` 里补了中文注释，说明 token 卡为什么不再维护本地 mock，而是直接读取 store 里的系统运行态真值。
+
+## Learning Tips
+
+### Newbie Tips
+
+前端接真接口时，最容易犯的错不是字段名改漏，而是“接口已经变了，页面却还在偷偷补假数据”。这样页面表面能动，实际上你根本分不清哪个数是真值、哪个数是前端自己编的。系统监控这类页面要么吃真快照，要么明确空态，最忌讳真假混用。
+
+### Function Explanation
+
+这次 `system.ts` 里保留了 `MetricPoint { time, qps, aiRate }` 这层前端结构，但后端返回的是 `timeseries[].{time_ms, ingest_rate, ai_completion_rate}`。前端没有直接把 `time_ms` 当真实时间展示，而是按点的顺序回填 `HH:mm:ss` 标签，因为当前后端的 `time_ms` 还是内部采样时钟，不是用户能理解的墙上时间。
+
+### Pitfalls
+
+内存卡如果继续沿用旧的 `memoryPercent + 进度条`，页面看起来会像“宿主机资源面板”，但后端现在拿到的其实是进程 RSS。进程内存和整机百分比不是一个量纲，前端如果不跟着改口径，用户看到的就是一张表面正常、实际语义完全错位的卡片。
