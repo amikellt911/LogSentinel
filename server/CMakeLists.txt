@@ -196,6 +196,12 @@ add_executable(test_webhook_notifier
   tests/WebhookNotifier_test.cpp
 )
 
+# 这个目标是给真实 webhook 手工联调用的独立入口，不注册进 CTest，
+# 避免构建机或本地一跑测试就误把真实消息发到外部平台。
+add_executable(manual_webhook_notifier
+  tests/manual_webhook_notifier.cpp
+)
+
 # target_include_directories(test_http_context PRIVATE
 # ${CMAKE_CURRENT_SOURCE_DIR}
 # )
@@ -237,6 +243,9 @@ handler_module
 )
 target_link_libraries(test_webhook_notifier PRIVATE
 GTest::gtest_main
+notification_module
+)
+target_link_libraries(manual_webhook_notifier PRIVATE
 notification_module
 )
 

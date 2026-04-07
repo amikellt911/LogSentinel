@@ -33,6 +33,38 @@ refactor(frontend): 收口系统监控页面骨架与文案
 
 ## Git Commit Message
 
+feat(notification): 新增独立 webhook 手工联调入口
+
+## Modification
+
+- `server/tests/manual_webhook_notifier.cpp`
+- `server/CMakeLists.txt`
+- `docs/todo-list/Todo_WebhookNotifier.md`
+- `docs/dev-log/20260407-feat-dashboard-system-monitor.md`
+
+## 这次补了哪些注释
+
+- 在 `server/tests/manual_webhook_notifier.cpp` 里补了中文注释，说明为什么这条入口故意只构造假 `TraceAlertEvent`，以及为什么它要和主链、Settings、数据库解耦。
+- 在 `server/CMakeLists.txt` 里补了中文注释，说明 `manual_webhook_notifier` 是手工联调目标，不注册进 CTest，避免自动化测试误发真实外部消息。
+
+## Learning Tips
+
+### Newbie Tips
+
+真实 webhook 联调入口最好和主程序入口分开。这样出问题时，变量只剩消息模板、HTTP 发送和平台返回，不会把 Settings、生效逻辑、数据库配置一起卷进来。
+
+### Function Explanation
+
+这次新增的 `manual_webhook_notifier` 不是单元测试，而是一个独立的手工联调可执行文件。它通过命令行参数构造一条假的 `TraceAlertEvent`，然后直接调用 `WebhookNotifier::notifyTraceAlert`，专门用来验证飞书等外部 webhook 的真实送达链路。
+
+### Pitfalls
+
+不要把真实外部 webhook 联调入口注册进 CTest。否则你一旦执行 `ctest` 或 CI 跑全量测试，就可能把真实告警消息发到外部群里，测试环境和生产联调边界会立刻变脏。
+
+# 追加记录：2026-04-07 Dashboard 前端切到系统运行态真快照
+
+## Git Commit Message
+
 refactor(frontend): 移除系统监控背压卡的队列百分比副文案
 
 ## Modification

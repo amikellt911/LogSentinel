@@ -18,3 +18,7 @@
 - [x] 维持现有 `cpr` 发送逻辑不动，只把 payload 组装与发送通道解耦
 - [x] 编译并运行 `WebhookNotifier` 测试，确认通知层结构改造无回归
 - [x] 追加本次飞书 formatter 改造 dev-log 记录
+- [x] 新增独立 webhook 手工联调入口，支持启动参数传 `provider/webhook_url`
+- [x] 手工联调入口默认构造一条假 `TraceAlertEvent`，不依赖主链、Settings 或数据库
+- [x] 编译并验证手工联调入口至少能正常打印 `--help`
+- [x] 追加本次 webhook 手工联调入口 dev-log 记录
