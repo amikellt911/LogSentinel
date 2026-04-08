@@ -160,8 +160,8 @@
                 </div>
               </div>
 
-              <!-- prompt 管理区继续严格贴近旧 Settings 的交互：
-                   左侧点哪条就编辑哪条，并且同步切成 active，避免再额外造一个“设为 Active”按钮打断原来的使用路径。 -->
+              <!-- prompt 管理区现在把“选中编辑”和“设为生效”彻底拆开：
+                   左侧点击只表示当前正在编辑哪条，active 由右侧独立按钮决定，避免用户把“我点到了这条”误解成“这条已经会生效”。 -->
               <div class="flex min-h-[780px] flex-col border-t border-gray-700 md:min-h-[860px] md:flex-row">
                 <div class="w-full border-r border-gray-700 flex flex-col bg-[#1a1a1a] md:w-[300px] md:min-w-[300px]">
                   <div class="p-4 border-b border-gray-700 flex justify-between items-center bg-[#252525]">
@@ -217,9 +217,23 @@
                 <div class="w-full min-w-0 bg-[#202020] md:flex-1">
                   <div v-if="selectedPrompt" class="flex h-full min-h-0 flex-col">
                     <div class="border-b border-gray-700 bg-[#262626] px-6 py-6 md:px-8">
-                      <div class="max-w-[420px]">
-                        <label class="mb-2 block text-sm font-semibold text-gray-200">Prompt 名称</label>
-                        <el-input v-model="selectedPrompt.name" />
+                      <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                        <div class="max-w-[420px]">
+                          <label class="mb-2 block text-sm font-semibold text-gray-200">Prompt 名称</label>
+                          <el-input v-model="selectedPrompt.name" />
+                        </div>
+
+                        <div class="flex flex-col items-start gap-2 lg:items-end">
+                          <el-button
+                            type="primary"
+                            :disabled="!selectedPrompt || ai.activePromptId === selectedPrompt.id"
+                            @click="setSelectedPromptActive"
+                          >
+                            <el-icon class="mr-2"><Check /></el-icon>
+                            {{ promptEditorLabels.setActive }}
+                          </el-button>
+                          <div class="text-xs text-gray-400">{{ promptEditorLabels.activeHint }}</div>
+                        </div>
                       </div>
                     </div>
 
@@ -816,7 +830,9 @@ const promptEditorLabels = computed(() => {
     focusAreas: isZh ? '关注点' : 'Focus Areas',
     riskPreference: isZh ? '风险偏好' : 'Risk Preference',
     outputPreference: isZh ? '输出偏好' : 'Output Preference',
-    preview: isZh ? '最终 Business Guidance 预览' : 'Rendered Business Guidance Preview'
+    preview: isZh ? '最终 Business Guidance 预览' : 'Rendered Business Guidance Preview',
+    setActive: isZh ? '设为生效配置' : 'Set As Active Prompt',
+    activeHint: isZh ? '保存后重启生效' : 'Takes effect after save and restart'
   }
 })
 
@@ -1186,12 +1202,19 @@ function resetPrototype() {
 }
 
 /**
- * 这里故意沿用旧 Settings 的点击语义：
- * 用户点左侧列表项时，同时完成“选中编辑”和“切成 active”，这样视觉状态点和右侧编辑目标始终一致。
+ * 左侧点击现在只负责切换编辑对象。
+ * active prompt 已经被明确收口成“冷启动配置”，所以不能再用一次点击同时完成“选中”和“设为生效”，
+ * 否则用户会误以为当前运行中的分析逻辑已经立刻切过去了。
  */
 function handlePromptClick(id: number) {
   selectedPromptId.value = id
-  ai.activePromptId = id
+}
+
+// active prompt 现在必须通过独立按钮显式设置。
+// 这样用户会先看右侧内容，再决定哪条在“保存并重启”后真正生效，语义比点击列表即切换更干净。
+function setSelectedPromptActive() {
+  if (!selectedPrompt.value) return
+  ai.activePromptId = selectedPrompt.value.id
 }
 
 function addPrompt() {

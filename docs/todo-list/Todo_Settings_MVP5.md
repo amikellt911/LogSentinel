@@ -40,3 +40,6 @@
 - [x] 调整 `SettingsPrototype.vue` 的结构化 Prompt 标题语言，使其跟随界面语言切换，但保留英文 `business_guidance` 预览
 - [x] 将 Prompt 列表里的 `selected` 与 `active` 视觉状态拆开，并增加明确的 active badge
 - [x] 追加 2026-04-08 dev-log，记录这次 Prompt 标题语言与 active 状态视觉修正
+- [x] 修正 `SettingsPrototype.vue` 的 Prompt 交互语义：左侧点击只选中编辑，不再自动切 active
+- [x] 为 Prompt 编辑区补独立“设为生效配置”按钮，并明确标注“保存后重启生效”
+- [x] 追加 2026-04-08 dev-log，记录这次 Prompt 选中态/生效态语义修正

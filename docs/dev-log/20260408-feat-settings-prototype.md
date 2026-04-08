@@ -296,6 +296,43 @@ refactor(frontend): 将设置原型页的业务 prompt 改成结构化编辑
 
 - 在 `client` 目录运行了单文件 SFC 编译检查：
   - `node -e "...@vue/compiler-sfc..."` 返回 `SFC compile ok`
+
+# 追加记录：2026-04-08 Prompt 选中态与生效态语义拆分
+
+## Git Commit Message
+
+refactor(frontend): 拆开设置原型页的 prompt 选中态与生效态
+
+## Modification
+
+- `client/src/views/SettingsPrototype.vue`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/SettingsPrototype.vue` 的 Prompt 列表区补了中文注释，说明为什么左侧列表现在必须把“选中编辑”和“设为生效”拆开。
+- 在 `client/src/views/SettingsPrototype.vue` 的 `handlePromptClick()` 上方补了中文注释，说明为什么点击左侧条目不能再顺手改 `active_prompt_id`。
+- 在 `client/src/views/SettingsPrototype.vue` 的 `setSelectedPromptActive()` 上方补了中文注释，说明为什么 active prompt 必须通过右侧独立按钮显式设置。
+
+## Learning Tips
+
+### Newbie Tips
+
+“我正在编辑哪一条配置”和“哪一条配置会真正生效”是两个不同状态。只要系统不是运行中立刻热切换，这两个状态就不应该共用同一个点击动作。
+
+### Function Explanation
+
+这次新增的 `setSelectedPromptActive()` 只做一件事：把当前选中的 prompt 标记成 active。真正落地生效仍然取决于后续保存和冷启动语义，所以按钮旁边额外写了“保存后重启生效”。
+
+### Pitfalls
+
+如果左侧点击既切编辑对象又切 active，用户几乎一定会误以为“我一点，这条就已经在当前系统里生效了”。这在冷启动配置场景下是错觉，而且会直接把页面语义搞脏。
+
+## Verification
+
+- 在 `client` 目录运行了单文件 SFC 编译检查：
+  - `node -e "...@vue/compiler-sfc..."` 返回 `SFC compile ok`
 - 第一次在仓库根目录运行相同检查时失败，原因是 `@vue/compiler-sfc` 模块只安装在 `client/node_modules`，不是本次代码本身的语法错误。
 
 # 追加记录：2026-04-08 Prompt 编辑区标题本地化与 Active 状态强化
