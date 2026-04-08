@@ -6,6 +6,13 @@
 
 using namespace persistence;
 
+// 配置表里的布尔值目前既可能来自旧库里的 0/1，也可能来自接口层传来的 true/false 字符串。
+// 这里统一做最小宽容解析，避免存储层因为表现形式差异把同一个开关读成两种语义。
+static bool IsTruthyConfigValue(const std::string& val)
+{
+    return val == "1" || val == "true" || val == "TRUE";
+}
+
 // 辅助函数：将 DB 字符串值应用到 AppConfig 结构体
 static void ApplyConfigValue(AppConfig &config, const std::string &key, const std::string &val)
 {
@@ -16,20 +23,31 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         else if (key == "ai_api_key") config.ai_api_key = val;
         else if (key == "ai_language") config.ai_language = val;
         else if (key == "app_language") config.app_language = val;
-        else if (key == "kernel_io_buffer") config.kernel_io_buffer = val;
-        else if (key == "kernel_worker_threads") config.kernel_worker_threads = std::stoi(val);
-        else if (key == "kernel_max_batch") config.kernel_max_batch = std::stoi(val);
-        else if (key == "kernel_refresh_interval") config.kernel_refresh_interval = std::stoi(val);
-        else if (key == "log_retention_days") config.log_retention_days = std::stoi(val);
-        else if (key == "max_disk_usage_gb") config.max_disk_usage_gb = std::stoi(val);
         else if (key == "http_port") config.http_port = std::stoi(val);
+        else if (key == "log_retention_days") config.log_retention_days = std::stoi(val);
+        else if (key == "ai_retry_enabled") config.ai_retry_enabled = IsTruthyConfigValue(val);
+        else if (key == "ai_retry_max_attempts") config.ai_retry_max_attempts = std::stoi(val);
+        else if (key == "ai_auto_degrade") config.ai_auto_degrade = IsTruthyConfigValue(val);
+        else if (key == "ai_fallback_provider") config.ai_fallback_provider = val;
+        else if (key == "ai_fallback_model") config.ai_fallback_model = val;
+        else if (key == "ai_circuit_breaker") config.ai_circuit_breaker = IsTruthyConfigValue(val);
         else if (key == "ai_failure_threshold") config.ai_failure_threshold = std::stoi(val);
         else if (key == "ai_cooldown_seconds") config.ai_cooldown_seconds = std::stoi(val);
         else if (key == "active_prompt_id") config.active_prompt_id = std::stoi(val);
-        else if (key == "ai_fallback_model") config.ai_fallback_model = val;
-        else if (key == "kernel_adaptive_mode") config.kernel_adaptive_mode = (val == "1" || val == "true" || val == "TRUE");
-        else if (key == "ai_auto_degrade") config.ai_auto_degrade = (val == "1" || val == "true" || val == "TRUE");
-        else if (key == "ai_circuit_breaker") config.ai_circuit_breaker = (val == "1" || val == "true" || val == "TRUE");
+        else if (key == "kernel_worker_threads") config.kernel_worker_threads = std::stoi(val);
+        else if (key == "trace_end_field") config.trace_end_field = val;
+        else if (key == "token_limit") config.token_limit = std::stoi(val);
+        else if (key == "span_capacity") config.span_capacity = std::stoi(val);
+        else if (key == "collecting_idle_timeout_ms") config.collecting_idle_timeout_ms = std::stoi(val);
+        else if (key == "sealed_grace_window_ms") config.sealed_grace_window_ms = std::stoi(val);
+        else if (key == "retry_base_delay_ms") config.retry_base_delay_ms = std::stoi(val);
+        else if (key == "sweep_tick_ms") config.sweep_tick_ms = std::stoi(val);
+        else if (key == "wm_active_sessions_overload") config.wm_active_sessions_overload = std::stoi(val);
+        else if (key == "wm_active_sessions_critical") config.wm_active_sessions_critical = std::stoi(val);
+        else if (key == "wm_buffered_spans_overload") config.wm_buffered_spans_overload = std::stoi(val);
+        else if (key == "wm_buffered_spans_critical") config.wm_buffered_spans_critical = std::stoi(val);
+        else if (key == "wm_pending_tasks_overload") config.wm_pending_tasks_overload = std::stoi(val);
+        else if (key == "wm_pending_tasks_critical") config.wm_pending_tasks_critical = std::stoi(val);
     }
     catch (const std::exception &e)
     {
@@ -82,7 +100,11 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
         rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
         if (rc != SQLITE_OK) throw std::runtime_error("Failed to begin transaction");
 
-        // 初始化 SQL：使用单一 prompts 表管理提示词
+        // 这一刀只收口 Settings 的持久化契约，不在这里做整套配置中心重构：
+        // 1. app_config 继续走 KV，便于后面继续增删 key；
+        // 2. prompts 保持单表不扩字段，避免把还没钉死的 prompt 语义提前写死；
+        // 3. alert_channels 改成最小真实外发字段集，去掉 msg_template，补上飞书签名 secret。
+        // 当前仍假设这是测试阶段的新库或可重建库，所以这里不额外补旧 schema 迁移逻辑。
         const char *init_sql = R"(
             CREATE TABLE IF NOT EXISTS app_config (
                 config_key TEXT PRIMARY KEY,
@@ -102,8 +124,8 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
                 name TEXT NOT NULL,
                 provider TEXT NOT NULL,
                 webhook_url TEXT NOT NULL,
+                secret TEXT DEFAULT '',
                 alert_threshold TEXT NOT NULL,
-                msg_template TEXT,
                 is_active INTEGER DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
@@ -113,20 +135,39 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('ai_api_key', '', 'API密钥'),
             ('ai_language', 'en', '解析语言'),
             ('app_language', 'en', '界面语言'),
-            ('log_retention_days', '7', '日志保留天数'),
-            ('max_disk_usage_gb', '1', '最大磁盘占用GB'),
             ('http_port', '8080', 'HTTP服务端口'),
+            ('log_retention_days', '7', '日志保留天数'),
+            ('ai_retry_enabled', '0', 'AI自动重试开关'),
+            ('ai_retry_max_attempts', '3', 'AI最大重试次数'),
             ('ai_auto_degrade', '0', '自动降级开关'),
+            ('ai_fallback_provider', 'mock', '降级服务商类型'),
             ('ai_fallback_model', 'mock', '降级模型名称'),
             ('ai_circuit_breaker', '1', '熔断机制开关'),
             ('ai_failure_threshold', '5', '熔断触发阈值'),
             ('ai_cooldown_seconds', '60', '熔断冷却时间s'),
             ('active_prompt_id', '0', '当前激活的PromptID'),
-            ('kernel_adaptive_mode', '1', '自适应微批模式开关 1/0'),
-            ('kernel_max_batch', '50', '自适应最大阈值'),
-            ('kernel_refresh_interval', '200', '刷新间隔ms'),
             ('kernel_worker_threads', '4', '工作线程数'),
-            ('kernel_io_buffer', '256MB', 'IO缓冲区大小'); 
+            ('trace_end_field', 'trace_end', '顶层 trace 结束标记字段名'),
+            ('token_limit', '0', '单条 trace 的 token 保护阈值'),
+            ('span_capacity', '100', '单条 trace 的 span 数量保护阈值'),
+            ('collecting_idle_timeout_ms', '5000', '收集阶段空闲超时'),
+            ('sealed_grace_window_ms', '1000', '封口后的乱序缓冲窗'),
+            ('retry_base_delay_ms', '500', 'dispatch 重试的起始等待时间'),
+            ('sweep_tick_ms', '500', '状态机 tick 推进频率'),
+            ('wm_active_sessions_overload', '75', 'active sessions overload 百分比阈值'),
+            ('wm_active_sessions_critical', '90', 'active sessions critical 百分比阈值'),
+            ('wm_buffered_spans_overload', '75', 'buffered spans overload 百分比阈值'),
+            ('wm_buffered_spans_critical', '90', 'buffered spans critical 百分比阈值'),
+            ('wm_pending_tasks_overload', '75', 'pending tasks overload 百分比阈值'),
+            ('wm_pending_tasks_critical', '90', 'pending tasks critical 百分比阈值');
+            DELETE FROM app_config
+            WHERE config_key IN (
+                'max_disk_usage_gb',
+                'kernel_adaptive_mode',
+                'kernel_max_batch',
+                'kernel_refresh_interval',
+                'kernel_io_buffer'
+            );
         )";
 
         rc = sqlite3_exec(db_, init_sql, nullptr, nullptr, &errmsg);
@@ -195,7 +236,15 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
     // 基于旧配置准备新配置
     AppConfig configClone = old_snap->app_config;
 
-    const char *sql = "update app_config set config_value=? where config_key=?;";
+    // config 现在按“只更新改动 key”保存，所以这里直接做按 key upsert。
+    // 这样即使后面新增 key、或者旧测试库里暂时缺了一条 seed，也不会因为 update 命中 0 行而静默丢配置。
+    const char *sql = R"(
+        INSERT INTO app_config (config_key, config_value, description, updated_at)
+        VALUES (?, ?, '', CURRENT_TIMESTAMP)
+        ON CONFLICT(config_key) DO UPDATE SET
+            config_value = excluded.config_value,
+            updated_at = CURRENT_TIMESTAMP;
+    )";
     sqlite3_stmt *stmt_ = nullptr;
     int rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
     checkSqliteError(db_, rc, "Failed to begin transaction");
@@ -212,8 +261,8 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
         for (auto &[key, val] : mp)
         {
             const std::string& effective_val = val;
-            sqlite3_bind_text(stmt.get(), 1, effective_val.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt.get(), 2, key.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt.get(), 1, key.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt.get(), 2, effective_val.c_str(), -1, SQLITE_STATIC);
 
             const int step_rc = sqlite3_step(stmt.get());
             if (step_rc != SQLITE_DONE) {
@@ -360,8 +409,8 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
     sqlite3_stmt* stmt_insert = nullptr;
     sqlite3_stmt* stmt_update = nullptr;
 
-    const char* sql_insert = "INSERT INTO alert_channels (name, provider, webhook_url, alert_threshold, msg_template, is_active) VALUES (?, ?, ?, ?, ?, ?);";
-    const char* sql_update = "UPDATE alert_channels SET name=?, provider=?, webhook_url=?, alert_threshold=?, msg_template=?, is_active=? WHERE id=?;";
+    const char* sql_insert = "INSERT INTO alert_channels (name, provider, webhook_url, secret, alert_threshold, is_active) VALUES (?, ?, ?, ?, ?, ?);";
+    const char* sql_update = "UPDATE alert_channels SET name=?, provider=?, webhook_url=?, secret=?, alert_threshold=?, is_active=? WHERE id=?;";
 
     int rc = SQLITE_OK;
     try {
@@ -389,8 +438,8 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
             sqlite3_bind_text(curr_stmt, col_idx++, item.name.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(curr_stmt, col_idx++, item.provider.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(curr_stmt, col_idx++, item.webhook_url.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(curr_stmt, col_idx++, item.secret.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(curr_stmt, col_idx++, item.alert_threshold.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(curr_stmt, col_idx++, item.msg_template.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_int(curr_stmt, col_idx++, item.is_active ? 1 : 0);
 
             if (item.id > 0) {
@@ -494,7 +543,7 @@ AppConfig SqliteConfigRepository::getAppConfigInternal()
 std::vector<AlertChannel> SqliteConfigRepository::getAllChannelsInternal()
 {
     std::vector<AlertChannel> alerts;
-    const char *sql = "select id,name,provider,webhook_url,alert_threshold,msg_template,is_active from alert_channels;";
+    const char *sql = "select id,name,provider,webhook_url,secret,alert_threshold,is_active from alert_channels;";
     sqlite3_stmt *stmt_ = nullptr;
     int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
     if (rc != SQLITE_OK) checkSqliteError(db_, rc, "Failed to prepare statement for channels");
@@ -505,17 +554,17 @@ std::vector<AlertChannel> SqliteConfigRepository::getAllChannelsInternal()
         const char *name_ptr = (const char *)sqlite3_column_text(stmt.get(), 1);
         const char *provider_ptr = (const char *)sqlite3_column_text(stmt.get(), 2);
         const char *webhook_url_ptr = (const char *)sqlite3_column_text(stmt.get(), 3);
-        const char *alert_threshold_ptr = (const char *)sqlite3_column_text(stmt.get(), 4);
-        const char *msg_template_ptr = (const char *)sqlite3_column_text(stmt.get(), 5);
+        const char *secret_ptr = (const char *)sqlite3_column_text(stmt.get(), 4);
+        const char *alert_threshold_ptr = (const char *)sqlite3_column_text(stmt.get(), 5);
         int is_active = sqlite3_column_int(stmt.get(), 6);
         bool active_flag = (is_active != 0);
         if (!name_ptr || !provider_ptr || !webhook_url_ptr || !alert_threshold_ptr) continue;
         std::string name = name_ptr;
         std::string provider = provider_ptr;
         std::string webhook_url = webhook_url_ptr;
+        std::string secret = secret_ptr ? secret_ptr : "";
         std::string alert_threshold = alert_threshold_ptr;
-        std::string msg_template = msg_template_ptr ? msg_template_ptr : "";
-        alerts.emplace_back(id, name, provider, webhook_url, alert_threshold, msg_template, active_flag);
+        alerts.emplace_back(id, name, provider, webhook_url, secret, alert_threshold, active_flag);
     }
     return alerts;
 }

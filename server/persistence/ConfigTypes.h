@@ -25,23 +25,26 @@ struct HistoryPage {
 };
 
 // 1. 通用配置 (对应 app_config 表)
+// 这里继续保留 KV 投影，而不是把 Settings 直接拆成强 schema 表。
+// 原因很直接：这批字段现在仍在收口期，后面真正频繁变化的是 key 集，而不是整张表的物理结构。
+// 所以这一层只负责把“当前认可的稳定 key”集中成一个类型安全的视图，便于 Repository 读写和快照发布。
 struct AppConfig {
     // AI 设置
     std::string ai_provider = "mock";
     std::string ai_model = "gpt-4-turbo";
     std::string ai_api_key = "";
     std::string ai_language = "en";
-    std::string app_language = "en"; // Application UI Language
+    std::string app_language = "en";
 
-    // 日志存储策略
-    int log_retention_days = 7;
-    int max_disk_usage_gb = 1;
-
-    // 网络监听配置
+    // 基础设置
     int http_port = 8080;
+    int log_retention_days = 7;
 
-    // 高可用与容灾
+    // AI 可靠性控制
+    bool ai_retry_enabled = false;
+    int ai_retry_max_attempts = 3;
     bool ai_auto_degrade = false;
+    std::string ai_fallback_provider = "mock";
     std::string ai_fallback_model = "mock";
     bool ai_circuit_breaker = true;
     int ai_failure_threshold = 5;
@@ -50,24 +53,45 @@ struct AppConfig {
     // Active Prompt ID（单一提示词方案）
     int active_prompt_id = 0;
 
-    // 内核设置
+    // 内核与主链运行时参数
     int kernel_worker_threads = 4;
-    int kernel_max_batch = 50;
-    int kernel_refresh_interval = 200;
-    std::string kernel_io_buffer = "256MB";
-    bool kernel_adaptive_mode = true;
+    std::string trace_end_field = "trace_end";
+    int token_limit = 0;
+    int span_capacity = 100;
+    int collecting_idle_timeout_ms = 5000;
+    int sealed_grace_window_ms = 1000;
+    int retry_base_delay_ms = 500;
+    int sweep_tick_ms = 500;
+
+    // 三类积压指标各自维护 overload / critical 百分比，避免把不同容量基数硬揉成一个总水位。
+    int wm_active_sessions_overload = 75;
+    int wm_active_sessions_critical = 90;
+    int wm_buffered_spans_overload = 75;
+    int wm_buffered_spans_critical = 90;
+    int wm_pending_tasks_overload = 75;
+    int wm_pending_tasks_critical = 90;
 
     // 序列化宏 (注意：字段名需与 JSON key 及 DB config_key 一致)
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AppConfig, 
         ai_provider, ai_model, ai_api_key, ai_language, app_language,
-        log_retention_days, max_disk_usage_gb, http_port,
-        ai_auto_degrade, ai_fallback_model, ai_circuit_breaker, ai_failure_threshold, ai_cooldown_seconds,
+        http_port, log_retention_days,
+        ai_retry_enabled, ai_retry_max_attempts,
+        ai_auto_degrade, ai_fallback_provider, ai_fallback_model,
+        ai_circuit_breaker, ai_failure_threshold, ai_cooldown_seconds,
         active_prompt_id,
-        kernel_worker_threads, kernel_max_batch, kernel_refresh_interval, kernel_io_buffer, kernel_adaptive_mode
+        kernel_worker_threads,
+        trace_end_field, token_limit, span_capacity,
+        collecting_idle_timeout_ms, sealed_grace_window_ms, retry_base_delay_ms, sweep_tick_ms,
+        wm_active_sessions_overload, wm_active_sessions_critical,
+        wm_buffered_spans_overload, wm_buffered_spans_critical,
+        wm_pending_tasks_overload, wm_pending_tasks_critical
     )
 };
 
 // 2. Prompt 配置 (对应 prompts 表)
+// 这一轮故意不继续扩字段。
+// 既然前后端当前仍按“整列表覆盖”保存 prompt，那么先维持 id/name/content/is_active 这组最小契约，
+// 可以避免把 scope、分类、版本号之类还没钉死的语义提前写进表结构。
 struct PromptConfig {
     int id = 0; // 0 表示新增
     std::string name;
@@ -114,18 +138,20 @@ struct PromptConfig {
 };
 
 // 3. 通知渠道配置 (对应 alert_channels 表)
+// 这轮渠道表只保留真实外发会吃到的最小字段，消息模板不再放进 Settings 存储。
+// 模板内容由系统内置维护；Settings 只负责“发不发、发到哪、按什么阈值发、签名密钥是什么”。
 struct AlertChannel {
     int id = 0;
     std::string name;
-    std::string provider; // "dingtalk", "lark", "slack", "custom"
+    std::string provider = "feishu";
     std::string webhook_url;
+    std::string secret;
     std::string alert_threshold; // "critical", "error", "warning"
-    std::string msg_template;
     bool is_active = false;
 
     AlertChannel() = default;
-    AlertChannel(int id, std::string name, std::string provider, std::string webhook_url, std::string alert_threshold, std::string msg_template, bool is_active)
-        : id(id), name(std::move(name)), provider(std::move(provider)), webhook_url(std::move(webhook_url)), alert_threshold(std::move(alert_threshold)), msg_template(std::move(msg_template)), is_active(is_active) {}
+    AlertChannel(int id, std::string name, std::string provider, std::string webhook_url, std::string secret, std::string alert_threshold, bool is_active)
+        : id(id), name(std::move(name)), provider(std::move(provider)), webhook_url(std::move(webhook_url)), secret(std::move(secret)), alert_threshold(std::move(alert_threshold)), is_active(is_active) {}
 
     // 1. 序列化 (Backend -> JSON)
     friend void to_json(nlohmann::json& j, const AlertChannel& p) {
@@ -134,8 +160,8 @@ struct AlertChannel {
             {"name", p.name},
             {"provider", p.provider},
             {"webhook_url", p.webhook_url},
+            {"secret", p.secret},
             {"alert_threshold", p.alert_threshold},
-            {"msg_template", p.msg_template},
             {"is_active", p.is_active} // 输出标准 bool
         };
     }
@@ -148,8 +174,8 @@ struct AlertChannel {
         if (j.contains("name")) j.at("name").get_to(p.name);
         if (j.contains("provider")) j.at("provider").get_to(p.provider);
         if (j.contains("webhook_url")) j.at("webhook_url").get_to(p.webhook_url);
+        if (j.contains("secret")) j.at("secret").get_to(p.secret);
         if (j.contains("alert_threshold")) j.at("alert_threshold").get_to(p.alert_threshold);
-        if (j.contains("msg_template")) j.at("msg_template").get_to(p.msg_template);
 
         // 特殊处理 bool 类型的兼容性
         if (j.contains("is_active")) {

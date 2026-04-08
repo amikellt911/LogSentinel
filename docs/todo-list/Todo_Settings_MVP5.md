@@ -17,3 +17,6 @@
 - [x] 删除 AI tab 右侧无效的“业务作用域”字段，并恢复可滚动的大文本编辑区
 - [x] 将 AI tab 的 Prompt 编辑区从固定高度盒子里拆出来，改成页面级底栏 + 独立主编辑区，避免正文输入框再被上下区域夹死
 - [x] 删除 `SettingsPrototype.vue` 页面里的说明性文案，只保留标题、字段标签和操作按钮，避免辅助文字继续干扰编辑区
+- [x] 收口 Settings 持久化契约，明确 `app_config` / `prompts` / `alert_channels` 的最小字段集合
+- [x] 修改 `server/persistence/ConfigTypes.h`，移除过时字段、补齐新配置字段，并补中文注释说明这轮存储边界
+- [x] 修改 `server/persistence/SqliteConfigRepository.cpp`，同步更新初始化 SQL、配置 seed、AppConfig 映射和渠道读写字段
