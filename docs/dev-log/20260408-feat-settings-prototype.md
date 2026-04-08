@@ -650,3 +650,38 @@ refactor(frontend): 对齐设置原型页的 prompt 列表交互
 ## Verification
 
 - 用本地 `@vue/compiler-sfc` 对 `client/src/views/SettingsPrototype.vue` 做了单文件解析和模板编译检查，结果通过：`SFC compile ok`
+
+# 追加记录：2026-04-08 接通第一批冷启动配置消费
+
+## Git Commit Message
+
+feat(settings): 接通首批冷启动配置的主程序消费
+
+## Modification
+
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `server/src/main.cpp` 里补了中文注释，说明为什么 `http_port`、`kernel_worker_threads`、`token_limit`、`span_capacity`、`collecting_idle_timeout_ms`、`sweep_tick_ms` 这批值要在启动时只读一次快照。
+- 在 `server/src/main.cpp` 里补了中文注释，说明为什么这里的优先级要收口成 `CLI > Settings > 默认值`，以及为什么线程池大小不能做成运行中热更新。
+
+## Learning Tips
+
+### Newbie Tips
+
+冷启动配置的关键不是“能不能从 repo 读出来”，而是“谁在什么时候第一次消费它”。如果一个值只在对象构造时才真正生效，那你把它存进数据库并不等于系统已经会用它，主程序的构造路径必须显式接上。
+
+### Function Explanation
+
+这次没有新增复杂抽象，只是在 `main.cpp` 启动期先拿 `config_repo->getSnapshot()`，然后把解析出来的最终值喂给 `InetAddress`、`ThreadPool`、`TraceSessionManager` 和 `loop.runEvery(...)`。
+
+### Pitfalls
+
+如果不区分“CLI 显式覆盖”和“只是沿用默认值”，你后面就很容易把库里的配置永远压死，或者反过来让脚本里显式传的参数失效。所以这里必须把“有没有显式传参”单独记下来，而不是只看最终的整数值。
+
+## Verification
+
+- 按当前步骤约束，这次没有运行编译和测试。

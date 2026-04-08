@@ -74,6 +74,7 @@ int main(int argc, char* argv[])
 {
     std::string db_path = "LogSentinel.db"; // 生产环境默认名
     int port = 8080;
+    bool port_explicit = false;
     // 当前处于 TraceExplorer 联调阶段，开发时默认自动拉起本地 AI proxy，
     // 这样直接点运行就能看到 trace_analysis，不需要每次手敲 --auto-start-proxy。
     // 后续如果要切回更保守的默认行为，再按阶段调整。
@@ -83,11 +84,15 @@ int main(int argc, char* argv[])
     std::string trace_ai_base_url = "http://127.0.0.1:8001";
     int trace_ai_timeout_ms = 10000;
     int trace_sweep_interval_ms = 500;
+    bool trace_sweep_interval_explicit = false;
     int trace_idle_timeout_ms = 5000;
+    bool trace_idle_timeout_explicit = false;
     int worker_threads_override = -1;
     int worker_queue_size = 10000;
     int trace_capacity = 100;
+    bool trace_capacity_explicit = false;
     int trace_token_limit = 0;
+    bool trace_token_limit_explicit = false;
     int trace_max_dispatch_per_tick = 64;
     int trace_buffered_span_limit = 4096;
     int trace_active_session_limit = 1024;
@@ -105,6 +110,7 @@ int main(int argc, char* argv[])
             db_path = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
             port = std::stoi(argv[++i]);
+            port_explicit = true;
         } else if (arg == "--auto-start-deps") {
             auto_start_proxy = true;
             auto_start_webhook_mock = true;
@@ -125,16 +131,20 @@ int main(int argc, char* argv[])
             trace_ai_timeout_ms = std::stoi(argv[++i]);
         } else if (arg == "--trace-sweep-interval-ms" && i + 1 < argc) {
             trace_sweep_interval_ms = std::stoi(argv[++i]);
+            trace_sweep_interval_explicit = true;
         } else if (arg == "--trace-idle-timeout-ms" && i + 1 < argc) {
             trace_idle_timeout_ms = std::stoi(argv[++i]);
+            trace_idle_timeout_explicit = true;
         } else if (arg == "--worker-threads" && i + 1 < argc) {
             worker_threads_override = std::stoi(argv[++i]);
         } else if (arg == "--worker-queue-size" && i + 1 < argc) {
             worker_queue_size = std::stoi(argv[++i]);
         } else if (arg == "--trace-capacity" && i + 1 < argc) {
             trace_capacity = std::stoi(argv[++i]);
+            trace_capacity_explicit = true;
         } else if (arg == "--trace-token-limit" && i + 1 < argc) {
             trace_token_limit = std::stoi(argv[++i]);
+            trace_token_limit_explicit = true;
         } else if (arg == "--trace-max-dispatch-per-tick" && i + 1 < argc) {
             trace_max_dispatch_per_tick = std::stoi(argv[++i]);
         } else if (arg == "--trace-buffered-span-limit" && i + 1 < argc) {
@@ -215,6 +225,72 @@ int main(int argc, char* argv[])
     std::signal(SIGINT, HandleProcessSignal);
     std::signal(SIGTERM, HandleProcessSignal);
 
+    std::shared_ptr<SqliteConfigRepository> config_repo;
+    try
+    {
+        config_repo = std::make_shared<SqliteConfigRepository>(db_path);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Fatal Error:Failed to initialize config repository" << e.what() << '\n';
+        return -1;
+    }
+    // 这批参数已经被收口成“冷启动配置”：
+    // 既然它们会直接影响监听端口、线程池大小和 TraceSessionManager 的构造参数，
+    // 那么就应该在进程启动时只读一次快照，后面运行中不再反复回头查 repo。
+    const auto startup_config_snapshot = config_repo->getSnapshot();
+    const AppConfig& startup_app_config = startup_config_snapshot->app_config;
+    // CLI 显式覆盖仍然优先于 Settings。
+    // 这样开发脚本和手工调试时还能临时顶掉库里的值，避免“为了试一个参数还得先进设置页保存”。
+    const int effective_port =
+        port_explicit ? port
+                      : (startup_app_config.http_port > 0 ? startup_app_config.http_port : port);
+    const int effective_trace_sweep_interval_ms =
+        trace_sweep_interval_explicit
+            ? trace_sweep_interval_ms
+            : (startup_app_config.sweep_tick_ms > 0
+                   ? startup_app_config.sweep_tick_ms
+                   : trace_sweep_interval_ms);
+    const int effective_trace_idle_timeout_ms =
+        trace_idle_timeout_explicit
+            ? trace_idle_timeout_ms
+            : (startup_app_config.collecting_idle_timeout_ms > 0
+                   ? startup_app_config.collecting_idle_timeout_ms
+                   : trace_idle_timeout_ms);
+    const int effective_trace_capacity =
+        trace_capacity_explicit
+            ? trace_capacity
+            : (startup_app_config.span_capacity > 0
+                   ? startup_app_config.span_capacity
+                   : trace_capacity);
+    const int effective_trace_token_limit =
+        trace_token_limit_explicit
+            ? trace_token_limit
+            : (startup_app_config.token_limit >= 0
+                   ? startup_app_config.token_limit
+                   : trace_token_limit);
+
+    if (effective_port <= 0) {
+        std::cerr << "Fatal Error: effective http_port must be > 0" << std::endl;
+        return -1;
+    }
+    if (effective_trace_sweep_interval_ms <= 0) {
+        std::cerr << "Fatal Error: effective sweep_tick_ms must be > 0" << std::endl;
+        return -1;
+    }
+    if (effective_trace_idle_timeout_ms <= 0) {
+        std::cerr << "Fatal Error: effective collecting_idle_timeout_ms must be > 0" << std::endl;
+        return -1;
+    }
+    if (effective_trace_capacity <= 0) {
+        std::cerr << "Fatal Error: effective span_capacity must be > 0" << std::endl;
+        return -1;
+    }
+    if (effective_trace_token_limit < 0) {
+        std::cerr << "Fatal Error: effective token_limit must be >= 0" << std::endl;
+        return -1;
+    }
+
     DevSubprocessManager dev_process_manager;
     if (auto_start_proxy) {
         std::optional<std::string> proxy_script = ResolveScriptPath({
@@ -278,8 +354,14 @@ int main(int argc, char* argv[])
     const int num_cpu_cores = std::thread::hardware_concurrency();
     const int num_io_threads = 1; // 明确 I/O 线程数量
     const int default_worker_threads = num_cpu_cores > 1 ? num_cpu_cores - num_io_threads : 1;
+    // worker 线程数和端口一样属于冷启动参数：
+    // 既然线程池创建后不会在运行中自动扩缩，那么这里就只在启动时做一次“CLI > Settings > 默认值”的决策。
     const int num_worker_threads =
-        worker_threads_override > 0 ? worker_threads_override : default_worker_threads;
+        worker_threads_override > 0
+            ? worker_threads_override
+            : (startup_app_config.kernel_worker_threads > 0
+                   ? startup_app_config.kernel_worker_threads
+                   : default_worker_threads);
     const int num_query_threads = 1;
 
     std::cout << "System Info: " << num_cpu_cores << " cores detected." << std::endl;
@@ -287,9 +369,8 @@ int main(int argc, char* argv[])
               << num_worker_threads << " worker threads, "
               << num_query_threads << " query threads." << std::endl;
     MiniMuduo::net::EventLoop loop;
-    MiniMuduo::net::InetAddress addr(port);
+    MiniMuduo::net::InetAddress addr(effective_port);
     testServer server(&loop, addr, num_io_threads);
-    auto config_repo = std::make_shared<SqliteConfigRepository>(db_path);
     std::vector<WebhookChannel> webhook_channels;
     if (auto_start_webhook_mock) {
         // 开发时自动注入本地 mock webhook，避免“服务已经拉起，但压根没有通知目标”的调试盲区。
@@ -347,34 +428,37 @@ int main(int argc, char* argv[])
         &tpool,
         buffered_trace_repo.get(),
         trace_ai.get(),
-        /*capacity*/static_cast<size_t>(trace_capacity),
-        /*token_limit*/static_cast<size_t>(trace_token_limit),
+        /*capacity*/static_cast<size_t>(effective_trace_capacity),
+        /*token_limit*/static_cast<size_t>(effective_trace_token_limit),
         notifier.get(),
-        trace_idle_timeout_ms,
-        trace_sweep_interval_ms,
+        effective_trace_idle_timeout_ms,
+        effective_trace_sweep_interval_ms,
         /*wheel_size*/512,
         static_cast<size_t>(trace_buffered_span_limit),
         static_cast<size_t>(trace_active_session_limit),
         service_runtime_accumulator.get(),
         system_runtime_accumulator.get());
-    const double trace_sweep_interval_sec = static_cast<double>(trace_sweep_interval_ms) / 1000.0;
-    std::cout << "Trace session sweep enabled. sweep_interval_ms=" << trace_sweep_interval_ms
-              << ", idle_timeout_ms=" << trace_idle_timeout_ms
+    const double trace_sweep_interval_sec =
+        static_cast<double>(effective_trace_sweep_interval_ms) / 1000.0;
+    std::cout << "Trace session sweep enabled. sweep_interval_ms=" << effective_trace_sweep_interval_ms
+              << ", idle_timeout_ms=" << effective_trace_idle_timeout_ms
               << ", max_dispatch_per_tick=" << trace_max_dispatch_per_tick
-              << ", trace_capacity=" << trace_capacity
-              << ", trace_token_limit=" << trace_token_limit
+              << ", trace_capacity=" << effective_trace_capacity
+              << ", trace_token_limit=" << effective_trace_token_limit
               << ", buffered_span_limit=" << trace_buffered_span_limit
               << ", active_session_limit=" << trace_active_session_limit
               << ", worker_queue_size=" << worker_queue_size << std::endl;
     std::cout << "Service monitor window enabled. window_minutes=" << service_monitor_window_minutes
               << ", bucket_seconds=" << service_monitor_bucket_seconds << std::endl;
     TraceSessionManager* trace_session_manager_raw = trace_session_manager.get();
-    loop.runEvery(trace_sweep_interval_sec, [trace_session_manager_raw, trace_idle_timeout_ms, trace_max_dispatch_per_tick]() {
+    loop.runEvery(trace_sweep_interval_sec, [trace_session_manager_raw,
+                                             effective_trace_idle_timeout_ms,
+                                             trace_max_dispatch_per_tick]() {
         const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
         trace_session_manager_raw->SweepExpiredSessions(
             now_ms,
-            trace_idle_timeout_ms,
+            effective_trace_idle_timeout_ms,
             static_cast<size_t>(trace_max_dispatch_per_tick));
     });
     ServiceRuntimeAccumulator* service_runtime_accumulator_raw = service_runtime_accumulator.get();

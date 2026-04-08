@@ -29,3 +29,4 @@
 - [x] 让 `LogHandler` 从 `ConfigRepo` 快照读取 `trace_end_field / trace_end_aliases`，把结束字段别名真正接进解析入口
 - [x] 将 `trace_end_aliases` 从 `app_config` JSON 字符串改成单独表 + 快照数组，去掉 `LogHandler` 热路径反序列化
 - [x] 将 `trace_end_aliases` 的重复/空值处理收回前端控件状态，后端只保留最小主字段冲突过滤
+- [x] 在 `main.cpp` 启动期读取冷启动快照，先接通 `http_port`、`kernel_worker_threads`、`token_limit`、`span_capacity`、`collecting_idle_timeout_ms`、`sweep_tick_ms` 的真实消费
