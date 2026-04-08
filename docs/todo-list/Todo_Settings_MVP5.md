@@ -34,3 +34,6 @@
 - [x] 将 `trace_end_field` 与 `trace_end_aliases` 从 `LogHandler` 的热读取收口成冷启动注入，去掉每请求读配置快照
 - [x] 将 `wm_active_sessions/*`、`wm_buffered_spans/*`、`wm_pending_tasks/*` 三组水位阈值接成 `TraceSessionManager` 的冷启动配置，去掉固定 55/75/90
 - [x] 将 Settings 保存的 `channels` 真正接到 `main.cpp/WebhookNotifier`，让 `enabled + threshold + secret` 都参与真实告警外发
+- [x] 将 `SettingsPrototype.vue` 的业务 Prompt 编辑区改成结构化 5 段表单，不再继续使用单个自由文本框
+- [x] 为结构化 Prompt 编辑区补最终 `business_guidance` 只读预览，并保持当前保存接口仍能写回 `content` 字符串
+- [x] 追加 2026-04-08 dev-log，记录这次 Prompt 结构化编辑原型调整和中文注释位置

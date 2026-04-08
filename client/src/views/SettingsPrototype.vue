@@ -198,9 +198,6 @@
 
                 <div class="w-full min-w-0 bg-[#202020] md:flex-1">
                   <div v-if="selectedPrompt" class="flex h-full min-h-0 flex-col">
-                    <!-- 右侧这里改成真正的主工作区：
-                         左侧列表只负责切换条目，名称和正文放进同一块编辑面板里，
-                         这样用户看过去就知道“这一大块都是可编辑区域”，不会再像被表单壳子分割。 -->
                     <div class="border-b border-gray-700 bg-[#262626] px-6 py-6 md:px-8">
                       <div class="max-w-[420px]">
                         <label class="mb-2 block text-sm font-semibold text-gray-200">Prompt 名称</label>
@@ -208,21 +205,140 @@
                       </div>
                     </div>
 
-                    <!-- 这里不再把正文继续塞进 el-form-item 的默认壳子里：
-                         直接把剩余高度整块让给 textarea，视觉上更像正文编辑器，而不是一个被包围盒锁死的小表单。 -->
-                    <div class="flex flex-1 min-h-0 flex-col px-6 py-6 md:px-8 md:py-8">
-                      <div class="mb-3">
-                        <label class="text-sm font-semibold text-gray-200">业务 Prompt 内容</label>
+                    <div class="flex flex-1 min-h-0 flex-col xl:flex-row">
+                      <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-6 py-6 md:px-8 md:py-8">
+                        <!-- 业务 Prompt 不再给一个自由大文本框。
+                             这里按数据形态拆成单值、术语字典、多条规则三种控件，目的是把“用户能改什么”直接写进编辑器结构里。 -->
+                        <div class="space-y-6">
+                          <div class="rounded border border-gray-700 bg-[#1a1a1a] p-5">
+                            <div class="mb-3 text-sm font-semibold text-gray-200">Domain Goal</div>
+                            <el-input
+                              v-model="selectedPrompt.content.domainGoal"
+                              type="textarea"
+                              :rows="3"
+                              resize="none"
+                              placeholder="例如：支付链路异常分析"
+                            />
+                          </div>
+
+                          <div class="rounded border border-gray-700 bg-[#1a1a1a] p-5">
+                            <div class="mb-4 flex items-center justify-between">
+                              <div class="text-sm font-semibold text-gray-200">Business Glossary</div>
+                              <el-button size="small" @click="addPromptGlossaryRow">
+                                <el-icon class="mr-1"><Plus /></el-icon>
+                                添加术语
+                              </el-button>
+                            </div>
+                            <div class="space-y-3">
+                              <div
+                                v-for="(row, index) in selectedPrompt.content.businessGlossary"
+                                :key="`glossary-${index}`"
+                                class="grid grid-cols-1 gap-3 rounded border border-gray-800 bg-[#202020] p-3 md:grid-cols-[minmax(180px,240px)_1fr_auto]"
+                              >
+                                <el-input v-model="row.term" placeholder="term" />
+                                <el-input v-model="row.meaning" placeholder="meaning" />
+                                <div class="flex items-center justify-end">
+                                  <el-button
+                                    type="danger"
+                                    link
+                                    :disabled="selectedPrompt.content.businessGlossary.length <= 1"
+                                    @click="removePromptGlossaryRow(index)"
+                                  >
+                                    <el-icon><Delete /></el-icon>
+                                  </el-button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div class="rounded border border-gray-700 bg-[#1a1a1a] p-5">
+                            <div class="mb-4 flex items-center justify-between">
+                              <div class="text-sm font-semibold text-gray-200">Focus Areas</div>
+                              <el-button size="small" @click="addPromptListRow('focusAreas')">
+                                <el-icon class="mr-1"><Plus /></el-icon>
+                                添加关注点
+                              </el-button>
+                            </div>
+                            <div class="space-y-3">
+                              <div
+                                v-for="(item, index) in selectedPrompt.content.focusAreas"
+                                :key="`focus-${index}`"
+                                class="flex items-center gap-3 rounded border border-gray-800 bg-[#202020] p-3"
+                              >
+                                <el-input v-model="selectedPrompt.content.focusAreas[index]" placeholder="例如：timeout" />
+                                <el-button
+                                  type="danger"
+                                  link
+                                  :disabled="selectedPrompt.content.focusAreas.length <= 1"
+                                  @click="removePromptListRow('focusAreas', index)"
+                                >
+                                  <el-icon><Delete /></el-icon>
+                                </el-button>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div class="rounded border border-gray-700 bg-[#1a1a1a] p-5">
+                            <div class="mb-4 flex items-center justify-between">
+                              <div class="text-sm font-semibold text-gray-200">Risk Preference</div>
+                              <el-button size="small" @click="addPromptListRow('riskPreference')">
+                                <el-icon class="mr-1"><Plus /></el-icon>
+                                添加偏好
+                              </el-button>
+                            </div>
+                            <div class="space-y-3">
+                              <div
+                                v-for="(item, index) in selectedPrompt.content.riskPreference"
+                                :key="`risk-${index}`"
+                                class="flex items-center gap-3 rounded border border-gray-800 bg-[#202020] p-3"
+                              >
+                                <el-input v-model="selectedPrompt.content.riskPreference[index]" placeholder="例如：涉及资金安全的问题，风险等级从严判断。" />
+                                <el-button
+                                  type="danger"
+                                  link
+                                  :disabled="selectedPrompt.content.riskPreference.length <= 1"
+                                  @click="removePromptListRow('riskPreference', index)"
+                                >
+                                  <el-icon><Delete /></el-icon>
+                                </el-button>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div class="rounded border border-gray-700 bg-[#1a1a1a] p-5">
+                            <div class="mb-4 flex items-center justify-between">
+                              <div class="text-sm font-semibold text-gray-200">Output Preference</div>
+                              <el-button size="small" @click="addPromptListRow('outputPreference')">
+                                <el-icon class="mr-1"><Plus /></el-icon>
+                                添加输出要求
+                              </el-button>
+                            </div>
+                            <div class="space-y-3">
+                              <div
+                                v-for="(item, index) in selectedPrompt.content.outputPreference"
+                                :key="`output-${index}`"
+                                class="flex items-center gap-3 rounded border border-gray-800 bg-[#202020] p-3"
+                              >
+                                <el-input v-model="selectedPrompt.content.outputPreference[index]" placeholder="例如：summary 要短，solution 要偏操作建议。" />
+                                <el-button
+                                  type="danger"
+                                  link
+                                  :disabled="selectedPrompt.content.outputPreference.length <= 1"
+                                  @click="removePromptListRow('outputPreference', index)"
+                                >
+                                  <el-icon><Delete /></el-icon>
+                                </el-button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
 
-                      <div class="flex-1 min-h-[560px]">
-                        <el-input
-                          v-model="selectedPrompt.content"
-                          type="textarea"
-                          :rows="26"
-                          class="font-mono text-xs custom-textarea h-full"
-                          resize="none"
-                        />
+                      <div class="border-t border-gray-700 bg-[#181818] p-6 xl:w-[420px] xl:border-l xl:border-t-0">
+                        <div class="mb-3 text-sm font-semibold text-gray-200">最终 Business Guidance 预览</div>
+                        <div class="rounded border border-gray-700 bg-[#111111] p-4">
+                          <pre class="whitespace-pre-wrap break-words text-xs leading-6 text-gray-300 font-mono min-h-[480px]">{{ selectedPromptPreview || '当前还没有可预览的业务 guidance。' }}</pre>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -463,7 +579,20 @@ type TabId = 'general' | 'ai' | 'alert' | 'kernel'
 interface PromptDraft {
   id: number
   name: string
-  content: string
+  content: PromptContentDraft
+}
+
+interface PromptGlossaryDraft {
+  term: string
+  meaning: string
+}
+
+interface PromptContentDraft {
+  domainGoal: string
+  businessGlossary: PromptGlossaryDraft[]
+  focusAreas: string[]
+  riskPreference: string[]
+  outputPreference: string[]
 }
 
 interface ChannelDraft {
@@ -573,17 +702,41 @@ const prompts = reactive<PromptDraft[]>([
   {
     id: 1,
     name: '支付链路排障',
-    content: '重点关注订单支付、银行网关、重试链路和失败回滚，优先给出服务侧排查路径。'
+    content: {
+      domainGoal: '支付链路异常分析',
+      businessGlossary: [
+        { term: 'bank-gateway', meaning: '银行侧网关' },
+        { term: 'acquire_result', meaning: '收单返回码' }
+      ],
+      focusAreas: ['timeout', 'retry storm', 'downstream dependency failure'],
+      riskPreference: ['涉及资金安全的问题，风险等级从严判断。'],
+      outputPreference: ['summary 要短，root_cause 要明确点名服务链路。']
+    }
   },
   {
     id: 2,
     name: '基础通用分析',
-    content: '优先总结主要异常服务、异常操作、根因方向和建议操作，避免生成过度推测的结论。'
+    content: {
+      domainGoal: '通用分布式链路异常分析',
+      businessGlossary: [],
+      focusAreas: ['error propagation', 'timeout', 'abnormal latency'],
+      riskPreference: ['证据不足时宁可返回 unknown，也不要过度推测。'],
+      outputPreference: ['solution 要偏操作建议，不要写空泛结论。']
+    }
   },
   {
     id: 3,
     name: '风控链路排障',
-    content: '关注规则命中、缓存失效、特征拉取和下游依赖超时，给出风控侧和基础设施侧的分层判断。'
+    content: {
+      domainGoal: '风控链路排障',
+      businessGlossary: [
+        { term: 'feature pull', meaning: '特征拉取链路' },
+        { term: 'rule hit', meaning: '规则命中判断' }
+      ],
+      focusAreas: ['cache miss', 'feature pull timeout', 'downstream dependency failure'],
+      riskPreference: ['涉及误拒或漏放的链路问题，需要比普通性能抖动更谨慎。'],
+      outputPreference: ['root_cause 要区分风控规则层和基础设施层。']
+    }
   }
 ])
 
@@ -630,6 +783,11 @@ const selectedPrompt = computed(() => {
   return prompts.find((item) => item.id === selectedPromptId.value) ?? prompts[0]
 })
 
+const selectedPromptPreview = computed(() => {
+  if (!selectedPrompt.value) return ''
+  return renderBusinessGuidancePreview(selectedPrompt.value.content)
+})
+
 const selectedChannel = computed(() => {
   return channels.find((item) => item.id === selectedChannelId.value) ?? channels[0]
 })
@@ -649,6 +807,123 @@ function toNumber(value: unknown, defaultValue: number) {
     if (Number.isFinite(parsed)) return parsed
   }
   return defaultValue
+}
+
+function createEmptyPromptContent(): PromptContentDraft {
+  return {
+    domainGoal: '',
+    businessGlossary: [{ term: '', meaning: '' }],
+    focusAreas: [''],
+    riskPreference: [''],
+    outputPreference: ['']
+  }
+}
+
+function normalizePromptList(rawList: unknown) {
+  if (!Array.isArray(rawList)) return []
+  return rawList
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+}
+
+function normalizePromptGlossary(rawGlossary: unknown) {
+  if (!Array.isArray(rawGlossary)) return []
+  return rawGlossary
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const row = item as Record<string, unknown>
+      const term = typeof row.term === 'string' ? row.term.trim() : ''
+      const meaning = typeof row.meaning === 'string' ? row.meaning.trim() : ''
+      if (!term && !meaning) return null
+      return { term, meaning }
+    })
+    .filter((item): item is PromptGlossaryDraft => item !== null)
+}
+
+// Prompt 编辑器这一步已经改成结构化表单，所以回填时先尽量按 JSON 结构解释。
+// 如果旧库里还是自由文本，就先兜底塞进 domainGoal，至少保证原内容不会在原型页里直接丢失。
+function parsePromptContent(value: unknown): PromptContentDraft {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return createEmptyPromptContent()
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>
+    const content: PromptContentDraft = {
+      domainGoal: typeof parsed.domain_goal === 'string' ? parsed.domain_goal : '',
+      businessGlossary: normalizePromptGlossary(parsed.business_glossary),
+      focusAreas: normalizePromptList(parsed.focus_areas),
+      riskPreference: normalizePromptList(parsed.risk_preference),
+      outputPreference: normalizePromptList(parsed.output_preference)
+    }
+
+    if (content.businessGlossary.length === 0) content.businessGlossary.push({ term: '', meaning: '' })
+    if (content.focusAreas.length === 0) content.focusAreas.push('')
+    if (content.riskPreference.length === 0) content.riskPreference.push('')
+    if (content.outputPreference.length === 0) content.outputPreference.push('')
+    return content
+  } catch {
+    return {
+      domainGoal: value.trim(),
+      businessGlossary: [{ term: '', meaning: '' }],
+      focusAreas: [''],
+      riskPreference: [''],
+      outputPreference: ['']
+    }
+  }
+}
+
+function serializePromptContent(content: PromptContentDraft) {
+  const normalized = {
+    domain_goal: content.domainGoal.trim(),
+    business_glossary: normalizePromptGlossary(content.businessGlossary),
+    focus_areas: normalizePromptList(content.focusAreas),
+    risk_preference: normalizePromptList(content.riskPreference),
+    output_preference: normalizePromptList(content.outputPreference)
+  }
+  return JSON.stringify(normalized)
+}
+
+// 业务 prompt 的编辑器按字段形态拆开了，但模型最终吃的仍然是一段 business_guidance。
+// 所以这里保留只读预览，让用户能看见“结构化输入最后会渲染成什么样”，避免配置时心里没底。
+function renderBusinessGuidancePreview(content: PromptContentDraft) {
+  const lines: string[] = []
+  const domainGoal = content.domainGoal.trim()
+  if (domainGoal) {
+    lines.push('Domain goal:')
+    lines.push(domainGoal)
+    lines.push('')
+  }
+
+  const glossary = normalizePromptGlossary(content.businessGlossary)
+  if (glossary.length > 0) {
+    lines.push('Business glossary:')
+    glossary.forEach((item) => lines.push(`- ${item.term}: ${item.meaning}`))
+    lines.push('')
+  }
+
+  const focusAreas = normalizePromptList(content.focusAreas)
+  if (focusAreas.length > 0) {
+    lines.push('Focus areas:')
+    focusAreas.forEach((item) => lines.push(`- ${item}`))
+    lines.push('')
+  }
+
+  const riskPreference = normalizePromptList(content.riskPreference)
+  if (riskPreference.length > 0) {
+    lines.push('Risk preference:')
+    riskPreference.forEach((item) => lines.push(`- ${item}`))
+    lines.push('')
+  }
+
+  const outputPreference = normalizePromptList(content.outputPreference)
+  if (outputPreference.length > 0) {
+    lines.push('Output preference:')
+    outputPreference.forEach((item) => lines.push(`- ${item}`))
+  }
+
+  return lines.join('\n').trim()
 }
 
 // 后端现在会把别名作为数组回填到快照里，但这里仍保留字符串兼容分支。
@@ -796,7 +1071,7 @@ async function loadSettings() {
       prompts: (data.prompts ?? []).map((item) => ({
         id: item.id,
         name: item.name,
-        content: item.content
+        content: parsePromptContent(item.content)
       })),
       channels: (data.channels ?? []).map((item) => ({
         id: item.id,
@@ -837,7 +1112,7 @@ async function loadSettings() {
       nextSnapshot.prompts.push({
         id: 1,
         name: '默认 Prompt',
-        content: ''
+        content: createEmptyPromptContent()
       })
     }
     if (nextSnapshot.channels.length === 0) {
@@ -888,7 +1163,7 @@ function addPrompt() {
   prompts.unshift({
     id: nextId,
     name: `新业务 Prompt ${nextId}`,
-    content: '在这里填写业务背景、领域术语和关注重点。'
+    content: createEmptyPromptContent()
   })
   selectedPromptId.value = nextId
 }
@@ -934,6 +1209,26 @@ function thresholdClass(level: string) {
   if (level === 'error') return 'is-error'
   if (level === 'warning') return 'is-warning'
   return ''
+}
+
+function addPromptGlossaryRow() {
+  selectedPrompt.value?.content.businessGlossary.push({ term: '', meaning: '' })
+}
+
+function removePromptGlossaryRow(index: number) {
+  if (!selectedPrompt.value) return
+  if (selectedPrompt.value.content.businessGlossary.length <= 1) return
+  selectedPrompt.value.content.businessGlossary.splice(index, 1)
+}
+
+function addPromptListRow(target: 'focusAreas' | 'riskPreference' | 'outputPreference') {
+  selectedPrompt.value?.content[target].push('')
+}
+
+function removePromptListRow(target: 'focusAreas' | 'riskPreference' | 'outputPreference', index: number) {
+  if (!selectedPrompt.value) return
+  if (selectedPrompt.value.content[target].length <= 1) return
+  selectedPrompt.value.content[target].splice(index, 1)
 }
 
 /**
@@ -996,7 +1291,7 @@ async function persistSettings() {
     const promptsPayload = prompts.map((item) => ({
       id: item.id,
       name: item.name,
-      content: item.content,
+      content: serializePromptContent(item.content),
       is_active: item.id === ai.activePromptId ? 1 : 0
     }))
 
@@ -1078,30 +1373,6 @@ onMounted(() => {
 :deep(.el-tabs--border-card > .el-tabs__content) {
   background-color: #2d2d2d;
   padding: 0;
-}
-
-/* Prompt 主编辑区必须让 Element Plus 的组件根、textarea 包裹层、inner 三层一起继承高度。
-   否则外层面板看起来已经被拉高了，真正能输入的那层还是会缩回默认高度，用户就会继续觉得编辑区被锁死。 */
-:deep(.custom-textarea) {
-  height: 100%;
-}
-
-:deep(.custom-textarea .el-textarea) {
-  height: 100%;
-  display: flex;
-}
-
-:deep(.custom-textarea .el-textarea__inner) {
-  background-color: #1a1a1a !important;
-  color: #a8a29e !important;
-  border-color: #3f3f46 !important;
-  padding: 18px 20px;
-  font-family: 'Fira Code', monospace;
-  font-size: 0.8rem;
-  height: 100% !important;
-  min-height: 100% !important;
-  overflow-y: auto !important;
-  line-height: 1.75;
 }
 
 :deep(.custom-radio-group.is-critical .el-radio-button__original-radio:checked + .el-radio-button__inner) {

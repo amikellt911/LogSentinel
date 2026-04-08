@@ -259,6 +259,45 @@ refactor(handler): 收口 Settings 接口层字段白名单
 
 ## 这次补了哪些注释
 
+# 追加记录：2026-04-08 Settings 原型页改成结构化 Prompt 编辑器
+
+## Git Commit Message
+
+refactor(frontend): 将设置原型页的业务 prompt 改成结构化编辑
+
+## Modification
+
+- `client/src/views/SettingsPrototype.vue`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/SettingsPrototype.vue` 的 AI tab 右侧编辑区附近补了中文注释，说明为什么业务 Prompt 不再给一个自由大文本框，而要按单值、术语字典、多条规则三种数据形态拆开。
+- 在 `client/src/views/SettingsPrototype.vue` 的 `parsePromptContent()` 上方补了中文注释，说明为什么当前原型页回填时要优先按 JSON 结构解析，以及为什么旧自由文本要临时兜底到 `domainGoal`，避免原内容直接丢失。
+- 在 `client/src/views/SettingsPrototype.vue` 的 `renderBusinessGuidancePreview()` 上方补了中文注释，说明为什么结构化编辑器旁边还要保留只读预览。
+- 在 `client/src/views/SettingsPrototype.vue` 的 `persistSettings()` 上方旧注释附近继续沿用并匹配当前改动，保证“原型页验证新字段契约”的语义不被旧自由文本编辑逻辑误导。
+
+## Learning Tips
+
+### Newbie Tips
+
+如果你嘴上说“业务 Prompt 只能补领域知识”，但界面上还是给用户一个无限自由的大文本框，那这个限制就是假的。真正的边界不是写在文档里，而是应该长在编辑器结构里。
+
+### Function Explanation
+
+这次新增的 `PromptContentDraft` 不是最终发给模型的字符串，而是前端编辑态的数据结构。真正给模型看的 `business_guidance` 仍然是通过 `renderBusinessGuidancePreview()` 这种渲染逻辑拼出来的。也就是说，编辑态和运行态现在被明确分开了。
+
+### Pitfalls
+
+如果你直接把旧库里的 `content` 当成 JSON 强行解析，一旦里面还是自由文本，原型页就会直接炸掉或者清空内容。这次选择的兜底方式是先把旧文本塞进 `domainGoal`，这样虽然语义不完美，但至少不会让历史内容无声丢失。
+
+## Verification
+
+- 在 `client` 目录运行了单文件 SFC 编译检查：
+  - `node -e "...@vue/compiler-sfc..."` 返回 `SFC compile ok`
+- 第一次在仓库根目录运行相同检查时失败，原因是 `@vue/compiler-sfc` 模块只安装在 `client/node_modules`，不是本次代码本身的语法错误。
+
 - 在 `server/handlers/ConfigHandler.cpp` 顶部 helper 区补了中文注释，说明为什么接口层现在必须自己维护 config key 白名单，以及为什么 channels 要先硬收成飞书最小字段集。
 - 在 `server/handlers/ConfigHandler.cpp` 的 `ConvertConfigValueToString()` 上方补了中文注释，说明为什么 `/settings/config` 这条接口现在只允许标量值，不再允许对象/数组混进 KV 配置。
 - 在 `server/handlers/ConfigHandler.cpp` 的 `handleUpdateAppConfig()` 和 `handleUpdateChannels()` 里补了中文注释，说明为什么这一步要在 Handler 层先把旧字段挡掉，而不是继续依赖 Repository 默默忽略。
