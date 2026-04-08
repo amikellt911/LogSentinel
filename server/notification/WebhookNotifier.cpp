@@ -49,6 +49,49 @@ bool isFeishuProvider(const std::string& provider)
     return lowered == "feishu" || lowered == "lark";
 }
 
+int riskLevelRank(const std::string& risk_level)
+{
+    const std::string lowered = toLowerCopy(risk_level);
+    if (lowered == "critical")
+    {
+        return 5;
+    }
+    if (lowered == "error")
+    {
+        return 4;
+    }
+    if (lowered == "warning")
+    {
+        return 3;
+    }
+    if (lowered == "info")
+    {
+        return 2;
+    }
+    if (lowered == "safe")
+    {
+        return 1;
+    }
+    if (lowered == "unknown")
+    {
+        return 0;
+    }
+    return -1;
+}
+
+bool shouldSendTraceAlertToChannel(const WebhookChannel& channel, const TraceAlertEvent& event)
+{
+    // threshold 的语义是“从哪个风险等级开始发消息”，不是展示标签。
+    // 所以这里要在真正序列化并发请求之前先做过滤，避免 critical-only 渠道继续收到 warning/error。
+    const int event_rank = riskLevelRank(event.risk_level);
+    const int threshold_rank = riskLevelRank(channel.threshold.empty() ? "critical" : channel.threshold);
+    if (event_rank < 0 || threshold_rank < 0)
+    {
+        return false;
+    }
+    return event_rank >= threshold_rank;
+}
+
 std::string base64Encode(const unsigned char* data, size_t size)
 {
     if (size == 0)
@@ -117,6 +160,10 @@ void WebhookNotifier::notifyTraceAlert(const TraceAlertEvent& event)
         {
             continue;
         }
+        if (!shouldSendTraceAlertToChannel(channel, event))
+        {
+            continue;
+        }
 
         const std::shared_ptr<const IWebhookFormatter> formatter =
             ResolveWebhookFormatter(channel.provider);
@@ -141,7 +188,7 @@ WebhookNotifier::WebhookNotifier(std::vector<std::string> webhook_urls)
     {
         // 兼容旧主链：原来只有 URL 时，默认都按 generic 渠道处理，
         // 这样现有 mock webhook 和历史入口不用跟着这一刀一起重写。
-        channels_.push_back(WebhookChannel{"generic", std::move(webhook_url), true, ""});
+        channels_.push_back(WebhookChannel{"generic", std::move(webhook_url), true, "", "critical"});
     }
 }
 

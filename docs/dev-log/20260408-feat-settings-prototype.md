@@ -724,6 +724,48 @@ feat(trace): 接通 sealed 与 retry 时序配置的冷启动消费
 
 - 按当前步骤约束，这次没有运行编译和测试。
 
+# 追加记录：2026-04-08 接通 webhook channels 的冷启动消费
+
+## Git Commit Message
+
+feat(notification): 接通 webhook 渠道配置的冷启动消费
+
+## Modification
+
+- `server/notification/NotifyTypes.h`
+- `server/notification/WebhookNotifier.cpp`
+- `server/src/main.cpp`
+- `server/tests/WebhookNotifier_test.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `server/notification/NotifyTypes.h` 里补了中文注释，说明为什么 `WebhookChannel` 也要带 `threshold`，不能只消费地址和密钥。
+- 在 `server/notification/WebhookNotifier.cpp` 里补了中文注释，说明为什么真正的风险阈值过滤要放在 notifier 层做，而不是继续把 `alert_threshold` 当摆设。
+- 在 `server/src/main.cpp` 里补了中文注释，说明为什么 settings 里的渠道要在启动时投影成 notifier channels，以及为什么 CLI webhook 入口现在只保留为调试兜底。
+- 在 `server/tests/WebhookNotifier_test.cpp` 里补了中文注释，说明新测试锁定的是“warning 事件不能再命中 critical-only 渠道”这条真实配置语义。
+
+## Learning Tips
+
+### Newbie Tips
+
+配置“能存”和配置“真生效”是两回事。像 `alert_threshold` 这种字段，如果只在 SQLite 里有、前端也能改，但通知层从来不读，那它本质上就是假功能。
+
+### Function Explanation
+
+这次没有把 notifier 改成热更新快照，而是先做冷启动消费：`main.cpp` 启动时把 `settings.channels` 映射成 `WebhookChannel`，再交给 `WebhookNotifier`；真正的阈值判断放在 `notifyTraceAlert(...)` 里做。
+
+### Pitfalls
+
+如果只把 settings 里的 `webhook_url/secret` 接上，却不把 `alert_threshold` 一起接真，那么页面上看起来能配 `warning/error/critical`，实际发送行为却永远一样。这种“半真半假”比完全没做更容易误导联调。
+
+## Verification
+
+- 运行 `cmake --build server/build --target test_webhook_notifier && ./server/build/test_webhook_notifier --gtest_filter=WebhookNotifierTest.NotifyTraceAlertHonorsChannelThreshold`
+- 运行 `./server/build/test_webhook_notifier`
+- 运行 `cmake --build server/build --target LogSentinel`
+
 # 追加记录：2026-04-08 收口 trace_end 冷启动解析口径
 
 ## Git Commit Message

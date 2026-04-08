@@ -31,4 +31,8 @@ struct WebhookChannel
     std::string webhook_url;
     bool enabled = true;
     std::string secret;
+    // threshold 表示“从哪个风险等级开始真正外发”。
+    // 既然 Settings 已经允许用户按渠道配置 critical/error/warning，
+    // 那么通知层就必须把这个阈值带下来，不能只消费地址和签名密钥。
+    std::string threshold = "critical";
 };

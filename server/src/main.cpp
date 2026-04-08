@@ -54,6 +54,46 @@ std::optional<std::string> ResolveScriptPath(const std::vector<std::string>& can
     }
     return std::nullopt;
 }
+
+std::string ToLowerCopy(std::string value)
+{
+    for (char& ch : value) {
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = static_cast<char>(ch - 'A' + 'a');
+        }
+    }
+    return value;
+}
+
+std::string NormalizeWebhookThreshold(std::string threshold)
+{
+    if (threshold.empty()) {
+        return "critical";
+    }
+    return ToLowerCopy(std::move(threshold));
+}
+
+std::vector<WebhookChannel> BuildWebhookChannelsFromSettings(const std::vector<AlertChannel>& alert_channels)
+{
+    std::vector<WebhookChannel> channels;
+    channels.reserve(alert_channels.size());
+    for (const auto& alert_channel : alert_channels) {
+        // Settings 里的渠道现在先按冷启动配置消费：
+        // 这里只把真正启用的渠道投影成通知层对象，避免主程序继续完全忽略 settings.channels。
+        if (!alert_channel.is_active || alert_channel.webhook_url.empty()) {
+            continue;
+        }
+
+        WebhookChannel channel;
+        channel.provider = alert_channel.provider.empty() ? "feishu" : alert_channel.provider;
+        channel.webhook_url = alert_channel.webhook_url;
+        channel.enabled = true;
+        channel.secret = alert_channel.secret;
+        channel.threshold = NormalizeWebhookThreshold(alert_channel.alert_threshold);
+        channels.push_back(std::move(channel));
+    }
+    return channels;
+}
 } // namespace
 
 class testServer : public HttpServer
@@ -432,23 +472,25 @@ int main(int argc, char* argv[])
     MiniMuduo::net::EventLoop loop;
     MiniMuduo::net::InetAddress addr(effective_port);
     testServer server(&loop, addr, num_io_threads);
-    std::vector<WebhookChannel> webhook_channels;
+    std::vector<WebhookChannel> webhook_channels =
+        BuildWebhookChannelsFromSettings(startup_config_snapshot->channels);
     if (auto_start_webhook_mock) {
         // 开发时自动注入本地 mock webhook，避免“服务已经拉起，但压根没有通知目标”的调试盲区。
         // 这里显式按 generic 渠道注入，是为了让 mock webhook 和真实飞书 webhook 可以并存，而不是互相覆盖。
-        webhook_channels.push_back(WebhookChannel{"generic", "http://127.0.0.1:9999/webhook", true, ""});
+        webhook_channels.push_back(WebhookChannel{"generic", "http://127.0.0.1:9999/webhook", true, "", "critical"});
     }
     if (!webhook_url.empty()) {
-        // 这一步故意不去读 Settings/SQLite，而是在启动时直接拼一个临时渠道：
-        // 目的就是先把“主链 critical 告警能不能真实打到外部平台”单独验通，
-        // 避免把飞书格式问题、主链触发问题和配置生效问题搅在一起。
-        webhook_channels.push_back(WebhookChannel{webhook_provider, webhook_url, true, webhook_secret});
+        // CLI 直连入口现在降级成调试兜底：
+        // settings.channels 已经会在启动时进入 notifier，这里只额外补一个手工 override，
+        // 保住现有脚本和答辩临时联调入口，不要求每次都先去页面里保存。
+        webhook_channels.push_back(WebhookChannel{webhook_provider, webhook_url, true, webhook_secret, "critical"});
     }
     if (!webhook_channels.empty()) {
         std::cout << "Webhook notifier enabled. channels=" << webhook_channels.size() << std::endl;
         for (const auto& channel : webhook_channels) {
             std::cout << "  - provider=" << channel.provider
                       << ", url=" << channel.webhook_url
+                      << ", threshold=" << channel.threshold
                       << ", enabled=" << (channel.enabled ? "true" : "false")
                       << std::endl;
         }

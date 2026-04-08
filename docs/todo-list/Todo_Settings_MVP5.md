@@ -33,3 +33,4 @@
 - [x] 将 `sealed_grace_window_ms` 与 `retry_base_delay_ms` 真正接进 `TraceSessionManager` 的 tick 换算逻辑，去掉内部硬编码时序
 - [x] 将 `trace_end_field` 与 `trace_end_aliases` 从 `LogHandler` 的热读取收口成冷启动注入，去掉每请求读配置快照
 - [x] 将 `wm_active_sessions/*`、`wm_buffered_spans/*`、`wm_pending_tasks/*` 三组水位阈值接成 `TraceSessionManager` 的冷启动配置，去掉固定 55/75/90
+- [x] 将 Settings 保存的 `channels` 真正接到 `main.cpp/WebhookNotifier`，让 `enabled + threshold + secret` 都参与真实告警外发
