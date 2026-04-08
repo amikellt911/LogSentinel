@@ -685,3 +685,41 @@ feat(settings): 接通首批冷启动配置的主程序消费
 ## Verification
 
 - 按当前步骤约束，这次没有运行编译和测试。
+
+# 追加记录：2026-04-08 接通 sealed/retry 冷启动时序配置
+
+## Git Commit Message
+
+feat(trace): 接通 sealed 与 retry 时序配置的冷启动消费
+
+## Modification
+
+- `server/core/TraceSessionManager.h`
+- `server/core/TraceSessionManager.cpp`
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `server/core/TraceSessionManager.h` 里补了中文注释，说明为什么 `sealed_grace_window_ms` 与 `retry_base_delay_ms` 要在构造期折算成 tick，以及为什么当前 sealed 窗口先统一成单值而不是按 reason 分档。
+- 在 `server/core/TraceSessionManager.cpp` 里补了中文注释，说明为什么 delay 要向上取整到至少 1 tick，以及为什么 retry 退避要改成“base tick * 指数倍数”的形式。
+- 在 `server/src/main.cpp` 里补了中文注释，说明为什么 sealed/retry 这两个值当前只走 Settings 冷启动配置，不再继续保留内部硬编码。
+
+## Learning Tips
+
+### Newbie Tips
+
+时间轮真正调度的是 tick，不是毫秒。所以你把配置项设计成毫秒之后，真正容易出 bug 的地方不是“值怎么存”，而是“什么时候换算成 tick、向上还是向下取整、0 tick 怎么处理”。
+
+### Function Explanation
+
+这次把 `ComputeSealDelayTicks(...)` 和 `ComputeRetryDelayTicks(...)` 从硬编码改成配置驱动：构造函数先把毫秒值按 `wheel_tick_ms_` 换算成基础 tick，后面 sealed 和 retry 状态只复用缓存结果，不再每次临时算。
+
+### Pitfalls
+
+如果直接用整数除法把毫秒配置换算成 tick，而不做向上取整，那么当 `sealed_grace_window_ms < wheel_tick_ms_` 时，结果会直接掉成 0 tick，表现出来就是“刚 seal 就立刻到期”，这种 bug 非常隐蔽。
+
+## Verification
+
+- 按当前步骤约束，这次没有运行编译和测试。

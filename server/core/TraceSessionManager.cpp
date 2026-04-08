@@ -196,6 +196,8 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
                                          INotifier *notifier,
                                          int64_t idle_timeout_ms,
                                          int64_t wheel_tick_ms,
+                                         int64_t sealed_grace_window_ms,
+                                         int64_t retry_base_delay_ms,
                                          size_t wheel_size,
                                          size_t buffered_span_hard_limit,
                                          size_t active_session_hard_limit,
@@ -204,6 +206,9 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
     : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
+    // sealed/retry 这两档时间现在也跟着启动配置走，避免状态机里继续保留 1/2 tick 的硬编码。
+    sealed_grace_ticks_ = ComputeDelayTicks(sealed_grace_window_ms);
+    retry_base_delay_ticks_ = ComputeDelayTicks(retry_base_delay_ms);
     time_wheel_.resize(wheel_size_);
     // 先把 completed tombstone 的桶位也按同样的 wheel_size 建好。
     // 这样后面只要跟着 current_tick_ 同步推进，就能在同一套 tick 节奏里做过期回收。
@@ -242,29 +247,33 @@ TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_l
     return mark;
 }
 
-uint64_t TraceSessionManager::ComputeSealDelayTicks(TraceSession::SealReason reason)
+uint64_t TraceSessionManager::ComputeDelayTicks(int64_t delay_ms) const
 {
-    switch (reason)
+    if (delay_ms <= 0 || wheel_tick_ms_ <= 0)
     {
-    case TraceSession::SealReason::TraceEnd:
-        return 2;
-    case TraceSession::SealReason::Capacity:
-    case TraceSession::SealReason::TokenLimit:
-    case TraceSession::SealReason::DuplicateSpan:
         return 1;
     }
-    return 1;
+    return static_cast<uint64_t>((delay_ms + wheel_tick_ms_ - 1) / wheel_tick_ms_);
 }
 
-uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count)
+uint64_t TraceSessionManager::ComputeSealDelayTicks(TraceSession::SealReason reason) const
 {
+    (void)reason;
+    return std::max<uint64_t>(1, sealed_grace_ticks_);
+}
+
+uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count) const
+{
+    const uint64_t base_ticks = std::max<uint64_t>(1, retry_base_delay_ticks_);
     if (retry_count == 0)
     {
-        return 1;
+        return base_ticks;
     }
-    constexpr uint64_t kMaxRetryDelayTicks = 16;
+    // 继续保留最多 16 倍 base delay 的上限，避免下游长期故障时把单条 trace 的重试时间拖得过长。
+    const uint64_t max_retry_delay_ticks = std::max<uint64_t>(base_ticks, base_ticks * 16);
     const size_t shift = std::min<size_t>(retry_count - 1, 4);
-    return std::min<uint64_t>(1ULL << shift, kMaxRetryDelayTicks);
+    const uint64_t scaled_delay_ticks = base_ticks << shift;
+    return std::min<uint64_t>(scaled_delay_ticks, max_retry_delay_ticks);
 }
 
 void TraceSessionManager::DispatchLoop()

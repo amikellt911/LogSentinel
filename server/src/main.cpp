@@ -269,6 +269,17 @@ int main(int argc, char* argv[])
             : (startup_app_config.token_limit >= 0
                    ? startup_app_config.token_limit
                    : trace_token_limit);
+    // 这两个时间窗当前没有保留 CLI override，先统一走 Settings 冷启动配置。
+    // 原因很简单：这一刀的目标就是把“已经设计成 Settings 字段的主链参数”真正接回状态机，
+    // 避免继续出现库里能存、页面能改、但 TraceSessionManager 实际上仍然硬编码的假生效。
+    const int effective_sealed_grace_window_ms =
+        startup_app_config.sealed_grace_window_ms > 0
+            ? startup_app_config.sealed_grace_window_ms
+            : 1000;
+    const int effective_retry_base_delay_ms =
+        startup_app_config.retry_base_delay_ms > 0
+            ? startup_app_config.retry_base_delay_ms
+            : 500;
 
     if (effective_port <= 0) {
         std::cerr << "Fatal Error: effective http_port must be > 0" << std::endl;
@@ -288,6 +299,14 @@ int main(int argc, char* argv[])
     }
     if (effective_trace_token_limit < 0) {
         std::cerr << "Fatal Error: effective token_limit must be >= 0" << std::endl;
+        return -1;
+    }
+    if (effective_sealed_grace_window_ms <= 0) {
+        std::cerr << "Fatal Error: effective sealed_grace_window_ms must be > 0" << std::endl;
+        return -1;
+    }
+    if (effective_retry_base_delay_ms <= 0) {
+        std::cerr << "Fatal Error: effective retry_base_delay_ms must be > 0" << std::endl;
         return -1;
     }
 
@@ -433,6 +452,8 @@ int main(int argc, char* argv[])
         notifier.get(),
         effective_trace_idle_timeout_ms,
         effective_trace_sweep_interval_ms,
+        effective_sealed_grace_window_ms,
+        effective_retry_base_delay_ms,
         /*wheel_size*/512,
         static_cast<size_t>(trace_buffered_span_limit),
         static_cast<size_t>(trace_active_session_limit),
@@ -442,6 +463,8 @@ int main(int argc, char* argv[])
         static_cast<double>(effective_trace_sweep_interval_ms) / 1000.0;
     std::cout << "Trace session sweep enabled. sweep_interval_ms=" << effective_trace_sweep_interval_ms
               << ", idle_timeout_ms=" << effective_trace_idle_timeout_ms
+              << ", sealed_grace_window_ms=" << effective_sealed_grace_window_ms
+              << ", retry_base_delay_ms=" << effective_retry_base_delay_ms
               << ", max_dispatch_per_tick=" << trace_max_dispatch_per_tick
               << ", trace_capacity=" << effective_trace_capacity
               << ", trace_token_limit=" << effective_trace_token_limit

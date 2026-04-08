@@ -175,6 +175,12 @@ public:
                                  INotifier* notifier = nullptr,
                                  int64_t idle_timeout_ms = 5000,
                                  int64_t wheel_tick_ms = 500,
+                                 // sealed_grace_window_ms 控制 session 命中 trace_end/capacity/token_limit
+                                 // 之后还能继续吸收 late span 的短窗口；当前先统一成一个值，不再按 reason 分多档。
+                                 int64_t sealed_grace_window_ms = 1000,
+                                 // retry_base_delay_ms 是 dispatch 失败后的第一档重试等待时间，
+                                 // 后续连续失败仍然沿用指数退避，只是把“起始 tick”改成配置驱动。
+                                 int64_t retry_base_delay_ms = 500,
                                  size_t wheel_size = 512,
                                  size_t buffered_span_hard_limit = 4096,
                                  size_t active_session_hard_limit = 1024,
@@ -258,13 +264,18 @@ private:
                                                              const LogAnalysisResult& analysis);
     // 计算当前 idle_timeout 对应的 tick 数；至少返回 1，避免 0 tick 导致不触发。
     uint64_t ComputeTimeoutTicks() const;
+    // 毫秒配置在进入状态机前统一折算成 tick。
+    // 既然时间轮真正调度的是 tick 而不是毫秒，那么这里必须向上取整并至少保留 1 tick，
+    // 否则配置值小于 wheel_tick_ms_ 时会被截成 0，最终表现成“设置了但完全不生效”。
+    uint64_t ComputeDelayTicks(int64_t delay_ms) const;
     // 按 hard limit 预计算 low/high/critical 三档阈值，构造期缓存后供准入门禁直接读取。
     static Watermark BuildWatermark(size_t hard_limit);
-    // sealed 会话使用短窗口而不是完整 idle timeout。trace_end 给 2 tick，
-    // capacity/token_limit 给 1 tick，目的是吸收少量乱序 span，但不把封口抖成长期收集。
-    static uint64_t ComputeSealDelayTicks(TraceSession::SealReason reason);
-    // 根据连续失败次数计算退避 tick，避免 ready retry 会话固定每 tick 原地撞线程池。
-    static uint64_t ComputeRetryDelayTicks(size_t retry_count);
+    // sealed 窗口现在改成配置驱动：所有 seal reason 共用同一个短窗口，
+    // 目的是先把 Settings 里的单个 sealed_grace_window_ms 真正落地，后面若要细分 reason 再扩。
+    uint64_t ComputeSealDelayTicks(TraceSession::SealReason reason) const;
+    // 根据连续失败次数计算退避 tick，起点来自 retry_base_delay_ms 配置。
+    // 第一次失败先等 base tick，后面按 2 倍递增，但仍保留一个有限上限避免无限拉长。
+    uint64_t ComputeRetryDelayTicks(size_t retry_count) const;
     // completed tombstone 进入 TIME_WAIT：写入精确查找表并挂进独立 wheel，避免晚到 span 复活旧 trace。
     void AddCompletedTombstoneLocked(size_t trace_key);
     // 命中且仍未过期时返回 true；若发现只是 map 里的过期脏数据，会在这里顺手清掉。
@@ -319,6 +330,9 @@ private:
     size_t wheel_size_ = 512;
     int64_t idle_timeout_ms_ = 5000;
     int64_t wheel_tick_ms_ = 500;
+    // 冷启动配置在构造时先换算成 tick，后面状态机只读缓存值，不再每次临时做毫秒到 tick 的折算。
+    uint64_t sealed_grace_ticks_ = 2;
+    uint64_t retry_base_delay_ticks_ = 1;
     // completed tombstone 默认保留 25 tick；当前 tick=200ms 时大约是 5s。
     uint64_t completed_trace_tombstone_ticks_ = 25;
     uint64_t timeout_ticks_ = 10;
