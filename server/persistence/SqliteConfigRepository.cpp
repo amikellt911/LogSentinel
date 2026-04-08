@@ -36,6 +36,7 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         else if (key == "active_prompt_id") config.active_prompt_id = std::stoi(val);
         else if (key == "kernel_worker_threads") config.kernel_worker_threads = std::stoi(val);
         else if (key == "trace_end_field") config.trace_end_field = val;
+        else if (key == "trace_end_aliases") config.trace_end_aliases = val;
         else if (key == "token_limit") config.token_limit = std::stoi(val);
         else if (key == "span_capacity") config.span_capacity = std::stoi(val);
         else if (key == "collecting_idle_timeout_ms") config.collecting_idle_timeout_ms = std::stoi(val);
@@ -148,6 +149,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('active_prompt_id', '0', '当前激活的PromptID'),
             ('kernel_worker_threads', '4', '工作线程数'),
             ('trace_end_field', 'trace_end', '顶层 trace 结束标记字段名'),
+            ('trace_end_aliases', '[]', '顶层 trace 结束标记字段别名(JSON字符串)'),
             ('token_limit', '0', '单条 trace 的 token 保护阈值'),
             ('span_capacity', '100', '单条 trace 的 span 数量保护阈值'),
             ('collecting_idle_timeout_ms', '5000', '收集阶段空闲超时'),

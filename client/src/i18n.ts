@@ -643,8 +643,10 @@ const messages = {
 
 const i18n = createI18n({
   legacy: false, // Use Composition API
-  locale: 'en',
-  fallbackLocale: 'en',
+  // 默认先用中文，避免入口预取设置失败时整站先回退成英文。
+  // 真正的最终语言仍然由 main.ts 预取到的 app_language 再覆盖。
+  locale: 'zh',
+  fallbackLocale: 'zh',
   globalInjection: true, // Enables $t in templates
   messages
 })

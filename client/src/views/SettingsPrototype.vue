@@ -5,7 +5,7 @@
         <div class="border-b border-gray-700 pb-4">
           <!-- 这一版原型页把说明性文案整体拿掉，只保留标题、标签和操作本身。
                用户当前要看的不是字段解释，而是页面结构和可编辑范围，所以这里不再让辅助文字抢视觉注意力。 -->
-          <h2 class="text-2xl font-bold text-white tracking-wide">设置原型</h2>
+          <h2 class="text-2xl font-bold text-white tracking-wide">设置</h2>
         </div>
 
         <el-form label-position="top" size="large" class="demo-tabs">
@@ -441,10 +441,10 @@
     <div class="shrink-0 border-t border-gray-800 bg-[#141414]/95 backdrop-blur">
       <div class="mx-auto flex w-full max-w-[1680px] justify-end px-8 py-5">
         <div class="flex justify-end gap-3">
-          <el-button :disabled="!isDirty" @click="resetPrototype">放弃修改</el-button>
-          <el-button type="primary" size="large" :disabled="!isDirty" @click="savePrototype">
+          <el-button :disabled="!isDirty || isLoading || isSaving" @click="resetPrototype">放弃修改</el-button>
+          <el-button type="primary" size="large" :disabled="!isDirty || isLoading" :loading="isSaving" @click="savePrototype">
             <el-icon class="mr-2"><Check /></el-icon>
-            保存原型快照
+            保存设置
           </el-button>
         </div>
       </div>
@@ -453,9 +453,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Check, Cpu, Delete, Operation, Plus, Promotion, Setting, Share } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import i18n from '../i18n'
 
 type TabId = 'general' | 'ai' | 'alert' | 'kernel'
 
@@ -472,6 +473,29 @@ interface ChannelDraft {
   webhookUrl: string
   secret: string
   threshold: 'critical' | 'error' | 'warning'
+}
+
+interface BackendPromptConfig {
+  id: number
+  name: string
+  content: string
+  is_active: number | boolean
+}
+
+interface BackendChannelConfig {
+  id: number
+  name: string
+  provider: string
+  webhook_url: string
+  secret?: string
+  alert_threshold: 'critical' | 'error' | 'warning'
+  is_active: number | boolean
+}
+
+interface BackendSettingsResponse {
+  config: Record<string, unknown>
+  prompts: BackendPromptConfig[]
+  channels: BackendChannelConfig[]
 }
 
 interface PrototypeSnapshot {
@@ -520,6 +544,8 @@ interface PrototypeSnapshot {
  * 用户已经明确要“像原来的设置页”，所以这里不再自创新的工作台结构，只替换里面的字段语义和本地原型状态。
  */
 const activeTab = ref<TabId>('general')
+const isLoading = ref(false)
+const isSaving = ref(false)
 
 const general = reactive({
   language: 'zh',
@@ -608,6 +634,41 @@ const selectedChannel = computed(() => {
   return channels.find((item) => item.id === selectedChannelId.value) ?? channels[0]
 })
 
+function toBool(value: unknown, defaultValue = false) {
+  if (value === undefined || value === null) return defaultValue
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') return value === '1' || value.toLowerCase() === 'true'
+  return defaultValue
+}
+
+function toNumber(value: unknown, defaultValue: number) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return defaultValue
+}
+
+// 结束字段别名当前在后端先按 JSON 字符串存储。
+// 这样 SettingsPrototype 可以先把“多选别名”真实保存和回填，等后面真接到 LogHandler 时再统一解析成数组。
+function parseAliasList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string')
+  }
+  if (typeof value !== 'string' || value.trim() === '') {
+    return []
+  }
+  try {
+    const parsed = JSON.parse(value)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === 'string')
+  } catch {
+    return []
+  }
+}
+
 function snapshotState(): PrototypeSnapshot {
   return JSON.parse(JSON.stringify({
     general,
@@ -622,7 +683,8 @@ const savedSnapshot = ref<PrototypeSnapshot>(snapshotState())
 
 /**
  * 保存区仍然做脏状态判断，因为用户要的是“像真页”的交互。
- * 这里虽然还没接后端，但至少要把本地改动、重启字段和恢复操作都做成和真实设置页一致的使用感。
+ * 现在虽然已经接上后端，但这层本地快照仍然有价值：
+ * 一是用来做 dirty check，二是用来判断哪些字段属于“保存后重启生效”。
  */
 const isDirty = computed(() => JSON.stringify(snapshotState()) !== JSON.stringify(savedSnapshot.value))
 const restartRequired = computed(() => {
@@ -642,25 +704,142 @@ function ensureChannelSelection() {
   }
 }
 
+function normalizePromptSelection() {
+  if (prompts.length === 0) {
+    ai.activePromptId = 0
+    selectedPromptId.value = 0
+    return
+  }
+
+  if (!prompts.some((item) => item.id === ai.activePromptId)) {
+    ai.activePromptId = prompts[0].id
+  }
+
+  if (!prompts.some((item) => item.id === selectedPromptId.value)) {
+    selectedPromptId.value = ai.activePromptId
+  }
+}
+
 function applySnapshot(next: PrototypeSnapshot) {
   Object.assign(general, next.general)
   Object.assign(ai, next.ai)
   prompts.splice(0, prompts.length, ...next.prompts)
   channels.splice(0, channels.length, ...next.channels)
   Object.assign(kernel, next.kernel)
-  ensurePromptSelection()
+  normalizePromptSelection()
   ensureChannelSelection()
 }
 
+async function loadSettings() {
+  isLoading.value = true
+  try {
+    const response = await fetch('/api/settings/all')
+    if (!response.ok) {
+      throw new Error('Failed to fetch settings')
+    }
+
+    const data: BackendSettingsResponse = await response.json()
+    const config = data.config ?? {}
+    const nextSnapshot: PrototypeSnapshot = {
+      general: {
+        language: (typeof config.app_language === 'string' ? config.app_language : 'zh'),
+        httpPort: toNumber(config.http_port, 8080),
+        retentionDays: toNumber(config.log_retention_days, 7)
+      },
+      ai: {
+        provider: typeof config.ai_provider === 'string' ? config.ai_provider : 'mock',
+        model: typeof config.ai_model === 'string' ? config.ai_model : 'gpt-4-turbo',
+        apiKey: typeof config.ai_api_key === 'string' ? config.ai_api_key : '',
+        language: typeof config.ai_language === 'string' ? config.ai_language : 'zh',
+        retryEnabled: toBool(config.ai_retry_enabled, false),
+        retryMaxAttempts: toNumber(config.ai_retry_max_attempts, 3),
+        autoDegrade: toBool(config.ai_auto_degrade, false),
+        fallbackProvider: typeof config.ai_fallback_provider === 'string' ? config.ai_fallback_provider : 'mock',
+        fallbackModel: typeof config.ai_fallback_model === 'string' ? config.ai_fallback_model : 'mock',
+        circuitBreaker: toBool(config.ai_circuit_breaker, true),
+        failureThreshold: toNumber(config.ai_failure_threshold, 5),
+        cooldownSeconds: toNumber(config.ai_cooldown_seconds, 60),
+        activePromptId: toNumber(config.active_prompt_id, 0)
+      },
+      prompts: (data.prompts ?? []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        content: item.content
+      })),
+      channels: (data.channels ?? []).map((item) => ({
+        id: item.id,
+        name: item.name,
+        enabled: toBool(item.is_active, false),
+        webhookUrl: item.webhook_url,
+        secret: item.secret ?? '',
+        threshold: item.alert_threshold
+      })),
+      kernel: {
+        workerThreads: toNumber(config.kernel_worker_threads, 4),
+        endFlagField: typeof config.trace_end_field === 'string' ? config.trace_end_field : 'trace_end',
+        endFlagAliases: parseAliasList(config.trace_end_aliases),
+        tokenLimit: toNumber(config.token_limit, 0),
+        spanCapacity: toNumber(config.span_capacity, 100),
+        collectingIdleMs: toNumber(config.collecting_idle_timeout_ms, 5000),
+        sealedGraceMs: toNumber(config.sealed_grace_window_ms, 1000),
+        retryBaseDelayMs: toNumber(config.retry_base_delay_ms, 500),
+        sweepTickMs: toNumber(config.sweep_tick_ms, 500),
+        watermarks: {
+          activeSessions: {
+            overload: toNumber(config.wm_active_sessions_overload, 75),
+            critical: toNumber(config.wm_active_sessions_critical, 90)
+          },
+          bufferedSpans: {
+            overload: toNumber(config.wm_buffered_spans_overload, 75),
+            critical: toNumber(config.wm_buffered_spans_critical, 90)
+          },
+          pendingTasks: {
+            overload: toNumber(config.wm_pending_tasks_overload, 75),
+            critical: toNumber(config.wm_pending_tasks_critical, 90)
+          }
+        }
+      }
+    }
+
+    if (nextSnapshot.prompts.length === 0) {
+      nextSnapshot.prompts.push({
+        id: 1,
+        name: '默认 Prompt',
+        content: ''
+      })
+    }
+    if (nextSnapshot.channels.length === 0) {
+      nextSnapshot.channels.push({
+        id: 1,
+        name: '默认飞书渠道',
+        enabled: false,
+        webhookUrl: '',
+        secret: '',
+        threshold: 'critical'
+      })
+    }
+
+    if (!nextSnapshot.prompts.some((item) => item.id === nextSnapshot.ai.activePromptId)) {
+      nextSnapshot.ai.activePromptId = nextSnapshot.prompts[0].id
+    }
+
+    applySnapshot(nextSnapshot)
+    savedSnapshot.value = snapshotState()
+  } catch (error) {
+    console.error('Failed to load settings prototype data:', error)
+    ElMessage.error('设置加载失败，当前先保留本地默认值')
+  } finally {
+    isLoading.value = false
+  }
+}
+
 function savePrototype() {
-  const restartTouched = restartRequired.value
-  savedSnapshot.value = snapshotState()
-  ElMessage.success(restartTouched ? '原型快照已保存：包含重启后生效字段' : '原型快照已保存（仅本地）')
+  void persistSettings()
 }
 
 function resetPrototype() {
   applySnapshot(JSON.parse(JSON.stringify(savedSnapshot.value)) as PrototypeSnapshot)
-  ElMessage.info('已恢复到上一次保存的原型快照')
+  ElMessage.info('已恢复到上一次保存的设置')
 }
 
 /**
@@ -726,7 +905,7 @@ function thresholdClass(level: string) {
 }
 
 /**
- * 测试发送和保存原型快照必须分开：
+ * 测试发送和保存设置必须分开：
  * 一个是在验证单条飞书渠道配置能不能发，另一个是在保存整页设置状态，两个动作语义完全不是一回事。
  */
 function sendChannelProbe() {
@@ -738,6 +917,106 @@ function sendChannelProbe() {
   const secretState = selectedChannel.value.secret.trim() ? '已附带签名 Secret' : '未填写签名 Secret'
   ElMessage.success(`已模拟发送测试消息：${selectedChannel.value.name}（${secretState}）`)
 }
+
+// 这里故意不复用旧 system.ts。
+// 原因不是重复造轮子，而是旧 store 里还带着 maxDiskUsageGB / msg_template / ioBuffer 这些过时字段；
+// 当前原型页要验证的是“新字段契约能不能真实落库并稳定回填”，所以直接按三类接口对接最干净。
+async function persistSettings() {
+  isSaving.value = true
+  try {
+    const restartTouched = restartRequired.value
+    const configItems = [
+      { key: 'app_language', value: general.language },
+      { key: 'http_port', value: general.httpPort.toString() },
+      { key: 'log_retention_days', value: general.retentionDays.toString() },
+      { key: 'ai_provider', value: ai.provider },
+      { key: 'ai_model', value: ai.model },
+      { key: 'ai_api_key', value: ai.apiKey },
+      { key: 'ai_language', value: ai.language },
+      { key: 'ai_retry_enabled', value: ai.retryEnabled ? '1' : '0' },
+      { key: 'ai_retry_max_attempts', value: ai.retryMaxAttempts.toString() },
+      { key: 'ai_auto_degrade', value: ai.autoDegrade ? '1' : '0' },
+      { key: 'ai_fallback_provider', value: ai.fallbackProvider },
+      { key: 'ai_fallback_model', value: ai.fallbackModel },
+      { key: 'ai_circuit_breaker', value: ai.circuitBreaker ? '1' : '0' },
+      { key: 'ai_failure_threshold', value: ai.failureThreshold.toString() },
+      { key: 'ai_cooldown_seconds', value: ai.cooldownSeconds.toString() },
+      { key: 'active_prompt_id', value: ai.activePromptId.toString() },
+      { key: 'kernel_worker_threads', value: kernel.workerThreads.toString() },
+      { key: 'trace_end_field', value: kernel.endFlagField },
+      { key: 'trace_end_aliases', value: JSON.stringify(kernel.endFlagAliases) },
+      { key: 'token_limit', value: kernel.tokenLimit.toString() },
+      { key: 'span_capacity', value: kernel.spanCapacity.toString() },
+      { key: 'collecting_idle_timeout_ms', value: kernel.collectingIdleMs.toString() },
+      { key: 'sealed_grace_window_ms', value: kernel.sealedGraceMs.toString() },
+      { key: 'retry_base_delay_ms', value: kernel.retryBaseDelayMs.toString() },
+      { key: 'sweep_tick_ms', value: kernel.sweepTickMs.toString() },
+      { key: 'wm_active_sessions_overload', value: kernel.watermarks.activeSessions.overload.toString() },
+      { key: 'wm_active_sessions_critical', value: kernel.watermarks.activeSessions.critical.toString() },
+      { key: 'wm_buffered_spans_overload', value: kernel.watermarks.bufferedSpans.overload.toString() },
+      { key: 'wm_buffered_spans_critical', value: kernel.watermarks.bufferedSpans.critical.toString() },
+      { key: 'wm_pending_tasks_overload', value: kernel.watermarks.pendingTasks.overload.toString() },
+      { key: 'wm_pending_tasks_critical', value: kernel.watermarks.pendingTasks.critical.toString() }
+    ]
+
+    const promptsPayload = prompts.map((item) => ({
+      id: item.id,
+      name: item.name,
+      content: item.content,
+      is_active: item.id === ai.activePromptId ? 1 : 0
+    }))
+
+    const channelsPayload = channels.map((item) => ({
+      id: item.id,
+      name: item.name,
+      provider: 'feishu',
+      webhook_url: item.webhookUrl,
+      secret: item.secret,
+      alert_threshold: item.threshold,
+      is_active: item.enabled ? 1 : 0
+    }))
+
+    const responses = await Promise.all([
+      fetch('/api/settings/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: configItems })
+      }),
+      fetch('/api/settings/prompts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(promptsPayload)
+      }),
+      fetch('/api/settings/channels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(channelsPayload)
+      })
+    ])
+
+    const failed = responses.find((response) => !response.ok)
+    if (failed) {
+      throw new Error(`Save failed with status ${failed.status}`)
+    }
+
+    await loadSettings()
+    ElMessage.success(restartTouched ? '设置已保存：包含重启后生效字段' : '设置已保存')
+  } catch (error) {
+    console.error('Failed to save settings prototype data:', error)
+    ElMessage.error('设置保存失败')
+  } finally {
+    isSaving.value = false
+  }
+}
+
+watch(() => general.language, (newLang) => {
+  // @ts-ignore
+  i18n.global.locale.value = newLang
+}, { immediate: true })
+
+onMounted(() => {
+  void loadSettings()
+})
 </script>
 
 <style scoped>

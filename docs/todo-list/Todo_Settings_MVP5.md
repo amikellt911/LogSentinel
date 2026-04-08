@@ -23,3 +23,6 @@
 - [x] 修改 `server/handlers/ConfigHandler.cpp`，为 `/settings/config` 补 key 白名单和标量值校验
 - [x] 修改 `server/handlers/ConfigHandler.cpp`，为 `/settings/channels` 补飞书最小字段校验，挡掉旧 `msg_template` 口径
 - [x] 回收 `server/handlers/ConfigHandler.cpp` 里过重的字段白名单，改回只保留最小格式校验
+- [x] 为 `trace_end` 结束字段别名补最小持久化能力，避免设置原型页该字段成为假保存
+- [x] 让 `SettingsPrototype.vue` 直接对接 `/settings/all`、`/settings/config`、`/settings/prompts`、`/settings/channels`
+- [x] 在前端入口预取 `app_language`，并把 UI 默认语言切到中文，避免必须先进入设置页才切换语言

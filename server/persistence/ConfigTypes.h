@@ -56,6 +56,9 @@ struct AppConfig {
     // 内核与主链运行时参数
     int kernel_worker_threads = 4;
     std::string trace_end_field = "trace_end";
+    // 别名当前先按 JSON 字符串存储：
+    // 这样前端可以先把多选结果稳定回填，后面真接到 LogHandler 时再统一解析成数组，不必现在就把 app_config 从 KV 改成复杂结构。
+    std::string trace_end_aliases = "[]";
     int token_limit = 0;
     int span_capacity = 100;
     int collecting_idle_timeout_ms = 5000;
@@ -80,7 +83,7 @@ struct AppConfig {
         ai_circuit_breaker, ai_failure_threshold, ai_cooldown_seconds,
         active_prompt_id,
         kernel_worker_threads,
-        trace_end_field, token_limit, span_capacity,
+        trace_end_field, trace_end_aliases, token_limit, span_capacity,
         collecting_idle_timeout_ms, sealed_grace_window_ms, retry_base_delay_ms, sweep_tick_ms,
         wm_active_sessions_overload, wm_active_sessions_critical,
         wm_buffered_spans_overload, wm_buffered_spans_critical,

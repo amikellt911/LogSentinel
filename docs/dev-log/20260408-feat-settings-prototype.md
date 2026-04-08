@@ -319,6 +319,49 @@ refactor(handler): 回收设置接口层的重复字段白名单
 - 按本轮要求，未运行编译命令和测试命令。
 - 这一步只回收了 `ConfigHandler` 里过重的字段白名单，没有继续改前端 store、Repository 或主程序运行时读取。
 
+# 追加记录：2026-04-08 设置原型页接回真实存储闭环
+
+## Git Commit Message
+
+feat(settings): 打通设置原型页与配置存储闭环
+
+## Modification
+
+- `client/src/views/SettingsPrototype.vue`
+- `client/src/main.ts`
+- `client/src/i18n.ts`
+- `server/persistence/ConfigTypes.h`
+- `server/persistence/SqliteConfigRepository.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/SettingsPrototype.vue` 里补了中文注释，说明为什么这页故意不复用旧 `system.ts`、为什么 `trace_end_aliases` 先按 JSON 字符串存储，以及为什么本地快照现在仍然要保留给 dirty check / restart 判断使用。
+- 在 `client/src/views/SettingsPrototype.vue` 里补了中文注释，说明为什么“测试发送”和“保存设置”必须分开，避免把渠道联调动作和整页配置保存混成一个语义。
+- 在 `client/src/main.ts` 里补了中文注释，说明为什么应用入口要先预取 `app_language`，否则根路由第一次打开时会先展示错误语言。
+- 在 `client/src/i18n.ts` 里补了中文注释，说明为什么默认语言先切到中文，以及为什么最终语言仍然要由入口预取的配置覆盖。
+- 在 `server/persistence/ConfigTypes.h` 和 `server/persistence/SqliteConfigRepository.cpp` 里补了中文注释，说明为什么 `trace_end_aliases` 当前先按 JSON 字符串挂进 `app_config`，而不是现在就把 KV 存储改成复杂结构。
+
+## Learning Tips
+
+### Newbie Tips
+
+设置页“能保存”不等于“真闭环”。真正的闭环至少要有三步：页面加载能回填、保存后刷新还能读回来、入口级全局状态能在用户第一次打开应用时就拿到。少任何一步，用户都会觉得配置像是假的。
+
+### Function Explanation
+
+这次 `SettingsPrototype.vue` 没去复用旧 `system.ts`，而是直接按三类接口对接：`/settings/config`、`/settings/prompts`、`/settings/channels`。这样做是为了绕开旧 store 里已经过时的字段映射，先验证新字段契约本身能不能稳定落库和回填。
+
+### Pitfalls
+
+`trace_end_aliases` 现在只是“存得下、读得回”，还没有真正接进 `LogHandler` 的解析逻辑。所以这一步解决的是设置页假保存，不是别名已经开始生效。后面如果你看到界面能保存别名，但上报时别名还不认，这是预期中的下一阶段工作。
+
+## Verification
+
+- 按本轮要求，未运行编译命令和测试命令。
+- 这一步只打通了“设置原型页 <-> 配置存储 <-> 应用入口语言预取”的闭环，没有继续改主程序运行时消费点。
+
 # 追加记录：2026-04-08 设置原型页去掉说明性文案
 
 ## Git Commit Message
