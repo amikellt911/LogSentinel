@@ -201,6 +201,12 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
                                          size_t wheel_size,
                                          size_t buffered_span_hard_limit,
                                          size_t active_session_hard_limit,
+                                         int active_session_overload_percent,
+                                         int active_session_critical_percent,
+                                         int buffered_spans_overload_percent,
+                                         int buffered_spans_critical_percent,
+                                         int pending_tasks_overload_percent,
+                                         int pending_tasks_critical_percent,
                                          ServiceRuntimeAccumulator* service_runtime_accumulator,
                                          SystemRuntimeAccumulator* system_runtime_accumulator)
     : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
@@ -213,15 +219,24 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
     // 先把 completed tombstone 的桶位也按同样的 wheel_size 建好。
     // 这样后面只要跟着 current_tick_ 同步推进，就能在同一套 tick 节奏里做过期回收。
     completed_trace_wheel_.resize(wheel_size_);
-    buffered_span_watermark_ = BuildWatermark(buffered_span_hard_limit_);
-    active_session_watermark_ = BuildWatermark(active_session_hard_limit_);
+    // 三组背压阈值现在改成 Settings 冷启动配置驱动，避免继续把 55/75/90 写死在状态机里。
+    buffered_span_watermark_ = BuildWatermark(buffered_span_hard_limit_,
+                                              buffered_spans_overload_percent,
+                                              buffered_spans_critical_percent);
+    active_session_watermark_ = BuildWatermark(active_session_hard_limit_,
+                                               active_session_overload_percent,
+                                               active_session_critical_percent);
     const size_t pending_task_hard_limit =
         thread_pool_ ? std::max<size_t>(1, thread_pool_->maxQueueSize()) : 1;
-    pending_task_watermark_ = BuildWatermark(pending_task_hard_limit);
+    pending_task_watermark_ = BuildWatermark(pending_task_hard_limit,
+                                             pending_tasks_overload_percent,
+                                             pending_tasks_critical_percent);
     // dispatch queue 先按 worker queue 的一半建硬上限，目的是让“主线程摘 session”和“AI worker 真正吃任务”
     // 之间至少隔一层更窄的静态闸门；后面如果压测显示过窄，再按结果调整。
     dispatch_queue_hard_limit_ = std::max<size_t>(1, pending_task_hard_limit / 2);
-    dispatch_queue_watermark_ = BuildWatermark(dispatch_queue_hard_limit_);
+    dispatch_queue_watermark_ = BuildWatermark(dispatch_queue_hard_limit_,
+                                               pending_tasks_overload_percent,
+                                               pending_tasks_critical_percent);
     dispatch_thread_ = std::thread(&TraceSessionManager::DispatchLoop, this);
 }
 
@@ -236,13 +251,25 @@ TraceSessionManager::~TraceSessionManager()
     std::clog << "[TraceRuntimeStats] " << DescribeRuntimeStats() << std::endl;
 }
 
-TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_limit)
+TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_limit,
+                                                                  int overload_percent,
+                                                                  int critical_percent)
 {
     const size_t safe_hard_limit = std::max<size_t>(hard_limit, 1);
+    const int safe_overload_percent = std::max(1, std::min(overload_percent, 100));
+    const int safe_critical_percent =
+        std::max(safe_overload_percent, std::min(critical_percent, 100));
+    // Settings 当前只开放 overload / critical 两档百分比，low 不单独暴露。
+    // 这里先固定回退 10 个百分点做回滞，避免状态在 overload 边界附近来回抖动。
+    const int low_percent = std::max(1, safe_overload_percent - 10);
     Watermark mark;
-    mark.low = std::max<size_t>(1, safe_hard_limit * 55 / 100);
-    mark.high = std::max(mark.low, std::max<size_t>(1, safe_hard_limit * 75 / 100));
-    mark.critical = std::max(mark.high, std::max<size_t>(1, safe_hard_limit * 90 / 100));
+    mark.low = std::max<size_t>(1, safe_hard_limit * static_cast<size_t>(low_percent) / 100);
+    mark.high =
+        std::max(mark.low,
+                 std::max<size_t>(1, safe_hard_limit * static_cast<size_t>(safe_overload_percent) / 100));
+    mark.critical =
+        std::max(mark.high,
+                 std::max<size_t>(1, safe_hard_limit * static_cast<size_t>(safe_critical_percent) / 100));
     mark.critical = std::min(mark.critical, safe_hard_limit);
     return mark;
 }

@@ -761,3 +761,41 @@ refactor(trace): 将 trace_end 解析口径收口为冷启动配置
 ## Verification
 
 - 按当前步骤约束，这次没有运行编译和测试。
+
+# 追加记录：2026-04-08 接通背压水位阈值的冷启动消费
+
+## Git Commit Message
+
+feat(trace): 接通背压水位阈值的冷启动消费
+
+## Modification
+
+- `server/core/TraceSessionManager.h`
+- `server/core/TraceSessionManager.cpp`
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `server/core/TraceSessionManager.h` 里补了中文注释，说明为什么三组水位阈值当前只开放 overload/critical 两档，以及为什么 `low` 仍由后端内部派生。
+- 在 `server/core/TraceSessionManager.cpp` 里补了中文注释，说明为什么这三组阈值要在构造期接入状态机，以及为什么 `low_percent` 固定按 overload 往下退 10 个百分点做回滞。
+- 在 `server/src/main.cpp` 里补了中文注释，说明为什么水位阈值也属于冷启动配置、为什么这里只校验百分比区间合法性，不在启动期再引入更多热更新分支。
+
+## Learning Tips
+
+### Newbie Tips
+
+背压阈值不是单纯“几个数字好看就行”。既然它们会直接决定请求什么时候开始拒绝、什么时候回到正常态，那么它们就是状态机参数，不是普通展示配置，默认先按冷启动处理更稳。
+
+### Function Explanation
+
+这次把 `BuildWatermark(...)` 从固定 55/75/90 改成了配置驱动版本：启动时只读取 overload/critical 百分比，构造 `TraceSessionManager` 时再换算成 `low/high/critical` 三个绝对值阈位。
+
+### Pitfalls
+
+如果把三个阈值都直接暴露给前端，用户很容易把 `low >= high` 或 `high > critical` 这种非法组合保存进去。当前先只开放 overload/critical 两档，`low` 交给后端内部派生，能少掉一类很低价值的错误输入。
+
+## Verification
+
+- 按当前步骤约束，这次没有运行编译和测试。

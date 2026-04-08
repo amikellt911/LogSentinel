@@ -289,6 +289,21 @@ int main(int argc, char* argv[])
             : startup_app_config.trace_end_field;
     const std::vector<std::string> effective_trace_end_aliases =
         startup_app_config.trace_end_aliases;
+    // 水位阈值同样收口成冷启动配置：
+    // 它们直接驱动 TraceSessionManager 的背压状态机，不适合运行中热切。
+    // 这一刀只开放 overload/critical 两档，low 仍由后端内部派生回滞阈值。
+    const int effective_wm_active_sessions_overload =
+        startup_app_config.wm_active_sessions_overload;
+    const int effective_wm_active_sessions_critical =
+        startup_app_config.wm_active_sessions_critical;
+    const int effective_wm_buffered_spans_overload =
+        startup_app_config.wm_buffered_spans_overload;
+    const int effective_wm_buffered_spans_critical =
+        startup_app_config.wm_buffered_spans_critical;
+    const int effective_wm_pending_tasks_overload =
+        startup_app_config.wm_pending_tasks_overload;
+    const int effective_wm_pending_tasks_critical =
+        startup_app_config.wm_pending_tasks_critical;
 
     if (effective_port <= 0) {
         std::cerr << "Fatal Error: effective http_port must be > 0" << std::endl;
@@ -316,6 +331,24 @@ int main(int argc, char* argv[])
     }
     if (effective_retry_base_delay_ms <= 0) {
         std::cerr << "Fatal Error: effective retry_base_delay_ms must be > 0" << std::endl;
+        return -1;
+    }
+    if (effective_wm_active_sessions_overload <= 0 || effective_wm_active_sessions_overload > 100 ||
+        effective_wm_active_sessions_critical < effective_wm_active_sessions_overload ||
+        effective_wm_active_sessions_critical > 100) {
+        std::cerr << "Fatal Error: active session watermark percentages are invalid" << std::endl;
+        return -1;
+    }
+    if (effective_wm_buffered_spans_overload <= 0 || effective_wm_buffered_spans_overload > 100 ||
+        effective_wm_buffered_spans_critical < effective_wm_buffered_spans_overload ||
+        effective_wm_buffered_spans_critical > 100) {
+        std::cerr << "Fatal Error: buffered spans watermark percentages are invalid" << std::endl;
+        return -1;
+    }
+    if (effective_wm_pending_tasks_overload <= 0 || effective_wm_pending_tasks_overload > 100 ||
+        effective_wm_pending_tasks_critical < effective_wm_pending_tasks_overload ||
+        effective_wm_pending_tasks_critical > 100) {
+        std::cerr << "Fatal Error: pending tasks watermark percentages are invalid" << std::endl;
         return -1;
     }
 
@@ -466,6 +499,12 @@ int main(int argc, char* argv[])
         /*wheel_size*/512,
         static_cast<size_t>(trace_buffered_span_limit),
         static_cast<size_t>(trace_active_session_limit),
+        effective_wm_active_sessions_overload,
+        effective_wm_active_sessions_critical,
+        effective_wm_buffered_spans_overload,
+        effective_wm_buffered_spans_critical,
+        effective_wm_pending_tasks_overload,
+        effective_wm_pending_tasks_critical,
         service_runtime_accumulator.get(),
         system_runtime_accumulator.get());
     const double trace_sweep_interval_sec =
@@ -477,6 +516,9 @@ int main(int argc, char* argv[])
               << ", max_dispatch_per_tick=" << trace_max_dispatch_per_tick
               << ", trace_capacity=" << effective_trace_capacity
               << ", trace_token_limit=" << effective_trace_token_limit
+              << ", wm_active_sessions=" << effective_wm_active_sessions_overload << "/" << effective_wm_active_sessions_critical
+              << ", wm_buffered_spans=" << effective_wm_buffered_spans_overload << "/" << effective_wm_buffered_spans_critical
+              << ", wm_pending_tasks=" << effective_wm_pending_tasks_overload << "/" << effective_wm_pending_tasks_critical
               << ", buffered_span_limit=" << trace_buffered_span_limit
               << ", active_session_limit=" << trace_active_session_limit
               << ", worker_queue_size=" << worker_queue_size << std::endl;

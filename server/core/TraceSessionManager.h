@@ -184,6 +184,14 @@ public:
                                  size_t wheel_size = 512,
                                  size_t buffered_span_hard_limit = 4096,
                                  size_t active_session_hard_limit = 1024,
+                                 // 三组水位阈值当前只开放 overload/critical 两档百分比；
+                                 // low 不单独暴露给 Settings，而是由内部自动派生一个更低的回滞阈值。
+                                 int active_session_overload_percent = 75,
+                                 int active_session_critical_percent = 90,
+                                 int buffered_spans_overload_percent = 75,
+                                 int buffered_spans_critical_percent = 90,
+                                 int pending_tasks_overload_percent = 75,
+                                 int pending_tasks_critical_percent = 90,
                                  ServiceRuntimeAccumulator* service_runtime_accumulator = nullptr,
                                  // system_runtime_accumulator 只负责系统运行态埋点，
                                  // 不参与 Trace 聚合/分发语义判断，所以和服务监控累加器一样保持可选注入。
@@ -268,8 +276,11 @@ private:
     // 既然时间轮真正调度的是 tick 而不是毫秒，那么这里必须向上取整并至少保留 1 tick，
     // 否则配置值小于 wheel_tick_ms_ 时会被截成 0，最终表现成“设置了但完全不生效”。
     uint64_t ComputeDelayTicks(int64_t delay_ms) const;
-    // 按 hard limit 预计算 low/high/critical 三档阈值，构造期缓存后供准入门禁直接读取。
-    static Watermark BuildWatermark(size_t hard_limit);
+    // 按 hard limit 和 overload/critical 百分比预计算水位。
+    // low 不单独开放配置，而是从 overload 百分比向下退一小段，专门给 back_to_low 回滞使用。
+    static Watermark BuildWatermark(size_t hard_limit,
+                                    int overload_percent,
+                                    int critical_percent);
     // sealed 窗口现在改成配置驱动：所有 seal reason 共用同一个短窗口，
     // 目的是先把 Settings 里的单个 sealed_grace_window_ms 真正落地，后面若要细分 reason 再扩。
     uint64_t ComputeSealDelayTicks(TraceSession::SealReason reason) const;
