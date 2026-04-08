@@ -298,6 +298,42 @@ refactor(frontend): 将设置原型页的业务 prompt 改成结构化编辑
   - `node -e "...@vue/compiler-sfc..."` 返回 `SFC compile ok`
 - 第一次在仓库根目录运行相同检查时失败，原因是 `@vue/compiler-sfc` 模块只安装在 `client/node_modules`，不是本次代码本身的语法错误。
 
+# 追加记录：2026-04-08 Prompt 编辑区标题本地化与 Active 状态强化
+
+## Git Commit Message
+
+refactor(frontend): 强化设置原型页的 prompt 生效态提示
+
+## Modification
+
+- `client/src/views/SettingsPrototype.vue`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/SettingsPrototype.vue` 的 Prompt 列表项附近补了中文注释，说明为什么 `selected` 和 `active` 必须拆成两套视觉状态，不能继续只靠一个绿色小点混着表示。
+- 在 `client/src/views/SettingsPrototype.vue` 的预览标题附近补了中文注释，说明为什么左侧结构化编辑标题应该跟随界面语言切换，但右侧 `business_guidance` 预览故意保留英文结构。
+
+## Learning Tips
+
+### Newbie Tips
+
+列表里的“我现在点中了哪条”和“哪条配置才是真正生效的”不是一回事。如果这两个状态共用同一种高亮，用户一定会把“当前正在编辑”误以为“当前正在生效”。
+
+### Function Explanation
+
+这次新增了 `promptEditorLabels` 和 `activePromptBadgeLabel` 两个计算属性。前者负责把结构化编辑区标题跟随界面语言切成中英双语，后者负责把 active badge 文案切成 `生效中` / `Active`，避免在模板里散落多份条件判断。
+
+### Pitfalls
+
+如果只把原来的绿色小点放大，它看起来仍然更像“选中态”或“正常态”，而不是“真正会生效的配置”。要解决这个问题，必须把 active 整行做成更强的视觉信号，比如 badge、边框、底色，而不是只改一个小圆点。
+
+## Verification
+
+- 在 `client` 目录运行了单文件 SFC 编译检查：
+  - `node -e "...@vue/compiler-sfc..."` 返回 `SFC compile ok`
+
 - 在 `server/handlers/ConfigHandler.cpp` 顶部 helper 区补了中文注释，说明为什么接口层现在必须自己维护 config key 白名单，以及为什么 channels 要先硬收成飞书最小字段集。
 - 在 `server/handlers/ConfigHandler.cpp` 的 `ConvertConfigValueToString()` 上方补了中文注释，说明为什么 `/settings/config` 这条接口现在只允许标量值，不再允许对象/数组混进 KV 配置。
 - 在 `server/handlers/ConfigHandler.cpp` 的 `handleUpdateAppConfig()` 和 `handleUpdateChannels()` 里补了中文注释，说明为什么这一步要在 Handler 层先把旧字段挡掉，而不是继续依赖 Repository 默默忽略。

@@ -37,3 +37,6 @@
 - [x] 将 `SettingsPrototype.vue` 的业务 Prompt 编辑区改成结构化 5 段表单，不再继续使用单个自由文本框
 - [x] 为结构化 Prompt 编辑区补最终 `business_guidance` 只读预览，并保持当前保存接口仍能写回 `content` 字符串
 - [x] 追加 2026-04-08 dev-log，记录这次 Prompt 结构化编辑原型调整和中文注释位置
+- [x] 调整 `SettingsPrototype.vue` 的结构化 Prompt 标题语言，使其跟随界面语言切换，但保留英文 `business_guidance` 预览
+- [x] 将 Prompt 列表里的 `selected` 与 `active` 视觉状态拆开，并增加明确的 active badge
+- [x] 追加 2026-04-08 dev-log，记录这次 Prompt 标题语言与 active 状态视觉修正

@@ -175,16 +175,34 @@
                       v-for="prompt in prompts"
                       :key="prompt.id"
                       class="p-4 cursor-pointer hover:bg-gray-800 transition-colors border-b border-gray-800 relative group flex items-center"
-                      :class="{ 'bg-gray-800 border-l-2 border-l-primary': selectedPromptId === prompt.id }"
+                      :class="{
+                        'bg-gray-800 border-l-2 border-l-primary': selectedPromptId === prompt.id,
+                        'ring-1 ring-emerald-500/50 ring-inset bg-emerald-950/20': ai.activePromptId === prompt.id
+                      }"
                       @click="handlePromptClick(prompt.id)"
                     >
                       <div class="mr-3 flex items-center justify-center">
-                        <div v-if="ai.activePromptId === prompt.id" class="w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
+                        <!-- selected 和 active 必须拆开。
+                             selected 只表示“右侧当前正在编辑哪一条”，active 才表示“重启后真正会生效哪一条”，
+                             所以这里不再只靠绿色小点，而是额外给 active 整行 badge 和边框状态。 -->
+                        <div
+                          v-if="ai.activePromptId === prompt.id"
+                          class="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.75)]"
+                        ></div>
+                        <div v-else-if="selectedPromptId === prompt.id" class="w-2.5 h-2.5 rounded-full bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.55)]"></div>
                         <div v-else class="w-2.5 h-2.5 rounded-full border border-gray-500"></div>
                       </div>
 
                       <div class="flex flex-col truncate flex-1 pr-2">
-                        <div class="font-mono text-sm text-gray-300 truncate">{{ prompt.name }}</div>
+                        <div class="flex items-center gap-2">
+                          <div class="font-mono text-sm text-gray-300 truncate">{{ prompt.name }}</div>
+                          <span
+                            v-if="ai.activePromptId === prompt.id"
+                            class="shrink-0 rounded-full border border-emerald-500/60 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300"
+                          >
+                            {{ activePromptBadgeLabel }}
+                          </span>
+                        </div>
                       </div>
 
                       <div class="opacity-0 group-hover:opacity-100 transition-opacity ml-auto" v-if="prompts.length > 1">
@@ -211,7 +229,7 @@
                              这里按数据形态拆成单值、术语字典、多条规则三种控件，目的是把“用户能改什么”直接写进编辑器结构里。 -->
                         <div class="space-y-6">
                           <div class="rounded border border-gray-700 bg-[#1a1a1a] p-5">
-                            <div class="mb-3 text-sm font-semibold text-gray-200">Domain Goal</div>
+                            <div class="mb-3 text-sm font-semibold text-gray-200">{{ promptEditorLabels.domainGoal }}</div>
                             <el-input
                               v-model="selectedPrompt.content.domainGoal"
                               type="textarea"
@@ -223,7 +241,7 @@
 
                           <div class="rounded border border-gray-700 bg-[#1a1a1a] p-5">
                             <div class="mb-4 flex items-center justify-between">
-                              <div class="text-sm font-semibold text-gray-200">Business Glossary</div>
+                              <div class="text-sm font-semibold text-gray-200">{{ promptEditorLabels.businessGlossary }}</div>
                               <el-button size="small" @click="addPromptGlossaryRow">
                                 <el-icon class="mr-1"><Plus /></el-icon>
                                 添加术语
@@ -253,7 +271,7 @@
 
                           <div class="rounded border border-gray-700 bg-[#1a1a1a] p-5">
                             <div class="mb-4 flex items-center justify-between">
-                              <div class="text-sm font-semibold text-gray-200">Focus Areas</div>
+                              <div class="text-sm font-semibold text-gray-200">{{ promptEditorLabels.focusAreas }}</div>
                               <el-button size="small" @click="addPromptListRow('focusAreas')">
                                 <el-icon class="mr-1"><Plus /></el-icon>
                                 添加关注点
@@ -280,7 +298,7 @@
 
                           <div class="rounded border border-gray-700 bg-[#1a1a1a] p-5">
                             <div class="mb-4 flex items-center justify-between">
-                              <div class="text-sm font-semibold text-gray-200">Risk Preference</div>
+                              <div class="text-sm font-semibold text-gray-200">{{ promptEditorLabels.riskPreference }}</div>
                               <el-button size="small" @click="addPromptListRow('riskPreference')">
                                 <el-icon class="mr-1"><Plus /></el-icon>
                                 添加偏好
@@ -307,7 +325,7 @@
 
                           <div class="rounded border border-gray-700 bg-[#1a1a1a] p-5">
                             <div class="mb-4 flex items-center justify-between">
-                              <div class="text-sm font-semibold text-gray-200">Output Preference</div>
+                              <div class="text-sm font-semibold text-gray-200">{{ promptEditorLabels.outputPreference }}</div>
                               <el-button size="small" @click="addPromptListRow('outputPreference')">
                                 <el-icon class="mr-1"><Plus /></el-icon>
                                 添加输出要求
@@ -335,7 +353,9 @@
                       </div>
 
                       <div class="border-t border-gray-700 bg-[#181818] p-6 xl:w-[420px] xl:border-l xl:border-t-0">
-                        <div class="mb-3 text-sm font-semibold text-gray-200">最终 Business Guidance 预览</div>
+                        <!-- 左侧标题跟着界面语言切换，但右侧预览故意保留英文结构。
+                             因为这里展示的不是 UI 文案，而是后面真正会被渲染成 business_guidance 的 prompt 片段。 -->
+                        <div class="mb-3 text-sm font-semibold text-gray-200">{{ promptEditorLabels.preview }}</div>
                         <div class="rounded border border-gray-700 bg-[#111111] p-4">
                           <pre class="whitespace-pre-wrap break-words text-xs leading-6 text-gray-300 font-mono min-h-[480px]">{{ selectedPromptPreview || '当前还没有可预览的业务 guidance。' }}</pre>
                         </div>
@@ -786,6 +806,22 @@ const selectedPrompt = computed(() => {
 const selectedPromptPreview = computed(() => {
   if (!selectedPrompt.value) return ''
   return renderBusinessGuidancePreview(selectedPrompt.value.content)
+})
+
+const promptEditorLabels = computed(() => {
+  const isZh = general.language === 'zh'
+  return {
+    domainGoal: isZh ? '目标领域' : 'Domain Goal',
+    businessGlossary: isZh ? '业务术语表' : 'Business Glossary',
+    focusAreas: isZh ? '关注点' : 'Focus Areas',
+    riskPreference: isZh ? '风险偏好' : 'Risk Preference',
+    outputPreference: isZh ? '输出偏好' : 'Output Preference',
+    preview: isZh ? '最终 Business Guidance 预览' : 'Rendered Business Guidance Preview'
+  }
+})
+
+const activePromptBadgeLabel = computed(() => {
+  return general.language === 'zh' ? '生效中' : 'Active'
 })
 
 const selectedChannel = computed(() => {
