@@ -1,0 +1,19 @@
+# Todo_Settings_MVP5
+
+- [x] 基于当前字段矩阵与收口文档，确定 Settings 原型页信息架构
+- [x] 新建 `client/src/views/SettingsPrototype.vue`，按 4 个主 tab 落高保真原型
+- [x] 为原型页补中文注释，说明页面分区、原型数据和高级参数区语义
+- [x] 在路由中新增独立 `/settings-prototype` 入口，不替换旧 `Settings.vue`
+- [x] 追加 2026-04-08 dev-log，记录本次 Settings 原型页改造与注释点
+- [x] 运行前端校验命令，确认没有新增本次文件相关错误
+- [x] 将 `settings-prototype` 挂到左侧边栏，保证可直接点击进入
+- [x] 将 `SettingsPrototype.vue` 从信息架构展示稿重做为可操作高保真原型
+- [x] 为原型页增加本地保存/放弃交互与底部 save bar
+- [x] 让 AI / 告警 / 内核区域改成更接近真实产品的工作台布局
+- [x] 拆开“发送测试消息”和“保存原型快照”的交互语义，并补充保存栏状态提示
+- [x] 修复 `SettingsPrototype.vue` 的 runtime-only 渲染问题，确保辅助组件能真实渲染表单内容
+- [x] 按旧 `Settings.vue` 的模板骨架重排 `SettingsPrototype.vue`，不再自创新版式
+- [x] 将 AI tab 的 prompt 列表交互继续对齐旧 `Settings.vue`，点击列表项即选中并切为 active
+- [x] 删除 AI tab 右侧无效的“业务作用域”字段，并恢复可滚动的大文本编辑区
+- [x] 将 AI tab 的 Prompt 编辑区从固定高度盒子里拆出来，改成页面级底栏 + 独立主编辑区，避免正文输入框再被上下区域夹死
+- [x] 删除 `SettingsPrototype.vue` 页面里的说明性文案，只保留标题、字段标签和操作按钮，避免辅助文字继续干扰编辑区

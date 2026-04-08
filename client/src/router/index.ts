@@ -4,6 +4,7 @@ import ServiceMonitorPrototype from '../views/ServiceMonitorPrototype.vue'
 import Dashboard from '../views/Dashboard.vue'
 import TraceExplorer from '../views/TraceExplorer.vue'
 import Settings from '../views/Settings.vue'
+import SettingsPrototype from '../views/SettingsPrototype.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -48,6 +49,12 @@ const router = createRouter({
           path: 'settings',
           name: 'settings',
           component: Settings
+        },
+        {
+          // 新设置原型页先独立挂载，避免直接覆盖旧 Settings 页面，方便并行对比。
+          path: 'settings-prototype',
+          name: 'settings-prototype',
+          component: SettingsPrototype
         }
       ]
     }
