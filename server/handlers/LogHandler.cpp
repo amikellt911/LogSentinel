@@ -4,6 +4,7 @@
 #include "core/SystemRuntimeAccumulator.h"
 #include "core/TraceSessionManager.h"
 #include "MiniMuduo/net/EventLoop.h"
+#include "persistence/SqliteConfigRepository.h"
 #include "persistence/SqliteLogRepository.h"
 #include "threadpool/ThreadPool.h"
 #include <algorithm>
@@ -42,20 +43,74 @@ bool IsKnownTraceSpanField(const std::string& key)
         "service_name",
         "status",
         "kind",
-        "trace_end",
         "attributes"
     };
     return known_fields.find(key) != known_fields.end();
 }
 
+bool ParseOptionalBoolByField(const nlohmann::json& body,
+                              const std::string& field,
+                              std::optional<bool>* out,
+                              std::string* error)
+{
+    if (field.empty()) {
+        return true;
+    }
+    if (!body.contains(field) || body.at(field).is_null()) {
+        return true;
+    }
+    const nlohmann::json& value = body.at(field);
+    if (!value.is_boolean()) {
+        *error = std::string("Field must be bool: ") + field;
+        return false;
+    }
+    *out = value.get<bool>();
+    return true;
+}
+
+bool ParseConfiguredTraceEnd(const nlohmann::json& body,
+                             const std::string& primary_field,
+                             const std::vector<std::string>& aliases,
+                             std::optional<bool>* out,
+                             std::string* error)
+{
+    std::optional<bool> parsed;
+    // 这里明确采用“主字段优先，别名顺序回退”的规则：
+    // 既然 Settings 已经允许用户指定主字段名，那么主字段一旦命中，就不再继续看别名；
+    // 如果主字段没出现，再按别名列表顺序找第一个合法 bool，避免同一条请求里被多个名字来回覆盖。
+    if (!ParseOptionalBoolByField(body, primary_field, &parsed, error)) {
+        return false;
+    }
+    if (parsed.has_value()) {
+        *out = parsed;
+        return true;
+    }
+
+    for (const std::string& alias : aliases) {
+        parsed.reset();
+        if (!ParseOptionalBoolByField(body, alias, &parsed, error)) {
+            return false;
+        }
+        if (parsed.has_value()) {
+            *out = parsed;
+            return true;
+        }
+    }
+    return true;
+}
+
 void CollectUnknownTopLevelAttributes(const nlohmann::json& body,
+                                      const std::unordered_set<std::string>& dynamic_known_fields,
                                       std::unordered_map<std::string, std::string>* attributes)
 {
     for (auto it = body.begin(); it != body.end(); ++it) {
-        if (IsKnownTraceSpanField(it.key())) {
+        if (IsKnownTraceSpanField(it.key()) ||
+            dynamic_known_fields.find(it.key()) != dynamic_known_fields.end()) {
             continue;
         }
         // 顶层未知字段统一收敛到 attributes，目的是让客户端新增指标时服务端无需立刻改协议。
+        // dynamic_known_fields 会额外带上当前请求生效的 trace_end 主字段和别名，
+        // 避免这些字段一边被标准化成 span.trace_end，一边又脏兮兮地落进 attributes。
         // 这里用 emplace 不覆盖已存在键，确保显式 attributes 的值优先级更高，避免歧义覆盖。
         attributes->emplace(it.key(), JsonValueToAttributeString(it.value()));
     }
@@ -242,10 +297,12 @@ LogHandler::LogHandler(ThreadPool *tpool,
                        std::shared_ptr<SqliteLogRepository> repo,
                        std::shared_ptr<LogBatcher> batcher,
                        TraceSessionManager* trace_session_manager,
-                       SystemRuntimeAccumulator* system_runtime_accumulator)
+                       SystemRuntimeAccumulator* system_runtime_accumulator,
+                       std::shared_ptr<SqliteConfigRepository> config_repo)
     : tpool_(tpool),
       batcher_(batcher),
       repo_(repo),
+      config_repo_(config_repo),
       trace_session_manager_(trace_session_manager),
       system_runtime_accumulator_(system_runtime_accumulator)
 {
@@ -307,6 +364,24 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
 
     SpanEvent span;
     std::string error;
+    std::string trace_end_field = "trace_end";
+    std::vector<std::string> trace_end_aliases;
+    if (config_repo_) {
+        // 这里按“单请求拿一次快照”读取热配置：
+        // 既然 Settings 允许运行中改结束字段主名/别名，那么解析层就不能在构造时把字段名缓存死。
+        // 但是同一条请求内部又必须保持口径一致，所以这一刀只在请求开头拿一次快照，后面整段解析都用它。
+        // 真正的字符串到数组转换已经收回 Repository 边界，这里直接拿快照里的现成别名数组，不再做 JSON 解析。
+        const SystemConfigPtr config_snapshot = config_repo_->getSnapshot();
+        if (config_snapshot) {
+            if (!config_snapshot->app_config.trace_end_field.empty()) {
+                trace_end_field = config_snapshot->app_config.trace_end_field;
+            }
+            trace_end_aliases = config_snapshot->app_config.trace_end_aliases;
+        }
+    }
+    std::unordered_set<std::string> trace_end_known_fields;
+    trace_end_known_fields.insert(trace_end_field);
+    trace_end_known_fields.insert(trace_end_aliases.begin(), trace_end_aliases.end());
     if (body.contains("trace_key")) {
         if (!ParseRequiredUint(body, "trace_key", &span.trace_key, &error)) {
             resp->setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
@@ -332,7 +407,7 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
         !ParseRequiredString(body, "service_name", &span.service_name, &error) ||
         !ParseOptionalUint(body, "parent_span_id", &span.parent_span_id, &error) ||
         !ParseOptionalInt64(body, "end_time_ms", &span.end_time, &error) ||
-        !ParseOptionalBool(body, "trace_end", &span.trace_end, &error) ||
+        !ParseConfiguredTraceEnd(body, trace_end_field, trace_end_aliases, &span.trace_end, &error) ||
         !ParseOptionalStatus(body, &span.status, &error) ||
         !ParseOptionalKind(body, &span.kind, &error) ||
         !ParseOptionalAttributes(body, &span.attributes, &error)) {
@@ -340,7 +415,7 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
         resp->body_ = nlohmann::json{{"error", error}}.dump();
         return;
     }
-    CollectUnknownTopLevelAttributes(body, &span.attributes);
+    CollectUnknownTopLevelAttributes(body, trace_end_known_fields, &span.attributes);
 
     const TraceSessionManager::PushResult push_result = trace_session_manager_->Push(span);
     if (push_result == TraceSessionManager::PushResult::RejectedUnavailable) {

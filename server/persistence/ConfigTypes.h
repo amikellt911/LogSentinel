@@ -56,9 +56,10 @@ struct AppConfig {
     // 内核与主链运行时参数
     int kernel_worker_threads = 4;
     std::string trace_end_field = "trace_end";
-    // 别名当前先按 JSON 字符串存储：
-    // 这样前端可以先把多选结果稳定回填，后面真接到 LogHandler 时再统一解析成数组，不必现在就把 app_config 从 KV 改成复杂结构。
-    std::string trace_end_aliases = "[]";
+    // 别名在内存快照里直接用数组，而不是继续塞 JSON 字符串。
+    // 既然 /logs/spans 是热路径，那么解析入口就应该直接拿现成的别名数组，
+    // 不能每个请求再把字符串反序列化一遍；真正的序列化/反序列化成本只留在 Repository 边界。
+    std::vector<std::string> trace_end_aliases = {};
     int token_limit = 0;
     int span_capacity = 100;
     int collecting_idle_timeout_ms = 5000;

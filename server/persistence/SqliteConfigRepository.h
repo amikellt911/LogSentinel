@@ -13,6 +13,8 @@ private:
     AppConfig getAppConfigInternal();
     // 获取 Prompt 列表
     std::vector<PromptConfig> getAllPromptsInternal();
+    // 别名单独落表，避免热路径重复反序列化 JSON 字符串。
+    std::vector<std::string> getTraceEndAliasesInternal();
     std::vector<AlertChannel> getAllChannelsInternal();
     // 从数据库重新加载全部配置并生成新的快照
     void loadFromDbInternal();

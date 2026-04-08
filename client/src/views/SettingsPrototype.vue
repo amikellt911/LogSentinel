@@ -651,8 +651,9 @@ function toNumber(value: unknown, defaultValue: number) {
   return defaultValue
 }
 
-// 结束字段别名当前在后端先按 JSON 字符串存储。
-// 这样 SettingsPrototype 可以先把“多选别名”真实保存和回填，等后面真接到 LogHandler 时再统一解析成数组。
+// 后端现在会把别名作为数组回填到快照里，但这里仍保留字符串兼容分支。
+// 原因是 Settings 控制面目前还是走 /settings/config 的标量接口，保存时会临时 stringify；
+// 所以这个解析函数需要同时兼容“新后端数组回填”和“旧值/半迁移字符串”两种形态。
 function parseAliasList(value: unknown) {
   if (Array.isArray(value)) {
     return value.filter((item): item is string => typeof item === 'string')
@@ -667,6 +668,23 @@ function parseAliasList(value: unknown) {
   } catch {
     return []
   }
+}
+
+function normalizeAliasDrafts(rawAliases: string[], primaryField: string) {
+  const next: string[] = []
+  const seen = new Set<string>()
+  const normalizedPrimary = primaryField.trim()
+  // 重复别名、空值、以及和主字段撞名的项都直接在前端控件状态里收掉。
+  // 这一轮我们明确把“别名去重”放在 Settings 页面自己处理，后端只保留最低限度的语义过滤。
+  for (const rawAlias of rawAliases) {
+    const alias = rawAlias.trim()
+    if (!alias) continue
+    if (normalizedPrimary && alias === normalizedPrimary) continue
+    if (seen.has(alias)) continue
+    seen.add(alias)
+    next.push(alias)
+  }
+  return next
 }
 
 function snapshotState(): PrototypeSnapshot {
@@ -726,9 +744,23 @@ function applySnapshot(next: PrototypeSnapshot) {
   prompts.splice(0, prompts.length, ...next.prompts)
   channels.splice(0, channels.length, ...next.channels)
   Object.assign(kernel, next.kernel)
+  kernel.endFlagAliases = normalizeAliasDrafts(kernel.endFlagAliases, kernel.endFlagField)
   normalizePromptSelection()
   ensureChannelSelection()
 }
+
+watch(
+  [() => kernel.endFlagAliases.slice(), () => kernel.endFlagField],
+  ([aliases, primaryField]) => {
+    const normalized = normalizeAliasDrafts(aliases, primaryField)
+    const unchanged = normalized.length === kernel.endFlagAliases.length
+      && normalized.every((item, index) => item === kernel.endFlagAliases[index])
+    if (unchanged) {
+      return
+    }
+    kernel.endFlagAliases.splice(0, kernel.endFlagAliases.length, ...normalized)
+  }
+)
 
 async function loadSettings() {
   isLoading.value = true
@@ -944,6 +976,8 @@ async function persistSettings() {
       { key: 'active_prompt_id', value: ai.activePromptId.toString() },
       { key: 'kernel_worker_threads', value: kernel.workerThreads.toString() },
       { key: 'trace_end_field', value: kernel.endFlagField },
+      // 这里暂时继续走字符串，是为了不把 /settings/config 这条标量接口一起推翻重写。
+      // 真正的持久化已经不再存 JSON；Repository 收到这一项后会在写库边界解析一次，并改写到 trace_end_aliases 单独表里。
       { key: 'trace_end_aliases', value: JSON.stringify(kernel.endFlagAliases) },
       { key: 'token_limit', value: kernel.tokenLimit.toString() },
       { key: 'span_capacity', value: kernel.spanCapacity.toString() },

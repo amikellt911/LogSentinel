@@ -362,6 +362,128 @@ feat(settings): 打通设置原型页与配置存储闭环
 - 按本轮要求，未运行编译命令和测试命令。
 - 这一步只打通了“设置原型页 <-> 配置存储 <-> 应用入口语言预取”的闭环，没有继续改主程序运行时消费点。
 
+# 追加记录：2026-04-08 结束字段别名接入 LogHandler 解析入口
+
+## Git Commit Message
+
+feat(trace): 让结束字段别名在解析入口真实生效
+
+## Modification
+
+- `server/handlers/LogHandler.h`
+- `server/handlers/LogHandler.cpp`
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `server/handlers/LogHandler.h` 的构造函数注释里补了中文说明，解释为什么这次要给 `LogHandler` 注入 `ConfigRepo`，以及为什么结束字段配置必须按“单请求拿一次快照”读取，不能在构造时缓存死。
+- 在 `server/handlers/LogHandler.cpp` 里给 `ParseTraceEndAliasList()` 补了中文注释，说明为什么别名 JSON 解析失败时要宽容降级成“无别名”，而不是直接打断 span 上报。
+- 在 `server/handlers/LogHandler.cpp` 里给 `ParseConfiguredTraceEnd()` 补了中文注释，说明当前采用“主字段优先、别名顺序回退”的匹配规则，避免同一条请求里多个字段互相覆盖。
+- 在 `server/handlers/LogHandler.cpp` 的 `CollectUnknownTopLevelAttributes()` 和 `handleTracePost()` 附近补了中文注释，说明为什么结束字段主名/别名要从未知顶层属性收集中排除，以及为什么这一刀要在请求开头拿一份配置快照后整段复用。
+- 在 `server/src/main.cpp` 里补了中文注释，说明为什么要把 `config_repo` 传给 `LogHandler`，以及这一步只服务结束字段标准化，不代表 Handler 开始承担通用配置读取职责。
+
+## Learning Tips
+
+### Newbie Tips
+
+热配置最容易写脏的地方，不是“怎么拿到最新值”，而是“同一条请求内部会不会前半段用旧值、后半段用新值”。所以这类解析配置不能随用随读，应该在请求入口拿一次快照，然后整段都用同一份。
+
+### Function Explanation
+
+这次没有改 `TraceSessionManager`，而是把 `trace_end_field / trace_end_aliases` 的处理放在 `LogHandler`。原因是别名本质属于“协议解析层”的标准化：请求里可能叫 `trace_end`、`end` 或其他别名，但进入主链后统一只认 `span.trace_end`。
+
+### Pitfalls
+
+如果把 `trace_end` 永久写死在“已知顶层字段”列表里，那么当用户把主字段改成别的名字后，旧的 `trace_end` 既不会被识别成结束标记，也不会落进 `attributes`，会被静默吞掉。这一刀把结束字段移到动态已知字段里，就是为了避免这种假成功。
+
+## Verification
+
+- 按本轮要求，未运行编译命令和测试命令。
+- 这一步只把 `trace_end` 主字段/别名接入 `LogHandler` 解析入口，没有继续改 `TraceSessionManager`、其他运行时消费点，也没有动 `ConfigRepo` 的 mutex/atomic 实现。
+
+# 追加记录：2026-04-08 结束字段别名拆出单独表并移出热路径
+
+## Git Commit Message
+
+refactor(config): 将结束字段别名改为单独表与快照数组
+
+## Modification
+
+- `server/persistence/ConfigTypes.h`
+- `server/persistence/SqliteConfigRepository.h`
+- `server/persistence/SqliteConfigRepository.cpp`
+- `server/handlers/LogHandler.cpp`
+- `client/src/views/SettingsPrototype.vue`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `server/persistence/ConfigTypes.h` 里补了中文注释，说明为什么 `trace_end_aliases` 要在内存快照里直接改成 `vector<string>`，以及为什么不能继续让热路径反复反序列化字符串。
+- 在 `server/persistence/SqliteConfigRepository.h` 里补了中文注释，说明为什么要新增 `getTraceEndAliasesInternal()`，以及这张别名表的职责就是把控制面存储和热路径读取隔开。
+- 在 `server/persistence/SqliteConfigRepository.cpp` 里补了中文注释，说明为什么别名字符串只允许在 Repository 写入边界解析一次、为什么要用单独的 `trace_end_aliases` 表保住顺序、以及为什么主字段变化时要重新规整别名列表。
+- 在 `server/handlers/LogHandler.cpp` 里补了中文注释，说明为什么解析层现在直接读取快照数组，不再自己做 JSON 解析。
+- 在 `client/src/views/SettingsPrototype.vue` 里补了中文注释，说明为什么前端保存时暂时还要 `JSON.stringify`，以及这一步只是为了兼容当前 `/settings/config` 标量接口，而不代表后端仍然按 JSON 字符串持久化。
+
+## Learning Tips
+
+### Newbie Tips
+
+热路径优化最常见的误区，就是只盯着“这一行代码是不是快”，却不看“这件事是不是根本就不该出现在这里”。这次真正该删掉的不是某个 JSON 库调用，而是“每个请求都做别名反序列化”这个职责本身。
+
+### Function Explanation
+
+这次 `trace_end_aliases` 变成了“SQLite 单独表 + `AppConfig` 内存数组”的两层模型。磁盘层负责持久化和顺序，Repository 负责把存储值装配成快照对象，`LogHandler` 只消费已经准备好的 `vector<string>`。
+
+### Pitfalls
+
+如果你只是把 `AppConfig.trace_end_aliases` 改成 `vector<string>`，但底层还是继续往 `app_config` 里塞 JSON 字符串、并且在 `LogHandler` 里每请求 `parse`，那只是把类型写好看了，热点开销根本没消失。真正要收掉的是“解析发生的时机”和“别名落在哪里”。
+
+## Verification
+
+- 按本轮要求，未运行编译命令和测试命令。
+- 这一步只重构了 `trace_end_aliases` 的持久化与快照模型，没有继续扩到 `ConfigHandler` 数组接口、`TraceSessionManager` 其他运行时参数消费，也没有改 `ConfigRepo` 的 mutex/atomic 发布方式。
+
+# 追加记录：2026-04-08 将结束字段别名去重责任收回前端
+
+## Git Commit Message
+
+refactor(settings): 将结束字段别名去重收回前端状态
+
+## Modification
+
+- `client/src/views/SettingsPrototype.vue`
+- `server/persistence/SqliteConfigRepository.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `client/src/views/SettingsPrototype.vue` 的 `normalizeAliasDrafts()` 上方补了中文注释，说明为什么重复别名、空值和与主字段撞名的项要在前端控件状态里立即清掉，而不是继续交给后端兜底。
+- 在 `client/src/views/SettingsPrototype.vue` 的 `applySnapshot()` 附近补了中文注释，说明为什么回填后的别名数组也要再过一次前端规整，避免旧值或半迁移值把页面状态搞脏。
+- 在 `server/persistence/SqliteConfigRepository.cpp` 的 `FilterTraceEndAliases()` 和 `loadFromDbInternal()` 附近补了中文注释，说明为什么后端现在只保留最小主字段冲突过滤，不再负责去重。
+
+## Learning Tips
+
+### Newbie Tips
+
+如果一个约束本来就是 UI 自己能稳定保证的，例如多选标签去重，那么优先在前端状态层收掉，代码会比“前后端双重兜底”更短、更容易看懂。后端只应该保留那种真的会破坏语义的最低限度校验。
+
+### Function Explanation
+
+这次新增的 `normalizeAliasDrafts()` 不是给后端用的，而是给 `el-select multiple + allow-create` 这种可自由输入的控件做状态清洗。它会把别名 trim 后去重，并且把和主字段同名的项直接剔掉。
+
+### Pitfalls
+
+如果你只在“保存前”做一次别名规整，而不是在前端状态变化时立刻收掉，那么用户界面上仍然会暂时出现重复标签。后端虽然能处理，但用户会以为这些配置真的会原样保存，这就是状态展示和最终语义不一致。
+
+## Verification
+
+- 按本轮要求，未运行编译命令和测试命令。
+- 这一步只把重复别名处理从后端收回前端，没有继续改 Settings 接口结构，也没有动 `LogHandler` 的结束字段匹配逻辑。
+
 # 追加记录：2026-04-08 设置原型页去掉说明性文案
 
 ## Git Commit Message

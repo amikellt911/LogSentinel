@@ -26,3 +26,6 @@
 - [x] 为 `trace_end` 结束字段别名补最小持久化能力，避免设置原型页该字段成为假保存
 - [x] 让 `SettingsPrototype.vue` 直接对接 `/settings/all`、`/settings/config`、`/settings/prompts`、`/settings/channels`
 - [x] 在前端入口预取 `app_language`，并把 UI 默认语言切到中文，避免必须先进入设置页才切换语言
+- [x] 让 `LogHandler` 从 `ConfigRepo` 快照读取 `trace_end_field / trace_end_aliases`，把结束字段别名真正接进解析入口
+- [x] 将 `trace_end_aliases` 从 `app_config` JSON 字符串改成单独表 + 快照数组，去掉 `LogHandler` 热路径反序列化
+- [x] 将 `trace_end_aliases` 的重复/空值处理收回前端控件状态，后端只保留最小主字段冲突过滤

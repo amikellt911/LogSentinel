@@ -13,6 +13,65 @@ static bool IsTruthyConfigValue(const std::string& val)
     return val == "1" || val == "true" || val == "TRUE";
 }
 
+static std::vector<std::string> ParseTraceEndAliasConfigValue(const std::string& raw_json)
+{
+    std::vector<std::string> aliases;
+    const nlohmann::json alias_json = nlohmann::json::parse(raw_json, nullptr, false);
+    // 别名字符串现在只出现在“控制面写配置”这条低频路径。
+    // 这里解析失败直接回空数组，避免旧前端、半迁移数据或手工测试值把整次设置保存直接打断。
+    if (alias_json.is_discarded() || !alias_json.is_array()) {
+        return aliases;
+    }
+    for (const auto& item : alias_json) {
+        if (!item.is_string()) {
+            continue;
+        }
+        aliases.push_back(item.get<std::string>());
+    }
+    return aliases;
+}
+
+static std::vector<std::string> FilterTraceEndAliases(const std::vector<std::string>& raw_aliases,
+                                                      const std::string& primary_field)
+{
+    std::vector<std::string> filtered;
+    for (const std::string& alias : raw_aliases) {
+        if (alias.empty()) {
+            continue;
+        }
+        // 去重交给前端控件做，这里只保留最小语义处理：
+        // 别名如果和主字段同名，就属于自相矛盾配置，直接在 Repository 边界过滤掉。
+        if (!primary_field.empty() && alias == primary_field) {
+            continue;
+        }
+        filtered.push_back(alias);
+    }
+    return filtered;
+}
+
+static void ReplaceTraceEndAliases(sqlite3* db, const std::vector<std::string>& aliases)
+{
+    int rc = sqlite3_exec(db, "DELETE FROM trace_end_aliases;", nullptr, nullptr, nullptr);
+    checkSqliteError(db, rc, "Failed to clear trace_end_aliases");
+
+    const char* insert_sql = "INSERT INTO trace_end_aliases (position, alias) VALUES (?, ?);";
+    sqlite3_stmt* stmt_raw = nullptr;
+    rc = sqlite3_prepare_v2(db, insert_sql, -1, &stmt_raw, nullptr);
+    checkSqliteError(db, rc, "Failed to prepare trace_end_aliases insert");
+    StmtPtr stmt(stmt_raw);
+
+    for (size_t i = 0; i < aliases.size(); ++i) {
+        sqlite3_bind_int(stmt.get(), 1, static_cast<int>(i));
+        sqlite3_bind_text(stmt.get(), 2, aliases[i].c_str(), -1, SQLITE_STATIC);
+        const int step_rc = sqlite3_step(stmt.get());
+        if (step_rc != SQLITE_DONE) {
+            checkSqliteError(db, step_rc, "Failed to write trace_end_aliases");
+        }
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+    }
+}
+
 // 辅助函数：将 DB 字符串值应用到 AppConfig 结构体
 static void ApplyConfigValue(AppConfig &config, const std::string &key, const std::string &val)
 {
@@ -36,7 +95,6 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         else if (key == "active_prompt_id") config.active_prompt_id = std::stoi(val);
         else if (key == "kernel_worker_threads") config.kernel_worker_threads = std::stoi(val);
         else if (key == "trace_end_field") config.trace_end_field = val;
-        else if (key == "trace_end_aliases") config.trace_end_aliases = val;
         else if (key == "token_limit") config.token_limit = std::stoi(val);
         else if (key == "span_capacity") config.span_capacity = std::stoi(val);
         else if (key == "collecting_idle_timeout_ms") config.collecting_idle_timeout_ms = std::stoi(val);
@@ -101,8 +159,9 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
         rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
         if (rc != SQLITE_OK) throw std::runtime_error("Failed to begin transaction");
 
-        // 这一刀只收口 Settings 的持久化契约，不在这里做整套配置中心重构：
+        // 这一刀继续收口 Settings 的持久化契约，不在这里做整套配置中心重构：
         // 1. app_config 继续走 KV，便于后面继续增删 key；
+        // 2. trace_end_aliases 从 app_config 里拆出来单独落表，避免 /logs/spans 热路径反复 JSON 解析；
         // 2. prompts 保持单表不扩字段，避免把还没钉死的 prompt 语义提前写死；
         // 3. alert_channels 改成最小真实外发字段集，去掉 msg_template，补上飞书签名 secret。
         // 当前仍假设这是测试阶段的新库或可重建库，所以这里不额外补旧 schema 迁移逻辑。
@@ -119,6 +178,10 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
                 content TEXT NOT NULL,
                 is_active INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS trace_end_aliases (
+                position INTEGER PRIMARY KEY,
+                alias TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS alert_channels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -149,7 +212,6 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('active_prompt_id', '0', '当前激活的PromptID'),
             ('kernel_worker_threads', '4', '工作线程数'),
             ('trace_end_field', 'trace_end', '顶层 trace 结束标记字段名'),
-            ('trace_end_aliases', '[]', '顶层 trace 结束标记字段别名(JSON字符串)'),
             ('token_limit', '0', '单条 trace 的 token 保护阈值'),
             ('span_capacity', '100', '单条 trace 的 span 数量保护阈值'),
             ('collecting_idle_timeout_ms', '5000', '收集阶段空闲超时'),
@@ -168,7 +230,8 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
                 'kernel_adaptive_mode',
                 'kernel_max_batch',
                 'kernel_refresh_interval',
-                'kernel_io_buffer'
+                'kernel_io_buffer',
+                'trace_end_aliases'
             );
         )";
 
@@ -237,6 +300,24 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
 
     // 基于旧配置准备新配置
     AppConfig configClone = old_snap->app_config;
+    const auto trace_end_field_it = mp.find("trace_end_field");
+    const auto trace_end_aliases_it = mp.find("trace_end_aliases");
+    const bool trace_end_field_updated = trace_end_field_it != mp.end();
+    const bool trace_end_aliases_updated = trace_end_aliases_it != mp.end();
+    const std::string effective_trace_end_field =
+        trace_end_field_updated ? trace_end_field_it->second : configClone.trace_end_field;
+    std::vector<std::string> effective_trace_end_aliases = configClone.trace_end_aliases;
+    if (trace_end_aliases_updated) {
+        // 别名字符串现在只允许在 Repository 入口解析一次。
+        // 这样做完后，快照里拿到的就是已经过滤过主字段冲突的数组，后面的 LogHandler 热路径只读现成 vector。
+        effective_trace_end_aliases = FilterTraceEndAliases(
+            ParseTraceEndAliasConfigValue(trace_end_aliases_it->second),
+            effective_trace_end_field);
+    } else if (trace_end_field_updated) {
+        // 主字段变了但别名列表没显式改时，仍然要把“和主字段撞名”的那一项剔掉，避免配置自己打自己。
+        effective_trace_end_aliases = FilterTraceEndAliases(configClone.trace_end_aliases,
+                                                            effective_trace_end_field);
+    }
 
     // config 现在按“只更新改动 key”保存，所以这里直接做按 key upsert。
     // 这样即使后面新增 key、或者旧测试库里暂时缺了一条 seed，也不会因为 update 命中 0 行而静默丢配置。
@@ -262,6 +343,9 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
     {
         for (auto &[key, val] : mp)
         {
+            if (key == "trace_end_aliases") {
+                continue;
+            }
             const std::string& effective_val = val;
             sqlite3_bind_text(stmt.get(), 1, key.c_str(), -1, SQLITE_STATIC);
             sqlite3_bind_text(stmt.get(), 2, effective_val.c_str(), -1, SQLITE_STATIC);
@@ -274,6 +358,10 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
             ApplyConfigValue(configClone, key, effective_val);
             sqlite3_reset(stmt.get());
             sqlite3_clear_bindings(stmt.get());
+        }
+        if (trace_end_field_updated || trace_end_aliases_updated) {
+            ReplaceTraceEndAliases(db_, effective_trace_end_aliases);
+            configClone.trace_end_aliases = effective_trace_end_aliases;
         }
 
         // 更新快照
@@ -542,6 +630,27 @@ AppConfig SqliteConfigRepository::getAppConfigInternal()
     return config;
 }
 
+std::vector<std::string> SqliteConfigRepository::getTraceEndAliasesInternal()
+{
+    std::vector<std::string> aliases;
+    // 单独按 position 读回是为了保住用户在 Settings 里设置的别名优先级顺序。
+    // 解析层虽然现在是“命中第一个别名就停”，但这个顺序仍然属于配置语义，不能在存储层丢掉。
+    const char* sql = "select alias from trace_end_aliases order by position asc;";
+    sqlite3_stmt* stmt_ = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
+    if (rc != SQLITE_OK) checkSqliteError(db_, rc, "Failed to prepare statement for trace_end_aliases");
+    StmtPtr stmt(stmt_);
+    while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW)
+    {
+        const char* alias_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
+        if (!alias_ptr) {
+            continue;
+        }
+        aliases.emplace_back(alias_ptr);
+    }
+    return aliases;
+}
+
 std::vector<AlertChannel> SqliteConfigRepository::getAllChannelsInternal()
 {
     std::vector<AlertChannel> alerts;
@@ -574,6 +683,9 @@ std::vector<AlertChannel> SqliteConfigRepository::getAllChannelsInternal()
 void SqliteConfigRepository::loadFromDbInternal()
 {
     auto app = getAppConfigInternal();
+    // DB 里读回来的别名也只做最小过滤，不再在后端兜底去重。
+    // 这一轮我们明确把“避免重复别名”收回到前端控件状态处理。
+    app.trace_end_aliases = FilterTraceEndAliases(getTraceEndAliasesInternal(), app.trace_end_field);
     auto prompts = getAllPromptsInternal();
     auto channels = getAllChannelsInternal();
 

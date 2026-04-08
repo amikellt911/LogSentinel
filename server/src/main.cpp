@@ -444,12 +444,16 @@ int main(int argc, char* argv[])
     //lambda默认值拷贝是const,但是handlePost是非const成员函数，会导致const值变化
     //所以需要加上mutable或shared_ptr,因为他是指针，在const中，让他不会改变指向，但是可以改变值
     //LogHandler handler(&tpool,persistence,ai_client, notifier);
-    // 注入 config_repo
+    // 这一刀把 config_repo 接给 LogHandler，不是为了让 Handler 到处读配置，
+    // 而是只服务 /logs/spans 的结束字段标准化：
+    // Settings 里改了 trace_end 主字段名或别名后，新请求会在解析入口拿到新快照，
+    // 这样就能在不重启的情况下把不同上报口径统一写回 span.trace_end。
     auto handler = std::make_shared<LogHandler>(&tpool,
                                                 persistence,
                                                 batcher,
                                                 trace_session_manager.get(),
-                                                system_runtime_accumulator.get());
+                                                system_runtime_accumulator.get(),
+                                                config_repo);
 
     router->add("POST", "/logs", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         handler->handlePost(req, resp, conn);
