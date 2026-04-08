@@ -31,3 +31,4 @@
 - [x] 将 `trace_end_aliases` 的重复/空值处理收回前端控件状态，后端只保留最小主字段冲突过滤
 - [x] 在 `main.cpp` 启动期读取冷启动快照，先接通 `http_port`、`kernel_worker_threads`、`token_limit`、`span_capacity`、`collecting_idle_timeout_ms`、`sweep_tick_ms` 的真实消费
 - [x] 将 `sealed_grace_window_ms` 与 `retry_base_delay_ms` 真正接进 `TraceSessionManager` 的 tick 换算逻辑，去掉内部硬编码时序
+- [x] 将 `trace_end_field` 与 `trace_end_aliases` 从 `LogHandler` 的热读取收口成冷启动注入，去掉每请求读配置快照

@@ -723,3 +723,41 @@ feat(trace): 接通 sealed 与 retry 时序配置的冷启动消费
 ## Verification
 
 - 按当前步骤约束，这次没有运行编译和测试。
+
+# 追加记录：2026-04-08 收口 trace_end 冷启动解析口径
+
+## Git Commit Message
+
+refactor(trace): 将 trace_end 解析口径收口为冷启动配置
+
+## Modification
+
+- `server/handlers/LogHandler.h`
+- `server/handlers/LogHandler.cpp`
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `server/handlers/LogHandler.h` 里补了中文注释，说明为什么 `trace_end_field` 与 `trace_end_aliases` 不再按请求读快照，而是改成构造期注入。
+- 在 `server/handlers/LogHandler.cpp` 里补了中文注释，说明为什么要在构造期预展开 `trace_end_known_fields_`，以及为什么请求里直接复用这份冷启动口径。
+- 在 `server/src/main.cpp` 里补了中文注释，说明为什么 `trace_end` 主字段和别名也改成冷启动配置，不再继续走热更新。
+
+## Learning Tips
+
+### Newbie Tips
+
+“技术上能热更新”不等于“业务上应该热更新”。如果一个配置改变的是协议解释口径，而不是普通展示或任务参数，那么运行中切它的收益通常很低，排查成本却很高。
+
+### Function Explanation
+
+这次把 `LogHandler` 里原来每个 `/logs/spans` 请求都做一次 `config_repo->getSnapshot()` 的路径删掉了，改成启动时在 `main.cpp` 算出 `effective_trace_end_field / effective_trace_end_aliases`，再一次性注入给 `LogHandler`。
+
+### Pitfalls
+
+如果你一边把某个字段定义成“冷启动配置”，一边又让热路径在每次请求里回头读 repo，那这个语义就是假的。最后系统行为会变成“文档说要重启，实际上不重启也会变”，这种口径漂移比单纯没实现更坑。
+
+## Verification
+
+- 按当前步骤约束，这次没有运行编译和测试。

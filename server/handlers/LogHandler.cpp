@@ -4,7 +4,6 @@
 #include "core/SystemRuntimeAccumulator.h"
 #include "core/TraceSessionManager.h"
 #include "MiniMuduo/net/EventLoop.h"
-#include "persistence/SqliteConfigRepository.h"
 #include "persistence/SqliteLogRepository.h"
 #include "threadpool/ThreadPool.h"
 #include <algorithm>
@@ -298,14 +297,20 @@ LogHandler::LogHandler(ThreadPool *tpool,
                        std::shared_ptr<LogBatcher> batcher,
                        TraceSessionManager* trace_session_manager,
                        SystemRuntimeAccumulator* system_runtime_accumulator,
-                       std::shared_ptr<SqliteConfigRepository> config_repo)
+                       std::string trace_end_field,
+                       std::vector<std::string> trace_end_aliases)
     : tpool_(tpool),
       batcher_(batcher),
       repo_(repo),
-      config_repo_(config_repo),
       trace_session_manager_(trace_session_manager),
-      system_runtime_accumulator_(system_runtime_accumulator)
+      system_runtime_accumulator_(system_runtime_accumulator),
+      trace_end_field_(trace_end_field.empty() ? "trace_end" : std::move(trace_end_field)),
+      trace_end_aliases_(std::move(trace_end_aliases))
 {
+    // 主字段和别名已经被收口成冷启动配置，所以这里直接在构造时预展开 known field 集合。
+    // 这样 handleTracePost() 里既不用每次读快照，也不用每次为了过滤 attributes 临时拼一遍 set。
+    trace_end_known_fields_.insert(trace_end_field_);
+    trace_end_known_fields_.insert(trace_end_aliases_.begin(), trace_end_aliases_.end());
 }
 
 void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
@@ -364,24 +369,6 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
 
     SpanEvent span;
     std::string error;
-    std::string trace_end_field = "trace_end";
-    std::vector<std::string> trace_end_aliases;
-    if (config_repo_) {
-        // 这里按“单请求拿一次快照”读取热配置：
-        // 既然 Settings 允许运行中改结束字段主名/别名，那么解析层就不能在构造时把字段名缓存死。
-        // 但是同一条请求内部又必须保持口径一致，所以这一刀只在请求开头拿一次快照，后面整段解析都用它。
-        // 真正的字符串到数组转换已经收回 Repository 边界，这里直接拿快照里的现成别名数组，不再做 JSON 解析。
-        const SystemConfigPtr config_snapshot = config_repo_->getSnapshot();
-        if (config_snapshot) {
-            if (!config_snapshot->app_config.trace_end_field.empty()) {
-                trace_end_field = config_snapshot->app_config.trace_end_field;
-            }
-            trace_end_aliases = config_snapshot->app_config.trace_end_aliases;
-        }
-    }
-    std::unordered_set<std::string> trace_end_known_fields;
-    trace_end_known_fields.insert(trace_end_field);
-    trace_end_known_fields.insert(trace_end_aliases.begin(), trace_end_aliases.end());
     if (body.contains("trace_key")) {
         if (!ParseRequiredUint(body, "trace_key", &span.trace_key, &error)) {
             resp->setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
@@ -407,7 +394,7 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
         !ParseRequiredString(body, "service_name", &span.service_name, &error) ||
         !ParseOptionalUint(body, "parent_span_id", &span.parent_span_id, &error) ||
         !ParseOptionalInt64(body, "end_time_ms", &span.end_time, &error) ||
-        !ParseConfiguredTraceEnd(body, trace_end_field, trace_end_aliases, &span.trace_end, &error) ||
+        !ParseConfiguredTraceEnd(body, trace_end_field_, trace_end_aliases_, &span.trace_end, &error) ||
         !ParseOptionalStatus(body, &span.status, &error) ||
         !ParseOptionalKind(body, &span.kind, &error) ||
         !ParseOptionalAttributes(body, &span.attributes, &error)) {
@@ -415,7 +402,9 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
         resp->body_ = nlohmann::json{{"error", error}}.dump();
         return;
     }
-    CollectUnknownTopLevelAttributes(body, trace_end_known_fields, &span.attributes);
+    // 顶层未知字段收集也跟着这份冷启动口径走：
+    // 既然主字段/别名在进程启动后就固定了，这里直接复用构造期准备好的 known field 集合即可。
+    CollectUnknownTopLevelAttributes(body, trace_end_known_fields_, &span.attributes);
 
     const TraceSessionManager::PushResult push_result = trace_session_manager_->Push(span);
     if (push_result == TraceSessionManager::PushResult::RejectedUnavailable) {
