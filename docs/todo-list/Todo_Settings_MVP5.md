@@ -20,3 +20,6 @@
 - [x] 收口 Settings 持久化契约，明确 `app_config` / `prompts` / `alert_channels` 的最小字段集合
 - [x] 修改 `server/persistence/ConfigTypes.h`，移除过时字段、补齐新配置字段，并补中文注释说明这轮存储边界
 - [x] 修改 `server/persistence/SqliteConfigRepository.cpp`，同步更新初始化 SQL、配置 seed、AppConfig 映射和渠道读写字段
+- [x] 修改 `server/handlers/ConfigHandler.cpp`，为 `/settings/config` 补 key 白名单和标量值校验
+- [x] 修改 `server/handlers/ConfigHandler.cpp`，为 `/settings/channels` 补飞书最小字段校验，挡掉旧 `msg_template` 口径
+- [x] 回收 `server/handlers/ConfigHandler.cpp` 里过重的字段白名单，改回只保留最小格式校验

@@ -245,6 +245,80 @@ refactor(persistence): 收口 Settings 的持久化字段契约
 - 按本轮要求，未运行编译命令和测试命令。
 - 这一步只做了存储契约收口，没有继续向前端、Handler 和运行时消费点扩散。
 
+# 追加记录：2026-04-08 ConfigHandler 收口 Settings 接口层口径
+
+## Git Commit Message
+
+refactor(handler): 收口 Settings 接口层字段白名单
+
+## Modification
+
+- `server/handlers/ConfigHandler.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `server/handlers/ConfigHandler.cpp` 顶部 helper 区补了中文注释，说明为什么接口层现在必须自己维护 config key 白名单，以及为什么 channels 要先硬收成飞书最小字段集。
+- 在 `server/handlers/ConfigHandler.cpp` 的 `ConvertConfigValueToString()` 上方补了中文注释，说明为什么 `/settings/config` 这条接口现在只允许标量值，不再允许对象/数组混进 KV 配置。
+- 在 `server/handlers/ConfigHandler.cpp` 的 `handleUpdateAppConfig()` 和 `handleUpdateChannels()` 里补了中文注释，说明为什么这一步要在 Handler 层先把旧字段挡掉，而不是继续依赖 Repository 默默忽略。
+
+## Learning Tips
+
+### Newbie Tips
+
+如果存储层已经收口成新契约，接口层却还继续吃旧字段，那“代码能跑”不代表系统口径一致。最典型的坑就是数据库里继续被写进没人再读的废 key，后面你看页面、看库、看运行时，三边都对不上。
+
+### Function Explanation
+
+这次 `ConfigHandler` 里新加的 helper 做的是两层过滤：`/settings/config` 先验 key 白名单，再把标量值统一转成字符串；`/settings/channels` 则先验字段集合和 provider，只让飞书最小字段集通过。
+
+### Pitfalls
+
+这一步会让旧前端保存直接暴露 400，因为 `system.ts` 现在还在发 `msg_template`、`kernel_io_buffer`、`kernel_refresh_interval` 这些已经被收掉的字段。这不是新 bug，而是接口层开始真实反映前后端口径已经不一致，下一刀就该改前端映射。
+
+## Verification
+
+- 按本轮要求，未运行编译命令和测试命令。
+- 这一步只修改了 `ConfigHandler` 接口层口径，没有继续改前端 store、Repository 或主程序运行时读取。
+
+# 追加记录：2026-04-08 回收 ConfigHandler 里的重复白名单
+
+## Git Commit Message
+
+refactor(handler): 回收设置接口层的重复字段白名单
+
+## Modification
+
+- `server/handlers/ConfigHandler.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260408-feat-settings-prototype.md`
+
+## 这次补了哪些注释
+
+- 在 `server/handlers/ConfigHandler.cpp` 的 `handleUpdateAppConfig()` 上方补了中文注释，说明为什么这里退回到最小职责，只做请求形状和标量值校验，不再自己维护第二份字段白名单。
+- 在 `server/handlers/ConfigHandler.cpp` 的 `handleUpdateChannels()` 上方补了中文注释，说明为什么 channels 也只保留最小格式校验，不再在 Handler 层重复维护飞书字段契约。
+- `ConvertConfigValueToString()` 上方原有中文注释保留，继续说明为什么 `/settings/config` 只接受标量值。
+
+## Learning Tips
+
+### Newbie Tips
+
+“多一层校验更安全”不总是对的。只要这层校验和真正的数据契约不是同一个来源，它就会变成第二份配置表，后面字段一改，你就要同时维护两边，出错概率反而更高。
+
+### Function Explanation
+
+这次不是把格式校验全删掉，而是把 `ConfigHandler` 收回到最小职责：`/settings/config` 仍然要求 `items` 数组和标量 `value`，`/settings/channels` 仍然要求数组和基本必填字段，只是不再在这一层硬编码完整字段集合和 provider 白名单。
+
+### Pitfalls
+
+如果前端和存储层都还没稳定，就急着在 Handler 里写死一整份 key 列表，短期看像是更严谨，实际上后面每改一个字段都要追着这里一起动。等 Settings 真定稿、而且你确实需要接口层强校验时，再把这层补回来更合适。
+
+## Verification
+
+- 按本轮要求，未运行编译命令和测试命令。
+- 这一步只回收了 `ConfigHandler` 里过重的字段白名单，没有继续改前端 store、Repository 或主程序运行时读取。
+
 # 追加记录：2026-04-08 设置原型页去掉说明性文案
 
 ## Git Commit Message
