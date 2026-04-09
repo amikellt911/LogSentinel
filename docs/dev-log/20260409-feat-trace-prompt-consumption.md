@@ -250,3 +250,46 @@ refactor(core): 移除旧日志分析链活代码与构建入口
 - `LogSentinel`：通过
 - `test_log_handler`：5/5 通过
 - `test_trace_session_manager_unit`：36 条里 27 条通过，剩余 9 条失败；失败点集中在 sealed deadline、背压阈值和系统运行态断言，属于旧测试口径未跟上当前实现，不是这次删旧链引入的新编译错误
+
+# 追加记录：2026-04-09 修正 TraceSessionManager 旧单测口径
+
+## Git Commit Message
+
+test(core): 修正 TraceSessionManager 旧单测口径
+
+## Modification
+
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260409-feat-trace-prompt-consumption.md`
+
+## 这次补了哪些注释
+
+- 在 `server/tests/TraceSessionManager_unit_test.cpp` 里补了中文注释，说明为什么“单 tick 封口”用例要显式把 `sealed_grace_window_ms` 设成 `500ms`，不能继续误吃当前默认的 `1000ms`。
+- 在 `server/tests/TraceSessionManager_unit_test.cpp` 里补了中文注释，说明为什么 `SystemRuntimeAccumulator` 现在必须经过 `OnTick()` 才会把累计值发布成快照，测试不能再沿用“写完即读到 snapshot”的旧心智。
+- 在 `server/tests/TraceSessionManager_unit_test.cpp` 里补了中文注释，说明为什么背压测试要显式补齐 `sealed/retry` 这两个新参数位，避免后面的 `wheel_size/hard_limit` 串位。
+
+## Learning Tips
+
+### Newbie Tips
+
+长参数列表最危险的地方不是“编译不过”，而是“还能编，但语义已经错位”。一旦中间新增了两个参数，后面的硬限制、阈值、依赖注入全都可能悄悄传错位置，这种 bug 比直接编译失败更难发现。
+
+### Function Explanation
+
+`sealed_grace_window_ms` 会先经过 `ComputeDelayTicks()` 按 `wheel_tick_ms` 向上取整，所以 `1000ms / 500ms` 对应的是 `2 tick`，不是 `1 tick`。测试如果要锁死“单 tick 封口”，就必须把这个配置显式设成 `500ms`。
+
+### Pitfalls
+
+`SystemRuntimeAccumulator` 现在走的是“热路径只做原子累计 + OnTick 发布成品快照”的路线。这样请求线程便宜了，但测试如果还直接拿 `BuildSnapshot()` 等待最新值，就会一直读到旧发布结果，看起来像没记账，实际上只是没采样发布。
+
+## Verification
+
+- `cmake --build server/build --target test_trace_session_manager_unit`
+- `./server/build/test_trace_session_manager_unit --gtest_filter='TraceSessionManagerUnitTest.PushSealsWhenCapacityReachedAndDispatchesAfterOneTick:TraceSessionManagerUnitTest.PushSealsWhenTokenLimitReachedAndDispatchesAfterOneTick:TraceSessionManagerUnitTest.PushSealsWhenDuplicateSpanIdAppearsAndDispatchesAfterOneTick:TraceSessionManagerUnitTest.SystemRuntimeAccumulatorTracksAiLifecycleAndUsageAfterAiCompletion:TraceSessionManagerUnitTest.RefreshOverloadStatePublishesSystemBackpressureStatus:TraceSessionManagerUnitTest.PushRejectsNewTraceButAllowsExistingTraceWhenOverload:TraceSessionManagerUnitTest.PushRejectsExistingTraceWhenCritical:TraceSessionManagerUnitTest.PushReturnsAcceptedDeferredWhenSubmitFails:TraceSessionManagerUnitTest.BackpressureRecoversWhenWatermarkDropsBelowLow'`
+- `./server/build/test_trace_session_manager_unit`
+
+## Verification Result
+
+- 目标 9 条失败用例：9/9 通过
+- `test_trace_session_manager_unit`：36/36 通过

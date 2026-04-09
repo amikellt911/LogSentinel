@@ -61,4 +61,7 @@
 - [x] 删除 `server/src` 下仍然演示旧链的 demo 源文件，并清理活跃目录下仍指向 `/logs` 的旧 wrk 脚本
 - [x] 更新注释与 dev-log，说明当前主线只保留 Trace 新链，旧链仅剩 legacy 归档资料
 - [x] 运行最小测试与构建命令，确认 `LogSentinel` 与 `test_log_handler` 通过，并记录 `test_trace_session_manager_unit` 仍有 9 个既有失败
+- [x] 对照 `TraceSessionManager` 当前 sealed/backpressure 语义，逐条定位 `test_trace_session_manager_unit` 剩余 9 个失败的根因
+- [x] 只修正旧测试口径与参数，不改业务实现语义，并为关键断言补中文注释
+- [x] 重跑 `test_trace_session_manager_unit`，确认这组旧测试重新收口
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

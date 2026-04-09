@@ -397,7 +397,18 @@ TEST_F(TraceSessionManagerUnitTest, PushSealsWhenCapacityReachedAndDispatchesAft
     ThreadPool pool(1);
     FakeTraceRepository repo;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
-    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/2, /*token_limit*/0);
+    // 这里显式把 sealed_grace_window_ms 设成 500ms，刚好等于 1 个 wheel tick。
+    // 否则当前默认值是 1000ms，会变成 2 tick，这个“单 tick 封口”用例就会测偏。
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                /*capacity*/2,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/500,
+                                /*retry_base_delay_ms*/500);
 
     SpanEvent span1 = MakeSpan(22, 201, 1000);
     SpanEvent span2 = MakeSpan(22, 202, 1100);
@@ -447,7 +458,18 @@ TEST_F(TraceSessionManagerUnitTest, PushSealsWhenTokenLimitReachedAndDispatchesA
     // 阈值设为“两条 span 估算之和”，确保第一条不触发、第二条触发。
     const size_t token_limit = first_tokens + second_tokens;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
-    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, token_limit);
+    // 这个用例只想验证“token 达阈值后，封口 1 tick 再 dispatch”的最小语义，
+    // 所以也把 sealed_grace_window_ms 显式压成 500ms，避免继续吃生产默认的 2 tick。
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                /*capacity*/10,
+                                token_limit,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/500,
+                                /*retry_base_delay_ms*/500);
 
     ASSERT_EQ(manager.Push(span1), TraceSessionManager::PushResult::Accepted);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
@@ -479,7 +501,18 @@ TEST_F(TraceSessionManagerUnitTest, PushSealsWhenDuplicateSpanIdAppearsAndDispat
     ThreadPool pool(1);
     FakeTraceRepository repo;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
-    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/10, /*token_limit*/0);
+    // DuplicateSpan 这条用例也明确锁“1 tick 后进入统一异步分发”，
+    // 所以这里不能再依赖当前默认的 1000ms sealed grace。
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/500,
+                                /*retry_base_delay_ms*/500);
 
     SpanEvent span = MakeSpan(33, 301, 1000);
 
@@ -809,13 +842,17 @@ TEST_F(TraceSessionManagerUnitTest, SystemRuntimeAccumulatorTracksAiLifecycleAnd
     ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
 
     SweepTraceEndSealWindow(manager);
-    ASSERT_TRUE(WaitUntil([&system_runtime_accumulator]() {
-        return system_runtime_accumulator.BuildSnapshot().overview.ai_call_total == 1u &&
-               system_runtime_accumulator.BuildSnapshot().token_stats.total_tokens == 13u;
+    ASSERT_TRUE(WaitUntil([&]() {
+        // SystemRuntimeAccumulator 现在是 OnTick 时才发布成品快照。
+        // 所以这里不能再拿“热路径刚写完原子计数”就直接读 snapshot 的旧心智，
+        // 必须推进采样时钟，让累计值先被采进发布快照里。
+        now_ms += 1000;
+        system_runtime_accumulator.OnTick();
+        const SystemRuntimeSnapshot snapshot = system_runtime_accumulator.BuildSnapshot();
+        return snapshot.overview.ai_call_total == 1u &&
+               snapshot.token_stats.total_tokens == 13u;
     }));
 
-    now_ms = 1000;
-    system_runtime_accumulator.OnTick();
     const SystemRuntimeSnapshot snapshot = system_runtime_accumulator.BuildSnapshot();
     EXPECT_EQ(snapshot.overview.ai_call_total, 1u);
     EXPECT_EQ(snapshot.token_stats.input_tokens, 8u);
@@ -833,9 +870,10 @@ TEST_F(TraceSessionManagerUnitTest, RefreshOverloadStatePublishesSystemBackpress
     ThreadPool pool(1, 16);
     FakeTraceRepository repo;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    int64_t now_ms = 0;
     SystemRuntimeAccumulator system_runtime_accumulator(/*latency_sample_limit*/4,
                                                        /*series_limit*/8,
-                                                       []() { return 0LL; },
+                                                       [&now_ms]() { return now_ms; },
                                                        []() { return 0ULL; });
     TraceSessionManager manager(&pool,
                                 buffered_repo.get(),
@@ -865,6 +903,10 @@ TEST_F(TraceSessionManagerUnitTest, RefreshOverloadStatePublishesSystemBackpress
     ASSERT_EQ(manager.Push(MakeSpan(202, 2002, 1000)), TraceSessionManager::PushResult::Accepted);
     ASSERT_EQ(manager.Push(MakeSpan(203, 2003, 1000)), TraceSessionManager::PushResult::Accepted);
 
+    // UpdateBackpressureStatus 只改累计状态，不会立刻重发 published snapshot。
+    // 这里推进一个采样 tick，把最新背压字符串正式发布到前端会读的成品快照里。
+    now_ms = 1000;
+    system_runtime_accumulator.OnTick();
     const SystemRuntimeSnapshot snapshot = system_runtime_accumulator.BuildSnapshot();
     EXPECT_EQ(snapshot.overview.backpressure_status, "Active");
 
@@ -1546,6 +1588,10 @@ TEST_F(TraceSessionManagerUnitTest, PushRejectsNewTraceButAllowsExistingTraceWhe
                                 nullptr,
                                 /*idle_timeout_ms*/5000,
                                 /*wheel_tick_ms*/500,
+                                // 这里要把 sealed/retry 两个新参数位显式补齐，
+                                // 否则后面的 wheel_size 和 hard_limit 会串位，背压测试就根本没把 10 传进去。
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
                                 /*wheel_size*/512,
                                 /*buffered_span_hard_limit*/10,
                                 /*active_session_hard_limit*/10);
@@ -1586,6 +1632,9 @@ TEST_F(TraceSessionManagerUnitTest, PushRejectsExistingTraceWhenCritical)
                                 nullptr,
                                 /*idle_timeout_ms*/5000,
                                 /*wheel_tick_ms*/500,
+                                // 同上：这类老测试最容易被长参数列表坑到，必须显式补齐新参数位。
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
                                 /*wheel_size*/512,
                                 /*buffered_span_hard_limit*/10,
                                 /*active_session_hard_limit*/10);
@@ -1617,7 +1666,18 @@ TEST_F(TraceSessionManagerUnitTest, PushReturnsAcceptedDeferredWhenSubmitFails)
     FakeTraceRepository repo;
     // 设 capacity=1。现在语义不是“立刻 dispatch”，而是先 sealed 1 tick，再尝试 dispatch。
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
-    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/1, /*token_limit*/0);
+    // 这里同样锁“1 tick 后尝试 dispatch 并触发 submit 失败回滚”，
+    // 所以把 sealed_grace_window_ms 明确设成 500ms，避免默认 2 tick 把断言拖慢半拍。
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                /*capacity*/1,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/500,
+                                /*retry_base_delay_ms*/500);
 
     // 模拟线程池已关闭，等 sweep 到 sealed deadline 时 submit 必定返回 false。
     pool.shutdown();
@@ -1654,7 +1714,20 @@ TEST_F(TraceSessionManagerUnitTest, BackpressureRecoversWhenWatermarkDropsBelowL
     FakeTraceRepository repo;
     // Hard limit = 100 -> Low = 55, High = 75, Critical = 90
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
-    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, 100, 0, nullptr, 5000, 500, 512, 100);
+    // 这条也是典型的旧参数位测试：如果不把 sealed/retry 显式补齐，
+    // `100` 会被当成 wheel_size，而不是 buffered_span_hard_limit。
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                100,
+                                0,
+                                nullptr,
+                                5000,
+                                500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                512,
+                                100);
 
     // 1. 达到 High 水位 (76 > 75) 触发 Overload。
     for (size_t i = 0; i < 76; ++i) {
