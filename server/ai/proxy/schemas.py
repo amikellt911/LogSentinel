@@ -39,6 +39,10 @@ class SummarizeRequest(BaseModel):
     api_key: Optional[str] = None
     model: Optional[str] = None
     prompt: Optional[str] = None
+
+class TraceAnalyzeRequest(BaseModel):
+    trace_text: str
+    prompt: Optional[str] = None
     
 class BatchAnalysisResponse(BaseModel):
     results: List[Dict[str, Any]]
@@ -70,18 +74,38 @@ Guidelines:
 3) solution: actionable remediation steps.
 """
 
-TRACE_PROMPT_TEMPLATE = """You are a distributed tracing analysis expert.
-Input is a serialized trace tree (spans with parent-child relations, timing, status, and attributes), not a single log line.
-Analyze the trace as a whole and return ONLY a JSON object with:
-summary, risk_level, root_cause, solution.
+# 这是 proxy 自己的兜底 Trace Prompt 模板。
+# 正常情况下，C++ 会在冷启动时把“语言约束 + 业务 guidance”渲染成更完整的模板传下来；
+# 这里保留一个默认版本，是为了兼容旧调用方和手工联调，而不是继续让 Python 端负责配置真值。
+TRACE_PROMPT_TEMPLATE = """You are a distributed tracing analysis expert for LogSentinel.
+You must analyze the input trace as a whole and return ONLY one JSON object.
 
-Risk level must be one of: critical, error, warning, info, safe, unknown.
+Non-overridable rules:
+1. The output JSON must contain exactly these fields:
+   - summary
+   - risk_level
+   - root_cause
+   - solution
+2. risk_level must be one of:
+   critical, error, warning, info, safe, unknown
+3. If evidence is insufficient, use unknown instead of guessing.
+4. Use English for all natural-language fields: summary, root_cause, solution.
 
-Guidelines:
-1) Focus on end-to-end failure propagation across spans.
-2) Prioritize anomalies such as error status, timeout patterns, cycles, missing-parent, and abnormal latency.
-3) root_cause should point to the most likely failing service/span chain.
-4) solution should be specific and executable.
+Analysis priorities:
+1. Focus on end-to-end failure propagation across spans.
+2. Prioritize anomalies such as error status, timeout patterns, cycles, missing-parent, and abnormal latency.
+3. root_cause should point to the most likely failing service/span chain.
+4. solution should be specific and executable.
+
+<business_guidance>
+No additional business guidance provided.
+</business_guidance>
+
+<trace_context>
+{{TRACE_CONTEXT}}
+</trace_context>
+
+Return ONLY valid JSON.
 """
 
 BATCH_PROMPT_TEMPLATE = """You are a professional log analysis expert.

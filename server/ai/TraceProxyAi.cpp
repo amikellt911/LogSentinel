@@ -45,8 +45,12 @@ std::optional<TraceAiUsage> ParseTraceUsage(const nlohmann::json& response_json)
 }
 } // namespace
 
-TraceProxyAi::TraceProxyAi(std::string base_url, TraceAiBackend backend, int timeout_ms)
-    : timeout_ms_(timeout_ms > 0 ? timeout_ms : 10000)
+TraceProxyAi::TraceProxyAi(std::string base_url,
+                           TraceAiBackend backend,
+                           int timeout_ms,
+                           std::string prompt_template)
+    : timeout_ms_(timeout_ms > 0 ? timeout_ms : 10000),
+      prompt_template_(std::move(prompt_template))
 {
     if (!base_url.empty() && base_url.back() == '/') {
         base_url.pop_back();
@@ -59,10 +63,16 @@ TraceProxyAi::~TraceProxyAi() = default;
 TraceAiResponse TraceProxyAi::AnalyzeTrace(const std::string& trace_payload)
 {
     cpr::Session session;
-    session.SetHeader(cpr::Header{{"Content-Type", "text/plain"}});
+    session.SetHeader(cpr::Header{{"Content-Type", "application/json"}});
     session.SetTimeout(cpr::Timeout{timeout_ms_});
     session.SetUrl(cpr::Url{analyze_trace_url_});
-    session.SetBody(cpr::Body{trace_payload});
+    // Trace 路由这里改成 JSON，不再只发裸文本。
+    // 原因是 ai_language 和业务 prompt 都已经在 C++ 启动期收口成冷启动模板，
+    // 只有把 prompt 显式下发给 proxy，Settings 里的 Prompt/语言配置才算真的进入 trace AI 主链。
+    nlohmann::json request_json;
+    request_json["trace_text"] = trace_payload;
+    request_json["prompt"] = prompt_template_;
+    session.SetBody(cpr::Body{request_json.dump()});
 
     cpr::Response r = session.Post();
     if (r.status_code != 200) {

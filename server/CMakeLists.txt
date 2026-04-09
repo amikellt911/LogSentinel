@@ -84,6 +84,9 @@ add_library(ai_module STATIC
   ai/GeminiApiAi.cpp
   ai/AiTypes.h 
   ai/MockTraceAi.cpp
+  # Trace Prompt 的结构化解析和冷启动模板渲染单独收在 AI 模块里，
+  # 避免 main.cpp 和 proxy 两边继续手写拼接逻辑。
+  ai/TracePromptRenderer.cpp
   ai/TraceProxyAi.cpp
   ai/TraceAiFactory.cpp
 )

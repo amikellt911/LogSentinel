@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request, HTTPException
 from starlette.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pathlib import Path
 import uvicorn
 import sys
@@ -40,6 +40,7 @@ from ai.proxy.schemas import (
     BatchRequestSchema,
     ChatRequest,
     SummarizeRequest,
+    TraceAnalyzeRequest,
     LOG_PROMPT_TEMPLATE,
     TRACE_PROMPT_TEMPLATE,
     BATCH_PROMPT_TEMPLATE,
@@ -63,6 +64,17 @@ async def call_provider_in_threadpool(func, *args, **kwargs):
     这里统一走线程池桥接，路由继续保持 async，阻塞工作交给后台线程。
     """
     return await run_in_threadpool(func, *args, **kwargs)
+
+
+def render_trace_prompt(prompt_template: str, trace_text: str) -> str:
+    """
+    Trace 路由现在优先吃 C++ 下发的最终 prompt 模板。
+    既然业务 prompt 和语言约束已经在冷启动阶段确定，那么这里真正要做的只剩最后一步：
+    把本次请求的 trace_text 注入到模板里，而不是再回头猜测上层想要什么 Prompt 结构。
+    """
+    if "{{TRACE_CONTEXT}}" in prompt_template:
+        return prompt_template.replace("{{TRACE_CONTEXT}}", trace_text)
+    return f"{prompt_template}\n\n<trace_context>\n{trace_text}\n</trace_context>"
 
 # --- Provider 实例化和注册 ---
 # 在这里，我们创建所有可用的'转换插头'实例，并放入一个字典中进行管理。
@@ -130,11 +142,27 @@ async def analyze_trace(provider_name: str, request: Request):
         raise HTTPException(status_code=404, detail=f"未找到或未配置 Provider '{provider_name}'。")
 
     try:
-        trace_text = (await request.body()).decode('utf-8')
+        body = await request.body()
+        trace_text = ""
+        prompt_template = TRACE_PROMPT_TEMPLATE
+        content_type = request.headers.get("content-type", "").lower()
+
+        if "application/json" in content_type:
+            try:
+                payload = TraceAnalyzeRequest.model_validate_json(body)
+            except ValidationError as e:
+                raise HTTPException(status_code=400, detail=f"Trace 请求体格式错误: {e}") from e
+            trace_text = payload.trace_text
+            if payload.prompt:
+                prompt_template = payload.prompt
+        else:
+            trace_text = body.decode('utf-8')
+
+        rendered_prompt = render_trace_prompt(prompt_template, trace_text)
         result = await call_provider_in_threadpool(
             provider.analyze_trace,
             trace_text=trace_text,
-            prompt=TRACE_PROMPT_TEMPLATE,
+            prompt=rendered_prompt,
         )
         # Trace 路由现在允许 provider 附带 usage 元数据，目的是把 token 计量从 analysis JSON 里拆出来。
         # 既然 analysis 是业务结果，usage 就应该作为外层 sibling 字段单独返回，便于 C++ 统一解析。

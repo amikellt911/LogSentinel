@@ -9,6 +9,7 @@
 #include "ai/MockAI.h"
 #include "ai/TraceAiBackend.h"
 #include "ai/TraceAiFactory.h"
+#include "ai/TracePromptRenderer.h"
 #include <MiniMuduo/net/TcpConnection.h>
 #include <memory> // For std::unique_ptr
 #include "notification/WebhookNotifier.h"
@@ -329,6 +330,12 @@ int main(int argc, char* argv[])
             : startup_app_config.trace_end_field;
     const std::vector<std::string> effective_trace_end_aliases =
         startup_app_config.trace_end_aliases;
+    // Trace AI 的固定系统 prompt、语言约束和业务 guidance 本轮统一按冷启动配置收口。
+    // 既然 prompts + active_prompt_id + ai_language 已经被定义成“保存后重启生效”，
+    // 那这里就在启动时把最终 trace prompt 模板一次性渲染好，后面 provider 直接复用这份缓存。
+    const std::string effective_trace_prompt_template =
+        BuildTracePromptTemplate(startup_app_config.ai_language,
+                                 startup_config_snapshot->active_prompt);
     // 水位阈值同样收口成冷启动配置：
     // 它们直接驱动 TraceSessionManager 的背压状态机，不适合运行中热切。
     // 这一刀只开放 overload/critical 两档，low 仍由后端内部派生回滞阈值。
@@ -509,10 +516,12 @@ int main(int argc, char* argv[])
         options.base_url = trace_ai_base_url;
         options.backend = backend;
         options.timeout_ms = trace_ai_timeout_ms;
+        options.prompt_template = effective_trace_prompt_template;
         trace_ai = CreateTraceAiProvider(options);
         std::cout << "Trace AI enabled via proxy. provider=" << trace_ai_provider
                   << ", base_url=" << trace_ai_base_url
-                  << ", timeout_ms=" << trace_ai_timeout_ms << std::endl;
+                  << ", timeout_ms=" << trace_ai_timeout_ms
+                  << ", ai_language=" << startup_app_config.ai_language << std::endl;
     }
     // 线程池需要在 trace_ai/notifier 之前回收：
     // 既然 worker 任务里拿的是这些对象的裸指针，那么退出时必须先 join worker，

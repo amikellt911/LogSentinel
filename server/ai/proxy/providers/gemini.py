@@ -101,7 +101,10 @@ class GeminiProvider(AIProvider):
                 "usage": None,
             }
 
-        full_prompt = f"{prompt}\n\nLog to analyze:\n{trace_text}"
+        # Trace 路由在进入 provider 之前，就已经把 trace_text 注入到了最终 prompt 模板里。
+        # 所以这里不要再像普通日志 analyze 那样把 trace_text 追加一遍，
+        # 否则同一份 trace 上下文会在模型输入里重复出现两次。
+        full_prompt = prompt
         try:
             response = client.models.generate_content(
                 model=target_model,

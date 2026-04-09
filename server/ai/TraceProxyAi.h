@@ -11,7 +11,8 @@ class TraceProxyAi : public TraceAiProvider
 public:
     explicit TraceProxyAi(std::string base_url,
                           TraceAiBackend backend,
-                          int timeout_ms = 10000);
+                          int timeout_ms = 10000,
+                          std::string prompt_template = "");
     ~TraceProxyAi() override;
 
     // 代理返回现在既包含结构化 analysis，也可能带 usage 元数据。
@@ -21,4 +22,7 @@ public:
 private:
     std::string analyze_trace_url_;
     int timeout_ms_ = 10000;
+    // 这里缓存的是“已经带语言约束和业务 guidance 的 Trace Prompt 模板”，
+    // 但还没注入本次 trace_text；真正的 trace 上下文会在 proxy 路由里最后一步填进去。
+    std::string prompt_template_;
 };
