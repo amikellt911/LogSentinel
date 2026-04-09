@@ -125,6 +125,18 @@ bool BufferedTraceRepository::AppendAnalysis(TraceAnalysisWrite write)
     return true;
 }
 
+bool BufferedTraceRepository::UpdateTraceAiState(const std::string& trace_id,
+                                                 const std::string& ai_status,
+                                                 const std::string& ai_error)
+{
+    // AI 状态更新是低频“每条 trace 最多一次”的控制面写入，
+    // 这里直接透传到底层 repo，避免为了这点流量再补一套状态缓冲与 flush 时序。
+    if (!sink_) {
+        return false;
+    }
+    return sink_->UpdateTraceAiState(trace_id, ai_status, ai_error);
+}
+
 BufferedTraceRepository::PrimaryBufferPtr BufferedTraceRepository::CreatePrimaryBuffer() const
 {
     auto buffer = std::make_unique<PrimaryBufferGroup>();

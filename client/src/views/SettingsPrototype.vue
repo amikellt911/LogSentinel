@@ -61,8 +61,14 @@
               <div class="bg-[#1a1a1a] border-b border-gray-700 p-6 flex flex-col justify-center shrink-0">
                 <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">全局 Provider 配置</h3>
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  <!-- 这个总开关控制的是 Trace 主链是否真的发起 AI 分析。
+                       关闭后 provider/model/key 仍然保留，但后端 worker 只会把 ai_status 记成 skipped_manual。 -->
+                  <el-form-item label="AI 分析开关">
+                    <el-switch v-model="ai.analysisEnabled" inline-prompt active-text="ON" inactive-text="OFF" />
+                  </el-form-item>
+
                   <el-form-item label="默认 Provider">
-                    <el-select v-model="ai.provider" class="w-full">
+                    <el-select v-model="ai.provider" class="w-full" :disabled="!ai.analysisEnabled">
                       <el-option label="Local Mock (Dev)" value="mock" />
                       <el-option label="Google Gemini" value="gemini" />
                       <el-option label="智谱 GLM（后置）" value="zhipu" disabled />
@@ -70,7 +76,7 @@
                   </el-form-item>
 
                   <el-form-item label="默认模型">
-                    <el-input v-model="ai.model" placeholder="e.g. gemini-2.5-flash" />
+                    <el-input v-model="ai.model" placeholder="e.g. gemini-2.5-flash" :disabled="!ai.analysisEnabled" />
                   </el-form-item>
 
                   <el-form-item label="API Key">
@@ -79,11 +85,12 @@
                       type="password"
                       show-password
                       placeholder="provider api key"
+                      :disabled="!ai.analysisEnabled"
                     />
                   </el-form-item>
 
                   <el-form-item label="分析输出语言">
-                    <el-select v-model="ai.language" class="w-full">
+                    <el-select v-model="ai.language" class="w-full" :disabled="!ai.analysisEnabled">
                       <el-option label="English" value="en" />
                       <el-option label="中文 (Chinese)" value="zh" />
                     </el-select>
@@ -678,6 +685,7 @@ interface PrototypeSnapshot {
     retentionDays: number
   }
   ai: {
+    analysisEnabled: boolean
     provider: string
     model: string
     apiKey: string
@@ -728,6 +736,7 @@ const general = reactive({
 })
 
 const ai = reactive({
+  analysisEnabled: true,
   provider: 'gemini',
   model: 'gemini-2.5-flash',
   apiKey: '',
@@ -1118,6 +1127,7 @@ async function loadSettings() {
         retentionDays: toNumber(config.log_retention_days, 7)
       },
       ai: {
+        analysisEnabled: toBool(config.ai_analysis_enabled, true),
         provider: typeof config.ai_provider === 'string' ? config.ai_provider : 'mock',
         model: typeof config.ai_model === 'string' ? config.ai_model : 'gpt-4-turbo',
         apiKey: typeof config.ai_api_key === 'string' ? config.ai_api_key : '',
@@ -1329,6 +1339,7 @@ async function persistSettings() {
       { key: 'app_language', value: general.language },
       { key: 'http_port', value: general.httpPort.toString() },
       { key: 'log_retention_days', value: general.retentionDays.toString() },
+      { key: 'ai_analysis_enabled', value: ai.analysisEnabled ? '1' : '0' },
       { key: 'ai_provider', value: ai.provider },
       { key: 'ai_model', value: ai.model },
       { key: 'ai_api_key', value: ai.apiKey },

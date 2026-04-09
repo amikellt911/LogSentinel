@@ -16,7 +16,7 @@ public:
 
     // 最小表结构建议（用于 TraceExplorer）：
     // 1) trace_summary: trace_id, service_name, start_time_ms, end_time_ms, duration_ms,
-    //    span_count, token_count, risk_level, tags
+    //    span_count, token_count, risk_level, ai_status, ai_error, tags
     // 2) trace_span: trace_id, span_id, parent_id, service_name, operation,
     //    start_time_ms, duration_ms, status
     // 3) trace_analysis: trace_id, risk_level, summary, root_cause, solution, confidence
@@ -26,6 +26,11 @@ public:
     virtual bool SaveSingleTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans) = 0;
     // AI 分析完成后存储结果，供 Trace 详情展示。
     virtual bool SaveSingleTraceAnalysis(const TraceAnalysisRecord& analysis) = 0;
+    // 失败/跳过态没有 trace_analysis 可写，所以单独补一条 summary 状态更新原语。
+    // 这里不伪造“失败分析记录”，避免把“没分析过”和“分析过但结果特殊”混成一回事。
+    virtual bool UpdateTraceAiState(const std::string& trace_id,
+                                    const std::string& ai_status,
+                                    const std::string& ai_error) = 0;
 
     // 当前主链只保留 summary / spans / analysis 三段数据。
     // 那张已经废弃的调试附属表既然不再进入产品路径，就不该继续污染仓储抽象。

@@ -40,9 +40,11 @@ public:
     std::atomic<bool> save_summary_called{false};
     std::atomic<bool> save_spans_called{false};
     std::atomic<bool> save_analysis_called{false};
+    std::atomic<bool> update_ai_state_called{false};
     std::atomic<int> save_summary_count{0};
     std::atomic<int> save_spans_count{0};
     std::atomic<int> save_analysis_count{0};
+    std::atomic<int> update_ai_state_count{0};
     std::atomic<bool> save_atomic_called{false};
     std::atomic<int> save_atomic_count{0};
     std::vector<std::string> saved_trace_ids;
@@ -53,6 +55,8 @@ public:
     TraceSummary last_summary;
     std::vector<TraceSpanRecord> last_spans;
     std::optional<TraceAnalysisRecord> last_analysis;
+    std::string last_ai_status;
+    std::string last_ai_error;
 
     bool SaveSingleTraceSummary(const TraceSummary& summary) override
     {
@@ -131,6 +135,21 @@ public:
             saved_trace_ids.push_back(summary.trace_id);
         }
         return save_atomic_return;
+    }
+
+    bool UpdateTraceAiState(const std::string& trace_id,
+                            const std::string& ai_status,
+                            const std::string& ai_error) override
+    {
+        last_ai_status = ai_status;
+        last_ai_error = ai_error;
+        update_ai_state_called.store(true, std::memory_order_release);
+        update_ai_state_count.fetch_add(1, std::memory_order_acq_rel);
+        {
+            std::lock_guard<std::mutex> lock(saved_trace_ids_mutex);
+            saved_trace_ids.push_back(trace_id);
+        }
+        return true;
     }
 };
 
@@ -673,6 +692,53 @@ TEST_F(TraceSessionManagerUnitTest, DispatchSkipsAnalysisWhenTraceAiProviderIsNu
     EXPECT_FALSE(repo.last_analysis.has_value());
     EXPECT_EQ(repo.last_summary.trace_id, "55");
     EXPECT_EQ(repo.last_spans.size(), 1u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchMarksSkippedManualWhenAiAnalysisDisabled)
+{
+    // 目的：锁定“用户主动关闭 AI”时仍然要正常落主数据，并把 summary 状态改成 skipped_manual。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    StubTraceAi ai;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                &ai,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                /*notifier*/nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/4096,
+                                /*active_session_hard_limit*/1024,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
+                                /*service_runtime_accumulator*/nullptr,
+                                /*system_runtime_accumulator*/nullptr,
+                                /*ai_analysis_enabled*/false);
+
+    SpanEvent span = MakeSpan(1055, 501, 1000);
+    span.trace_end = true;
+
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.update_ai_state_called.load(std::memory_order_acquire);
+    }));
+    EXPECT_FALSE(ai.called.load(std::memory_order_acquire));
+    EXPECT_FALSE(repo.last_analysis.has_value());
+    EXPECT_EQ(repo.last_ai_status, "skipped_manual");
+    EXPECT_TRUE(repo.last_ai_error.empty());
 
     pool.shutdown();
 }

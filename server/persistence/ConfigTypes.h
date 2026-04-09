@@ -33,6 +33,9 @@ struct AppConfig {
     std::string ai_provider = "mock";
     std::string ai_model = "gpt-4-turbo";
     std::string ai_api_key = "";
+    // 这个总开关表达的是“当前是否允许 trace 主链真正发起 AI 分析”。
+    // 关闭后 trace 仍然会正常聚合、落 summary/spans，只是 worker 会把 ai_status 收成 skipped_manual。
+    bool ai_analysis_enabled = true;
     std::string ai_language = "en";
     std::string app_language = "en";
 
@@ -81,7 +84,7 @@ struct AppConfig {
 
     // 序列化宏 (注意：字段名需与 JSON key 及 DB config_key 一致)
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AppConfig, 
-        ai_provider, ai_model, ai_api_key, ai_language, app_language,
+        ai_provider, ai_model, ai_api_key, ai_analysis_enabled, ai_language, app_language,
         http_port, log_retention_days,
         ai_retry_enabled, ai_retry_max_attempts,
         ai_auto_degrade, ai_fallback_provider, ai_fallback_model, ai_fallback_api_key,

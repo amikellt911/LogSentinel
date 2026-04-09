@@ -195,7 +195,10 @@ public:
                                  ServiceRuntimeAccumulator* service_runtime_accumulator = nullptr,
                                  // system_runtime_accumulator 只负责系统运行态埋点，
                                  // 不参与 Trace 聚合/分发语义判断，所以和服务监控累加器一样保持可选注入。
-                                 SystemRuntimeAccumulator* system_runtime_accumulator = nullptr);
+                                 SystemRuntimeAccumulator* system_runtime_accumulator = nullptr,
+                                 // ai_analysis_enabled 是“用户主动允许不允许”这层总开关。
+                                 // 关闭后 worker 仍要正常收尾，只是不再调用模型，而是把 ai_status 标成 skipped_manual。
+                                 bool ai_analysis_enabled = true);
     ~TraceSessionManager();
 
     size_t size() const;
@@ -223,6 +226,7 @@ private:
     ServiceRuntimeAccumulator* service_runtime_accumulator_ = nullptr;
     // 系统监控只吃主链埋点快照，不应该反过来驱动 TraceSessionManager 的状态机。
     SystemRuntimeAccumulator* system_runtime_accumulator_ = nullptr;
+    bool ai_analysis_enabled_ = true;
     size_t capacity_ = 0;
     size_t token_limit_ = 0;
     TokenEstimator token_estimator_;

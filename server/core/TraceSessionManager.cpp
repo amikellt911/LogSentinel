@@ -16,6 +16,11 @@
 
 namespace
 {
+    constexpr size_t kMaxTraceAiErrorLength = 1024;
+    constexpr const char* kAiStatusCompleted = "completed";
+    constexpr const char* kAiStatusSkippedManual = "skipped_manual";
+    constexpr const char* kAiStatusFailedPrimary = "failed_primary";
+
     std::string toLowerCopy(std::string value)
     {
         std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c)
@@ -61,6 +66,15 @@ namespace
             return usage->total_tokens;
         }
         return summary.token_count;
+    }
+
+    std::string TruncateTraceAiError(std::string error)
+    {
+        if (error.size() <= kMaxTraceAiErrorLength) {
+            return error;
+        }
+        error.resize(kMaxTraceAiErrorLength);
+        return error;
     }
 
     SystemBackpressureStatus ToSystemBackpressureStatus(TraceSessionManager::OverloadState overload_state)
@@ -208,8 +222,9 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
                                          int pending_tasks_overload_percent,
                                          int pending_tasks_critical_percent,
                                          ServiceRuntimeAccumulator* service_runtime_accumulator,
-                                         SystemRuntimeAccumulator* system_runtime_accumulator)
-    : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
+                                         SystemRuntimeAccumulator* system_runtime_accumulator,
+                                         bool ai_analysis_enabled)
+    : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), ai_analysis_enabled_(ai_analysis_enabled), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
     // sealed/retry 这两档时间现在也跟着启动配置走，避免状态机里继续保留 1/2 tick 的硬编码。
@@ -1272,7 +1287,18 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
         size_t alert_token_count = worker_summary->token_count;
         std::optional<TraceAiUsage> completed_usage;
-        if (trace_ai) {
+        std::string ai_status_override;
+        std::string ai_error_override;
+        if (!manager->ai_analysis_enabled_) {
+            // 这里是用户主动关闭 AI 的语义，不是失败。
+            // 所以 worker 仍要正常收尾，只把 summary 状态改成 skipped_manual，不能伪造一条失败 analysis。
+            ai_status_override = kAiStatusSkippedManual;
+        } else if (!trace_ai) {
+            // provider 为空时这条 trace 不可能真的完成分析。
+            // 这里直接记 failed_primary，避免主记录永远卡在 pending。
+            ai_status_override = kAiStatusFailedPrimary;
+            ai_error_override = "Trace AI provider unavailable";
+        } else {
             if (system_runtime_accumulator) {
                 // 系统监控里的 AI 调用总数要落在“真正准备调模型”的时间点，
                 // 不能在 submit 成功时就提前加，否则排队中断或后续没进入模型都算脏数据。
@@ -1290,21 +1316,11 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
                 alert_token_count = ResolveAlertTokenCount(*worker_summary, ai_response.usage);
                 completed_usage = ai_response.usage;
             } catch (const std::exception& e) {
-                analysis_record.trace_id = worker_summary->trace_id;
-                analysis_record.risk_level = "unknown";
-                analysis_record.summary = "AI_ANALYSIS_FAILED";
-                analysis_record.root_cause = e.what();
-                analysis_record.solution = "请检查 AI 代理与模型服务状态，稍后重试该 trace 的分析。";
-                analysis_record.confidence = 0.0;
-                analysis_ptr = &analysis_record;
+                ai_status_override = kAiStatusFailedPrimary;
+                ai_error_override = TruncateTraceAiError(e.what());
             } catch (...) {
-                analysis_record.trace_id = worker_summary->trace_id;
-                analysis_record.risk_level = "unknown";
-                analysis_record.summary = "AI_ANALYSIS_FAILED";
-                analysis_record.root_cause = "Unknown non-std exception";
-                analysis_record.solution = "请检查 AI 代理与模型服务状态，稍后重试该 trace 的分析。";
-                analysis_record.confidence = 0.0;
-                analysis_ptr = &analysis_record;
+                ai_status_override = kAiStatusFailedPrimary;
+                ai_error_override = "Unknown non-std exception";
             }
             const uint64_t ai_end_ns = NowSteadyNs();
             manager->ai_total_ns_.fetch_add(ai_end_ns - ai_begin_ns, std::memory_order_relaxed);
@@ -1321,12 +1337,16 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         bool saved = true;
         if (!buffered_trace_repo) {
             saved = false;
-        } else {
+        } else if (analysis_ptr) {
             BufferedTraceRepository::TraceAnalysisWrite analysis_write;
-            if (analysis_ptr) {
-                analysis_write.analysis = *analysis_ptr;
-            }
+            analysis_write.analysis = *analysis_ptr;
             saved = buffered_trace_repo->AppendAnalysis(std::move(analysis_write));
+        } else if (!ai_status_override.empty()) {
+            // 没有 analysis 可写时，必须把最终状态直接落回 summary。
+            // 否则查询层只能看到 pending，却分不清是人工关闭、provider 缺失还是调用失败。
+            saved = buffered_trace_repo->UpdateTraceAiState(worker_summary->trace_id,
+                                                            ai_status_override,
+                                                            ai_error_override);
         }
         manager->analysis_enqueue_total_ns_.fetch_add(NowSteadyNs() - enqueue_begin_ns, std::memory_order_relaxed);
         manager->worker_done_count_.fetch_add(1, std::memory_order_relaxed);

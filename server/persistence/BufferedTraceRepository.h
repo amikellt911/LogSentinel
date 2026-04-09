@@ -102,6 +102,11 @@ public:
 
     bool AppendPrimary(TracePrimaryWrite write);
     bool AppendAnalysis(TraceAnalysisWrite write);
+    // 失败/跳过态每条 trace 最多写一次，量级远低于 spans/analysis 批量 flush，
+    // 所以这里先直接透传给底层 repo，不专门再做一层状态缓冲桶。
+    bool UpdateTraceAiState(const std::string& trace_id,
+                            const std::string& ai_status,
+                            const std::string& ai_error);
     RuntimeStatsSnapshot SnapshotRuntimeStats() const;
     std::string DescribeRuntimeStats() const;
 

@@ -80,6 +80,9 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         if (key == "ai_provider") config.ai_provider = val;
         else if (key == "ai_model") config.ai_model = val;
         else if (key == "ai_api_key") config.ai_api_key = val;
+        // 这个开关决定的是 Trace 主链 worker 是否真的发 AI，
+        // 不是 provider/model/key 这些静态参数是否保留在配置里。
+        else if (key == "ai_analysis_enabled") config.ai_analysis_enabled = IsTruthyConfigValue(val);
         else if (key == "ai_language") config.ai_language = val;
         else if (key == "app_language") config.app_language = val;
         else if (key == "http_port") config.http_port = std::stoi(val);
@@ -200,6 +203,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('ai_provider', 'mock', 'AI服务商类型'),
             ('ai_model', 'gpt-4-turbo', '模型名称'),
             ('ai_api_key', '', 'API密钥'),
+            ('ai_analysis_enabled', '1', 'Trace AI 分析总开关'),
             ('ai_language', 'en', '解析语言'),
             ('app_language', 'en', '界面语言'),
             ('http_port', '8080', 'HTTP服务端口'),

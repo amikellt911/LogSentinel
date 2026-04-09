@@ -454,3 +454,79 @@ feat(retention): 接通 trace 过期清理与仓储删除链路
 - `test_sqlite_trace_repo`：15/15 通过
 - `test_trace_retention_service`：2/2 通过
 - `LogSentinel`：编译通过
+
+# 追加记录：2026-04-09 为 Trace AI 补总开关与执行状态骨架
+
+## Git Commit Message
+
+feat(trace): 为 ai 分析补总开关与执行状态骨架
+
+## Modification
+
+- `server/persistence/TraceTypes.h`
+- `server/persistence/TraceRepository.h`
+- `server/persistence/BufferedTraceRepository.h`
+- `server/persistence/BufferedTraceRepository.cpp`
+- `server/persistence/SqliteTraceRepository.h`
+- `server/persistence/SqliteTraceRepository.cpp`
+- `server/persistence/ConfigTypes.h`
+- `server/persistence/SqliteConfigRepository.cpp`
+- `server/core/TraceSessionManager.h`
+- `server/core/TraceSessionManager.cpp`
+- `server/src/main.cpp`
+- `server/handlers/TraceQueryHandler.cpp`
+- `server/tests/SqliteTraceRepository_test.cpp`
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `server/tests/LogHandler_test.cpp`
+- `client/src/views/SettingsPrototype.vue`
+- `client/src/types/trace.ts`
+- `client/src/views/TraceExplorer.vue`
+- `client/src/components/TraceListTable.vue`
+- `client/src/components/AIAnalysisDrawerContent.vue`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260409-feat-trace-prompt-consumption.md`
+
+## 这次补了哪些注释
+
+- 在 `server/persistence/TraceTypes.h` 里补了中文注释，说明 `ai_status/ai_error` 是 trace 汇总态，不等于 analysis 内容。
+- 在 `server/persistence/TraceRepository.h` 和 `server/persistence/BufferedTraceRepository.h/.cpp` 里补了中文注释，说明为什么失败/跳过态不能伪造 analysis，以及为什么状态更新先走低频直透传。
+- 在 `server/persistence/SqliteTraceRepository.h/.cpp` 里补了中文注释，说明为什么列表/详情都要直接返回 `ai_status`，以及为什么 analysis 成功时要把 `risk_level + ai_status` 一起回写。
+- 在 `server/persistence/ConfigTypes.h` 和 `server/persistence/SqliteConfigRepository.cpp` 里补了中文注释，说明 `ai_analysis_enabled` 控制的是 worker 是否真发 AI，而不是把 provider 配置删掉。
+- 在 `server/core/TraceSessionManager.h/.cpp` 里补了中文注释，说明为什么人工关闭 AI 只改 `ai_status=skipped_manual`，以及为什么 provider 缺失/异常不再伪造失败 analysis。
+- 在 `server/src/main.cpp` 里补了中文注释，说明为什么 `ai_analysis_enabled` 按冷启动配置消费，并直接决定是否创建 Trace AI provider。
+- 在 `server/handlers/TraceQueryHandler.cpp` 里补了中文注释，说明为什么查询接口要把 `ai_status/ai_error` 一起吐给前端。
+- 在 `server/tests/SqliteTraceRepository_test.cpp`、`server/tests/TraceSessionManager_unit_test.cpp` 和 `server/tests/LogHandler_test.cpp` 里补了中文注释，分别锁定了 pending/completed/skipped_manual 语义、人工关闭 AI 语义，以及 fake repo 对新接口的最小兼容语义。
+- 在 `client/src/views/SettingsPrototype.vue`、`client/src/types/trace.ts`、`client/src/views/TraceExplorer.vue`、`client/src/components/TraceListTable.vue`、`client/src/components/AIAnalysisDrawerContent.vue` 里补了中文注释，说明总开关、状态枚举、前端兜底映射、列表状态列和详情页无分析态展示的原因。
+
+## Learning Tips
+
+### Newbie Tips
+
+“没有 analysis”本身不是一个稳定状态，它可能代表处理中、人工关闭、熔断跳过或者调用失败。所以只靠 `analysis is null` 去猜执行态，前端一定会越写越乱。更稳的做法是把“执行态”单独落成 `ai_status`。
+
+### Function Explanation
+
+这次新增的 `UpdateTraceAiState` 不是在替代 `SaveAnalysisBatch`。它只负责没有 analysis 可写时的 summary 状态回写，例如人工关闭、熔断跳过、provider 不可用、主路失败。真正成功产出 analysis 的路径，还是继续走 `SaveAnalysisBatch`，只是顺手把 `ai_status` 收敛成 `completed`。
+
+### Pitfalls
+
+不要在 AI 调用失败时伪造一条 `AI_ANALYSIS_FAILED` 的分析记录。这会把“这条 trace 没分析过”和“这条 trace 分析过，只是结果特殊”混成一回事，前端和查询层后面都会越补越脏。
+
+## Verification
+
+- `cmake --build server/build --target test_sqlite_trace_repo`
+- `cmake --build server/build --target test_trace_session_manager_unit`
+- `cmake --build server/build --target test_log_handler`
+- `cmake --build server/build --target LogSentinel`
+- `./server/build/test_sqlite_trace_repo`
+- `./server/build/test_trace_session_manager_unit`
+- `./server/build/test_log_handler`
+- `npm run build`
+
+## Verification Result
+
+- `test_sqlite_trace_repo`：16/16 通过
+- `test_trace_session_manager_unit`：37/37 通过
+- `test_log_handler`：5/5 通过
+- `LogSentinel`：编译通过
+- `npm run build`：仍未通过，但失败项都来自仓库既有前端 TS 问题；这次改动涉及的 `SettingsPrototype.vue`、`TraceExplorer.vue`、`TraceListTable.vue`、`AIAnalysisDrawerContent.vue`、`types/trace.ts` 没有新增构建错误

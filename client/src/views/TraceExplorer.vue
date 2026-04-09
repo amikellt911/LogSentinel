@@ -78,7 +78,8 @@ import type {
   TraceListItemDto,
   TraceDetailResponseDto,
   TraceSpanDto,
-  TraceAnalysisDto
+  TraceAnalysisDto,
+  TraceAiStatus
 } from '../types/trace'
 import dayjs from 'dayjs'
 
@@ -128,6 +129,20 @@ function normalizeRiskLevel(level: string): RiskLevel {
   }
 }
 
+function normalizeAiStatus(status: string): TraceAiStatus {
+  // 后端返回的是稳定枚举值；这里只做最小兜底，避免旧库/空值把前端状态打成 undefined。
+  switch (status) {
+    case 'completed':
+    case 'skipped_manual':
+    case 'skipped_circuit':
+    case 'failed_primary':
+    case 'failed_both':
+      return status
+    default:
+      return 'pending'
+  }
+}
+
 function mapTraceListItem(dto: TraceListItemDto): TraceListItem {
   return {
     trace_id: dto.trace_id,
@@ -136,6 +151,7 @@ function mapTraceListItem(dto: TraceListItemDto): TraceListItem {
     duration: dto.duration_ms,
     span_count: dto.span_count,
     risk_level: normalizeRiskLevel(dto.risk_level),
+    ai_status: normalizeAiStatus(dto.ai_status),
     token_count: dto.token_count,
     timestamp: dto.start_time_ms
   }
@@ -193,6 +209,8 @@ function mapTraceDetail(dto: TraceDetailResponseDto): TraceDetail {
     duration: dto.duration_ms,
     span_count: dto.span_count,
     token_count: dto.token_count,
+    ai_status: normalizeAiStatus(dto.ai_status),
+    ai_error: dto.ai_error ?? '',
     tags: Array.isArray(dto.tags) ? dto.tags : [],
     spans: dto.spans.map(span => mapTraceSpan(span, dto.start_time_ms)),
     ai_analysis: mapTraceAnalysis(dto.analysis)

@@ -81,6 +81,8 @@ protected:
         int64_t start_time_ms = 0;
         int64_t duration_ms = 0;
         std::string risk_level;
+        std::string ai_status;
+        std::string ai_error;
     };
 
     std::optional<SummaryRow> QuerySummary(const std::string& trace_id) {
@@ -93,7 +95,7 @@ protected:
             return std::nullopt;
         }
         const char* sql = R"(
-            SELECT service_name, start_time_ms, duration_ms, risk_level
+            SELECT service_name, start_time_ms, duration_ms, risk_level, ai_status, ai_error
             FROM trace_summary
             WHERE trace_id = ?;
         )";
@@ -111,6 +113,8 @@ protected:
             out.start_time_ms = sqlite3_column_int64(stmt, 1);
             out.duration_ms = sqlite3_column_int64(stmt, 2);
             out.risk_level = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+            out.ai_status = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+            out.ai_error = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
             row = out;
         }
         sqlite3_finalize(stmt);
@@ -188,6 +192,9 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceSummaryPersistsRow)
     ASSERT_TRUE(row.has_value());
     EXPECT_EQ(row->service_name, summary.service_name);
     EXPECT_EQ(row->duration_ms, summary.duration_ms);
+    // 新写入的主记录要显式带上 pending，避免查询层把“还没分析完”误判成“关闭了/失败了”。
+    EXPECT_EQ(row->ai_status, "pending");
+    EXPECT_TRUE(row->ai_error.empty());
 }
 
 TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceSpansPersistsRows)
@@ -227,6 +234,13 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAnalysisPersistsRow)
     bool ok = repo->SaveSingleTraceAnalysis(analysis);
     EXPECT_TRUE(ok);
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 1);
+
+    auto row = QuerySummary(summary.trace_id);
+    ASSERT_TRUE(row.has_value());
+    // analysis 真落库后，summary 上的风险等级和 AI 状态都要一起收敛成最终成功态。
+    EXPECT_EQ(row->risk_level, analysis.risk_level);
+    EXPECT_EQ(row->ai_status, "completed");
+    EXPECT_TRUE(row->ai_error.empty());
 }
 
 TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAnalysisFailsWithoutSummary)
@@ -235,6 +249,21 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAnalysisFailsWithoutSummary)
     bool ok = repo->SaveSingleTraceAnalysis(analysis);
     EXPECT_FALSE(ok);
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+}
+
+TEST_F(SqliteTraceRepositoryTest, UpdateTraceAiStatePersistsSkippedManualWithoutAnalysisRow)
+{
+    persistence::TraceSummary summary = MakeSummary("manual-disabled-1");
+    ASSERT_TRUE(repo->SaveSingleTraceSummary(summary));
+
+    bool ok = repo->UpdateTraceAiState(summary.trace_id, "skipped_manual", "");
+    EXPECT_TRUE(ok);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+
+    auto row = QuerySummary(summary.trace_id);
+    ASSERT_TRUE(row.has_value());
+    EXPECT_EQ(row->ai_status, "skipped_manual");
+    EXPECT_TRUE(row->ai_error.empty());
 }
 
 TEST_F(SqliteTraceRepositoryTest, SchemaDoesNotCreatePromptDebugTable)

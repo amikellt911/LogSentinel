@@ -345,6 +345,7 @@ int main(int argc, char* argv[])
                    : trace_ai_provider);
     const std::string effective_trace_ai_model = startup_app_config.ai_model;
     const std::string effective_trace_ai_api_key = startup_app_config.ai_api_key;
+    const bool effective_ai_analysis_enabled = startup_app_config.ai_analysis_enabled;
     // 水位阈值同样收口成冷启动配置：
     // 它们直接驱动 TraceSessionManager 的背压状态机，不适合运行中热切。
     // 这一刀只开放 overload/critical 两档，low 仍由后端内部派生回滞阈值。
@@ -504,7 +505,8 @@ int main(int argc, char* argv[])
     }
     std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(std::move(webhook_channels));
     std::shared_ptr<TraceAiProvider> trace_ai;
-    const bool enable_trace_ai = auto_start_proxy || trace_ai_provider_explicit;
+    const bool enable_trace_ai =
+        effective_ai_analysis_enabled && (auto_start_proxy || trace_ai_provider_explicit);
     if (enable_trace_ai) {
         TraceAiBackend backend = TraceAiBackend::Mock;
         if (!TryParseTraceAiBackend(effective_trace_ai_provider, &backend)) {
@@ -526,6 +528,14 @@ int main(int argc, char* argv[])
                   << ", ai_language=" << startup_app_config.ai_language
                   << ", model=" << effective_trace_ai_model
                   << ", api_key=" << (effective_trace_ai_api_key.empty() ? "<empty>" : "<configured>")
+                  << std::endl;
+    } else {
+        // 这里区分的是“主链是否真的允许发起 AI 分析”，不是 trace 查询能力本身。
+        // 关闭后 summary/spans 仍然照常落库，worker 只会把 ai_status 收成 skipped_manual。
+        std::cout << "Trace AI disabled. ai_analysis_enabled="
+                  << (effective_ai_analysis_enabled ? "true" : "false")
+                  << ", auto_start_proxy=" << (auto_start_proxy ? "true" : "false")
+                  << ", trace_ai_provider_explicit=" << (trace_ai_provider_explicit ? "true" : "false")
                   << std::endl;
     }
     // 线程池需要在 trace_ai/notifier 之前回收：
@@ -584,7 +594,8 @@ int main(int argc, char* argv[])
         effective_wm_pending_tasks_overload,
         effective_wm_pending_tasks_critical,
         service_runtime_accumulator.get(),
-        system_runtime_accumulator.get());
+        system_runtime_accumulator.get(),
+        effective_ai_analysis_enabled);
     const double trace_sweep_interval_sec =
         static_cast<double>(effective_trace_sweep_interval_ms) / 1000.0;
     std::cout << "Trace session sweep enabled. sweep_interval_ms=" << effective_trace_sweep_interval_ms
@@ -597,6 +608,7 @@ int main(int argc, char* argv[])
               << ", wm_active_sessions=" << effective_wm_active_sessions_overload << "/" << effective_wm_active_sessions_critical
               << ", wm_buffered_spans=" << effective_wm_buffered_spans_overload << "/" << effective_wm_buffered_spans_critical
               << ", wm_pending_tasks=" << effective_wm_pending_tasks_overload << "/" << effective_wm_pending_tasks_critical
+              << ", ai_analysis_enabled=" << (effective_ai_analysis_enabled ? "true" : "false")
               << ", buffered_span_limit=" << trace_buffered_span_limit
               << ", active_session_limit=" << trace_active_session_limit
               << ", worker_queue_size=" << worker_queue_size << std::endl;

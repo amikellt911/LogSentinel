@@ -4,6 +4,15 @@
  */
 
 export type RiskLevel = 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' | 'Unknown'
+// TraceAiStatus 只表达执行态，不表达最终分析内容。
+// 也就是说 completed 之外的状态都可能没有 ai_analysis，但前端仍然能知道原因。
+export type TraceAiStatus =
+  | 'pending'
+  | 'completed'
+  | 'skipped_manual'
+  | 'skipped_circuit'
+  | 'failed_primary'
+  | 'failed_both'
 
 /**
  * Trace Span 节点（调用链中的单个操作）
@@ -39,6 +48,7 @@ export interface TraceListItem {
   duration: number // 用户耗时（ms），即业务系统从请求开始到结束的真实墙钟时间
   span_count: number // Span 数量（调用链中的操作节点数）
   risk_level: RiskLevel // 风险等级
+  ai_status: TraceAiStatus // AI 执行状态
   token_count: number // Token 消耗数量
   timestamp: number // 时间戳（用于排序）
 }
@@ -68,6 +78,7 @@ export interface TraceListItemDto {
   span_count: number
   token_count: number
   risk_level: string
+  ai_status: TraceAiStatus
 }
 
 /**
@@ -114,6 +125,8 @@ export interface TraceDetailResponseDto {
   span_count: number
   token_count: number
   risk_level: string
+  ai_status: TraceAiStatus
+  ai_error: string
   tags: string[]
   spans: TraceSpanDto[]
   analysis: TraceAnalysisDto | null
@@ -154,6 +167,8 @@ export interface TraceDetail {
   duration: number // 用户耗时（ms），即业务系统从请求开始到结束的真实墙钟时间
   span_count: number // Span 数量
   token_count: number // Token 消耗数量
+  ai_status: TraceAiStatus // AI 执行状态
+  ai_error: string // AI 原始异常摘要
   tags: string[] // 标签（如 ['认证', '安全']）
   spans: TraceSpan[] // Span 列表（调用链）
   ai_analysis: AIAnalysis | null // AI 分析结果

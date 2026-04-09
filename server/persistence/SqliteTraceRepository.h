@@ -32,6 +32,8 @@ struct TraceListItem
     size_t span_count = 0;
     size_t token_count = 0;
     std::string risk_level;
+    // 列表页现在不只看风险等级，还要知道“这条 trace 的 AI 到底有没有真正完成”。
+    std::string ai_status;
 };
 
 struct TraceSearchResult
@@ -70,6 +72,9 @@ struct TraceDetailRecord
     size_t span_count = 0;
     size_t token_count = 0;
     std::string risk_level;
+    // 详情页直接吃这两个字段，避免前端再用“analysis 是否为空”去猜执行态。
+    std::string ai_status;
+    std::string ai_error;
     std::vector<std::string> tags;
     std::optional<TraceAnalysisDetail> analysis;
     std::vector<TraceSpanDetail> spans;
@@ -85,6 +90,9 @@ public:
     bool SaveSingleTraceSummary(const TraceSummary& summary) override;
     bool SaveSingleTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans) override;
     bool SaveSingleTraceAnalysis(const TraceAnalysisRecord& analysis) override;
+    bool UpdateTraceAiState(const std::string& trace_id,
+                            const std::string& ai_status,
+                            const std::string& ai_error) override;
     bool SaveSingleTraceAtomic(const TraceSummary& summary,
                         const std::vector<TraceSpanRecord>& spans,
                         const TraceAnalysisRecord* analysis) override;

@@ -40,6 +40,15 @@ public:
         return true;
     }
 
+    // LogHandler 单测只关心入口返回码，不关心 AI 状态写库结果；
+    // 这里直接返回 true，避免为了无关断言把 fake repo 做复杂。
+    bool UpdateTraceAiState(const std::string&,
+                            const std::string&,
+                            const std::string&) override
+    {
+        return true;
+    }
+
     bool SaveSingleTraceAtomic(const TraceSummary&,
                                const std::vector<TraceSpanRecord>&,
                                const TraceAnalysisRecord*) override
