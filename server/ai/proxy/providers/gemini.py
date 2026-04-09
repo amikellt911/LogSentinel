@@ -51,6 +51,30 @@ class GeminiProvider(AIProvider):
 
         return self.default_client, target_model
 
+    def _build_trace_error_payload(self, error: Exception, default_status: str = "PROVIDER_ERROR") -> Dict[str, Any]:
+        """
+        Gemini SDK 的异常字段并不保证每次都长得一模一样，所以这里按“能拿多少拿多少”的方式做最小提取。
+        既然 Trace 主链后面只需要稳定的失败协议，就不要把 SDK 原始对象继续往外透传，更不能伪装成成功 analysis。
+        """
+        raw_code = getattr(error, "code", None)
+        error_code = None
+        if isinstance(raw_code, int):
+            error_code = raw_code
+        elif isinstance(raw_code, str) and raw_code.isdigit():
+            error_code = int(raw_code)
+
+        error_status = getattr(error, "status", None)
+        if error_status is None:
+            error_status = default_status
+        error_message = getattr(error, "message", None) or str(error)
+
+        return {
+            "ok": False,
+            "error_code": error_code,
+            "error_status": error_status,
+            "error_message": error_message,
+        }
+
     def analyze(self, log_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
         """
         实现单次分析功能。
@@ -91,15 +115,7 @@ class GeminiProvider(AIProvider):
             client, target_model = self._get_client_and_model(api_key, model)
         except ValueError as e:
             print(f"[Gemini] Trace 分析失败: {e}")
-            return {
-                "analysis": {
-                    "summary": "AI 未配置 (API Key Missing)",
-                    "risk_level": "unknown",
-                    "root_cause": "Configuration Error",
-                    "solution": "Configure API Key in Settings",
-                },
-                "usage": None,
-            }
+            return self._build_trace_error_payload(e, default_status="CONFIG_ERROR")
 
         # Trace 路由在进入 provider 之前，就已经把 trace_text 注入到了最终 prompt 模板里。
         # 所以这里不要再像普通日志 analyze 那样把 trace_text 追加一遍，
@@ -128,20 +144,15 @@ class GeminiProvider(AIProvider):
                 }
 
             return {
+                "ok": True,
                 "analysis": response.text,
                 "usage": usage,
             }
         except Exception as e:
             print(f"Error calling Gemini API for trace analysis: {e}")
-            return {
-                "analysis": json.dumps({
-                    "summary": "Error calling AI",
-                    "risk_level": "critical",
-                    "root_cause": "API Error",
-                    "solution": "Check logs"
-                }),
-                "usage": None,
-            }
+            # Trace 主链后面要做失败状态落库和熔断，所以这里必须保留“调用失败”的真相。
+            # 如果继续伪造一份成功 analysis，C++ 会把真正的 provider 错误误判成一条高风险业务结论。
+            return self._build_trace_error_payload(e)
 
     def chat(self, history: List[Dict[str, Any]], new_message: str) -> str:
         """

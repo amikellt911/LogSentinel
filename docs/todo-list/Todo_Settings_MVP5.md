@@ -73,4 +73,7 @@
 - [x] 运行 retention 相关最小构建与测试，并追加 2026-04-09 dev-log
 - [x] 为 AI 自动降级补 `ai_fallback_api_key` 的前后端保存/回填能力，避免降级链路只能误复用主 Key
 - [x] 为 Trace AI 增加 `ai_analysis_enabled + ai_status + ai_error` 骨架，并让查询结果能区分人工关闭/熔断/失败态
+- [x] 收口 Python AI proxy 的 Trace 失败协议，统一返回 `ok/provider/error_code/error_status/error_message`
+- [x] 让 Gemini provider 把 SDK 原始异常映射成统一失败载荷，不再伪造成功态 `analysis`
+- [x] 运行 proxy 最小测试，确认成功/失败两条返回协议都稳定
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

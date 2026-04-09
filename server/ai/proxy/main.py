@@ -66,6 +66,53 @@ async def call_provider_in_threadpool(func, *args, **kwargs):
     return await run_in_threadpool(func, *args, **kwargs)
 
 
+def build_trace_failure_result(provider_name: str,
+                               error_message: str,
+                               error_code: Optional[int] = None,
+                               error_status: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Trace 路由后续要给 C++ 做熔断和失败落库，所以失败结果不能再混进 HTTP 500 文本里。
+    这里统一收口成稳定 JSON：上层只看 ok/code/status/message，不再关心 Python 里具体是哪家 SDK 抛的异常。
+    """
+    return {
+        "ok": False,
+        "provider": provider_name,
+        "error_code": error_code,
+        "error_status": error_status or "PROXY_INTERNAL_ERROR",
+        "error_message": error_message,
+    }
+
+
+def normalize_trace_result(provider_name: str, result: Any) -> Dict[str, Any]:
+    """
+    Trace provider 现在允许两种输入：
+    1. 新协议：已经返回 ok=true/false 的统一结构。
+    2. 旧协议：直接返回 analysis 或 {analysis, usage}。
+    既然当前正处于新旧切换期，这里就把所有分支收成同一外部契约，避免 C++ 跟着感知 provider 差异。
+    """
+    if isinstance(result, dict) and "ok" in result:
+        normalized = dict(result)
+        normalized["provider"] = provider_name
+        if normalized.get("ok"):
+            normalized.setdefault("usage", None)
+        return normalized
+
+    if isinstance(result, dict) and "analysis" in result:
+        return {
+            "ok": True,
+            "provider": provider_name,
+            "analysis": result.get("analysis"),
+            "usage": result.get("usage"),
+        }
+
+    return {
+        "ok": True,
+        "provider": provider_name,
+        "analysis": result,
+        "usage": None,
+    }
+
+
 def render_trace_prompt(prompt_template: str, trace_text: str) -> str:
     """
     Trace 路由现在优先吃 C++ 下发的最终 prompt 模板。
@@ -170,17 +217,17 @@ async def analyze_trace(provider_name: str, request: Request):
             api_key=api_key,
             model=model,
         )
-        # Trace 路由现在允许 provider 附带 usage 元数据，目的是把 token 计量从 analysis JSON 里拆出来。
-        # 既然 analysis 是业务结果，usage 就应该作为外层 sibling 字段单独返回，便于 C++ 统一解析。
-        if isinstance(result, dict) and "analysis" in result:
-            return {
-                "provider": provider_name,
-                "analysis": result.get("analysis"),
-                "usage": result.get("usage"),
-            }
-        return {"provider": provider_name, "analysis": result, "usage": None}
+        return normalize_trace_result(provider_name, result)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"分析过程中发生错误: {e}")
+        # 这里故意不再把 provider 异常变成 HTTP 500。
+        # 因为对 C++ 来说，“这次 AI 调用最终失败”是业务失败，不是协议层崩溃；
+        # 只有继续返回统一 body，后面的 ai_status / 熔断计数才能稳定落地。
+        return build_trace_failure_result(
+            provider_name,
+            error_message=str(e),
+        )
 
 @app.post("/analyze/batch/{provider_name}")
 async def analyze_log_batch(provider_name: str, request: BatchRequestSchema):

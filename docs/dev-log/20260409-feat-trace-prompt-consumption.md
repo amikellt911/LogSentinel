@@ -530,3 +530,45 @@ feat(trace): 为 ai 分析补总开关与执行状态骨架
 - `test_log_handler`：5/5 通过
 - `LogSentinel`：编译通过
 - `npm run build`：仍未通过，但失败项都来自仓库既有前端 TS 问题；这次改动涉及的 `SettingsPrototype.vue`、`TraceExplorer.vue`、`TraceListTable.vue`、`AIAnalysisDrawerContent.vue`、`types/trace.ts` 没有新增构建错误
+
+---
+
+## Git Commit Message
+
+feat(ai-proxy): 收口 trace 失败返回协议
+
+## Modification
+
+- `server/ai/proxy/main.py`
+- `server/ai/proxy/providers/gemini.py`
+- `server/tests/ai_proxy_trace_protocol_test.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260409-feat-trace-prompt-consumption.md`
+
+## 这次补了哪些注释
+
+- 在 `server/ai/proxy/main.py` 里补了中文注释，说明为什么 trace 路由失败不能再抛 HTTP 500 给 C++，而要收口成统一 JSON 协议；同时说明了新旧 provider 返回格式共存时为什么要在路由层做一次标准化。
+- 在 `server/ai/proxy/providers/gemini.py` 里补了中文注释，说明为什么 Gemini SDK 异常不能再伪装成成功 analysis，而要提取 `code/status/message` 生成失败载荷。
+- 在 `server/tests/ai_proxy_trace_protocol_test.py` 里补了中文注释，说明测试锁定的是 proxy 对 C++ 的外部契约，而不是某个具体 SDK 的内部实现。
+
+## Learning Tips
+
+### Newbie Tips
+
+如果你准备在上游做熔断，那么“AI 请求失败”就必须先被定义成一条稳定协议。否则你今天拿到的是 HTTP 500 文本，明天拿到的是某家 SDK 的异常对象，后面的计数器和状态机都会越写越乱。
+
+### Function Explanation
+
+`normalize_trace_result` 的作用不是做业务分析，而是做协议适配。既然现在仓库里还存在旧 provider 返回 `analysis` 的写法，同时新协议又要引入 `ok/error_code/error_status/error_message`，那就应该在 proxy 路由边界做一次统一，不要把兼容逻辑散到 C++。
+
+### Pitfalls
+
+最脏的做法就是把 provider 调用失败伪造成一份“高风险 analysis”。这样前端看起来像是 AI 给了业务结论，实际上底下只是 SDK 调用炸了。业务结论和基础设施失败必须分开，否则后面根本没法做降级和熔断。
+
+## Verification
+
+- `timeout 15s python3 -m unittest server/tests/ai_proxy_trace_protocol_test.py; echo EXIT:$?`
+
+## Verification Result
+
+- `ai_proxy_trace_protocol_test.py`：3/3 通过，覆盖 trace 成功协议归一、失败协议归一、Gemini 错误字段提取三条路径
