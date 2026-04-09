@@ -172,6 +172,27 @@ Prompt 不是装饰项，而是 AI 主链真正的输入参数来源之一。这
    共同渲染出来。既然它们三者共同决定分析口径，那么本轮就不把其中两项做成热更新、一项做成冷启动，
    避免语义分裂。
 9. 后续如果真的要支持热更新，应该以“任务级快照”重讲，不在 MVP5 阶段强行混入。
+10. 如果后续真的要做这组配置的热更新，不建议使用 Unix `signal` 这类 OS 级信号去驱动。
+    更合适的方式是：
+    - `ConfigRepo` 继续维护全局 snapshot 真值
+    - 按“消费域”维护 revision，而不是按单字段维护 revision
+    - 例如：
+      - `prompt_revision` 覆盖 `prompts + active_prompt_id + ai_language`
+      - `webhook_revision` 覆盖 `channels`
+      - `parse_revision` 可覆盖 `trace_end_field + trace_end_aliases`
+11. 这样分域的原因很直接：
+    最终分析 prompt 是由 `prompts + active_prompt_id + ai_language` 一起渲染出来的。
+    如果给它们各自单独维护版本号，那么模块刷新时就可能读到“prompt 列表是新的，但 active 还是旧的”这种混合版本，语义会脏掉。
+12. 真正的运行方式应该是：
+    - 模块平时一直使用自己的本地冷缓存
+    - 在安全边界先看一眼自己关心的 revision 是否变化
+    - 只有 revision 变化时，才重新从 snapshot 拉一次配置，并重建本地缓存
+    - 例如 Prompt 主链适合在“准备开始一批新的 AI 分析任务”时刷新，而不是在每个 span 热路径里临时重建
+13. 这套方法的核心不是“每次都回 ConfigRepo 读配置”，而是：
+    - `global snapshot` 负责做全局真值
+    - `per-domain revision` 负责做变更通知
+    - `module local cache` 负责做稳定消费
+    这样既能避免回调风暴，也能让每个模块在自己的安全时机刷新。
 
 ### 5) 飞书 Webhook（enabled / name / webhook_url / secret / threshold）
 - 价值：高
