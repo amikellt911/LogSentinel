@@ -19,6 +19,9 @@ public:
     // 构造函数：一次性注入所有依赖。
     // system_runtime_accumulator 当前只负责系统监控埋点，不参与 Trace 主链语义判断；
     // 所以这里保持可选，方便逐步把主链统计接进来，而不是一次把 handler/router 全部改穿。
+    // repo/batcher 现在只服务旧 `/logs`、`/results/*` 链路：
+    // 既然 main.cpp 已经把主路由收口到 `/logs/spans` 新链，那么这两个旧依赖允许为空；
+    // 真有旧接口误调用时，再由 handlePost/handleGetResult 明确返回 503，而不是继续空指针崩溃。
     // trace_end 主字段和别名现在已经收口成冷启动配置：
     // 既然它们决定的是“请求字段该怎么解释”，那就不值得在运行中热切；这里直接在构造时注入，
     // 后面每个请求都复用同一份口径，避免继续为了这两个字段在热路径读配置快照。
@@ -36,6 +39,7 @@ public:
 
 private:
     ThreadPool* tpool_;
+    // 下面这两项只给旧日志分析链留兼容口子；主程序的新 Trace 入口不再依赖它们。
     std::shared_ptr<LogBatcher> batcher_;
     std::shared_ptr<SqliteLogRepository> repo_;
     TraceSessionManager* trace_session_manager_ = nullptr;

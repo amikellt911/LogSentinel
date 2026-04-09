@@ -126,3 +126,45 @@ refactor(router): 从主链路移除旧 history 和结果查询挂载
 ## Verification
 
 - `cmake --build server/build --target LogSentinel`
+
+# 追加记录：2026-04-09 脱钩 LogHandler 旧依赖并清理 main.cpp 残留构造
+
+## Git Commit Message
+
+refactor(handler): 让旧日志链依赖可空并从主程序移除构造
+
+## Modification
+
+- `server/handlers/LogHandler.h`
+- `server/handlers/LogHandler.cpp`
+- `server/src/main.cpp`
+- `server/tests/LogHandler_test.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260409-feat-trace-prompt-consumption.md`
+
+## 这次补了哪些注释
+
+- 在 `server/handlers/LogHandler.h` 里补了中文注释，说明为什么 `repo/batcher` 现在只剩旧链兼容用途，以及为什么允许为空。
+- 在 `server/handlers/LogHandler.cpp` 的 `handlePost()` 和 `handleGetResult()` 里补了中文注释，说明为什么旧依赖缺失时要显式返回 503，而不是继续空指针崩溃。
+- 在 `server/src/main.cpp` 的 `LogHandler` 构造位置补了中文注释，说明为什么主程序现在明确传空旧依赖，只保留 `/logs/spans` 新链。
+- 在 `server/tests/LogHandler_test.cpp` 里补了中文注释，说明新增测试锁定的是“旧接口在主链脱钩后必须 fail closed”的语义。
+
+## Learning Tips
+
+### Newbie Tips
+
+主程序“已经不用某条链路”不等于代码里“已经没有那条链路的构造依赖”。真正的脱钩要看两件事：一是入口是不是已经摘掉，二是构造路径是不是还能在完全不创建旧对象的前提下正常启动。两件都做到，才算真的从主链上拿掉。
+
+### Function Explanation
+
+这次 `LogHandler` 没有直接删除旧 `handlePost/handleGetResult`，而是改成 fail-closed。意思是：接口代码还留着，但依赖为空时立刻返回 503，明确告诉调用方“这条旧链现在不可用”。这比保留空指针隐患或者悄悄返回假成功都稳。
+
+### Pitfalls
+
+不要在同一个 build 目录里并发跑两个 `cmake --build`。这次就撞到了 `ranlib: file truncated`，本质是两个 ninja 任务同时改同一个静态库产物，结果把中间产物打坏了。构建验证最好串行跑。
+
+## Verification
+
+- `cmake --build server/build --target LogSentinel`
+- `cmake --build server/build --target test_log_handler`
+- `./server/build/test_log_handler`

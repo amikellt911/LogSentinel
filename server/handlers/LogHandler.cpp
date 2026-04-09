@@ -315,6 +315,19 @@ LogHandler::LogHandler(ThreadPool *tpool,
 
 void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
 {
+    (void)conn;
+    resp->setHeader("Content-Type", "application/json");
+    resp->addCorsHeaders();
+
+    if (!batcher_)
+    {
+        // 主程序已经不再挂旧 `/logs` 入口，所以 batcher 后续可以完全不构造。
+        // 这里选择显式 503，而不是假装 accepted 或直接空指针崩掉，避免别人误复用旧 handler 时把问题藏起来。
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
+        resp->body_ = R"({"error": "Legacy log pipeline is unavailable"})";
+        return;
+    }
+
     AnalysisTask task;
     // 没用，因为const(为了通用性)，会降级为拷贝
     //  task.trace_id = std::move(req.trace_id);
@@ -326,8 +339,6 @@ void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const Mi
     if (batcher_->push(std::move(task)))
     {
         resp->setStatusCode(HttpResponse::HttpStatusCode::k202Acceptd);
-        resp->setHeader("Content-Type", "application/json");
-        resp->addCorsHeaders();
         nlohmann::json j;
         j["trace_id"] = req.trace_id;
         resp->body_ = j.dump();
@@ -335,7 +346,6 @@ void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const Mi
     else
     {
         resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-        resp->addCorsHeaders();
         resp->body_ = "{\"error\": \"Server is overloaded\"}";
     }
 }
@@ -447,6 +457,18 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
 
 void LogHandler::handleGetResult(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
 {
+    resp->setHeader("Content-Type", "application/json");
+    resp->addCorsHeaders();
+
+    if (!repo_ || !tpool_)
+    {
+        // 旧 `/results/*` 现在已经从 main.cpp 主路由摘掉，所以 repo/tpool 都可能为空。
+        // 这里同样明确 fail closed，保证“旧链已脱钩”的状态对调用方是可见的。
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
+        resp->body_ = R"({"error": "Legacy result pipeline is unavailable"})";
+        return;
+    }
+
     std::string trace_id = req.path().substr(9);
 
     // 使用 weak_ptr 防止 conn 提前销毁
@@ -466,9 +488,9 @@ void LogHandler::handleGetResult(const HttpRequest &req, HttpResponse *resp, con
             if (conn) { // 检查连接是否还存活
                 HttpResponse resp;
                 resp.addCorsHeaders();
+                resp.setHeader("Content-Type", "application/json");
                 if (result) { // result 是 optional<string>
                     resp.setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
-                    resp.setHeader("Content-Type", "application/json");
                         // 注意：JSON 字符串中的引号需要转义
                         // 3. 修正：使用 json 库拼接，而不是手动拼字符串
                         // 注意：result 已经是 json 字符串了，不要重复序列化，

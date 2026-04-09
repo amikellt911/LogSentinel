@@ -2,11 +2,6 @@
 #include "MiniMuduo/net/EventLoop.h"
 #include "http/HttpResponse.h"
 #include "threadpool/ThreadPool.h"
-#include "core/AnalysisTask.h"
-#include "persistence/SqliteLogRepository.h"
-#include "ai/AiProvider.h"  // 引入AI抽象接口
-#include "ai/GeminiApiAi.h"
-#include "ai/MockAI.h"
 #include "ai/TraceAiBackend.h"
 #include "ai/TraceAiFactory.h"
 #include "ai/TracePromptRenderer.h"
@@ -22,7 +17,6 @@
 #include "handlers/DashboardHandler.h"
 #include "handlers/ServiceMonitorHandler.h"
 #include "handlers/ConfigHandler.h"
-#include "core/LogBatcher.h"
 #include "core/ServiceRuntimeAccumulator.h"
 #include "core/SystemRuntimeAccumulator.h"
 #include "core/TraceSessionManager.h"
@@ -444,13 +438,11 @@ int main(int argc, char* argv[])
         }
     }
 
-    std::shared_ptr<SqliteLogRepository> persistence;
     std::shared_ptr<SqliteTraceRepository> trace_repo;
     std::shared_ptr<SqliteTraceRepository> trace_read_repo;
     std::shared_ptr<BufferedTraceRepository> buffered_trace_repo;
     try
     {
-        persistence = std::make_shared<SqliteLogRepository>(db_path);
         trace_repo = std::make_shared<SqliteTraceRepository>(db_path);
         trace_read_repo = std::make_shared<SqliteTraceRepository>(db_path);
         // Trace 主数据和分析结果现在都先走双缓冲写入器，再由后台 flush 线程批量落到 SQLite。
@@ -461,13 +453,6 @@ int main(int argc, char* argv[])
         std::cerr << "Fatal Error:Failed to initialize persistence layer" << e.what() << '\n';
         return -1;
     }
-
-    // 创建AI客户端实例
-    // std::shared_ptr<AiProvider> ai_client = std::make_shared<MockAI>();
-    // TODO: 根据配置切换 AI Provider，目前先用 GeminiApiAi，因为它对接了 Proxy
-    // 我们的 LogHandler 会把 config 传给 Batcher，Batcher 传给 AiProvider
-    // 所以 AiProvider 本身可以是无状态的（除了 URL 配置），或者初始化一次即可
-    std::shared_ptr<AiProvider> ai_client = std::make_shared<GeminiApiAi>();
 
     const int num_cpu_cores = std::thread::hardware_concurrency();
     const int num_io_threads = 1; // 明确 I/O 线程数量
@@ -665,17 +650,18 @@ int main(int argc, char* argv[])
     router->add("POST", "/settings/channels", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         config_handler->handleUpdateChannels(req, resp, conn);
     });
-    std::shared_ptr<LogBatcher> batcher=std::make_shared<LogBatcher>(&loop,&tpool,persistence,ai_client,notifier, config_repo);
     //lambda默认值拷贝是const,但是handlePost是非const成员函数，会导致const值变化
     //所以需要加上mutable或shared_ptr,因为他是指针，在const中，让他不会改变指向，但是可以改变值
     //LogHandler handler(&tpool,persistence,ai_client, notifier);
     // /logs/spans 的结束字段口径已经收口成冷启动配置，
     // 所以这里直接把启动期算好的主字段和别名注入给 LogHandler，不再让请求热路径回头读 repo。
+    // 主程序已经不再挂旧 `/logs`、`/results/*` 路由，所以这里明确传空旧依赖，
+    // 让 LogHandler 只承接 `/logs/spans` 新链；真有旧接口误调时，再由 handler 自己返回 503。
     // 旧 `/logs` 和 `/results/*` 虽然暂时还留在 LogHandler 里，但主路由已经不再注册它们；
     // 这里先复用同一个 handler 承接 `/logs/spans`，后面如果继续清老链，再单独把旧接口从 handler 内部拔掉。
     auto handler = std::make_shared<LogHandler>(&tpool,
-                                                persistence,
-                                                batcher,
+                                                std::shared_ptr<SqliteLogRepository>{},
+                                                std::shared_ptr<LogBatcher>{},
                                                 trace_session_manager.get(),
                                                 system_runtime_accumulator.get(),
                                                 effective_trace_end_field,

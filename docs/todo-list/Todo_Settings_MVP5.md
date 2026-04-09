@@ -52,4 +52,8 @@
 - [x] 从 `main.cpp` 主路由移除旧 `/logs`、`/results/*`、`/history*` 挂载，只保留新 Trace 链与运行态/Settings 入口
 - [x] 从 `main.cpp` 移除 `HistoryHandler` 的主链实例化，并补注释说明旧链已不再挂主路由
 - [x] 运行最小构建命令，确认本次主路由收口没有引入新的编译错误
+- [x] 为 `LogHandler` 补旧依赖缺失场景测试，锁定旧接口在主链脱钩后必须返回 503 而不是崩溃
+- [x] 将 `LogHandler` 的旧 `repo/batcher` 依赖改成“可空但安全”，让主程序可以不再构造老链对象
+- [x] 清理 `main.cpp` 中残留的 `SqliteLogRepository/AiProvider/LogBatcher` 旧链构造，只给 `LogHandler` 传空旧依赖
+- [x] 运行最小测试与构建命令，确认旧链脱钩后 `LogHandler` 和 `LogSentinel` 仍可通过
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）
