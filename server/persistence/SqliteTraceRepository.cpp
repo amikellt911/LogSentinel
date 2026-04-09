@@ -123,17 +123,6 @@ CREATE TABLE IF NOT EXISTS trace_analysis (
   confidence REAL NOT NULL,
   FOREIGN KEY (trace_id) REFERENCES trace_summary(trace_id)
 );
-
-CREATE TABLE IF NOT EXISTS prompt_debug (
-  trace_id TEXT PRIMARY KEY,
-  input_json TEXT NOT NULL,
-  output_json TEXT NOT NULL,
-  model TEXT NOT NULL,
-  duration_ms INTEGER NOT NULL,
-  total_tokens INTEGER NOT NULL,
-  timestamp TEXT NOT NULL,
-  FOREIGN KEY (trace_id) REFERENCES trace_summary(trace_id)
-);
 )";
 
     errmsg = nullptr;
@@ -675,41 +664,6 @@ bool SqliteTraceRepository::SaveSingleTraceAnalysis(const TraceAnalysisRecord& a
     return true;
 }
 
-bool SqliteTraceRepository::SaveSinglePromptDebug(const PromptDebugRecord& record)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!db_) {
-        return false;
-    }
-
-    try {
-        const char* sql_insert_prompt = R"(
-            INSERT INTO prompt_debug
-            (trace_id, input_json, output_json, model, duration_ms, total_tokens, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?);
-        )";
-        persistence::StmtPtr prompt_stmt;
-        {
-            sqlite3_stmt* raw_stmt = nullptr;
-            const int rc = sqlite3_prepare_v2(db_, sql_insert_prompt, -1, &raw_stmt, nullptr);
-            persistence::checkSqliteError(db_, rc, "Prepare prompt_debug insert");
-            prompt_stmt.reset(raw_stmt);
-        }
-        sqlite3_bind_text(prompt_stmt.get(), 1, record.trace_id.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(prompt_stmt.get(), 2, record.input_json.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(prompt_stmt.get(), 3, record.output_json.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(prompt_stmt.get(), 4, record.model.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_int64(prompt_stmt.get(), 5, record.duration_ms);
-        sqlite3_bind_int64(prompt_stmt.get(), 6, static_cast<sqlite3_int64>(record.total_tokens));
-        sqlite3_bind_text(prompt_stmt.get(), 7, record.timestamp.c_str(), -1, SQLITE_STATIC);
-        const int rc = sqlite3_step(prompt_stmt.get());
-        persistence::checkSqliteError(db_, rc, "Insert prompt_debug");
-    } catch (const std::exception&) {
-        return false;
-    }
-    return true;
-}
-
 bool SqliteTraceRepository::SavePrimaryBatch(const std::vector<TraceSummary>& summaries,
                                              const std::vector<TraceSpanRecord>& spans)
 {
@@ -839,14 +793,13 @@ bool SqliteTraceRepository::SavePrimaryBatch(const std::vector<TraceSummary>& su
     return true;
 }
 
-bool SqliteTraceRepository::SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses,
-                                              const std::vector<PromptDebugRecord>& prompt_debugs)
+bool SqliteTraceRepository::SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!db_) {
         return false;
     }
-    if (analyses.empty() && prompt_debugs.empty()) {
+    if (analyses.empty()) {
         return true;
     }
 
@@ -880,6 +833,8 @@ bool SqliteTraceRepository::SaveAnalysisBatch(const std::vector<TraceAnalysisRec
             analysis_stmt.reset(raw_stmt);
         }
 
+        // analysis 虽然落在附属表，但列表页高频读取的还是 trace_summary。
+        // 所以这里必须把最终 risk_level 同步回写，避免读侧再为了风险等级额外 join。
         const char* sql_update_summary_risk = R"(
             UPDATE trace_summary
             SET risk_level = ?
@@ -916,35 +871,6 @@ bool SqliteTraceRepository::SaveAnalysisBatch(const std::vector<TraceAnalysisRec
             persistence::checkSqliteError(db_, rc, "Update trace_summary risk batch item");
         }
 
-        const char* sql_insert_prompt = R"(
-            INSERT INTO prompt_debug
-            (trace_id, input_json, output_json, model, duration_ms, total_tokens, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?);
-        )";
-        persistence::StmtPtr prompt_stmt;
-        {
-            sqlite3_stmt* raw_stmt = nullptr;
-            rc = sqlite3_prepare_v2(db_, sql_insert_prompt, -1, &raw_stmt, nullptr);
-            persistence::checkSqliteError(db_, rc, "Prepare prompt_debug batch insert");
-            prompt_stmt.reset(raw_stmt);
-        }
-
-        for (const auto& prompt_debug : prompt_debugs) {
-            sqlite3_reset(prompt_stmt.get());
-            sqlite3_clear_bindings(prompt_stmt.get());
-
-            sqlite3_bind_text(prompt_stmt.get(), 1, prompt_debug.trace_id.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 2, prompt_debug.input_json.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 3, prompt_debug.output_json.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 4, prompt_debug.model.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_int64(prompt_stmt.get(), 5, prompt_debug.duration_ms);
-            sqlite3_bind_int64(prompt_stmt.get(), 6, static_cast<sqlite3_int64>(prompt_debug.total_tokens));
-            sqlite3_bind_text(prompt_stmt.get(), 7, prompt_debug.timestamp.c_str(), -1, SQLITE_STATIC);
-
-            rc = sqlite3_step(prompt_stmt.get());
-            persistence::checkSqliteError(db_, rc, "Insert prompt_debug batch item");
-        }
-
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
         if (errmsg) {
             sqlite3_free(errmsg);
@@ -960,9 +886,8 @@ bool SqliteTraceRepository::SaveAnalysisBatch(const std::vector<TraceAnalysisRec
 }
 
 bool SqliteTraceRepository::SaveSingleTraceAtomic(const TraceSummary& summary,
-                                           const std::vector<TraceSpanRecord>& spans,
-                                           const TraceAnalysisRecord* analysis,
-                                           const PromptDebugRecord* prompt_debug)
+                                                  const std::vector<TraceSpanRecord>& spans,
+                                                  const TraceAnalysisRecord* analysis)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!db_) {
@@ -1046,6 +971,8 @@ bool SqliteTraceRepository::SaveSingleTraceAtomic(const TraceSummary& summary,
             persistence::checkSqliteError(db_, rc, "Insert trace_span");
         }
 
+        // 原子写现在只覆盖主链真实会被查询与展示的三段数据：
+        // summary / spans / analysis。那张废弃调试附属表已经退出产品路径，这里不再写它。
         if (analysis) {
             const char* sql_insert_analysis = R"(
                 INSERT INTO trace_analysis
@@ -1069,30 +996,6 @@ bool SqliteTraceRepository::SaveSingleTraceAtomic(const TraceSummary& summary,
             persistence::checkSqliteError(db_, rc, "Insert trace_analysis");
 
             UpdateSummaryRiskLevel(db_, analysis->trace_id, analysis->risk_level);
-        }
-
-        if (prompt_debug) {
-            const char* sql_insert_prompt = R"(
-                INSERT INTO prompt_debug
-                (trace_id, input_json, output_json, model, duration_ms, total_tokens, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?);
-            )";
-            persistence::StmtPtr prompt_stmt;
-            {
-                sqlite3_stmt* raw_stmt = nullptr;
-                rc = sqlite3_prepare_v2(db_, sql_insert_prompt, -1, &raw_stmt, nullptr);
-                persistence::checkSqliteError(db_, rc, "Prepare prompt_debug insert");
-                prompt_stmt.reset(raw_stmt);
-            }
-            sqlite3_bind_text(prompt_stmt.get(), 1, prompt_debug->trace_id.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 2, prompt_debug->input_json.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 3, prompt_debug->output_json.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 4, prompt_debug->model.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_int64(prompt_stmt.get(), 5, prompt_debug->duration_ms);
-            sqlite3_bind_int64(prompt_stmt.get(), 6, static_cast<sqlite3_int64>(prompt_debug->total_tokens));
-            sqlite3_bind_text(prompt_stmt.get(), 7, prompt_debug->timestamp.c_str(), -1, SQLITE_STATIC);
-            rc = sqlite3_step(prompt_stmt.get());
-            persistence::checkSqliteError(db_, rc, "Insert prompt_debug");
         }
 
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);

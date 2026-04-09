@@ -115,9 +115,6 @@ bool BufferedTraceRepository::AppendAnalysis(TraceAnalysisWrite write)
     if (write.analysis.has_value()) {
         current_analysis_->analyses.push_back(std::move(write.analysis.value()));
     }
-    if (write.prompt_debug.has_value()) {
-        current_analysis_->prompt_debugs.push_back(std::move(write.prompt_debug.value()));
-    }
 
     if (!ShouldFlushAnalysisCurrentBySizeLocked()) {
         return true;
@@ -140,7 +137,6 @@ BufferedTraceRepository::AnalysisBufferPtr BufferedTraceRepository::CreateAnalys
 {
     auto buffer = std::make_unique<AnalysisBufferGroup>();
     buffer->analyses.reserve(config_.analysis_reserve);
-    buffer->prompt_debugs.reserve(config_.prompt_debug_reserve);
     return buffer;
 }
 
@@ -161,8 +157,7 @@ bool BufferedTraceRepository::ShouldFlushAnalysisCurrentBySizeLocked() const
         return false;
     }
 
-    // 分析结果这条线先以 analyses 条数做主水位。
-    // 既然 prompt_debug 本来就是可选表，就不该拿它的数量做主条件。
+    // analysis 这条线现在只剩一张 analysis 表，所以主水位直接按 analyses 条数判断即可。
     return current_analysis_->analyses.size() >= config_.analysis_reserve;
 }
 
@@ -346,13 +341,12 @@ void BufferedTraceRepository::FlushLoop()
         }
 
         if (analysis_buffer) {
-            if (!analysis_buffer->analyses.empty() || !analysis_buffer->prompt_debugs.empty()) {
+            if (!analysis_buffer->analyses.empty()) {
                 const uint64_t flush_begin_ns = NowNs();
-                const bool saved = sink_->SaveAnalysisBatch(analysis_buffer->analyses, analysis_buffer->prompt_debugs);
+                const bool saved = sink_->SaveAnalysisBatch(analysis_buffer->analyses);
                 analysis_flush_calls_.fetch_add(1, std::memory_order_relaxed);
                 analysis_flush_total_ns_.fetch_add(NowNs() - flush_begin_ns, std::memory_order_relaxed);
                 analysis_flushed_analysis_count_.fetch_add(analysis_buffer->analyses.size(), std::memory_order_relaxed);
-                analysis_flushed_prompt_debug_count_.fetch_add(analysis_buffer->prompt_debugs.size(), std::memory_order_relaxed);
                 if (!saved) {
                     analysis_flush_fail_count_.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -399,13 +393,12 @@ void BufferedTraceRepository::FlushLoop()
         }
 
         if (analysis_buffer) {
-            if (!analysis_buffer->analyses.empty() || !analysis_buffer->prompt_debugs.empty()) {
+            if (!analysis_buffer->analyses.empty()) {
                 const uint64_t flush_begin_ns = NowNs();
-                const bool saved = sink_->SaveAnalysisBatch(analysis_buffer->analyses, analysis_buffer->prompt_debugs);
+                const bool saved = sink_->SaveAnalysisBatch(analysis_buffer->analyses);
                 analysis_flush_calls_.fetch_add(1, std::memory_order_relaxed);
                 analysis_flush_total_ns_.fetch_add(NowNs() - flush_begin_ns, std::memory_order_relaxed);
                 analysis_flushed_analysis_count_.fetch_add(analysis_buffer->analyses.size(), std::memory_order_relaxed);
-                analysis_flushed_prompt_debug_count_.fetch_add(analysis_buffer->prompt_debugs.size(), std::memory_order_relaxed);
                 if (!saved) {
                     analysis_flush_fail_count_.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -429,7 +422,6 @@ BufferedTraceRepository::RuntimeStatsSnapshot BufferedTraceRepository::SnapshotR
     stats.analysis_flush_fail_count = analysis_flush_fail_count_.load(std::memory_order_relaxed);
     stats.analysis_flush_total_ns = analysis_flush_total_ns_.load(std::memory_order_relaxed);
     stats.analysis_flushed_analysis_count = analysis_flushed_analysis_count_.load(std::memory_order_relaxed);
-    stats.analysis_flushed_prompt_debug_count = analysis_flushed_prompt_debug_count_.load(std::memory_order_relaxed);
     return stats;
 }
 
@@ -451,8 +443,7 @@ std::string BufferedTraceRepository::DescribeRuntimeStats() const
         << ", analysis_flush_total_ns=" << stats.analysis_flush_total_ns
         << ", analysis_flush_avg_ms="
         << (stats.analysis_flush_calls > 0 ? (static_cast<double>(stats.analysis_flush_total_ns) / stats.analysis_flush_calls / 1'000'000.0) : 0.0)
-        << ", analysis_flushed_analysis_count=" << stats.analysis_flushed_analysis_count
-        << ", analysis_flushed_prompt_debug_count=" << stats.analysis_flushed_prompt_debug_count;
+        << ", analysis_flushed_analysis_count=" << stats.analysis_flushed_analysis_count;
     return oss.str();
 }
 

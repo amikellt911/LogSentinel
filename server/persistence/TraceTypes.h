@@ -41,16 +41,4 @@ struct TraceAnalysisRecord
     std::string solution;
     double confidence = 0.0;
 };
-
-struct PromptDebugRecord
-{
-    std::string trace_id;
-    std::string input_json;
-    std::string output_json;
-    // metadata 直接拆字段，便于查询与展示。
-    std::string model;
-    int64_t duration_ms = 0;
-    size_t total_tokens = 0;
-    std::string timestamp;
-};
 } // namespace persistence

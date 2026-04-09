@@ -23,6 +23,8 @@ std::unique_ptr<BufferedTraceRepository> MakeBufferedTraceRepository(TraceReposi
 class FakeTraceRepository : public TraceRepository
 {
 public:
+    // LogHandler 这里只验证入口返回码，不验证持久化细节，
+    // 所以 fake repo 只保留当前 Trace 主链还会调用到的最小接口集合。
     bool SaveSingleTraceSummary(const TraceSummary&) override
     {
         return true;
@@ -38,15 +40,9 @@ public:
         return true;
     }
 
-    bool SaveSinglePromptDebug(const PromptDebugRecord&) override
-    {
-        return true;
-    }
-
     bool SaveSingleTraceAtomic(const TraceSummary&,
                                const std::vector<TraceSpanRecord>&,
-                               const TraceAnalysisRecord*,
-                               const PromptDebugRecord*) override
+                               const TraceAnalysisRecord*) override
     {
         return true;
     }

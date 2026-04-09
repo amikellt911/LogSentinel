@@ -35,10 +35,11 @@ std::unique_ptr<BufferedTraceRepository> MakeBufferedTraceRepository(TraceReposi
 class FakeTraceRepository : public TraceRepository
 {
 public:
+    // fake repo 现在只记录主链真实还会落库的三段数据，
+    // 这样单测验证的就是当前产品语义，而不是已经删掉的废弃调试支线。
     std::atomic<bool> save_summary_called{false};
     std::atomic<bool> save_spans_called{false};
     std::atomic<bool> save_analysis_called{false};
-    std::atomic<bool> save_prompt_called{false};
     std::atomic<int> save_summary_count{0};
     std::atomic<int> save_spans_count{0};
     std::atomic<int> save_analysis_count{0};
@@ -52,7 +53,6 @@ public:
     TraceSummary last_summary;
     std::vector<TraceSpanRecord> last_spans;
     std::optional<TraceAnalysisRecord> last_analysis;
-    std::optional<PromptDebugRecord> last_prompt_debug;
 
     bool SaveSingleTraceSummary(const TraceSummary& summary) override
     {
@@ -76,13 +76,6 @@ public:
         last_analysis = analysis;
         save_analysis_called.store(true, std::memory_order_release);
         save_analysis_count.fetch_add(1, std::memory_order_acq_rel);
-        return true;
-    }
-
-    bool SaveSinglePromptDebug(const PromptDebugRecord& record) override
-    {
-        last_prompt_debug = record;
-        save_prompt_called.store(true, std::memory_order_release);
         return true;
     }
 
@@ -110,25 +103,19 @@ public:
         return save_atomic_return;
     }
 
-    bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses,
-                           const std::vector<PromptDebugRecord>& prompt_debugs) override
+    bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses) override
     {
         if (!analyses.empty()) {
             last_analysis = analyses.back();
             save_analysis_called.store(true, std::memory_order_release);
             save_analysis_count.fetch_add(static_cast<int>(analyses.size()), std::memory_order_acq_rel);
         }
-        if (!prompt_debugs.empty()) {
-            last_prompt_debug = prompt_debugs.back();
-            save_prompt_called.store(true, std::memory_order_release);
-        }
         return true;
     }
 
     bool SaveSingleTraceAtomic(const TraceSummary& summary,
                                const std::vector<TraceSpanRecord>& spans,
-                               const TraceAnalysisRecord* analysis,
-                               const PromptDebugRecord* prompt_debug) override
+                               const TraceAnalysisRecord* analysis) override
     {
         last_summary = summary;
         last_spans = spans;
@@ -136,11 +123,6 @@ public:
             last_analysis = *analysis;
         } else {
             last_analysis.reset();
-        }
-        if (prompt_debug) {
-            last_prompt_debug = *prompt_debug;
-        } else {
-            last_prompt_debug.reset();
         }
         save_atomic_called.store(true, std::memory_order_release);
         save_atomic_count.fetch_add(1, std::memory_order_acq_rel);

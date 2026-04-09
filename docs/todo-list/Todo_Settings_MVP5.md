@@ -64,4 +64,7 @@
 - [x] 对照 `TraceSessionManager` 当前 sealed/backpressure 语义，逐条定位 `test_trace_session_manager_unit` 剩余 9 个失败的根因
 - [x] 只修正旧测试口径与参数，不改业务实现语义，并为关键断言补中文注释
 - [x] 重跑 `test_trace_session_manager_unit`，确认这组旧测试重新收口
+- [x] 从 Trace 主链后端移除 `prompt_debug` 支线：类型、仓储接口、缓冲写入、SQLite schema 与对应测试一起收口
+- [ ] 运行最小构建与仓储/会话相关测试，确认移除 `prompt_debug` 后主链仍可通过
+  - 已完成 `test_sqlite_trace_repo`、`test_trace_session_manager_unit`、`test_log_handler` 与 `LogSentinel` 验证；`test_trace_session_manager_integration` 仍有 3 条旧失败，待单独排查后再勾。
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

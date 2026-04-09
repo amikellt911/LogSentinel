@@ -13,7 +13,6 @@ public:
     using TraceSummary = persistence::TraceSummary;
     using TraceSpanRecord = persistence::TraceSpanRecord;
     using TraceAnalysisRecord = persistence::TraceAnalysisRecord;
-    using PromptDebugRecord = persistence::PromptDebugRecord;
 
     // 最小表结构建议（用于 TraceExplorer）：
     // 1) trace_summary: trace_id, service_name, start_time_ms, end_time_ms, duration_ms,
@@ -21,22 +20,18 @@ public:
     // 2) trace_span: trace_id, span_id, parent_id, service_name, operation,
     //    start_time_ms, duration_ms, status
     // 3) trace_analysis: trace_id, risk_level, summary, root_cause, solution, confidence
-    // 4) prompt_debug（可选）: trace_id, input, output, metadata
-
 
     // Trace 聚合完成后存储 summary 与 spans，供列表与详情查询。
     virtual bool SaveSingleTraceSummary(const TraceSummary& summary) = 0;
     virtual bool SaveSingleTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans) = 0;
     // AI 分析完成后存储结果，供 Trace 详情展示。
     virtual bool SaveSingleTraceAnalysis(const TraceAnalysisRecord& analysis) = 0;
-    // Prompt 调试信息存储，便于后续排查与回溯。
-    virtual bool SaveSinglePromptDebug(const PromptDebugRecord& record) = 0;
 
-    // 单个 Trace 的多表原子写入；analysis 与 prompt_debug 可为空指针。
+    // 当前主链只保留 summary / spans / analysis 三段数据。
+    // 那张已经废弃的调试附属表既然不再进入产品路径，就不该继续污染仓储抽象。
     virtual bool SaveSingleTraceAtomic(const TraceSummary& summary,
                                 const std::vector<TraceSpanRecord>& spans,
-                                const TraceAnalysisRecord* analysis,
-                                const PromptDebugRecord* prompt_debug) = 0;
+                                const TraceAnalysisRecord* analysis) = 0;
 
     // 批量写主数据。这里直接按表给两条平铺数据流：
     // summaries 对 trace_summary 表，spans 对 trace_span 表。
@@ -63,17 +58,11 @@ public:
         return true;
     }
 
-    // 批量写分析结果，同样直接按表给两条平铺数据流。
-    virtual bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses,
-                                   const std::vector<PromptDebugRecord>& prompt_debugs)
+    // 批量写分析结果时也只保留 trace_analysis 这一张附属表。
+    virtual bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses)
     {
         for (const auto& analysis : analyses) {
             if (!SaveSingleTraceAnalysis(analysis)) {
-                return false;
-            }
-        }
-        for (const auto& prompt_debug : prompt_debugs) {
-            if (!SaveSinglePromptDebug(prompt_debug)) {
                 return false;
             }
         }

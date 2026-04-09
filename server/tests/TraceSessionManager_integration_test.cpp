@@ -458,8 +458,9 @@ TEST_F(TraceSessionManagerIntegrationTest, BufferedRepositoryDestructorDrainsRem
         BufferedTraceRepository::Config buffer_config;
         buffer_config.primary_summary_reserve = 64;
         buffer_config.primary_span_reserve = 64;
+        // analysis 缓冲区现在只服务 trace_analysis 这一张表，
+        // 所以这里保留 analysis_reserve 就够了，不再给废弃调试支线预留容量。
         buffer_config.analysis_reserve = 64;
-        buffer_config.prompt_debug_reserve = 64;
         // 故意把时间阈值拉长，确保测试关注的是“析构 drain”，不是后台定时 flush。
         buffer_config.primary_flush_interval_ms = 60 * 1000;
         buffer_config.analysis_flush_interval_ms = 60 * 1000;

@@ -293,3 +293,64 @@ test(core): 修正 TraceSessionManager 旧单测口径
 
 - 目标 9 条失败用例：9/9 通过
 - `test_trace_session_manager_unit`：36/36 通过
+
+# 追加记录：2026-04-09 移除 Trace 主链的废弃调试附属表支线
+
+## Git Commit Message
+
+refactor(persistence): 移除 trace 废弃调试附属表支线
+
+## Modification
+
+- `server/ai/TraceAiProvider.h`
+- `server/persistence/TraceRepository.h`
+- `server/persistence/SqliteTraceRepository.cpp`
+- `server/tests/SqliteTraceRepository_test.cpp`
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `server/tests/TraceSessionManager_integration_test.cpp`
+- `server/tests/LogHandler_test.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260409-feat-trace-prompt-consumption.md`
+
+## 这次补了哪些注释
+
+- 在 `server/persistence/SqliteTraceRepository.cpp` 里补了中文注释，说明为什么 `SaveAnalysisBatch()` 仍然要把 `risk_level` 回写到 `trace_summary`，以及为什么 `SaveSingleTraceAtomic()` 现在只保留 `summary / spans / analysis` 三段事务写入。
+- 在 `server/tests/LogHandler_test.cpp` 里补了中文注释，说明这个 fake repo 为什么只保留当前主链真实还会经过的最小接口集合，避免测试继续绑在废弃支线上。
+
+## Learning Tips
+
+### Newbie Tips
+
+删一条废弃支线，不是把表删掉就完了。真正要收口的是一整条数据流：类型定义、仓储抽象、缓冲层、SQLite 实现、fake repo、单测入口都得一起断掉。只删中间一层，编译期或测试期迟早会把你拽回来。
+
+### Function Explanation
+
+`SaveAnalysisBatch()` 现在的职责很单纯：批量写 `trace_analysis`，然后把最终风险等级回写到 `trace_summary`。也就是说，它处理的是“分析结果落库”和“列表页读优化”这两件强相关的事，不再夹带别的调试数据。
+
+### Pitfalls
+
+接口裁剪最容易漏的是测试里的 fake/stub。活代码签名改了，如果 fake repo 还保留旧虚函数，看起来像只是测试文件没跟上，实际上是在说明“你删的不是一条完整支线，只是把生产代码切断了一半”。
+
+## Verification
+
+- `cmake --build server/build --target test_sqlite_trace_repo`
+- `cmake --build server/build --target test_trace_session_manager_unit`
+- `cmake --build server/build --target test_log_handler`
+- `cmake --build server/build --target test_trace_session_manager_integration`
+- `cmake --build server/build --target LogSentinel`
+- `./server/build/test_sqlite_trace_repo`
+- `./server/build/test_trace_session_manager_unit`
+- `./server/build/test_log_handler`
+- `./server/build/test_trace_session_manager_integration`
+
+## Verification Result
+
+- `test_sqlite_trace_repo`：12/12 通过
+- `test_trace_session_manager_unit`：36/36 通过
+- `test_log_handler`：5/5 通过
+- `LogSentinel`：编译通过
+- `test_trace_session_manager_integration`：10/13 通过，剩余 3 条失败为：
+  - `DispatchesOnCapacityAndStoresParentId`
+  - `DispatchesOnTokenLimitWithoutTraceEnd`
+  - `DispatchesOnDuplicateSpanId`
+  这 3 条失败不在本次删除支线改动面内，先记录，后续单独排查。

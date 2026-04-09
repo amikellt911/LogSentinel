@@ -85,15 +85,12 @@ public:
     bool SaveSingleTraceSummary(const TraceSummary& summary) override;
     bool SaveSingleTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans) override;
     bool SaveSingleTraceAnalysis(const TraceAnalysisRecord& analysis) override;
-    bool SaveSinglePromptDebug(const PromptDebugRecord& record) override;
     bool SaveSingleTraceAtomic(const TraceSummary& summary,
                         const std::vector<TraceSpanRecord>& spans,
-                        const TraceAnalysisRecord* analysis,
-                        const PromptDebugRecord* prompt_debug) override;
+                        const TraceAnalysisRecord* analysis) override;
     bool SavePrimaryBatch(const std::vector<TraceSummary>& summaries,
                           const std::vector<TraceSpanRecord>& spans) override;
-    bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses,
-                           const std::vector<PromptDebugRecord>& prompt_debugs) override;
+    bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses) override;
 
     // 读侧先只暴露两个最小入口：列表搜索 + 单条详情。
     // 当前阶段先直接落在 SQLite 仓库里，不急着上升到抽象基类，

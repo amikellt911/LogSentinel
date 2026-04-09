@@ -46,6 +46,36 @@ protected:
         return count;
     }
 
+    bool TableExists(const std::string& table_name) {
+        sqlite3* db = nullptr;
+        int rc = sqlite3_open_v2(db_path.c_str(), &db, SQLITE_OPEN_READONLY, nullptr);
+        if (rc != SQLITE_OK) {
+            if (db) {
+                sqlite3_close_v2(db);
+            }
+            return false;
+        }
+        const char* sql = R"(
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = ?;
+        )";
+        sqlite3_stmt* stmt = nullptr;
+        rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            sqlite3_close_v2(db);
+            return false;
+        }
+        sqlite3_bind_text(stmt, 1, table_name.c_str(), -1, SQLITE_TRANSIENT);
+        bool exists = false;
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            exists = sqlite3_column_int(stmt, 0) > 0;
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close_v2(db);
+        return exists;
+    }
+
     struct SummaryRow {
         std::string service_name;
         int64_t start_time_ms = 0;
@@ -128,18 +158,6 @@ protected:
         return analysis;
     }
 
-    persistence::PromptDebugRecord MakePrompt(const std::string& trace_id) {
-        persistence::PromptDebugRecord prompt;
-        prompt.trace_id = trace_id;
-        prompt.input_json = "{}";
-        prompt.output_json = "{}";
-        prompt.model = "gemini-2.0-flash-exp";
-        prompt.duration_ms = 410;
-        prompt.total_tokens = 685;
-        prompt.timestamp = "2026-01-09 10:00:00";
-        return prompt;
-    }
-
 protected:
     std::unique_ptr<SqliteTraceRepository> repo;
     std::string db_path;
@@ -152,7 +170,7 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicSummaryAndSpans)
     spans.push_back(MakeSpan("trace-1", "span-1", ""));
     spans.push_back(MakeSpan("trace-1", "span-2", "span-1"));
 
-    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, nullptr);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr);
     EXPECT_TRUE(ok);
 
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 1);
@@ -219,23 +237,11 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAnalysisFailsWithoutSummary)
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
 }
 
-TEST_F(SqliteTraceRepositoryTest, SaveSinglePromptDebugPersistsRow)
+TEST_F(SqliteTraceRepositoryTest, SchemaDoesNotCreatePromptDebugTable)
 {
-    persistence::TraceSummary summary = MakeSummary("single-prompt-1");
-    ASSERT_TRUE(repo->SaveSingleTraceSummary(summary));
-
-    persistence::PromptDebugRecord prompt = MakePrompt(summary.trace_id);
-    bool ok = repo->SaveSinglePromptDebug(prompt);
-    EXPECT_TRUE(ok);
-    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM prompt_debug;"), 1);
-}
-
-TEST_F(SqliteTraceRepositoryTest, SaveSinglePromptDebugFailsWithoutSummary)
-{
-    persistence::PromptDebugRecord prompt = MakePrompt("missing-trace");
-    bool ok = repo->SaveSinglePromptDebug(prompt);
-    EXPECT_FALSE(ok);
-    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM prompt_debug;"), 0);
+    // prompt_debug 已经不在 MVP5 主链产品范围里，
+    // 所以仓储初始化后不应该再顺手创建这张“没人读、没人用”的表。
+    EXPECT_FALSE(TableExists("prompt_debug"));
 }
 
 TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicPersistsSummaryFields)
@@ -244,7 +250,7 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicPersistsSummaryFields)
     std::vector<persistence::TraceSpanRecord> spans;
     spans.push_back(MakeSpan("trace-1", "span-1", ""));
 
-    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, nullptr);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr);
     EXPECT_TRUE(ok);
 
     auto row = QuerySummary("trace-1");
@@ -263,24 +269,12 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicWithAnalysis)
 
     persistence::TraceAnalysisRecord analysis = MakeAnalysis("trace-2");
 
-    bool ok = repo->SaveSingleTraceAtomic(summary, spans, &analysis, nullptr);
+    // 原子写现在只覆盖 summary / spans / analysis，
+    // 所以这个用例就是新的完整路径，不再额外夹带任何废弃调试附属表。
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, &analysis);
     EXPECT_TRUE(ok);
 
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 1);
-}
-
-TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicWithPromptDebug)
-{
-    persistence::TraceSummary summary = MakeSummary("trace-3");
-    std::vector<persistence::TraceSpanRecord> spans;
-    spans.push_back(MakeSpan("trace-3", "span-1", ""));
-
-    persistence::PromptDebugRecord prompt = MakePrompt("trace-3");
-
-    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, &prompt);
-    EXPECT_TRUE(ok);
-
-    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM prompt_debug;"), 1);
 }
 
 TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicRejectsOrphanSpan)
@@ -289,7 +283,7 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicRejectsOrphanSpan)
     std::vector<persistence::TraceSpanRecord> spans;
     spans.push_back(MakeSpan("trace-4", "span-1", ""));
 
-    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, nullptr);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr);
     EXPECT_TRUE(ok);
 
     // 直接写入不存在 trace_summary 的 span，应触发外键失败并返回 false
@@ -298,7 +292,7 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicRejectsOrphanSpan)
     std::vector<persistence::TraceSpanRecord> bad_spans;
     bad_spans.push_back(MakeSpan("missing-trace", "span-x", ""));
 
-    bool bad = repo->SaveSingleTraceAtomic(summary, bad_spans, nullptr, nullptr);
+    bool bad = repo->SaveSingleTraceAtomic(summary, bad_spans, nullptr);
     EXPECT_FALSE(bad);
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 1);
 }
