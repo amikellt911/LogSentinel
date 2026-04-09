@@ -97,8 +97,12 @@ public:
     // 否则为了未来可能不会发生的“多存储读实现”先加一层，会把本轮节奏拖慢。
     TraceSearchResult SearchTraces(const TraceSearchRequest& request);
     std::optional<TraceDetailRecord> GetTraceDetail(const std::string& trace_id);
+    bool DeleteTraceById(const std::string& trace_id);
+    size_t DeleteExpiredTracesBatch(int64_t cutoff_ms, size_t limit);
 
 private:
+    bool DeleteTracesByIdsAtomic(const std::vector<std::string>& trace_ids);
+
     std::string db_path_;
     sqlite3* db_ = nullptr;
     std::mutex mutex_;

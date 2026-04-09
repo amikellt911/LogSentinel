@@ -481,6 +481,138 @@ std::optional<TraceDetailRecord> SqliteTraceRepository::GetTraceDetail(const std
     }
 }
 
+bool SqliteTraceRepository::DeleteTraceById(const std::string& trace_id)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_ || trace_id.empty()) {
+        return false;
+    }
+    return DeleteTracesByIdsAtomic({trace_id});
+}
+
+size_t SqliteTraceRepository::DeleteExpiredTracesBatch(int64_t cutoff_ms, size_t limit)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_ || cutoff_ms <= 0 || limit == 0) {
+        return 0;
+    }
+
+    std::vector<std::string> expired_trace_ids;
+    const char* sql_select_expired = R"(
+        SELECT trace_id
+        FROM trace_summary
+        WHERE COALESCE(end_time_ms, start_time_ms) < ?
+        ORDER BY COALESCE(end_time_ms, start_time_ms) ASC, trace_id ASC
+        LIMIT ?;
+    )";
+    persistence::StmtPtr select_stmt;
+    {
+        sqlite3_stmt* raw_stmt = nullptr;
+        const int rc = sqlite3_prepare_v2(db_, sql_select_expired, -1, &raw_stmt, nullptr);
+        persistence::checkSqliteError(db_, rc, "Prepare expired trace_id selection");
+        select_stmt.reset(raw_stmt);
+    }
+    sqlite3_bind_int64(select_stmt.get(), 1, cutoff_ms);
+    sqlite3_bind_int64(select_stmt.get(), 2, static_cast<sqlite3_int64>(limit));
+
+    while (true) {
+        const int step_rc = sqlite3_step(select_stmt.get());
+        if (step_rc == SQLITE_ROW) {
+            const unsigned char* text = sqlite3_column_text(select_stmt.get(), 0);
+            if (text) {
+                expired_trace_ids.emplace_back(reinterpret_cast<const char*>(text));
+            }
+            continue;
+        }
+        if (step_rc == SQLITE_DONE) {
+            break;
+        }
+        persistence::checkSqliteError(db_, step_rc, "Step expired trace_id selection");
+    }
+
+    if (expired_trace_ids.empty()) {
+        return 0;
+    }
+
+    // retention 只在 summary 表统一判断“哪条 trace 已经过期”，
+    // 然后再按 trace_id 整条删，避免把一条调用树删成 summary 还在、span 只剩一半的脏状态。
+    if (!DeleteTracesByIdsAtomic(expired_trace_ids)) {
+        return 0;
+    }
+    return expired_trace_ids.size();
+}
+
+bool SqliteTraceRepository::DeleteTracesByIdsAtomic(const std::vector<std::string>& trace_ids)
+{
+    if (!db_ || trace_ids.empty()) {
+        return false;
+    }
+
+    char* errmsg = nullptr;
+    auto rollback = [this]() {
+        char* rollback_err = nullptr;
+        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &rollback_err);
+        if (rollback_err) {
+            sqlite3_free(rollback_err);
+        }
+    };
+
+    try {
+        int rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, &errmsg);
+        if (errmsg) {
+            sqlite3_free(errmsg);
+            errmsg = nullptr;
+        }
+        persistence::checkSqliteError(db_, rc, "Failed to begin trace delete transaction");
+
+        const std::string placeholders = BuildInClausePlaceholders(trace_ids.size());
+        const std::string delete_analysis_sql =
+            "DELETE FROM trace_analysis WHERE trace_id IN " + placeholders + ";";
+        const std::string delete_span_sql =
+            "DELETE FROM trace_span WHERE trace_id IN " + placeholders + ";";
+        const std::string delete_summary_sql =
+            "DELETE FROM trace_summary WHERE trace_id IN " + placeholders + ";";
+
+        auto delete_by_ids = [this, &trace_ids](const std::string& sql, const char* error_context) -> size_t {
+            persistence::StmtPtr stmt;
+            sqlite3_stmt* raw_stmt = nullptr;
+            int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &raw_stmt, nullptr);
+            persistence::checkSqliteError(db_, rc, error_context);
+            stmt.reset(raw_stmt);
+
+            for (size_t index = 0; index < trace_ids.size(); ++index) {
+                sqlite3_bind_text(stmt.get(),
+                                  static_cast<int>(index + 1),
+                                  trace_ids[index].c_str(),
+                                  -1,
+                                  SQLITE_TRANSIENT);
+            }
+
+            rc = sqlite3_step(stmt.get());
+            persistence::checkSqliteError(db_, rc, error_context);
+            return static_cast<size_t>(sqlite3_changes(db_));
+        };
+
+        // 当前外键没有配置 ON DELETE CASCADE，所以删除顺序必须是“从表 -> 父表”。
+        // 也就是先清 trace_analysis、trace_span，最后再删 trace_summary。
+        delete_by_ids(delete_analysis_sql, "Delete trace_analysis by trace_id");
+        delete_by_ids(delete_span_sql, "Delete trace_span by trace_id");
+        const size_t deleted_summary_rows =
+            delete_by_ids(delete_summary_sql, "Delete trace_summary by trace_id");
+
+        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
+        if (errmsg) {
+            sqlite3_free(errmsg);
+            errmsg = nullptr;
+        }
+        persistence::checkSqliteError(db_, rc, "Commit trace delete transaction");
+        return deleted_summary_rows == trace_ids.size();
+    } catch (const std::exception&) {
+        rollback();
+        return false;
+    }
+}
+
 bool SqliteTraceRepository::SaveSingleTraceSummary(const TraceSummary& summary)
 {
     std::lock_guard<std::mutex> lock(mutex_);

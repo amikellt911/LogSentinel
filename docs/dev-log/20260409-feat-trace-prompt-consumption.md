@@ -354,3 +354,59 @@ refactor(persistence): 移除 trace 废弃调试附属表支线
 - `test_trace_session_manager_integration`：13/13 通过
 - `LogSentinel`：编译通过
 - 补充说明：integration 里 `capacity/token_limit/duplicate_span` 相关用例已经同步到当前统一 `sealed_grace_ticks_` 语义，不再保留旧的“保护性封口只推进 1 tick”测试口径。
+
+# 追加记录：2026-04-09 接通 trace retention 冷启动清理
+
+## Git Commit Message
+
+feat(retention): 接通 trace 过期清理与仓储删除链路
+
+## Modification
+
+- `server/persistence/SqliteTraceRepository.h`
+- `server/persistence/SqliteTraceRepository.cpp`
+- `server/core/TraceRetentionService.h`
+- `server/core/TraceRetentionService.cpp`
+- `server/src/main.cpp`
+- `server/tests/SqliteTraceRepository_test.cpp`
+- `server/tests/TraceRetentionService_test.cpp`
+- `server/CMakeLists.txt`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260409-feat-trace-prompt-consumption.md`
+
+## 这次补了哪些注释
+
+- 在 `server/persistence/SqliteTraceRepository.cpp` 里补了中文注释，说明 retention 为什么只在 `trace_summary` 上判断过期，以及为什么删除顺序必须是 `trace_analysis -> trace_span -> trace_summary`。
+- 在 `server/core/TraceRetentionService.h` 里补了中文注释，说明 `cleanup_in_progress_` 存在的原因，也就是防止后台重复投递清理任务。
+- 在 `server/core/TraceRetentionService.cpp` 里补了中文注释，说明为什么提交任务前就要记录 `last_schedule_ms_`，以及为什么异步任务要通过 `shared_from_this()` 保住 service 生命周期。
+- 在 `server/src/main.cpp` 里补了中文注释，说明为什么 `log_retention_days` 先按冷启动配置消费，以及为什么启动清理和周期清理都只投递到 `query_tpool`，不在主线程直接删库。
+- 在 `server/tests/SqliteTraceRepository_test.cpp` 里补了中文注释，说明 `DeleteExpiredTracesBatchDeletesOldestExpiredTracesFirst` 用例锁定的是“最老优先 + limit 生效”的删除语义。
+- 在 `server/tests/TraceRetentionService_test.cpp` 里补了中文注释，说明为什么启动清理也必须受批次数预算控制，避免第一次启动就无限循环扫库。
+
+## Learning Tips
+
+### Newbie Tips
+
+过期清理真正难的不是 SQL 能不能写出来，而是“删除粒度”先别搞错。既然前端、AI 分析和调用树都是 trace 级数据，那 retention 也必须按整条 trace 删，不能去 span 表里按时间乱扫，否则很容易删成半条树。
+
+### Function Explanation
+
+`TraceRetentionService` 负责的是“什么时候触发清理”，不是“怎么删表”。真正的三表事务删除还是留在 `SqliteTraceRepository`。这样以后前端列表页要补“删除单条 trace”按钮时，可以直接复用同一条仓储删除原语，不需要再写第二套删除逻辑。
+
+### Pitfalls
+
+后台任务如果 capture 的只是裸 `this`，而主线程退出时 service 比线程池先析构，就会留下非常典型的悬空指针。这里用 `shared_from_this()` 不是炫技，是为了确保“任务还在跑时对象不能先死”。
+
+## Verification
+
+- `cmake --build server/build --target test_sqlite_trace_repo`
+- `cmake --build server/build --target test_trace_retention_service`
+- `cmake --build server/build --target LogSentinel`
+- `./server/build/test_sqlite_trace_repo`
+- `./server/build/test_trace_retention_service`
+
+## Verification Result
+
+- `test_sqlite_trace_repo`：15/15 通过
+- `test_trace_retention_service`：2/2 通过
+- `LogSentinel`：编译通过

@@ -364,3 +364,97 @@ TEST_F(SqliteTraceRepositoryTest, GetTraceDetailReturnsNulloptWhenTraceMissing)
     std::optional<TraceDetailRecord> detail = repo->GetTraceDetail("missing-trace");
     EXPECT_FALSE(detail.has_value());
 }
+
+TEST_F(SqliteTraceRepositoryTest, DeleteTraceByIdRemovesSummarySpansAndAnalysisTogether)
+{
+    persistence::TraceSummary summary = MakeSummary("delete-trace-1");
+    std::vector<persistence::TraceSpanRecord> spans;
+    spans.push_back(MakeSpan(summary.trace_id, "span-1", ""));
+    spans.push_back(MakeSpan(summary.trace_id, "span-2", "span-1"));
+    persistence::TraceAnalysisRecord analysis = MakeAnalysis(summary.trace_id);
+
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(summary, spans, &analysis));
+    ASSERT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 1);
+    ASSERT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 2);
+    ASSERT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 1);
+
+    EXPECT_TRUE(repo->DeleteTraceById(summary.trace_id));
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 0);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+}
+
+TEST_F(SqliteTraceRepositoryTest, DeleteExpiredTracesBatchRemovesOnlyExpiredTraceIds)
+{
+    persistence::TraceSummary expired_with_end = MakeSummary("expired-end");
+    expired_with_end.start_time_ms = 1000;
+    expired_with_end.end_time_ms = 1500;
+
+    persistence::TraceSummary expired_without_end = MakeSummary("expired-start");
+    expired_without_end.start_time_ms = 1800;
+    expired_without_end.end_time_ms.reset();
+
+    persistence::TraceSummary fresh = MakeSummary("fresh-trace");
+    fresh.start_time_ms = 4000;
+    fresh.end_time_ms = 5000;
+    persistence::TraceAnalysisRecord expired_with_end_analysis = MakeAnalysis(expired_with_end.trace_id);
+    persistence::TraceAnalysisRecord expired_without_end_analysis = MakeAnalysis(expired_without_end.trace_id);
+    persistence::TraceAnalysisRecord fresh_analysis = MakeAnalysis(fresh.trace_id);
+
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(
+        expired_with_end,
+        {MakeSpan(expired_with_end.trace_id, "span-a", "")},
+        &expired_with_end_analysis));
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(
+        expired_without_end,
+        {MakeSpan(expired_without_end.trace_id, "span-b", "")},
+        &expired_without_end_analysis));
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(
+        fresh,
+        {MakeSpan(fresh.trace_id, "span-c", "")},
+        &fresh_analysis));
+
+    const size_t deleted = repo->DeleteExpiredTracesBatch(/*cutoff_ms*/3000, /*limit*/10);
+    EXPECT_EQ(deleted, 2u);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 1);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 1);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 1);
+    EXPECT_TRUE(QuerySummary("fresh-trace").has_value());
+    EXPECT_FALSE(QuerySummary("expired-end").has_value());
+    EXPECT_FALSE(QuerySummary("expired-start").has_value());
+}
+
+TEST_F(SqliteTraceRepositoryTest, DeleteExpiredTracesBatchDeletesOldestExpiredTracesFirst)
+{
+    persistence::TraceSummary oldest = MakeSummary("trace-oldest");
+    oldest.start_time_ms = 1000;
+    oldest.end_time_ms = 1100;
+
+    persistence::TraceSummary middle = MakeSummary("trace-middle");
+    middle.start_time_ms = 2000;
+    middle.end_time_ms = 2100;
+
+    persistence::TraceSummary newest_expired = MakeSummary("trace-newest-expired");
+    newest_expired.start_time_ms = 2500;
+    newest_expired.end_time_ms = 2600;
+    persistence::TraceAnalysisRecord oldest_analysis = MakeAnalysis(oldest.trace_id);
+    persistence::TraceAnalysisRecord middle_analysis = MakeAnalysis(middle.trace_id);
+    persistence::TraceAnalysisRecord newest_analysis = MakeAnalysis(newest_expired.trace_id);
+
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(oldest,
+                                            {MakeSpan(oldest.trace_id, "span-oldest", "")},
+                                            &oldest_analysis));
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(middle,
+                                            {MakeSpan(middle.trace_id, "span-middle", "")},
+                                            &middle_analysis));
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(newest_expired,
+                                            {MakeSpan(newest_expired.trace_id, "span-newest", "")},
+                                            &newest_analysis));
+
+    // 这里锁死“最老优先 + limit 生效”的删除语义，避免 retention 一轮删的是随机过期 trace。
+    const size_t deleted = repo->DeleteExpiredTracesBatch(/*cutoff_ms*/3000, /*limit*/2);
+    EXPECT_EQ(deleted, 2u);
+    EXPECT_FALSE(QuerySummary("trace-oldest").has_value());
+    EXPECT_FALSE(QuerySummary("trace-middle").has_value());
+    EXPECT_TRUE(QuerySummary("trace-newest-expired").has_value());
+}

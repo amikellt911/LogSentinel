@@ -65,6 +65,7 @@ add_library(util_module STATIC
 add_library(core_module STATIC
     core/ServiceRuntimeAccumulator.cpp
     core/SystemRuntimeAccumulator.cpp
+    core/TraceRetentionService.cpp
     core/TraceSessionManager.cpp
     core/TokenEstimator.cpp
 )
@@ -173,6 +174,10 @@ add_executable(test_trace_session_manager_integration
   tests/TraceSessionManager_integration_test.cpp
 )
 
+add_executable(test_trace_retention_service
+  tests/TraceRetentionService_test.cpp
+)
+
 add_executable(test_sqlite_trace_repo
   tests/SqliteTraceRepository_test.cpp
 )
@@ -222,6 +227,10 @@ target_link_libraries(test_trace_session_manager_integration PRIVATE
 GTest::gtest_main
 core_module
 )
+target_link_libraries(test_trace_retention_service PRIVATE
+GTest::gtest_main
+core_module
+)
 target_link_libraries(test_sqlite_trace_repo PRIVATE
 GTest::gtest_main
 persistence_module
@@ -255,6 +264,7 @@ gtest_discover_tests(test_http_context)
 gtest_discover_tests(test_threadpool)
 gtest_discover_tests(test_trace_session_manager_unit)
 gtest_discover_tests(test_trace_session_manager_integration)
+gtest_discover_tests(test_trace_retention_service)
 gtest_discover_tests(test_sqlite_trace_repo)
 gtest_discover_tests(test_log_handler)
 gtest_discover_tests(test_webhook_notifier)

@@ -67,4 +67,8 @@
 - [x] 从 Trace 主链后端移除 `prompt_debug` 支线：类型、仓储接口、缓冲写入、SQLite schema 与对应测试一起收口
 - [x] 运行最小构建与仓储/会话相关测试，确认移除 `prompt_debug` 后主链仍可通过
   - 已完成 `test_sqlite_trace_repo`、`test_trace_session_manager_unit`、`test_log_handler`、`test_trace_session_manager_integration` 与 `LogSentinel` 验证。
+- [x] 为 Trace retention 补仓储删除测试：单条 trace 删除、按过期时间批量删除、删除顺序不破坏三张表一致性
+- [x] 新建 `TraceRetentionService`，补启动清理/周期调度/禁用语义测试
+- [x] 在 `SqliteTraceRepository` 落删除接口，在 `main.cpp` 接启动清理与周期调度
+- [x] 运行 retention 相关最小构建与测试，并追加 2026-04-09 dev-log
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

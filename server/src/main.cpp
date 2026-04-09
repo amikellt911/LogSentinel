@@ -19,6 +19,7 @@
 #include "handlers/ConfigHandler.h"
 #include "core/ServiceRuntimeAccumulator.h"
 #include "core/SystemRuntimeAccumulator.h"
+#include "core/TraceRetentionService.h"
 #include "core/TraceSessionManager.h"
 #include "util/DevSubprocessManager.h"
 #include <filesystem>
@@ -303,6 +304,10 @@ int main(int argc, char* argv[])
             : (startup_app_config.token_limit >= 0
                    ? startup_app_config.token_limit
                    : trace_token_limit);
+    // retention 目前也按冷启动配置消费：
+    // 既然后台清理线程不会在运行时自动重建，那 Settings 里的保留天数至少要在启动时真实吃到。
+    // 这一步先只接 days，批大小和周期继续由后端保守默认值控制，不把更多调参面提前暴露出来。
+    const int effective_log_retention_days = startup_app_config.log_retention_days;
     // 这两个时间窗当前没有保留 CLI override，先统一走 Settings 冷启动配置。
     // 原因很简单：这一刀的目标就是把“已经设计成 Settings 字段的主链参数”真正接回状态机，
     // 避免继续出现库里能存、页面能改、但 TraceSessionManager 实际上仍然硬编码的假生效。
@@ -530,6 +535,28 @@ int main(int argc, char* argv[])
     // Trace 读请求单独走查询线程池，避免前端查库任务和 AI/聚合任务抢同一条队列。
     // 当前先固定 1 条查询线程，把“执行通道分离”先做出来，后面再按压测结果调整线程数。
     ThreadPool query_tpool(static_cast<size_t>(num_query_threads), static_cast<size_t>(worker_queue_size));
+    TraceRetentionService::Config trace_retention_config;
+    trace_retention_config.retention_days = effective_log_retention_days;
+    trace_retention_config.batch_size = 500;
+    trace_retention_config.max_batches_per_run = 3;
+    trace_retention_config.cleanup_interval_ms = 60LL * 60 * 1000;
+    auto trace_retention_service = std::make_shared<TraceRetentionService>(
+        trace_repo.get(),
+        &query_tpool,
+        trace_retention_config);
+    if (effective_log_retention_days > 0) {
+        std::cout << "Trace retention enabled. days=" << effective_log_retention_days
+                  << ", batch_size=" << trace_retention_config.batch_size
+                  << ", max_batches_per_run=" << trace_retention_config.max_batches_per_run
+                  << ", cleanup_interval_ms=" << trace_retention_config.cleanup_interval_ms
+                  << std::endl;
+        // 启动后先异步清一轮旧数据，避免答辩或联调一打开就被历史过期 trace 污染。
+        // 这里仍然只投递到 query_tpool，不在主线程直接删库，防止启动路径被 SQLite 清理阻塞。
+        trace_retention_service->TriggerStartupCleanup();
+    } else {
+        std::cout << "Trace retention disabled. log_retention_days=" << effective_log_retention_days
+                  << std::endl;
+    }
     auto system_runtime_accumulator = std::make_shared<SystemRuntimeAccumulator>();
     auto service_runtime_accumulator = std::make_shared<ServiceRuntimeAccumulator>(/*service_top_k*/4,
                                                                                   /*operation_top_k*/6,
@@ -603,6 +630,14 @@ int main(int argc, char* argv[])
         if (system_runtime_accumulator_raw) {
             system_runtime_accumulator_raw->OnTick();
         }
+    });
+    loop.runEvery(60.0, [trace_retention_service]() {
+        if (!trace_retention_service) {
+            return;
+        }
+        const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        trace_retention_service->TrySchedulePeriodicCleanup(now_ms);
     });
     bool shutdown_stats_logged = false;
     loop.runEvery(0.1, [&loop, &shutdown_stats_logged, trace_session_manager_raw, buffered_trace_repo]() {
