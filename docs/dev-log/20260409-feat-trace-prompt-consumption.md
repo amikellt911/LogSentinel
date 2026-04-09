@@ -251,6 +251,50 @@ refactor(core): 移除旧日志分析链活代码与构建入口
 - `test_log_handler`：5/5 通过
 - `test_trace_session_manager_unit`：36 条里 27 条通过，剩余 9 条失败；失败点集中在 sealed deadline、背压阈值和系统运行态断言，属于旧测试口径未跟上当前实现，不是这次删旧链引入的新编译错误
 
+# 追加记录：2026-04-09 为 AI 降级配置补 fallback api key
+
+## Git Commit Message
+
+feat(settings): 为 ai 降级配置补 fallback api key
+
+## Modification
+
+- `server/persistence/ConfigTypes.h`
+- `server/persistence/SqliteConfigRepository.cpp`
+- `client/src/views/SettingsPrototype.vue`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260409-feat-trace-prompt-consumption.md`
+
+## 这次补了哪些注释
+
+- 在 `server/persistence/ConfigTypes.h` 里补了中文注释，说明为什么自动降级不能默认复用主模型的 `api_key`，而是要把 `provider/model/api_key` 当成完整备用三元组保存。
+- 在 `server/persistence/SqliteConfigRepository.cpp` 里补了中文注释，说明为什么仓储层要单独映射 `ai_fallback_api_key`，以及继续偷懒复用主 key 会导致什么失败模式。
+- 在 `client/src/views/SettingsPrototype.vue` 里补了中文注释，说明为什么设置页要把 `Fallback API Key` 和 `Fallback Provider/Model` 放在一起展示、一起回填、一起保存。
+
+## Learning Tips
+
+### Newbie Tips
+
+自动降级不是“换个模型名”这么简单。既然允许切到另一个 provider，那么凭证也必须能一起切。否则表面上开了降级，真正失败时还是会因为拿着主 provider 的 key 去打备用 provider 而继续报错。
+
+### Function Explanation
+
+这次新增的 `ai_fallback_api_key` 只是配置面字段，不代表降级执行链已经写完。它现在解决的是“配置数据得先存得住、取得回、页面能改”，这样后面做熔断/降级状态机时，读取到的才是一套完整备用配置。
+
+### Pitfalls
+
+不要把“主 key 为空时自动退回 fallback key”或者“fallback key 为空时自动复用主 key”这种偷懒逻辑提前塞进存储层。存储层应该只忠实保存用户表达的配置；真正要不要兜底、在哪条分支兜底，应该留给上层降级策略决定。
+
+## Verification
+
+- `cmake --build server/build --target LogSentinel`
+- `npm run build`
+
+## Verification Result
+
+- `LogSentinel`：通过
+- `npm run build`：未通过，但当前失败项均来自仓库既有前端 TS 问题；本次改动涉及的 `SettingsPrototype.vue` 不再新增自己的构建错误
+
 # 追加记录：2026-04-09 修正 TraceSessionManager 旧单测口径
 
 ## Git Commit Message

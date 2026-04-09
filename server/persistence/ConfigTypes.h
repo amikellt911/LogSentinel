@@ -44,8 +44,12 @@ struct AppConfig {
     bool ai_retry_enabled = false;
     int ai_retry_max_attempts = 3;
     bool ai_auto_degrade = false;
+    // 降级链路不能默认复用主链路密钥。
+    // 一旦主 provider 和 fallback provider 不是同一家，或者用户故意给它们分开配额/权限，
+    // 那么 fallback 必须有自己独立的 provider/model/api_key 三元组。
     std::string ai_fallback_provider = "mock";
     std::string ai_fallback_model = "mock";
+    std::string ai_fallback_api_key = "";
     bool ai_circuit_breaker = true;
     int ai_failure_threshold = 5;
     int ai_cooldown_seconds = 60;
@@ -80,7 +84,7 @@ struct AppConfig {
         ai_provider, ai_model, ai_api_key, ai_language, app_language,
         http_port, log_retention_days,
         ai_retry_enabled, ai_retry_max_attempts,
-        ai_auto_degrade, ai_fallback_provider, ai_fallback_model,
+        ai_auto_degrade, ai_fallback_provider, ai_fallback_model, ai_fallback_api_key,
         ai_circuit_breaker, ai_failure_threshold, ai_cooldown_seconds,
         active_prompt_id,
         kernel_worker_threads,

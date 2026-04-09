@@ -89,6 +89,9 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         else if (key == "ai_auto_degrade") config.ai_auto_degrade = IsTruthyConfigValue(val);
         else if (key == "ai_fallback_provider") config.ai_fallback_provider = val;
         else if (key == "ai_fallback_model") config.ai_fallback_model = val;
+        // fallback key 单独存，是为了允许“主模型”和“降级模型”走不同供应商或不同额度。
+        // 如果这里继续偷懒复用 ai_api_key，那么真正触发降级时反而可能因为凭证不匹配再次失败。
+        else if (key == "ai_fallback_api_key") config.ai_fallback_api_key = val;
         else if (key == "ai_circuit_breaker") config.ai_circuit_breaker = IsTruthyConfigValue(val);
         else if (key == "ai_failure_threshold") config.ai_failure_threshold = std::stoi(val);
         else if (key == "ai_cooldown_seconds") config.ai_cooldown_seconds = std::stoi(val);
@@ -206,6 +209,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('ai_auto_degrade', '0', '自动降级开关'),
             ('ai_fallback_provider', 'mock', '降级服务商类型'),
             ('ai_fallback_model', 'mock', '降级模型名称'),
+            ('ai_fallback_api_key', '', '降级模型 API 密钥'),
             ('ai_circuit_breaker', '1', '熔断机制开关'),
             ('ai_failure_threshold', '5', '熔断触发阈值'),
             ('ai_cooldown_seconds', '60', '熔断冷却时间s'),

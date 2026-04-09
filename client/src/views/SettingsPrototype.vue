@@ -126,6 +126,16 @@
                       <el-form-item label="Fallback Model" class="mb-0">
                         <el-input v-model="ai.fallbackModel" :disabled="!ai.autoDegrade" />
                       </el-form-item>
+                      <!-- 降级配置这里单独放一份 key，不和默认 provider 共用。
+                           既然 fallback 允许切供应商/切账号，那么用户就必须能明确填自己的备用凭证。 -->
+                      <el-form-item label="Fallback API Key" class="mb-0">
+                        <el-input
+                          v-model="ai.fallbackApiKey"
+                          type="password"
+                          show-password
+                          :disabled="!ai.autoDegrade"
+                        />
+                      </el-form-item>
                     </div>
                   </div>
 
@@ -293,7 +303,7 @@
                             </div>
                             <div class="space-y-3">
                               <div
-                                v-for="(item, index) in selectedPrompt.content.focusAreas"
+                                v-for="(_, index) in selectedPrompt.content.focusAreas"
                                 :key="`focus-${index}`"
                                 class="flex items-center gap-3 rounded border border-gray-800 bg-[#202020] p-3"
                               >
@@ -320,7 +330,7 @@
                             </div>
                             <div class="space-y-3">
                               <div
-                                v-for="(item, index) in selectedPrompt.content.riskPreference"
+                                v-for="(_, index) in selectedPrompt.content.riskPreference"
                                 :key="`risk-${index}`"
                                 class="flex items-center gap-3 rounded border border-gray-800 bg-[#202020] p-3"
                               >
@@ -347,7 +357,7 @@
                             </div>
                             <div class="space-y-3">
                               <div
-                                v-for="(item, index) in selectedPrompt.content.outputPreference"
+                                v-for="(_, index) in selectedPrompt.content.outputPreference"
                                 :key="`output-${index}`"
                                 class="flex items-center gap-3 rounded border border-gray-800 bg-[#202020] p-3"
                               >
@@ -677,6 +687,7 @@ interface PrototypeSnapshot {
     autoDegrade: boolean
     fallbackProvider: string
     fallbackModel: string
+    fallbackApiKey: string
     circuitBreaker: boolean
     failureThreshold: number
     cooldownSeconds: number
@@ -726,6 +737,7 @@ const ai = reactive({
   autoDegrade: true,
   fallbackProvider: 'mock',
   fallbackModel: 'mock-trace-analyzer',
+  fallbackApiKey: '',
   circuitBreaker: true,
   failureThreshold: 5,
   cooldownSeconds: 60,
@@ -1115,6 +1127,8 @@ async function loadSettings() {
         autoDegrade: toBool(config.ai_auto_degrade, false),
         fallbackProvider: typeof config.ai_fallback_provider === 'string' ? config.ai_fallback_provider : 'mock',
         fallbackModel: typeof config.ai_fallback_model === 'string' ? config.ai_fallback_model : 'mock',
+        // 这里单独回填 fallbackApiKey，是为了让“降级链路有独立凭证”这个语义在页面上可见、可改、可保存。
+        fallbackApiKey: typeof config.ai_fallback_api_key === 'string' ? config.ai_fallback_api_key : '',
         circuitBreaker: toBool(config.ai_circuit_breaker, true),
         failureThreshold: toNumber(config.ai_failure_threshold, 5),
         cooldownSeconds: toNumber(config.ai_cooldown_seconds, 60),
@@ -1324,6 +1338,8 @@ async function persistSettings() {
       { key: 'ai_auto_degrade', value: ai.autoDegrade ? '1' : '0' },
       { key: 'ai_fallback_provider', value: ai.fallbackProvider },
       { key: 'ai_fallback_model', value: ai.fallbackModel },
+      // 保存时把 fallback key 和 provider/model 一起发下去，避免后端只能看到半套降级配置。
+      { key: 'ai_fallback_api_key', value: ai.fallbackApiKey },
       { key: 'ai_circuit_breaker', value: ai.circuitBreaker ? '1' : '0' },
       { key: 'ai_failure_threshold', value: ai.failureThreshold.toString() },
       { key: 'ai_cooldown_seconds', value: ai.cooldownSeconds.toString() },

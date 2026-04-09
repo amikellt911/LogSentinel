@@ -71,4 +71,5 @@
 - [x] 新建 `TraceRetentionService`，补启动清理/周期调度/禁用语义测试
 - [x] 在 `SqliteTraceRepository` 落删除接口，在 `main.cpp` 接启动清理与周期调度
 - [x] 运行 retention 相关最小构建与测试，并追加 2026-04-09 dev-log
+- [x] 为 AI 自动降级补 `ai_fallback_api_key` 的前后端保存/回填能力，避免降级链路只能误复用主 Key
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）
