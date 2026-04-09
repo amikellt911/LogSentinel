@@ -329,8 +329,10 @@ protected:
     }
 
     void SweepProtectionSealWindow(TraceSessionManager& manager) {
-        // capacity/token_limit 属于保护性封口，只给 1 tick。
-        SweepTicks(manager, /*tick_count*/1);
+        // 现在 trace_end / capacity / token_limit / duplicate_span 都统一走同一个 sealed grace 配置。
+        // integration test 既然不跑 main 里的定时 sweep，这里就也必须推进 2 tick，
+        // 否则测试还停留在旧的“保护性封口只等 1 tick”心智上，会比真实实现更早断言。
+        SweepTicks(manager, /*tick_count*/2);
     }
 
     SpanEvent MakeSpan(size_t trace_key, size_t span_id, std::optional<size_t> parent_id) {

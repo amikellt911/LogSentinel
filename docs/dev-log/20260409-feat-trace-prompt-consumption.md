@@ -316,6 +316,9 @@ refactor(persistence): 移除 trace 废弃调试附属表支线
 
 - 在 `server/persistence/SqliteTraceRepository.cpp` 里补了中文注释，说明为什么 `SaveAnalysisBatch()` 仍然要把 `risk_level` 回写到 `trace_summary`，以及为什么 `SaveSingleTraceAtomic()` 现在只保留 `summary / spans / analysis` 三段事务写入。
 - 在 `server/tests/LogHandler_test.cpp` 里补了中文注释，说明这个 fake repo 为什么只保留当前主链真实还会经过的最小接口集合，避免测试继续绑在废弃支线上。
+- 在 `server/tests/TraceSessionManager_unit_test.cpp` 里补了中文注释，说明 fake repo 只记录当前主链真实落库的三段数据。
+- 在 `server/tests/TraceSessionManager_integration_test.cpp` 里补了中文注释，说明为什么保护性封口测试也必须推进 2 tick，而不是继续沿用旧的 1 tick 口径。
+- 在 `server/tests/SqliteTraceRepository_test.cpp` 里补了中文注释，说明 `SaveSingleTraceAtomicWithAnalysis` 就是当前三段原子写的完整路径，不再夹带废弃附属表。
 
 ## Learning Tips
 
@@ -348,9 +351,6 @@ refactor(persistence): 移除 trace 废弃调试附属表支线
 - `test_sqlite_trace_repo`：12/12 通过
 - `test_trace_session_manager_unit`：36/36 通过
 - `test_log_handler`：5/5 通过
+- `test_trace_session_manager_integration`：13/13 通过
 - `LogSentinel`：编译通过
-- `test_trace_session_manager_integration`：10/13 通过，剩余 3 条失败为：
-  - `DispatchesOnCapacityAndStoresParentId`
-  - `DispatchesOnTokenLimitWithoutTraceEnd`
-  - `DispatchesOnDuplicateSpanId`
-  这 3 条失败不在本次删除支线改动面内，先记录，后续单独排查。
+- 补充说明：integration 里 `capacity/token_limit/duplicate_span` 相关用例已经同步到当前统一 `sealed_grace_ticks_` 语义，不再保留旧的“保护性封口只推进 1 tick”测试口径。
