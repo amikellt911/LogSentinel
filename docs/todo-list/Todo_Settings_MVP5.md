@@ -46,3 +46,7 @@
 - [x] 为 Trace AI 增加冷启动 prompt 渲染链：`ai_language + active prompt` 组装成最终 trace prompt
 - [x] 修改 `TraceProxyAi` 与 Python proxy 的 trace 分析协议，让 C++ 可以显式传入最终 prompt
 - [x] 运行最小构建/验证命令，确认本次 Prompt 渲染链没有引入新的编译错误
+- [x] 将 `ai_provider` 真正接入 trace AI 的冷启动决策，改成 `CLI > Settings > 默认值`
+- [x] 将 `ai_model` 与 `ai_api_key` 真正接入 `TraceProxyAi` 请求体，并透传给 Python trace provider
+- [x] 运行最小构建/验证命令，确认本次 trace AI provider/model/api_key 消费链没有新增编译错误
+- [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

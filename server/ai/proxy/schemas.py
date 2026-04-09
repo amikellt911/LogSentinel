@@ -43,6 +43,8 @@ class SummarizeRequest(BaseModel):
 class TraceAnalyzeRequest(BaseModel):
     trace_text: str
     prompt: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
     
 class BatchAnalysisResponse(BaseModel):
     results: List[Dict[str, Any]]

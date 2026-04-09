@@ -8,5 +8,7 @@ std::shared_ptr<TraceAiProvider> CreateTraceAiProvider(const TraceAiFactoryOptio
     return std::make_shared<TraceProxyAi>(options.base_url,
                                           options.backend,
                                           options.timeout_ms,
-                                          options.prompt_template);
+                                          options.prompt_template,
+                                          options.model,
+                                          options.api_key);
 }

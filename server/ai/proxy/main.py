@@ -155,14 +155,20 @@ async def analyze_trace(provider_name: str, request: Request):
             trace_text = payload.trace_text
             if payload.prompt:
                 prompt_template = payload.prompt
+            model = payload.model
+            api_key = payload.api_key
         else:
             trace_text = body.decode('utf-8')
+            model = None
+            api_key = None
 
         rendered_prompt = render_trace_prompt(prompt_template, trace_text)
         result = await call_provider_in_threadpool(
             provider.analyze_trace,
             trace_text=trace_text,
             prompt=rendered_prompt,
+            api_key=api_key,
+            model=model,
         )
         # Trace 路由现在允许 provider 附带 usage 元数据，目的是把 token 计量从 analysis JSON 里拆出来。
         # 既然 analysis 是业务结果，usage 就应该作为外层 sibling 字段单独返回，便于 C++ 统一解析。

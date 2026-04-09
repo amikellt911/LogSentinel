@@ -336,6 +336,17 @@ int main(int argc, char* argv[])
     const std::string effective_trace_prompt_template =
         BuildTracePromptTemplate(startup_app_config.ai_language,
                                  startup_config_snapshot->active_prompt);
+    // trace AI 的 provider/model/api_key 这一刀也一起收口成冷启动配置。
+    // 原因很直接：既然 trace prompt 已经按“保存后重启生效”处理，
+    // 那同一条调用链上的 provider/model/key 也应该在启动时一次性决策，避免前后口径继续分裂。
+    const std::string effective_trace_ai_provider =
+        trace_ai_provider_explicit
+            ? trace_ai_provider
+            : (!startup_app_config.ai_provider.empty()
+                   ? startup_app_config.ai_provider
+                   : trace_ai_provider);
+    const std::string effective_trace_ai_model = startup_app_config.ai_model;
+    const std::string effective_trace_ai_api_key = startup_app_config.ai_api_key;
     // 水位阈值同样收口成冷启动配置：
     // 它们直接驱动 TraceSessionManager 的背压状态机，不适合运行中热切。
     // 这一刀只开放 overload/critical 两档，low 仍由后端内部派生回滞阈值。
@@ -507,9 +518,9 @@ int main(int argc, char* argv[])
     const bool enable_trace_ai = auto_start_proxy || trace_ai_provider_explicit;
     if (enable_trace_ai) {
         TraceAiBackend backend = TraceAiBackend::Mock;
-        if (!TryParseTraceAiBackend(trace_ai_provider, &backend)) {
+        if (!TryParseTraceAiBackend(effective_trace_ai_provider, &backend)) {
             std::cerr << "Fatal Error: unsupported --trace-ai-provider '"
-                      << trace_ai_provider << "'. expected one of: mock|gemini" << std::endl;
+                      << effective_trace_ai_provider << "'. expected one of: mock|gemini" << std::endl;
             return -1;
         }
         TraceAiFactoryOptions options;
@@ -517,11 +528,16 @@ int main(int argc, char* argv[])
         options.backend = backend;
         options.timeout_ms = trace_ai_timeout_ms;
         options.prompt_template = effective_trace_prompt_template;
+        options.model = effective_trace_ai_model;
+        options.api_key = effective_trace_ai_api_key;
         trace_ai = CreateTraceAiProvider(options);
-        std::cout << "Trace AI enabled via proxy. provider=" << trace_ai_provider
+        std::cout << "Trace AI enabled via proxy. provider=" << effective_trace_ai_provider
                   << ", base_url=" << trace_ai_base_url
                   << ", timeout_ms=" << trace_ai_timeout_ms
-                  << ", ai_language=" << startup_app_config.ai_language << std::endl;
+                  << ", ai_language=" << startup_app_config.ai_language
+                  << ", model=" << effective_trace_ai_model
+                  << ", api_key=" << (effective_trace_ai_api_key.empty() ? "<empty>" : "<configured>")
+                  << std::endl;
     }
     // 线程池需要在 trace_ai/notifier 之前回收：
     // 既然 worker 任务里拿的是这些对象的裸指针，那么退出时必须先 join worker，
