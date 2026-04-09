@@ -623,8 +623,8 @@ int main(int argc, char* argv[])
     std::shared_ptr<Router> router = std::make_shared<Router>();
     auto trace_query_handler = std::make_shared<TraceQueryHandler>(trace_read_repo, &query_tpool);
     auto service_monitor_handler = std::make_shared<ServiceMonitorHandler>(service_runtime_accumulator);
-    // MVP5 这一步先把主路由显式收口到“新 Trace 读写 + 运行态快照 + Settings”。
-    // 旧 `/logs`、`/results/*`、`/history*` 还保留代码文件，但不再继续挂到主链入口，避免演示和联调时把废弃链路误当成当前真链路。
+    // MVP5 这一步把主路由显式收口到“新 Trace 读写 + 运行态快照 + Settings”。
+    // 旧日志分析链已经退出活代码和构造链，主程序不再保留半退役入口混在这里误导联调。
 
     router->add("POST", "/traces/search", [trace_query_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         trace_query_handler->handleSearchTraces(req, resp, conn);
@@ -650,19 +650,11 @@ int main(int argc, char* argv[])
     router->add("POST", "/settings/channels", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         config_handler->handleUpdateChannels(req, resp, conn);
     });
-    //lambda默认值拷贝是const,但是handlePost是非const成员函数，会导致const值变化
-    //所以需要加上mutable或shared_ptr,因为他是指针，在const中，让他不会改变指向，但是可以改变值
-    //LogHandler handler(&tpool,persistence,ai_client, notifier);
     // /logs/spans 的结束字段口径已经收口成冷启动配置，
     // 所以这里直接把启动期算好的主字段和别名注入给 LogHandler，不再让请求热路径回头读 repo。
-    // 主程序已经不再挂旧 `/logs`、`/results/*` 路由，所以这里明确传空旧依赖，
-    // 让 LogHandler 只承接 `/logs/spans` 新链；真有旧接口误调时，再由 handler 自己返回 503。
-    // 旧 `/logs` 和 `/results/*` 虽然暂时还留在 LogHandler 里，但主路由已经不再注册它们；
-    // 这里先复用同一个 handler 承接 `/logs/spans`，后面如果继续清老链，再单独把旧接口从 handler 内部拔掉。
-    auto handler = std::make_shared<LogHandler>(&tpool,
-                                                std::shared_ptr<SqliteLogRepository>{},
-                                                std::shared_ptr<LogBatcher>{},
-                                                trace_session_manager.get(),
+    // LogHandler 现在彻底退化成 `/logs/spans` 专用处理器。
+    // 既然旧日志分析链已经从构造链和主路由一起移除，这里只需要注入 Trace 主链依赖即可。
+    auto handler = std::make_shared<LogHandler>(trace_session_manager.get(),
                                                 system_runtime_accumulator.get(),
                                                 effective_trace_end_field,
                                                 effective_trace_end_aliases);

@@ -1,14 +1,8 @@
 #include "handlers/LogHandler.h"
-#include "core/LogBatcher.h"
-#include "core/AnalysisTask.h"
 #include "core/SystemRuntimeAccumulator.h"
 #include "core/TraceSessionManager.h"
-#include "MiniMuduo/net/EventLoop.h"
-#include "persistence/SqliteLogRepository.h"
-#include "threadpool/ThreadPool.h"
 #include <algorithm>
 #include <cctype>
-#include <unordered_set>
 #include <nlohmann/json.hpp>
 
 namespace
@@ -292,17 +286,11 @@ bool ParseOptionalAttributes(const nlohmann::json& body,
 }
 } // namespace
 
-LogHandler::LogHandler(ThreadPool *tpool,
-                       std::shared_ptr<SqliteLogRepository> repo,
-                       std::shared_ptr<LogBatcher> batcher,
-                       TraceSessionManager* trace_session_manager,
+LogHandler::LogHandler(TraceSessionManager* trace_session_manager,
                        SystemRuntimeAccumulator* system_runtime_accumulator,
                        std::string trace_end_field,
                        std::vector<std::string> trace_end_aliases)
-    : tpool_(tpool),
-      batcher_(batcher),
-      repo_(repo),
-      trace_session_manager_(trace_session_manager),
+    : trace_session_manager_(trace_session_manager),
       system_runtime_accumulator_(system_runtime_accumulator),
       trace_end_field_(trace_end_field.empty() ? "trace_end" : std::move(trace_end_field)),
       trace_end_aliases_(std::move(trace_end_aliases))
@@ -311,43 +299,6 @@ LogHandler::LogHandler(ThreadPool *tpool,
     // 这样 handleTracePost() 里既不用每次读快照，也不用每次为了过滤 attributes 临时拼一遍 set。
     trace_end_known_fields_.insert(trace_end_field_);
     trace_end_known_fields_.insert(trace_end_aliases_.begin(), trace_end_aliases_.end());
-}
-
-void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
-{
-    (void)conn;
-    resp->setHeader("Content-Type", "application/json");
-    resp->addCorsHeaders();
-
-    if (!batcher_)
-    {
-        // 主程序已经不再挂旧 `/logs` 入口，所以 batcher 后续可以完全不构造。
-        // 这里选择显式 503，而不是假装 accepted 或直接空指针崩掉，避免别人误复用旧 handler 时把问题藏起来。
-        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-        resp->body_ = R"({"error": "Legacy log pipeline is unavailable"})";
-        return;
-    }
-
-    AnalysisTask task;
-    // 没用，因为const(为了通用性)，会降级为拷贝
-    //  task.trace_id = std::move(req.trace_id);
-    //  task.raw_request_body = std::move(req.body_);
-    task.trace_id = req.trace_id;
-    task.raw_request_body = req.body_;
-    task.start_time = std::chrono::steady_clock::now();
-
-    if (batcher_->push(std::move(task)))
-    {
-        resp->setStatusCode(HttpResponse::HttpStatusCode::k202Acceptd);
-        nlohmann::json j;
-        j["trace_id"] = req.trace_id;
-        resp->body_ = j.dump();
-    }
-    else
-    {
-        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-        resp->body_ = "{\"error\": \"Server is overloaded\"}";
-    }
 }
 
 void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
@@ -453,91 +404,4 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
         response_body["message"] = "Trace accepted; internal dispatch deferred";
     }
     resp->body_ = response_body.dump();
-}
-
-void LogHandler::handleGetResult(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
-{
-    resp->setHeader("Content-Type", "application/json");
-    resp->addCorsHeaders();
-
-    if (!repo_ || !tpool_)
-    {
-        // 旧 `/results/*` 现在已经从 main.cpp 主路由摘掉，所以 repo/tpool 都可能为空。
-        // 这里同样明确 fail closed，保证“旧链已脱钩”的状态对调用方是可见的。
-        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-        resp->body_ = R"({"error": "Legacy result pipeline is unavailable"})";
-        return;
-    }
-
-    std::string trace_id = req.path().substr(9);
-
-    // 使用 weak_ptr 防止 conn 提前销毁
-    std::weak_ptr<MiniMuduo::net::TcpConnection> weakConn = conn;
-    auto querywork = [trace_id, repo = repo_, weakConn]()
-    {
-        // --- 这部分在 Worker 线程 ---
-        auto result = repo->queryStructResultByTraceId(trace_id);
-        auto conn = weakConn.lock();
-        if (conn)
-        {
-            auto loop = conn->getLoop();
-            loop->queueInLoop([weakConn, trace_id, result]()
-                              {
-            // --- 这部分在 IO 线程 ---
-            auto conn = weakConn.lock();
-            if (conn) { // 检查连接是否还存活
-                HttpResponse resp;
-                resp.addCorsHeaders();
-                resp.setHeader("Content-Type", "application/json");
-                if (result) { // result 是 optional<string>
-                    resp.setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
-                        // 注意：JSON 字符串中的引号需要转义
-                        // 3. 修正：使用 json 库拼接，而不是手动拼字符串
-                        // 注意：result 已经是 json 字符串了，不要重复序列化，
-                        // 我们需要构造 {"trace_id": "...", "result": JSON_OBJECT}
-                        // 这里的 result.value() 是一个字符串形式的 JSON 对象
-                        // 为了避免转义问题，我们手动拼这一块是合理的，但要确保 result 本身是合法 JSON
-                        // 或者更安全的做法：
-                        // resp.body_ = "{\"trace_id\": \"" + trace_id + "\", \"result\": " + *result + "}"; 
-                        // 鉴于 *result 来自数据库且原本就是合法 JSON，你原来的写法是可以接受的。
-                        // 如果想更稳妥，可以这样：
-                        try {
-                             nlohmann::json root;
-                             root["trace_id"] = trace_id;
-                             root["result"] = *result; // 解析后再放入，保证嵌套正确
-                             resp.body_ = root.dump();
-                        } catch (...) {
-                             // 极端情况：数据库里的 json 坏了
-                             resp.body_ = "{\"trace_id\": \"" + trace_id + "\", \"result\": null, \"error\": \"Data corrupted\"}";
-                        }
-                } else {
-                    resp.setStatusCode(HttpResponse::HttpStatusCode::k404NotFound);
-                    resp.body_ = "{\"error\": \"Trace ID not found\"}";
-                }
-
-                MiniMuduo::net::Buffer buf;
-                resp.appendToBuffer(&buf);
-                conn->send(std::move(buf));
-            } });
-        }
-    };
-
-    if (tpool_->submit(std::move(querywork)))
-    {
-        resp->isHandledAsync = true;
-        // 对于 GET 请求，我们不立即返回任何东西，因为响应是异步的
-        // 如果想给客户端一个即时反馈，可以考虑接受请求后立即返回一个空的 202，但这不常用
-    }
-    else
-    {
-        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-        resp->addCorsHeaders();
-        resp->body_ = "{\"error\": \"Server is overloaded\"}";
-
-        // 只有在这种同步失败的情况下，才需要在这里发送响应
-        // MiniMuduo::net::Buffer buf;
-        // resp->appendToBuffer(&buf);
-        // isHandledAsync = false会自动发送
-        // conn->send(std::move(buf));
-    }
 }

@@ -56,4 +56,9 @@
 - [x] 将 `LogHandler` 的旧 `repo/batcher` 依赖改成“可空但安全”，让主程序可以不再构造老链对象
 - [x] 清理 `main.cpp` 中残留的 `SqliteLogRepository/AiProvider/LogBatcher` 旧链构造，只给 `LogHandler` 传空旧依赖
 - [x] 运行最小测试与构建命令，确认旧链脱钩后 `LogHandler` 和 `LogSentinel` 仍可通过
+- [x] 将 `LogHandler` 彻底收口为 `/logs/spans` 专用处理器，移除旧 `/logs`、`/results/*` 接口和旧依赖签名
+- [x] 从 `CMakeLists.txt` 移除旧链核心文件编译项：`AnalysisTask`、`LogBatcher`、`SqliteLogRepository`、`AiProvider/MockAI/GeminiApiAi`、`HistoryHandler`
+- [x] 删除 `server/src` 下仍然演示旧链的 demo 源文件，并清理活跃目录下仍指向 `/logs` 的旧 wrk 脚本
+- [x] 更新注释与 dev-log，说明当前主线只保留 Trace 新链，旧链仅剩 legacy 归档资料
+- [x] 运行最小测试与构建命令，确认 `LogSentinel` 与 `test_log_handler` 通过，并记录 `test_trace_session_manager_unit` 仍有 9 个既有失败
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

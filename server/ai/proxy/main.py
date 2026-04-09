@@ -228,8 +228,8 @@ async def summarize_logs(provider_name: str, request_data: SummarizeRequest):
             api_key=request_data.api_key,
             model=request_data.model,
         )
-        # 返回格式要匹配 C++ 端的预期
-        # C++ MockAI::summarize 里解析的是 response_json["summary"]
+        # 返回格式要匹配 C++ 端现有的总结协议
+        # C++ 侧读取的是 response_json["summary"]，这里继续保持这个字段名不变。
         return {"provider": provider_name, "summary": summary_text}
     except Exception as e:
         print(f"[Error] 总结失败: {e}")

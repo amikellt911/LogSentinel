@@ -28,7 +28,7 @@ unknown
 
 - `server/ai/proxy/schemas.py`
 - `server/ai/TraceProxyAi.cpp`
-- `server/ai/GeminiApiAi.cpp`
+- `server/ai/proxy/providers/gemini.py`
 
 这意味着后续 prompt 设计不能先乱扩字段，否则会先撞上后端结构化校验和持久化契约。
 

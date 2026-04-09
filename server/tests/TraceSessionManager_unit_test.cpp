@@ -639,7 +639,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchPersistsSummaryAndSpansToRepository)
     pool.shutdown();
 }
 
-TEST_F(TraceSessionManagerUnitTest, DispatchSkipsAnalysisWhenAiProviderIsNull)
+TEST_F(TraceSessionManagerUnitTest, DispatchSkipsAnalysisWhenTraceAiProviderIsNull)
 {
     // 目的：验证 AI 依赖为空时仍可落库基础 trace 数据，确保最小部署模式可用。
     ThreadPool pool(1);
@@ -782,9 +782,19 @@ TEST_F(TraceSessionManagerUnitTest, SystemRuntimeAccumulatorTracksAiLifecycleAnd
                                 nullptr,
                                 /*idle_timeout_ms*/5000,
                                 /*wheel_tick_ms*/500,
+                                // 这里把生产默认的 sealed/retry 时序显式写出来，
+                                // 目的不是改测试语义，而是避免构造参数位继续增长后把后面的 limit 参数错位。
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
                                 /*wheel_size*/64,
                                 /*buffered_span_hard_limit*/1024,
                                 /*active_session_hard_limit*/128,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
                                 nullptr,
                                 &system_runtime_accumulator);
 
@@ -835,9 +845,19 @@ TEST_F(TraceSessionManagerUnitTest, RefreshOverloadStatePublishesSystemBackpress
                                 nullptr,
                                 /*idle_timeout_ms*/5000,
                                 /*wheel_tick_ms*/500,
+                                // 这里同样显式补齐 sealed/retry 两个时序参数，
+                                // 确保后面的 hard limit 和系统监控注入不会因为参数位变化而串位。
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
                                 /*wheel_size*/64,
                                 /*buffered_span_hard_limit*/1024,
                                 /*active_session_hard_limit*/5,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
                                 nullptr,
                                 &system_runtime_accumulator);
 

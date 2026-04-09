@@ -93,7 +93,7 @@ protected:
 
 TEST_F(LogHandlerTracePostTest, HandleTracePostReturns503WhenTraceManagerMissing)
 {
-    LogHandler handler(nullptr, nullptr, nullptr, nullptr);
+    LogHandler handler(nullptr);
     HttpRequest req = MakeTraceRequest(1, 101, true);
     HttpResponse resp;
 
@@ -110,7 +110,7 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostReturns503WhenManagerRejectsUnava
     FakeTraceRepository repo;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(nullptr, buffered_repo.get(), nullptr, /*capacity*/ 8, /*token_limit*/ 0);
-    LogHandler handler(nullptr, nullptr, nullptr, &manager);
+    LogHandler handler(&manager);
     HttpRequest req = MakeTraceRequest(2, 201, true);
     HttpResponse resp;
 
@@ -147,7 +147,7 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostReturns503AndRetryAfterWhenManage
                                 /*buffered_spans_critical_percent*/ 90,
                                 /*pending_tasks_overload_percent*/ 75,
                                 /*pending_tasks_critical_percent*/ 90);
-    LogHandler handler(nullptr, nullptr, nullptr, &manager);
+    LogHandler handler(&manager);
 
     // 这里先手动塞满 3 条 collecting trace，把 active_sessions 推到 high=3，
     // 这样后面通过 handler 发一个全新的 trace_key 时，就会稳定命中 overload 拒绝。
@@ -180,7 +180,7 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostReturns202WithoutDeferredBeforeSe
     FakeTraceRepository repo;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/ 8, /*token_limit*/ 0);
-    LogHandler handler(nullptr, nullptr, nullptr, &manager);
+    LogHandler handler(&manager);
     HttpRequest req = MakeTraceRequest(3, 301, true);
     HttpResponse resp;
 
@@ -235,7 +235,7 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostRecordsAcceptedLogsIntoSystemRunt
                                 /*pending_tasks_critical_percent*/ 90,
                                 nullptr,
                                 &system_runtime_accumulator);
-    LogHandler handler(nullptr, nullptr, nullptr, &manager, &system_runtime_accumulator);
+    LogHandler handler(&manager, &system_runtime_accumulator);
     HttpRequest req = MakeTraceRequest(4, 401, false);
     HttpResponse resp;
 
@@ -248,44 +248,4 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostRecordsAcceptedLogsIntoSystemRunt
     EXPECT_EQ(snapshot.overview.total_logs, 1u);
 
     pool.shutdown();
-}
-
-TEST_F(LogHandlerTracePostTest, HandlePostReturns503WhenLegacyBatcherMissing)
-{
-    // 主链已经不再注册旧 `/logs` 入口，所以后续把 batcher 从 main.cpp 拔掉以后，
-    // 这里必须稳定返回 503，而不是一脚踩进空指针。
-    LogHandler handler(nullptr, nullptr, nullptr, nullptr);
-    HttpRequest req;
-    req.method_ = "POST";
-    req.path_ = "/logs";
-    req.version_ = "HTTP/1.1";
-    req.trace_id = "legacy-trace-id";
-    req.body_ = R"({"message":"legacy"})";
-    HttpResponse resp;
-
-    handler.handlePost(req, &resp, nullptr);
-
-    ASSERT_EQ(resp.statusCode_, HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-    ASSERT_EQ(resp.headers_.at("Content-Type"), "application/json");
-    const nlohmann::json body = ParseBody(resp);
-    EXPECT_EQ(body.at("error"), "Legacy log pipeline is unavailable");
-}
-
-TEST_F(LogHandlerTracePostTest, HandleGetResultReturns503WhenLegacyQueryDependenciesMissing)
-{
-    // 旧 `/results/*` 查询已经不再挂主路由，所以 repo/tpool 后续都可能被主程序清掉。
-    // 这里锁定“依赖缺失时同步返回 503”，避免别人手工复用旧 handler 时直接崩掉。
-    LogHandler handler(nullptr, nullptr, nullptr, nullptr);
-    HttpRequest req;
-    req.method_ = "GET";
-    req.path_ = "/results/legacy-trace-id";
-    req.version_ = "HTTP/1.1";
-    HttpResponse resp;
-
-    handler.handleGetResult(req, &resp, nullptr);
-
-    ASSERT_EQ(resp.statusCode_, HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-    ASSERT_EQ(resp.headers_.at("Content-Type"), "application/json");
-    const nlohmann::json body = ParseBody(resp);
-    EXPECT_EQ(body.at("error"), "Legacy result pipeline is unavailable");
 }

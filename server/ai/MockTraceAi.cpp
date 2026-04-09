@@ -18,7 +18,7 @@ MockTraceAi::~MockTraceAi() = default;
 
 TraceAiResponse MockTraceAi::AnalyzeTrace(const std::string& trace_payload)
 {
-    // 这里沿用 MockAI 的请求方式，方便复用错误处理习惯与调试流程。
+    // 这里沿用 Trace proxy 的统一请求方式，方便 mock/gemini 两条 Trace AI 路径共用同一套调试流程。
     cpr::Session session_;
     session_.SetHeader(cpr::Header{{"Content-Type", "text/plain"}});
     session_.SetTimeout(std::chrono::seconds(10));

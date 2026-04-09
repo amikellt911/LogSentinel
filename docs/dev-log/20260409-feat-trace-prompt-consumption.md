@@ -168,3 +168,85 @@ refactor(handler): 让旧日志链依赖可空并从主程序移除构造
 - `cmake --build server/build --target LogSentinel`
 - `cmake --build server/build --target test_log_handler`
 - `./server/build/test_log_handler`
+
+# 追加记录：2026-04-09 彻底移除旧日志分析链活代码
+
+## Git Commit Message
+
+refactor(core): 移除旧日志分析链活代码与构建入口
+
+## Modification
+
+- `server/handlers/LogHandler.h`
+- `server/handlers/LogHandler.cpp`
+- `server/src/main.cpp`
+- `server/CMakeLists.txt`
+- `server/tests/LogHandler_test.cpp`
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `server/ai/MockTraceAi.cpp`
+- `server/ai/proxy/main.py`
+- `server/http/README.md`
+- `server/threadpool/README.md`
+- `server/persistence/README.md`
+- `docs/PROMPT_LAYERING_NOTES.md`
+- `docs/TRACE_WRK_BENCHMARK_GUIDE.md`
+- `AGENTS.md`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- 删除：
+  - `server/core/AnalysisTask.cpp`
+  - `server/core/AnalysisTask.h`
+  - `server/core/LogBatcher.cpp`
+  - `server/core/LogBatcher.h`
+  - `server/persistence/SqliteLogRepository.cpp`
+  - `server/persistence/SqliteLogRepository.h`
+  - `server/ai/AiProvider.h`
+  - `server/ai/GeminiApiAi.cpp`
+  - `server/ai/GeminiApiAi.h`
+  - `server/ai/MockAI.cpp`
+  - `server/ai/MockAI.h`
+  - `server/handlers/HistoryHandler.cpp`
+  - `server/handlers/HistoryHandler.h`
+  - `server/src/testServerPoolSqlite.cpp`
+  - `server/src/testWithDashboard.cpp`
+  - `server/src/testWithRouter.cpp`
+  - `server/src/testgemini.cpp`
+  - `server/src/testserverPoolSqliteMock.cpp`
+  - `server/src/testserverpool.cpp`
+  - `server/tests/wrk/mvp1_performance_test.sh`
+  - `server/tests/wrk/performance_test.sh`
+  - `server/tests/wrk/performance_test2.sh`
+
+## 这次补了哪些注释
+
+- 在 `server/handlers/LogHandler.h` 里补了中文注释，说明 `LogHandler` 现在只承接 `/logs/spans`，旧 `/logs` 和 `/results/*` 已经从主链构造和路由一起收口，不再继续拖着旧依赖类型。
+- 在 `server/tests/TraceSessionManager_unit_test.cpp` 里补了中文注释，说明为什么要把 `sealed_grace_window_ms`、`retry_base_delay_ms` 和后面的水位阈值参数显式写出来，避免长参数列表继续错位。
+- 在 `server/ai/MockTraceAi.cpp` 与 `server/ai/proxy/main.py` 里补了中文注释，说明当前主链 AI 走的是 Trace proxy 统一协议，不再经过旧 `MockAI/GeminiApiAi` 那条实现链。
+- 在 `server/src/main.cpp` 里保留并补强了中文注释，说明当前主程序只挂 Trace 新链、运行态快照和 Settings 入口，旧 history/result 路由不再注册。
+
+## Learning Tips
+
+### Newbie Tips
+
+删旧链不能只看“源码文件删掉了没有”。真正要确认的是四件事一起成立：主路由不再挂入口、主程序不再构造旧对象、CMake 不再编旧目标、活跃脚本不再打旧接口。少一项都不算真收口。
+
+### Function Explanation
+
+当前主链 AI 的句柄已经不是旧 `AiProvider` 了，而是 `TraceAiProvider` 这层抽象；主程序启动时通过 `TraceAiFactory` 创建具体实现，当前活跃实现是 `TraceProxyAi`，它把请求统一发给 Python proxy。
+
+### Pitfalls
+
+长参数列表一旦中间插入了新配置项，最容易出现的不是编译不过，而是“还能编，但语义串位”。这次 `TraceSessionManager` 单测就有这个坑，所以凡是要传到尾部 `system_runtime_accumulator` 这种位置的调用，必须把中间新增参数显式补齐。
+
+## Verification
+
+- `cmake -S server -B server/build`
+- `cmake --build server/build --target LogSentinel`
+- `cmake --build server/build --target LogSentinel test_log_handler test_trace_session_manager_unit`
+- `./server/build/test_log_handler`
+- `./server/build/test_trace_session_manager_unit`
+
+## Verification Result
+
+- `LogSentinel`：通过
+- `test_log_handler`：5/5 通过
+- `test_trace_session_manager_unit`：36 条里 27 条通过，剩余 9 条失败；失败点集中在 sealed deadline、背压阈值和系统运行态断言，属于旧测试口径未跟上当前实现，不是这次删旧链引入的新编译错误

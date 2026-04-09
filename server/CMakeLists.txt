@@ -63,8 +63,6 @@ add_library(util_module STATIC
 )
 
 add_library(core_module STATIC
-    core/AnalysisTask.cpp
-    core/LogBatcher.cpp
     core/ServiceRuntimeAccumulator.cpp
     core/SystemRuntimeAccumulator.cpp
     core/TraceSessionManager.cpp
@@ -72,7 +70,6 @@ add_library(core_module STATIC
 )
 add_library(persistence_module STATIC
     persistence/BufferedTraceRepository.cpp
-    persistence/SqliteLogRepository.cpp
     persistence/SqliteConfigRepository.cpp
     persistence/SqliteTraceRepository.cpp
 )
@@ -80,8 +77,6 @@ add_library(threadpool_module STATIC
   threadpool/ThreadPool.cpp
 )
 add_library(ai_module STATIC
-  ai/MockAI.cpp
-  ai/GeminiApiAi.cpp
   ai/AiTypes.h 
   ai/MockTraceAi.cpp
   # Trace Prompt 的结构化解析和冷启动模板渲染单独收在 AI 模块里，
@@ -97,7 +92,6 @@ add_library(notification_module STATIC
 add_library(handler_module STATIC
   handlers/LogHandler.cpp
   handlers/DashboardHandler.cpp
-  handlers/HistoryHandler.cpp
   handlers/ConfigHandler.cpp
   handlers/ServiceMonitorHandler.cpp
   handlers/TraceQueryHandler.cpp
@@ -267,89 +261,6 @@ gtest_discover_tests(test_webhook_notifier)
 gtest_discover_tests(test_service_runtime_accumulator)
 gtest_discover_tests(test_system_runtime_accumulator)
 gtest_discover_tests(test_dashboard_handler)
-#-----------不同模块测试用例---------------
-#这些测试用例版本变动，用不了了
-# #http层测试用例
-# add_executable(testserver
-#     src/testserver.cpp   
-# )
-# #http层结合线程池测试用例
-# add_executable(testserverpool
-#   src/testserverpool.cpp
-# )
-# #http层结合线程池和sqlite数据库测试用例
-# add_executable(testServerPoolSqlite
-#   src/testServerPoolSqlite.cpp  
-# )
-# #上面与mockai测试用例
-# add_executable(testServerPoolSqliteMockAI
-#   src/testserverPoolSqliteMock.cpp
-# )
-# add_executable(testServerGeminiApi
-#   src/testgemini.cpp
-# )
-# add_executable(testServerRouter
-#   src/testWithRouter.cpp
-# )
-# add_executable(testServerDashboard
-#   src/testWithDashboard.cpp
-# )
-# 因为module会继承过来
-# target_include_directories(LogSentinel PRIVATE
-# ${CMAKE_CURRENT_SOURCE_DIR}
-# )
-# target_link_libraries(testserver PRIVATE 
-# http_module
-# core_module
-# persistence_module
-# threadpool_module
-# ai_module
-#)
-# target_link_libraries(testserverpool PRIVATE
-# http_module
-# threadpool_module
-# core_module
-# )
-# target_link_libraries(testServerPoolSqlite PRIVATE
-# http_module
-# threadpool_module
-# core_module
-# persistence_module
-# )
-# target_link_libraries(testServerPoolSqliteMockAI PRIVATE
-# http_module
-# threadpool_module
-# core_module
-# persistence_module
-# ai_module
-# notification_module
-# )
-# target_link_libraries(testServerGeminiApi PRIVATE
-# http_module
-# threadpool_module
-# core_module
-# persistence_module
-# ai_module
-# notification_module
-# )
-# target_link_libraries(testServerRouter PRIVATE
-# http_module
-# threadpool_module
-# core_module
-# persistence_module
-# ai_module
-# notification_module
-# handler_module
-# )
-# target_link_libraries(testServerDashboard PRIVATE
-# http_module
-# threadpool_module
-# core_module
-# persistence_module
-# ai_module
-# notification_module
-# handler_module
-# )
 #-----------主程序---------------
 add_executable(LogSentinel
     src/main.cpp   
