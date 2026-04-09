@@ -76,4 +76,7 @@
 - [x] 收口 Python AI proxy 的 Trace 失败协议，统一返回 `ok/provider/error_code/error_status/error_message`
 - [x] 让 Gemini provider 把 SDK 原始异常映射成统一失败载荷，不再伪造成功态 `analysis`
 - [x] 运行 proxy 最小测试，确认成功/失败两条返回协议都稳定
+- [x] 在 C++ 侧解析 proxy 的统一 Trace 失败协议，`ok=false` 时保留 `code/status/message`
+- [x] 为 TraceProxyAi 协议解析补单测，锁定成功/失败两条解析路径
+- [x] 运行 `TraceProxyAi + TraceSessionManager` 相关最小测试，确认失败信息能继续落到 `ai_error`
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

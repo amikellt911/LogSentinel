@@ -6,11 +6,13 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "ai/TraceAiProvider.h"
+#include "ai/TraceProxyProtocol.h"
 #define private public
 #include "core/TraceSessionManager.h"
 #undef private
@@ -178,6 +180,19 @@ public:
     }
 };
 
+// 用 ThrowingTraceAi 模拟 proxy 已经归一好的 provider 失败异常，
+// 这样单测锁定的是 manager 的失败落库语义，而不是具体 SDK/HTTP 层细节。
+class ThrowingTraceAi : public TraceAiProvider
+{
+public:
+    std::string error_message = "Trace AI Provider Error: [429 RESOURCE_EXHAUSTED] quota exhausted";
+
+    TraceAiResponse AnalyzeTrace(const std::string&) override
+    {
+        throw std::runtime_error(error_message);
+    }
+};
+
 // 用 SpyNotifier 只记录是否触发通知以及最后一次事件，目的是验证“何时通知”而不是测试 webhook 发送细节。
 class SpyNotifier : public INotifier
 {
@@ -202,6 +217,55 @@ public:
     }
 };
 } // namespace
+
+TEST(TraceProxyProtocolTest, ParsesSuccessfulTraceResponseWithUsage)
+{
+    const nlohmann::json response_json = {
+        {"ok", true},
+        {"provider", "gemini"},
+        {"analysis",
+         {
+             {"summary", "trace ok"},
+             {"risk_level", "info"},
+             {"root_cause", "none"},
+             {"solution", "none"},
+         }},
+        {"usage",
+         {
+             {"input_tokens", 10},
+             {"output_tokens", 5},
+             {"total_tokens", 15},
+         }},
+    };
+
+    // 这里锁的是 C++ 侧成功协议：analysis 继续走原语义，usage 作为独立元数据保留。
+    // 只要 proxy 回的是统一成功 envelope，TraceProxyAi 就不该再把它误判成协议错误。
+    const TraceAiResponse response = ParseTraceProxyResponseOrThrow(response_json);
+
+    EXPECT_EQ(response.analysis.summary, "trace ok");
+    ASSERT_TRUE(response.usage.has_value());
+    EXPECT_EQ(response.usage->total_tokens, 15U);
+}
+
+TEST(TraceProxyProtocolTest, ThrowsNormalizedProviderFailureWhenOkIsFalse)
+{
+    const nlohmann::json response_json = {
+        {"ok", false},
+        {"provider", "gemini"},
+        {"error_code", 429},
+        {"error_status", "RESOURCE_EXHAUSTED"},
+        {"error_message", "quota exhausted"},
+    };
+
+    // 这里锁的是 C++ 侧失败协议：provider 失败不是“JSON 结构坏了”，
+    // 而是要转成一条稳定异常文本，继续交给 TraceSessionManager 落 failed_primary/ai_error。
+    try {
+        (void)ParseTraceProxyResponseOrThrow(response_json);
+        FAIL() << "expected runtime_error";
+    } catch (const std::runtime_error& e) {
+        EXPECT_STREQ(e.what(), "Trace AI Provider Error: [429 RESOURCE_EXHAUSTED] quota exhausted");
+    }
+}
 
 class TraceSessionManagerUnitTest : public ::testing::Test
 {
@@ -739,6 +803,33 @@ TEST_F(TraceSessionManagerUnitTest, DispatchMarksSkippedManualWhenAiAnalysisDisa
     EXPECT_FALSE(repo.last_analysis.has_value());
     EXPECT_EQ(repo.last_ai_status, "skipped_manual");
     EXPECT_TRUE(repo.last_ai_error.empty());
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchStoresNormalizedProxyFailureMessageAsAiError)
+{
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    ThrowingTraceAi ai;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
+
+    SpanEvent span = MakeSpan(1155, 511, 1000);
+    span.trace_end = true;
+
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.update_ai_state_called.load(std::memory_order_acquire);
+    }));
+
+    // 这里锁的是 proxy 已归一好的 provider 失败文本要继续进入 ai_error，
+    // 否则前端详情页和后续熔断计数就只能看到模糊的本地异常，拿不到稳定的 code/status/message。
+    EXPECT_FALSE(repo.last_analysis.has_value());
+    EXPECT_EQ(repo.last_ai_status, "failed_primary");
+    EXPECT_EQ(repo.last_ai_error, "Trace AI Provider Error: [429 RESOURCE_EXHAUSTED] quota exhausted");
 
     pool.shutdown();
 }

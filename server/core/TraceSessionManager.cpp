@@ -1316,6 +1316,9 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
                 alert_token_count = ResolveAlertTokenCount(*worker_summary, ai_response.usage);
                 completed_usage = ai_response.usage;
             } catch (const std::exception& e) {
+                // 这里吃到的 e.what() 现在既可能是本地 HTTP/JSON 协议错误，
+                // 也可能是 proxy 已经归一好的 provider 失败文本（例如 [429 RESOURCE_EXHAUSTED] quota exhausted）。
+                // manager 不再区分 SDK 厂商细节，只负责把这条最终失败信息截断后落进 ai_error。
                 ai_status_override = kAiStatusFailedPrimary;
                 ai_error_override = TruncateTraceAiError(e.what());
             } catch (...) {

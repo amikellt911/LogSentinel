@@ -572,3 +572,51 @@ feat(ai-proxy): 收口 trace 失败返回协议
 ## Verification Result
 
 - `ai_proxy_trace_protocol_test.py`：3/3 通过，覆盖 trace 成功协议归一、失败协议归一、Gemini 错误字段提取三条路径
+
+---
+
+## Git Commit Message
+
+feat(trace-ai): 接通 proxy 失败协议到 c++ 落库链路
+
+## Modification
+
+- `server/ai/TraceProxyProtocol.h`
+- `server/ai/TraceProxyAi.cpp`
+- `server/core/TraceSessionManager.cpp`
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260409-feat-trace-prompt-consumption.md`
+
+## 这次补了哪些注释
+
+- 在 `server/ai/TraceProxyProtocol.h` 里补了中文注释，说明为什么 `ok=false` 不能再当成普通协议错误，而要转成稳定异常文本继续交给上层状态机处理。
+- 在 `server/ai/TraceProxyAi.cpp` 里补了中文注释，说明为什么 JSON parse 完成后还要继续吃一层 trace 协议语义，而不是只做 HTTP 传输。
+- 在 `server/core/TraceSessionManager.cpp` 里补了中文注释，说明 worker 捕获到的异常现在既可能是本地协议错误，也可能是 proxy 已归一好的 provider 失败文本，manager 只负责落 `failed_primary + ai_error`。
+- 在 `server/tests/TraceSessionManager_unit_test.cpp` 里补了中文注释，分别锁定了 `TraceProxyProtocol` 的成功解析、失败解析，以及 proxy 失败文本如何继续落进 `ai_error`。
+
+## Learning Tips
+
+### Newbie Tips
+
+跨语言边界最怕“半结构化失败”。如果 Python 一会儿回 HTTP 500 文本，一会儿回 JSON body，一会儿再把错误伪装成业务结果，那么 C++ 这边根本不可能稳定地做状态机。正确做法就是在边界上先统一协议，再让上层只消费统一语义。
+
+### Function Explanation
+
+`ParseTraceProxyResponseOrThrow` 做的是“协议翻译”，不是网络请求。它负责把 proxy 的成功 envelope 还原成 `TraceAiResponse`，把失败 envelope 变成一条可落库、可展示、可计数的异常文本。这样 `TraceProxyAi` 就只剩 HTTP 传输，`TraceSessionManager` 就只剩状态处理。
+
+### Pitfalls
+
+不要把 `ok=false` 继续当成“协议坏了”。如果 provider 因为 429、鉴权失败、配额耗尽而返回失败，这在业务上是一次真实 AI 调用失败，不是 JSON 结构损坏。把这两类失败混在一起，后面的前端展示和熔断策略都会被污染。
+
+## Verification
+
+- `cmake --build server/build --target test_trace_session_manager_unit`
+- `./server/build/test_trace_session_manager_unit --gtest_filter='TraceProxyProtocolTest.*:TraceSessionManagerUnitTest.DispatchStoresNormalizedProxyFailureMessageAsAiError'`
+- `cmake --build server/build --target LogSentinel`
+
+## Verification Result
+
+- `test_trace_session_manager_unit`：编译通过
+- `TraceProxyProtocolTest.*` 与 `TraceSessionManagerUnitTest.DispatchStoresNormalizedProxyFailureMessageAsAiError`：3/3 通过
+- `LogSentinel`：链接通过
