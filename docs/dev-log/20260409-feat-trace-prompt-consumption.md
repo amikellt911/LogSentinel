@@ -91,3 +91,38 @@ feat(settings): 接通 trace ai 的 provider model key 冷启动配置
 
 - `python3 -m py_compile server/ai/proxy/main.py server/ai/proxy/schemas.py server/ai/proxy/providers/gemini.py server/ai/proxy/providers/mock.py`
 - `cmake --build server/build --target LogSentinel`
+
+# 追加记录：2026-04-09 收口 main.cpp 主路由旧链挂载
+
+## Git Commit Message
+
+refactor(router): 从主链路移除旧 history 和结果查询挂载
+
+## Modification
+
+- `server/src/main.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260409-feat-trace-prompt-consumption.md`
+
+## 这次补了哪些注释
+
+- 在 `server/src/main.cpp` 的主路由注册段前补了中文注释，说明为什么这一步只保留“新 Trace 读写 + 运行态快照 + Settings”三类入口，以及为什么旧 `/logs`、`/results/*`、`/history*` 不再继续挂主路由。
+- 在 `server/src/main.cpp` 的 `LogHandler` 构造位置补了中文注释，说明为什么旧接口虽然还留在 `LogHandler` 文件里，但主路由已经不再注册，只暂时复用同一个 handler 承接 `/logs/spans`。
+
+## Learning Tips
+
+### Newbie Tips
+
+主链路收口时，先撤“入口挂载”通常比直接删整套实现更稳。因为入口才决定外部流量能不能打进来，先把旧入口拔掉，就已经能避免前端、脚本和答辩流程继续误走废弃链路；真正删文件和删依赖可以留到下一刀单独做。
+
+### Function Explanation
+
+`Router::add()` 这一层就是 HTTP 入口到业务 handler 的绑定表。你从这里把某个 path/method 对拿掉，本质上就是让这条链路从“可访问接口”变成“仓库里还留着实现代码，但外面已经打不进来”。
+
+### Pitfalls
+
+不要一边说“旧链废弃了”，一边还把旧路由继续挂在 `main.cpp`。这样最坏的结果不是代码脏，而是演示和联调时你自己都会搞不清到底哪条链是真入口，最后查问题会在两套链路之间来回误判。
+
+## Verification
+
+- `cmake --build server/build --target LogSentinel`

@@ -49,4 +49,7 @@
 - [x] 将 `ai_provider` 真正接入 trace AI 的冷启动决策，改成 `CLI > Settings > 默认值`
 - [x] 将 `ai_model` 与 `ai_api_key` 真正接入 `TraceProxyAi` 请求体，并透传给 Python trace provider
 - [x] 运行最小构建/验证命令，确认本次 trace AI provider/model/api_key 消费链没有新增编译错误
+- [x] 从 `main.cpp` 主路由移除旧 `/logs`、`/results/*`、`/history*` 挂载，只保留新 Trace 链与运行态/Settings 入口
+- [x] 从 `main.cpp` 移除 `HistoryHandler` 的主链实例化，并补注释说明旧链已不再挂主路由
+- [x] 运行最小构建命令，确认本次主路由收口没有引入新的编译错误
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

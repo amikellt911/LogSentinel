@@ -20,7 +20,6 @@
 #include "handlers/LogHandler.h"
 #include "handlers/TraceQueryHandler.h"
 #include "handlers/DashboardHandler.h"
-#include "handlers/HistoryHandler.h"
 #include "handlers/ServiceMonitorHandler.h"
 #include "handlers/ConfigHandler.h"
 #include "core/LogBatcher.h"
@@ -639,6 +638,8 @@ int main(int argc, char* argv[])
     std::shared_ptr<Router> router = std::make_shared<Router>();
     auto trace_query_handler = std::make_shared<TraceQueryHandler>(trace_read_repo, &query_tpool);
     auto service_monitor_handler = std::make_shared<ServiceMonitorHandler>(service_runtime_accumulator);
+    // MVP5 这一步先把主路由显式收口到“新 Trace 读写 + 运行态快照 + Settings”。
+    // 旧 `/logs`、`/results/*`、`/history*` 还保留代码文件，但不再继续挂到主链入口，避免演示和联调时把废弃链路误当成当前真链路。
 
     router->add("POST", "/traces/search", [trace_query_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         trace_query_handler->handleSearchTraces(req, resp, conn);
@@ -665,12 +666,13 @@ int main(int argc, char* argv[])
         config_handler->handleUpdateChannels(req, resp, conn);
     });
     std::shared_ptr<LogBatcher> batcher=std::make_shared<LogBatcher>(&loop,&tpool,persistence,ai_client,notifier, config_repo);
-    std::shared_ptr<HistoryHandler> history_handler=std::make_shared<HistoryHandler>(persistence,&tpool);
     //lambda默认值拷贝是const,但是handlePost是非const成员函数，会导致const值变化
     //所以需要加上mutable或shared_ptr,因为他是指针，在const中，让他不会改变指向，但是可以改变值
     //LogHandler handler(&tpool,persistence,ai_client, notifier);
     // /logs/spans 的结束字段口径已经收口成冷启动配置，
     // 所以这里直接把启动期算好的主字段和别名注入给 LogHandler，不再让请求热路径回头读 repo。
+    // 旧 `/logs` 和 `/results/*` 虽然暂时还留在 LogHandler 里，但主路由已经不再注册它们；
+    // 这里先复用同一个 handler 承接 `/logs/spans`，后面如果继续清老链，再单独把旧接口从 handler 内部拔掉。
     auto handler = std::make_shared<LogHandler>(&tpool,
                                                 persistence,
                                                 batcher,
@@ -679,23 +681,14 @@ int main(int argc, char* argv[])
                                                 effective_trace_end_field,
                                                 effective_trace_end_aliases);
 
-    router->add("POST", "/logs", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
-        handler->handlePost(req, resp, conn);
-    });
     router->add("POST", "/logs/spans", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         handler->handleTracePost(req, resp, conn);
-    });
-    router->add("GET", "/results/*", [handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
-        handler->handleGetResult(req, resp, conn);
     });
     // /dashboard 这一刀正式切到 SystemRuntimeAccumulator 快照。
     // 这样系统监控页先吃到主链路埋点的真值，不再绕回 SQLite 旧 dashboard 统计。
     auto dashboard_handler = std::make_shared<DashboardHandler>(system_runtime_accumulator);
     router->add("GET", "/dashboard", [dashboard_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         dashboard_handler->handleGetStats(req, resp, conn);
-    });
-    router->add("GET","/history*",[history_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn){
-        history_handler->handleGetHistory(req,resp,conn);
     });
     auto onRequest=[router](const HttpRequest& req, HttpResponse* resp,const MiniMuduo::net::TcpConnectionPtr& conn){
         bool isSuccess=router->dispatch(req,resp,conn);

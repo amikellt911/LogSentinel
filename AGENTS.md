@@ -5,6 +5,7 @@
 本项目是一个“C++ 高并发日志接入 + Trace 聚合 + 可选 AI 推理（Python proxy）+ 存储/查询/告警”的系统。
 当前已跑通的 Trace 主链路为：POST /logs/spans -> TraceSessionManager -> BufferedTraceRepository -> SqliteTraceRepository。
 当前 Trace 聚合采用“两阶段延迟关闭”语义：先通过 sealed grace window 吸收短暂乱序 Span，再通过 TIME_WAIT tombstone 拦截已完成 Trace 的晚到请求，避免重复落库。
+当前 MVP5 的 Settings/AI 主线以 Trace 链路为准；`LogBatcher` 对应的老日志批处理分析链路视为废弃路径，不再作为“配置是否真实生效”的判断依据，除非 `CurrentTask.md` 明确要求回头处理它。
 
 ## 禁止项与边界
 
