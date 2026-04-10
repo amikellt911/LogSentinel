@@ -3,8 +3,18 @@ name: CI Integration
 on:
   pull_request:
     branches: [ main, develop ]
+    paths-ignore:
+      - '**.md'      # 忽略所有层级的 Markdown 文件
+      - '**.pdf'     # 忽略所有 PDF 文件
+      - '../docs/**'    # 忽略 docs 文件夹下的所有变动
+      - '**.yml'
   push:
     branches: [ main, develop ]
+    paths-ignore:
+      - '**.md'      # 忽略所有层级的 Markdown 文件
+      - '**.pdf'     # 忽略所有 PDF 文件
+      - '../docs/**'    # 忽略 docs 文件夹下的所有变动
+      - '**.yml'
   workflow_dispatch: {}
 
 jobs:
