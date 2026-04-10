@@ -35,6 +35,12 @@
           <el-icon><Setting /></el-icon>
           <span>{{ $t('layout.settings') }}</span>
         </el-menu-item>
+
+        <!-- 设置原型页先并行挂到侧边栏，方便直接点进去看结构，不强迫用户手输 URL。 -->
+        <el-menu-item index="/settings-prototype">
+          <el-icon><Setting /></el-icon>
+          <span>设置原型</span>
+        </el-menu-item>
       </el-menu>
 
       <div class="p-4 border-t border-gray-700 text-xs text-gray-500 text-center">
@@ -115,6 +121,8 @@ const currentRouteName = computed(() => {
     case 'dashboard': return t('layout.dashboard')
     case 'traces': return t('layout.traceExplorer')
     case 'settings': return t('layout.settings')
+    // 原型页不放进正式侧边栏，但顶部标题仍然要能准确反映当前页面。
+    case 'settings-prototype': return '设置原型'
     default: return t('layout.dashboard')
   }
 })

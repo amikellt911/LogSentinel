@@ -115,3 +115,29 @@ TEST(WebhookNotifierTest, NotifyTraceAlertAddsFeishuTimestampAndSignWhenSecretPr
     EXPECT_EQ(payload.at("sign"), "l1N0gAcBjdwBvGm1xMjOF0XSyaLRpR7tuO5dHfhAYc8=");
     EXPECT_EQ(payload.at("msg_type"), "post");
 }
+
+TEST(WebhookNotifierTest, NotifyTraceAlertHonorsChannelThreshold)
+{
+    TraceAlertEvent event = MakeTraceAlertEvent();
+    event.risk_level = "warning";
+
+    std::vector<WebhookChannel> channels{
+        {"feishu", "https://example.test/warning", true, "", "warning"},
+        {"feishu", "https://example.test/critical", true, "", "critical"}
+    };
+
+    std::vector<WebhookChannel> posted_channels;
+    WebhookNotifier notifier(
+        std::move(channels),
+        [&](const WebhookChannel& channel, const std::string&, const std::string&)
+        {
+            posted_channels.push_back(channel);
+        });
+
+    notifier.notifyTraceAlert(event);
+
+    // 这里锁的是 settings 里的 threshold 不能是假字段：
+    // warning 事件只能命中 threshold<=warning 的渠道，不能继续把 critical-only 渠道也一起发送出去。
+    ASSERT_EQ(posted_channels.size(), 1U);
+    EXPECT_EQ(posted_channels[0].webhook_url, "https://example.test/warning");
+}

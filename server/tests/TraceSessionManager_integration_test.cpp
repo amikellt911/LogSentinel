@@ -329,8 +329,10 @@ protected:
     }
 
     void SweepProtectionSealWindow(TraceSessionManager& manager) {
-        // capacity/token_limit 属于保护性封口，只给 1 tick。
-        SweepTicks(manager, /*tick_count*/1);
+        // 现在 trace_end / capacity / token_limit / duplicate_span 都统一走同一个 sealed grace 配置。
+        // integration test 既然不跑 main 里的定时 sweep，这里就也必须推进 2 tick，
+        // 否则测试还停留在旧的“保护性封口只等 1 tick”心智上，会比真实实现更早断言。
+        SweepTicks(manager, /*tick_count*/2);
     }
 
     SpanEvent MakeSpan(size_t trace_key, size_t span_id, std::optional<size_t> parent_id) {
@@ -458,8 +460,9 @@ TEST_F(TraceSessionManagerIntegrationTest, BufferedRepositoryDestructorDrainsRem
         BufferedTraceRepository::Config buffer_config;
         buffer_config.primary_summary_reserve = 64;
         buffer_config.primary_span_reserve = 64;
+        // analysis 缓冲区现在只服务 trace_analysis 这一张表，
+        // 所以这里保留 analysis_reserve 就够了，不再给废弃调试支线预留容量。
         buffer_config.analysis_reserve = 64;
-        buffer_config.prompt_debug_reserve = 64;
         // 故意把时间阈值拉长，确保测试关注的是“析构 drain”，不是后台定时 flush。
         buffer_config.primary_flush_interval_ms = 60 * 1000;
         buffer_config.analysis_flush_interval_ms = 60 * 1000;

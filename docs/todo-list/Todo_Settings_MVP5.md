@@ -1,0 +1,88 @@
+# Todo_Settings_MVP5
+
+- [x] 基于当前字段矩阵与收口文档，确定 Settings 原型页信息架构
+- [x] 新建 `client/src/views/SettingsPrototype.vue`，按 4 个主 tab 落高保真原型
+- [x] 为原型页补中文注释，说明页面分区、原型数据和高级参数区语义
+- [x] 在路由中新增独立 `/settings-prototype` 入口，不替换旧 `Settings.vue`
+- [x] 追加 2026-04-08 dev-log，记录本次 Settings 原型页改造与注释点
+- [x] 运行前端校验命令，确认没有新增本次文件相关错误
+- [x] 将 `settings-prototype` 挂到左侧边栏，保证可直接点击进入
+- [x] 将 `SettingsPrototype.vue` 从信息架构展示稿重做为可操作高保真原型
+- [x] 为原型页增加本地保存/放弃交互与底部 save bar
+- [x] 让 AI / 告警 / 内核区域改成更接近真实产品的工作台布局
+- [x] 拆开“发送测试消息”和“保存原型快照”的交互语义，并补充保存栏状态提示
+- [x] 修复 `SettingsPrototype.vue` 的 runtime-only 渲染问题，确保辅助组件能真实渲染表单内容
+- [x] 按旧 `Settings.vue` 的模板骨架重排 `SettingsPrototype.vue`，不再自创新版式
+- [x] 将 AI tab 的 prompt 列表交互继续对齐旧 `Settings.vue`，点击列表项即选中并切为 active
+- [x] 删除 AI tab 右侧无效的“业务作用域”字段，并恢复可滚动的大文本编辑区
+- [x] 将 AI tab 的 Prompt 编辑区从固定高度盒子里拆出来，改成页面级底栏 + 独立主编辑区，避免正文输入框再被上下区域夹死
+- [x] 删除 `SettingsPrototype.vue` 页面里的说明性文案，只保留标题、字段标签和操作按钮，避免辅助文字继续干扰编辑区
+- [x] 收口 Settings 持久化契约，明确 `app_config` / `prompts` / `alert_channels` 的最小字段集合
+- [x] 修改 `server/persistence/ConfigTypes.h`，移除过时字段、补齐新配置字段，并补中文注释说明这轮存储边界
+- [x] 修改 `server/persistence/SqliteConfigRepository.cpp`，同步更新初始化 SQL、配置 seed、AppConfig 映射和渠道读写字段
+- [x] 修改 `server/handlers/ConfigHandler.cpp`，为 `/settings/config` 补 key 白名单和标量值校验
+- [x] 修改 `server/handlers/ConfigHandler.cpp`，为 `/settings/channels` 补飞书最小字段校验，挡掉旧 `msg_template` 口径
+- [x] 回收 `server/handlers/ConfigHandler.cpp` 里过重的字段白名单，改回只保留最小格式校验
+- [x] 为 `trace_end` 结束字段别名补最小持久化能力，避免设置原型页该字段成为假保存
+- [x] 让 `SettingsPrototype.vue` 直接对接 `/settings/all`、`/settings/config`、`/settings/prompts`、`/settings/channels`
+- [x] 在前端入口预取 `app_language`，并把 UI 默认语言切到中文，避免必须先进入设置页才切换语言
+- [x] 让 `LogHandler` 从 `ConfigRepo` 快照读取 `trace_end_field / trace_end_aliases`，把结束字段别名真正接进解析入口
+- [x] 将 `trace_end_aliases` 从 `app_config` JSON 字符串改成单独表 + 快照数组，去掉 `LogHandler` 热路径反序列化
+- [x] 将 `trace_end_aliases` 的重复/空值处理收回前端控件状态，后端只保留最小主字段冲突过滤
+- [x] 在 `main.cpp` 启动期读取冷启动快照，先接通 `http_port`、`kernel_worker_threads`、`token_limit`、`span_capacity`、`collecting_idle_timeout_ms`、`sweep_tick_ms` 的真实消费
+- [x] 将 `sealed_grace_window_ms` 与 `retry_base_delay_ms` 真正接进 `TraceSessionManager` 的 tick 换算逻辑，去掉内部硬编码时序
+- [x] 将 `trace_end_field` 与 `trace_end_aliases` 从 `LogHandler` 的热读取收口成冷启动注入，去掉每请求读配置快照
+- [x] 将 `wm_active_sessions/*`、`wm_buffered_spans/*`、`wm_pending_tasks/*` 三组水位阈值接成 `TraceSessionManager` 的冷启动配置，去掉固定 55/75/90
+- [x] 将 Settings 保存的 `channels` 真正接到 `main.cpp/WebhookNotifier`，让 `enabled + threshold + secret` 都参与真实告警外发
+- [x] 将 `SettingsPrototype.vue` 的业务 Prompt 编辑区改成结构化 5 段表单，不再继续使用单个自由文本框
+- [x] 为结构化 Prompt 编辑区补最终 `business_guidance` 只读预览，并保持当前保存接口仍能写回 `content` 字符串
+- [x] 追加 2026-04-08 dev-log，记录这次 Prompt 结构化编辑原型调整和中文注释位置
+- [x] 调整 `SettingsPrototype.vue` 的结构化 Prompt 标题语言，使其跟随界面语言切换，但保留英文 `business_guidance` 预览
+- [x] 将 Prompt 列表里的 `selected` 与 `active` 视觉状态拆开，并增加明确的 active badge
+- [x] 追加 2026-04-08 dev-log，记录这次 Prompt 标题语言与 active 状态视觉修正
+- [x] 修正 `SettingsPrototype.vue` 的 Prompt 交互语义：左侧点击只选中编辑，不再自动切 active
+- [x] 为 Prompt 编辑区补独立“设为生效配置”按钮，并明确标注“保存后重启生效”
+- [x] 追加 2026-04-08 dev-log，记录这次 Prompt 选中态/生效态语义修正
+- [x] 为 Trace AI 增加冷启动 prompt 渲染链：`ai_language + active prompt` 组装成最终 trace prompt
+- [x] 修改 `TraceProxyAi` 与 Python proxy 的 trace 分析协议，让 C++ 可以显式传入最终 prompt
+- [x] 运行最小构建/验证命令，确认本次 Prompt 渲染链没有引入新的编译错误
+- [x] 将 `ai_provider` 真正接入 trace AI 的冷启动决策，改成 `CLI > Settings > 默认值`
+- [x] 将 `ai_model` 与 `ai_api_key` 真正接入 `TraceProxyAi` 请求体，并透传给 Python trace provider
+- [x] 运行最小构建/验证命令，确认本次 trace AI provider/model/api_key 消费链没有新增编译错误
+- [x] 从 `main.cpp` 主路由移除旧 `/logs`、`/results/*`、`/history*` 挂载，只保留新 Trace 链与运行态/Settings 入口
+- [x] 从 `main.cpp` 移除 `HistoryHandler` 的主链实例化，并补注释说明旧链已不再挂主路由
+- [x] 运行最小构建命令，确认本次主路由收口没有引入新的编译错误
+- [x] 为 `LogHandler` 补旧依赖缺失场景测试，锁定旧接口在主链脱钩后必须返回 503 而不是崩溃
+- [x] 将 `LogHandler` 的旧 `repo/batcher` 依赖改成“可空但安全”，让主程序可以不再构造老链对象
+- [x] 清理 `main.cpp` 中残留的 `SqliteLogRepository/AiProvider/LogBatcher` 旧链构造，只给 `LogHandler` 传空旧依赖
+- [x] 运行最小测试与构建命令，确认旧链脱钩后 `LogHandler` 和 `LogSentinel` 仍可通过
+- [x] 将 `LogHandler` 彻底收口为 `/logs/spans` 专用处理器，移除旧 `/logs`、`/results/*` 接口和旧依赖签名
+- [x] 从 `CMakeLists.txt` 移除旧链核心文件编译项：`AnalysisTask`、`LogBatcher`、`SqliteLogRepository`、`AiProvider/MockAI/GeminiApiAi`、`HistoryHandler`
+- [x] 删除 `server/src` 下仍然演示旧链的 demo 源文件，并清理活跃目录下仍指向 `/logs` 的旧 wrk 脚本
+- [x] 更新注释与 dev-log，说明当前主线只保留 Trace 新链，旧链仅剩 legacy 归档资料
+- [x] 运行最小测试与构建命令，确认 `LogSentinel` 与 `test_log_handler` 通过，并记录 `test_trace_session_manager_unit` 仍有 9 个既有失败
+- [x] 对照 `TraceSessionManager` 当前 sealed/backpressure 语义，逐条定位 `test_trace_session_manager_unit` 剩余 9 个失败的根因
+- [x] 只修正旧测试口径与参数，不改业务实现语义，并为关键断言补中文注释
+- [x] 重跑 `test_trace_session_manager_unit`，确认这组旧测试重新收口
+- [x] 从 Trace 主链后端移除 `prompt_debug` 支线：类型、仓储接口、缓冲写入、SQLite schema 与对应测试一起收口
+- [x] 运行最小构建与仓储/会话相关测试，确认移除 `prompt_debug` 后主链仍可通过
+  - 已完成 `test_sqlite_trace_repo`、`test_trace_session_manager_unit`、`test_log_handler`、`test_trace_session_manager_integration` 与 `LogSentinel` 验证。
+- [x] 为 Trace retention 补仓储删除测试：单条 trace 删除、按过期时间批量删除、删除顺序不破坏三张表一致性
+- [x] 新建 `TraceRetentionService`，补启动清理/周期调度/禁用语义测试
+- [x] 在 `SqliteTraceRepository` 落删除接口，在 `main.cpp` 接启动清理与周期调度
+- [x] 运行 retention 相关最小构建与测试，并追加 2026-04-09 dev-log
+- [x] 为 AI 自动降级补 `ai_fallback_api_key` 的前后端保存/回填能力，避免降级链路只能误复用主 Key
+- [x] 为 Trace AI 增加 `ai_analysis_enabled + ai_status + ai_error` 骨架，并让查询结果能区分人工关闭/熔断/失败态
+- [x] 收口 Python AI proxy 的 Trace 失败协议，统一返回 `ok/provider/error_code/error_status/error_message`
+- [x] 让 Gemini provider 把 SDK 原始异常映射成统一失败载荷，不再伪造成功态 `analysis`
+- [x] 运行 proxy 最小测试，确认成功/失败两条返回协议都稳定
+- [x] 在 C++ 侧解析 proxy 的统一 Trace 失败协议，`ok=false` 时保留 `code/status/message`
+- [x] 为 TraceProxyAi 协议解析补单测，锁定成功/失败两条解析路径
+- [x] 运行 `TraceProxyAi + TraceSessionManager` 相关最小测试，确认失败信息能继续落到 `ai_error`
+- [x] 将 `ai_circuit_breaker/ai_failure_threshold/ai_cooldown_seconds` 接进 `main.cpp -> TraceSessionManager` 冷启动消费链
+- [x] 为 TraceSessionManager 熔断补单测，锁定“达到阈值后跳过 AI”和“冷却后重新放行”两条语义
+- [x] 运行 `test_trace_session_manager_unit` 与 `LogSentinel` 最小验证，确认 `skipped_circuit` 链路可用
+- [x] 将 `ai_auto_degrade/ai_fallback_provider/ai_fallback_model/ai_fallback_api_key` 接进 `main.cpp -> TraceSessionManager` 冷启动消费链
+- [x] 为 TraceSessionManager 自动降级补单测，锁定“主路失败后 fallback 成功”和“主备都失败”两条语义
+- [x] 运行 `test_trace_session_manager_unit` 与 `LogSentinel` 最小验证，确认 `failed_both` 与 fallback 成功链路可用
+- [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

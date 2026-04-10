@@ -10,6 +10,7 @@ namespace
 constexpr size_t kDefaultTraceSearchPage = 1;
 constexpr size_t kDefaultTraceSearchPageSize = 20;
 constexpr size_t kMaxTraceSearchPageSize = 100;
+constexpr size_t kMaxAiErrorLength = 1024;
 
 std::string BuildInClausePlaceholders(size_t count)
 {
@@ -24,24 +25,59 @@ std::string BuildInClausePlaceholders(size_t count)
     return placeholders;
 }
 
-void UpdateSummaryRiskLevel(sqlite3* db, const std::string& trace_id, const std::string& risk_level)
+std::string TruncateAiError(const std::string& ai_error)
 {
-    const char* sql_update_summary_risk = R"(
+    if (ai_error.size() <= kMaxAiErrorLength) {
+        return ai_error;
+    }
+    return ai_error.substr(0, kMaxAiErrorLength);
+}
+
+void UpdateSummaryAiState(sqlite3* db,
+                          const std::string& trace_id,
+                          const std::string& ai_status,
+                          const std::string& ai_error)
+{
+    const char* sql_update_summary_ai_state = R"(
         UPDATE trace_summary
-        SET risk_level = ?
+        SET ai_status = ?, ai_error = ?
         WHERE trace_id = ?;
     )";
     persistence::StmtPtr update_stmt;
     sqlite3_stmt* raw_stmt = nullptr;
-    const int rc = sqlite3_prepare_v2(db, sql_update_summary_risk, -1, &raw_stmt, nullptr);
-    persistence::checkSqliteError(db, rc, "Prepare trace_summary risk update");
+    const int rc = sqlite3_prepare_v2(db, sql_update_summary_ai_state, -1, &raw_stmt, nullptr);
+    persistence::checkSqliteError(db, rc, "Prepare trace_summary ai_state update");
+    update_stmt.reset(raw_stmt);
+
+    const std::string truncated_ai_error = TruncateAiError(ai_error);
+    sqlite3_bind_text(update_stmt.get(), 1, ai_status.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(update_stmt.get(), 2, truncated_ai_error.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(update_stmt.get(), 3, trace_id.c_str(), -1, SQLITE_STATIC);
+
+    const int step_rc = sqlite3_step(update_stmt.get());
+    persistence::checkSqliteError(db, step_rc, "Update trace_summary ai_state");
+}
+
+void UpdateSummaryAnalysisOutcome(sqlite3* db,
+                                  const std::string& trace_id,
+                                  const std::string& risk_level)
+{
+    const char* sql_update_summary_outcome = R"(
+        UPDATE trace_summary
+        SET risk_level = ?, ai_status = 'completed', ai_error = ''
+        WHERE trace_id = ?;
+    )";
+    persistence::StmtPtr update_stmt;
+    sqlite3_stmt* raw_stmt = nullptr;
+    const int rc = sqlite3_prepare_v2(db, sql_update_summary_outcome, -1, &raw_stmt, nullptr);
+    persistence::checkSqliteError(db, rc, "Prepare trace_summary analysis outcome update");
     update_stmt.reset(raw_stmt);
 
     sqlite3_bind_text(update_stmt.get(), 1, risk_level.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_text(update_stmt.get(), 2, trace_id.c_str(), -1, SQLITE_STATIC);
 
     const int step_rc = sqlite3_step(update_stmt.get());
-    persistence::checkSqliteError(db, step_rc, "Update trace_summary risk_level");
+    persistence::checkSqliteError(db, step_rc, "Update trace_summary analysis outcome");
 }
 } // namespace
 
@@ -97,7 +133,9 @@ CREATE TABLE IF NOT EXISTS trace_summary (
   duration_ms INTEGER NOT NULL,
   span_count INTEGER NOT NULL,
   token_count INTEGER NOT NULL,
-  risk_level TEXT NOT NULL
+  risk_level TEXT NOT NULL,
+  ai_status TEXT NOT NULL DEFAULT 'pending',
+  ai_error TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS trace_span (
@@ -121,17 +159,6 @@ CREATE TABLE IF NOT EXISTS trace_analysis (
   root_cause TEXT NOT NULL,
   solution TEXT NOT NULL,
   confidence REAL NOT NULL,
-  FOREIGN KEY (trace_id) REFERENCES trace_summary(trace_id)
-);
-
-CREATE TABLE IF NOT EXISTS prompt_debug (
-  trace_id TEXT PRIMARY KEY,
-  input_json TEXT NOT NULL,
-  output_json TEXT NOT NULL,
-  model TEXT NOT NULL,
-  duration_ms INTEGER NOT NULL,
-  total_tokens INTEGER NOT NULL,
-  timestamp TEXT NOT NULL,
   FOREIGN KEY (trace_id) REFERENCES trace_summary(trace_id)
 );
 )";
@@ -198,7 +225,8 @@ TraceSearchResult SqliteTraceRepository::SearchTraces(const TraceSearchRequest& 
                    duration_ms,
                    span_count,
                    token_count,
-                   risk_level
+                   risk_level,
+                   ai_status
             FROM trace_summary
             WHERE trace_id = ?;
         )";
@@ -224,6 +252,7 @@ TraceSearchResult SqliteTraceRepository::SearchTraces(const TraceSearchRequest& 
             item.span_count = static_cast<size_t>(sqlite3_column_int64(exact_stmt.get(), 5));
             item.token_count = static_cast<size_t>(sqlite3_column_int64(exact_stmt.get(), 6));
             item.risk_level = reinterpret_cast<const char*>(sqlite3_column_text(exact_stmt.get(), 7));
+            item.ai_status = reinterpret_cast<const char*>(sqlite3_column_text(exact_stmt.get(), 8));
             result.total = 1;
             result.items.push_back(std::move(item));
         } else if (step_rc != SQLITE_DONE) {
@@ -308,7 +337,8 @@ TraceSearchResult SqliteTraceRepository::SearchTraces(const TraceSearchRequest& 
                duration_ms,
                span_count,
                token_count,
-               risk_level
+               risk_level,
+               ai_status
         FROM trace_summary
     )" + where_sql + R"(
         ORDER BY start_time_ms DESC, trace_id DESC
@@ -344,6 +374,7 @@ TraceSearchResult SqliteTraceRepository::SearchTraces(const TraceSearchRequest& 
         item.span_count = static_cast<size_t>(sqlite3_column_int64(select_stmt.get(), 5));
         item.token_count = static_cast<size_t>(sqlite3_column_int64(select_stmt.get(), 6));
         item.risk_level = reinterpret_cast<const char*>(sqlite3_column_text(select_stmt.get(), 7));
+        item.ai_status = reinterpret_cast<const char*>(sqlite3_column_text(select_stmt.get(), 8));
         result.items.push_back(std::move(item));
     }
 
@@ -386,6 +417,8 @@ std::optional<TraceDetailRecord> SqliteTraceRepository::GetTraceDetail(const std
                    s.span_count,
                    s.token_count,
                    COALESCE(a.risk_level, s.risk_level) AS display_risk_level,
+                   s.ai_status,
+                   s.ai_error,
                    a.risk_level,
                    a.summary,
                    a.root_cause,
@@ -426,17 +459,19 @@ std::optional<TraceDetailRecord> SqliteTraceRepository::GetTraceDetail(const std
         detail.span_count = static_cast<size_t>(sqlite3_column_int64(detail_stmt.get(), 5));
         detail.token_count = static_cast<size_t>(sqlite3_column_int64(detail_stmt.get(), 6));
         detail.risk_level = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 7));
+        detail.ai_status = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 8));
+        detail.ai_error = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 9));
         // tags 当前后端主链路还没有真实产出，这里先稳定返回空数组，
         // 等 AI proxy / analysis 存储链真的接上 tags 后再补真实读取。
         detail.tags.clear();
 
-        if (sqlite3_column_type(detail_stmt.get(), 8) != SQLITE_NULL) {
+        if (sqlite3_column_type(detail_stmt.get(), 10) != SQLITE_NULL) {
             TraceAnalysisDetail analysis;
-            analysis.risk_level = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 8));
-            analysis.summary = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 9));
-            analysis.root_cause = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 10));
-            analysis.solution = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 11));
-            analysis.confidence = sqlite3_column_double(detail_stmt.get(), 12);
+            analysis.risk_level = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 10));
+            analysis.summary = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 11));
+            analysis.root_cause = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 12));
+            analysis.solution = reinterpret_cast<const char*>(sqlite3_column_text(detail_stmt.get(), 13));
+            analysis.confidence = sqlite3_column_double(detail_stmt.get(), 14);
             detail.analysis = std::move(analysis);
         }
 
@@ -492,6 +527,138 @@ std::optional<TraceDetailRecord> SqliteTraceRepository::GetTraceDetail(const std
     }
 }
 
+bool SqliteTraceRepository::DeleteTraceById(const std::string& trace_id)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_ || trace_id.empty()) {
+        return false;
+    }
+    return DeleteTracesByIdsAtomic({trace_id});
+}
+
+size_t SqliteTraceRepository::DeleteExpiredTracesBatch(int64_t cutoff_ms, size_t limit)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_ || cutoff_ms <= 0 || limit == 0) {
+        return 0;
+    }
+
+    std::vector<std::string> expired_trace_ids;
+    const char* sql_select_expired = R"(
+        SELECT trace_id
+        FROM trace_summary
+        WHERE COALESCE(end_time_ms, start_time_ms) < ?
+        ORDER BY COALESCE(end_time_ms, start_time_ms) ASC, trace_id ASC
+        LIMIT ?;
+    )";
+    persistence::StmtPtr select_stmt;
+    {
+        sqlite3_stmt* raw_stmt = nullptr;
+        const int rc = sqlite3_prepare_v2(db_, sql_select_expired, -1, &raw_stmt, nullptr);
+        persistence::checkSqliteError(db_, rc, "Prepare expired trace_id selection");
+        select_stmt.reset(raw_stmt);
+    }
+    sqlite3_bind_int64(select_stmt.get(), 1, cutoff_ms);
+    sqlite3_bind_int64(select_stmt.get(), 2, static_cast<sqlite3_int64>(limit));
+
+    while (true) {
+        const int step_rc = sqlite3_step(select_stmt.get());
+        if (step_rc == SQLITE_ROW) {
+            const unsigned char* text = sqlite3_column_text(select_stmt.get(), 0);
+            if (text) {
+                expired_trace_ids.emplace_back(reinterpret_cast<const char*>(text));
+            }
+            continue;
+        }
+        if (step_rc == SQLITE_DONE) {
+            break;
+        }
+        persistence::checkSqliteError(db_, step_rc, "Step expired trace_id selection");
+    }
+
+    if (expired_trace_ids.empty()) {
+        return 0;
+    }
+
+    // retention 只在 summary 表统一判断“哪条 trace 已经过期”，
+    // 然后再按 trace_id 整条删，避免把一条调用树删成 summary 还在、span 只剩一半的脏状态。
+    if (!DeleteTracesByIdsAtomic(expired_trace_ids)) {
+        return 0;
+    }
+    return expired_trace_ids.size();
+}
+
+bool SqliteTraceRepository::DeleteTracesByIdsAtomic(const std::vector<std::string>& trace_ids)
+{
+    if (!db_ || trace_ids.empty()) {
+        return false;
+    }
+
+    char* errmsg = nullptr;
+    auto rollback = [this]() {
+        char* rollback_err = nullptr;
+        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &rollback_err);
+        if (rollback_err) {
+            sqlite3_free(rollback_err);
+        }
+    };
+
+    try {
+        int rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, &errmsg);
+        if (errmsg) {
+            sqlite3_free(errmsg);
+            errmsg = nullptr;
+        }
+        persistence::checkSqliteError(db_, rc, "Failed to begin trace delete transaction");
+
+        const std::string placeholders = BuildInClausePlaceholders(trace_ids.size());
+        const std::string delete_analysis_sql =
+            "DELETE FROM trace_analysis WHERE trace_id IN " + placeholders + ";";
+        const std::string delete_span_sql =
+            "DELETE FROM trace_span WHERE trace_id IN " + placeholders + ";";
+        const std::string delete_summary_sql =
+            "DELETE FROM trace_summary WHERE trace_id IN " + placeholders + ";";
+
+        auto delete_by_ids = [this, &trace_ids](const std::string& sql, const char* error_context) -> size_t {
+            persistence::StmtPtr stmt;
+            sqlite3_stmt* raw_stmt = nullptr;
+            int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &raw_stmt, nullptr);
+            persistence::checkSqliteError(db_, rc, error_context);
+            stmt.reset(raw_stmt);
+
+            for (size_t index = 0; index < trace_ids.size(); ++index) {
+                sqlite3_bind_text(stmt.get(),
+                                  static_cast<int>(index + 1),
+                                  trace_ids[index].c_str(),
+                                  -1,
+                                  SQLITE_TRANSIENT);
+            }
+
+            rc = sqlite3_step(stmt.get());
+            persistence::checkSqliteError(db_, rc, error_context);
+            return static_cast<size_t>(sqlite3_changes(db_));
+        };
+
+        // 当前外键没有配置 ON DELETE CASCADE，所以删除顺序必须是“从表 -> 父表”。
+        // 也就是先清 trace_analysis、trace_span，最后再删 trace_summary。
+        delete_by_ids(delete_analysis_sql, "Delete trace_analysis by trace_id");
+        delete_by_ids(delete_span_sql, "Delete trace_span by trace_id");
+        const size_t deleted_summary_rows =
+            delete_by_ids(delete_summary_sql, "Delete trace_summary by trace_id");
+
+        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
+        if (errmsg) {
+            sqlite3_free(errmsg);
+            errmsg = nullptr;
+        }
+        persistence::checkSqliteError(db_, rc, "Commit trace delete transaction");
+        return deleted_summary_rows == trace_ids.size();
+    } catch (const std::exception&) {
+        rollback();
+        return false;
+    }
+}
+
 bool SqliteTraceRepository::SaveSingleTraceSummary(const TraceSummary& summary)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -502,8 +669,8 @@ bool SqliteTraceRepository::SaveSingleTraceSummary(const TraceSummary& summary)
     try {
         const char* sql_insert_summary = R"(
             INSERT INTO trace_summary
-            (trace_id, service_name, start_time_ms, end_time_ms, duration_ms, span_count, token_count, risk_level)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            (trace_id, service_name, start_time_ms, end_time_ms, duration_ms, span_count, token_count, risk_level, ai_status, ai_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         )";
         persistence::StmtPtr summary_stmt;
         {
@@ -525,6 +692,8 @@ bool SqliteTraceRepository::SaveSingleTraceSummary(const TraceSummary& summary)
         sqlite3_bind_int64(summary_stmt.get(), 6, static_cast<sqlite3_int64>(summary.span_count));
         sqlite3_bind_int64(summary_stmt.get(), 7, static_cast<sqlite3_int64>(summary.token_count));
         sqlite3_bind_text(summary_stmt.get(), 8, summary.risk_level.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(summary_stmt.get(), 9, summary.ai_status.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(summary_stmt.get(), 10, summary.ai_error.c_str(), -1, SQLITE_STATIC);
         const int rc = sqlite3_step(summary_stmt.get());
         persistence::checkSqliteError(db_, rc, "Insert trace_summary");
     } catch (const std::exception&) {
@@ -658,9 +827,9 @@ bool SqliteTraceRepository::SaveSingleTraceAnalysis(const TraceAnalysisRecord& a
         rc = sqlite3_step(analysis_stmt.get());
         persistence::checkSqliteError(db_, rc, "Insert trace_analysis");
 
-        // 列表页热路径只查 trace_summary，所以 AI 分析落库后顺手把最终 risk_level 回写进去，
-        // 这样列表查询就不用每次都 LEFT JOIN trace_analysis。
-        UpdateSummaryRiskLevel(db_, analysis.trace_id, analysis.risk_level);
+        // AI 成功时要把 risk_level 和 ai_status 一起回写到 summary。
+        // 否则列表页会看到“风险等级变了，但状态还停在 pending”的脏组合。
+        UpdateSummaryAnalysisOutcome(db_, analysis.trace_id, analysis.risk_level);
 
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
         if (errmsg) {
@@ -675,7 +844,9 @@ bool SqliteTraceRepository::SaveSingleTraceAnalysis(const TraceAnalysisRecord& a
     return true;
 }
 
-bool SqliteTraceRepository::SaveSinglePromptDebug(const PromptDebugRecord& record)
+bool SqliteTraceRepository::UpdateTraceAiState(const std::string& trace_id,
+                                               const std::string& ai_status,
+                                               const std::string& ai_error)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!db_) {
@@ -683,27 +854,7 @@ bool SqliteTraceRepository::SaveSinglePromptDebug(const PromptDebugRecord& recor
     }
 
     try {
-        const char* sql_insert_prompt = R"(
-            INSERT INTO prompt_debug
-            (trace_id, input_json, output_json, model, duration_ms, total_tokens, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?);
-        )";
-        persistence::StmtPtr prompt_stmt;
-        {
-            sqlite3_stmt* raw_stmt = nullptr;
-            const int rc = sqlite3_prepare_v2(db_, sql_insert_prompt, -1, &raw_stmt, nullptr);
-            persistence::checkSqliteError(db_, rc, "Prepare prompt_debug insert");
-            prompt_stmt.reset(raw_stmt);
-        }
-        sqlite3_bind_text(prompt_stmt.get(), 1, record.trace_id.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(prompt_stmt.get(), 2, record.input_json.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(prompt_stmt.get(), 3, record.output_json.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(prompt_stmt.get(), 4, record.model.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_int64(prompt_stmt.get(), 5, record.duration_ms);
-        sqlite3_bind_int64(prompt_stmt.get(), 6, static_cast<sqlite3_int64>(record.total_tokens));
-        sqlite3_bind_text(prompt_stmt.get(), 7, record.timestamp.c_str(), -1, SQLITE_STATIC);
-        const int rc = sqlite3_step(prompt_stmt.get());
-        persistence::checkSqliteError(db_, rc, "Insert prompt_debug");
+        UpdateSummaryAiState(db_, trace_id, ai_status, ai_error);
     } catch (const std::exception&) {
         return false;
     }
@@ -751,8 +902,8 @@ bool SqliteTraceRepository::SavePrimaryBatch(const std::vector<TraceSummary>& su
 
         const char* sql_insert_summary = R"(
             INSERT INTO trace_summary
-            (trace_id, service_name, start_time_ms, end_time_ms, duration_ms, span_count, token_count, risk_level)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            (trace_id, service_name, start_time_ms, end_time_ms, duration_ms, span_count, token_count, risk_level, ai_status, ai_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         )";
         persistence::StmtPtr summary_stmt;
         {
@@ -778,6 +929,8 @@ bool SqliteTraceRepository::SavePrimaryBatch(const std::vector<TraceSummary>& su
             sqlite3_bind_int64(summary_stmt.get(), 6, static_cast<sqlite3_int64>(summary.span_count));
             sqlite3_bind_int64(summary_stmt.get(), 7, static_cast<sqlite3_int64>(summary.token_count));
             sqlite3_bind_text(summary_stmt.get(), 8, summary.risk_level.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(summary_stmt.get(), 9, summary.ai_status.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(summary_stmt.get(), 10, summary.ai_error.c_str(), -1, SQLITE_STATIC);
 
             rc = sqlite3_step(summary_stmt.get());
             persistence::checkSqliteError(db_, rc, "Insert trace_summary batch item");
@@ -839,14 +992,13 @@ bool SqliteTraceRepository::SavePrimaryBatch(const std::vector<TraceSummary>& su
     return true;
 }
 
-bool SqliteTraceRepository::SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses,
-                                              const std::vector<PromptDebugRecord>& prompt_debugs)
+bool SqliteTraceRepository::SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!db_) {
         return false;
     }
-    if (analyses.empty() && prompt_debugs.empty()) {
+    if (analyses.empty()) {
         return true;
     }
 
@@ -880,17 +1032,19 @@ bool SqliteTraceRepository::SaveAnalysisBatch(const std::vector<TraceAnalysisRec
             analysis_stmt.reset(raw_stmt);
         }
 
-        const char* sql_update_summary_risk = R"(
+        // analysis 虽然落在附属表，但列表页高频读取的还是 trace_summary。
+        // 所以这里必须把最终 risk_level + ai_status 一起同步回写，避免读侧看到半成熟状态。
+        const char* sql_update_summary_outcome = R"(
             UPDATE trace_summary
-            SET risk_level = ?
+            SET risk_level = ?, ai_status = 'completed', ai_error = ''
             WHERE trace_id = ?;
         )";
-        persistence::StmtPtr update_summary_risk_stmt;
+        persistence::StmtPtr update_summary_outcome_stmt;
         {
             sqlite3_stmt* raw_stmt = nullptr;
-            rc = sqlite3_prepare_v2(db_, sql_update_summary_risk, -1, &raw_stmt, nullptr);
-            persistence::checkSqliteError(db_, rc, "Prepare trace_summary risk batch update");
-            update_summary_risk_stmt.reset(raw_stmt);
+            rc = sqlite3_prepare_v2(db_, sql_update_summary_outcome, -1, &raw_stmt, nullptr);
+            persistence::checkSqliteError(db_, rc, "Prepare trace_summary outcome batch update");
+            update_summary_outcome_stmt.reset(raw_stmt);
         }
 
         for (const auto& analysis : analyses) {
@@ -908,41 +1062,12 @@ bool SqliteTraceRepository::SaveAnalysisBatch(const std::vector<TraceAnalysisRec
             persistence::checkSqliteError(db_, rc, "Insert trace_analysis batch item");
 
             // 这里复用同一条 update stmt，避免 batch 内每条 analysis 都重新 prepare 一次 SQL。
-            sqlite3_reset(update_summary_risk_stmt.get());
-            sqlite3_clear_bindings(update_summary_risk_stmt.get());
-            sqlite3_bind_text(update_summary_risk_stmt.get(), 1, analysis.risk_level.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(update_summary_risk_stmt.get(), 2, analysis.trace_id.c_str(), -1, SQLITE_STATIC);
-            rc = sqlite3_step(update_summary_risk_stmt.get());
-            persistence::checkSqliteError(db_, rc, "Update trace_summary risk batch item");
-        }
-
-        const char* sql_insert_prompt = R"(
-            INSERT INTO prompt_debug
-            (trace_id, input_json, output_json, model, duration_ms, total_tokens, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?);
-        )";
-        persistence::StmtPtr prompt_stmt;
-        {
-            sqlite3_stmt* raw_stmt = nullptr;
-            rc = sqlite3_prepare_v2(db_, sql_insert_prompt, -1, &raw_stmt, nullptr);
-            persistence::checkSqliteError(db_, rc, "Prepare prompt_debug batch insert");
-            prompt_stmt.reset(raw_stmt);
-        }
-
-        for (const auto& prompt_debug : prompt_debugs) {
-            sqlite3_reset(prompt_stmt.get());
-            sqlite3_clear_bindings(prompt_stmt.get());
-
-            sqlite3_bind_text(prompt_stmt.get(), 1, prompt_debug.trace_id.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 2, prompt_debug.input_json.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 3, prompt_debug.output_json.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 4, prompt_debug.model.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_int64(prompt_stmt.get(), 5, prompt_debug.duration_ms);
-            sqlite3_bind_int64(prompt_stmt.get(), 6, static_cast<sqlite3_int64>(prompt_debug.total_tokens));
-            sqlite3_bind_text(prompt_stmt.get(), 7, prompt_debug.timestamp.c_str(), -1, SQLITE_STATIC);
-
-            rc = sqlite3_step(prompt_stmt.get());
-            persistence::checkSqliteError(db_, rc, "Insert prompt_debug batch item");
+            sqlite3_reset(update_summary_outcome_stmt.get());
+            sqlite3_clear_bindings(update_summary_outcome_stmt.get());
+            sqlite3_bind_text(update_summary_outcome_stmt.get(), 1, analysis.risk_level.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(update_summary_outcome_stmt.get(), 2, analysis.trace_id.c_str(), -1, SQLITE_STATIC);
+            rc = sqlite3_step(update_summary_outcome_stmt.get());
+            persistence::checkSqliteError(db_, rc, "Update trace_summary outcome batch item");
         }
 
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
@@ -960,9 +1085,8 @@ bool SqliteTraceRepository::SaveAnalysisBatch(const std::vector<TraceAnalysisRec
 }
 
 bool SqliteTraceRepository::SaveSingleTraceAtomic(const TraceSummary& summary,
-                                           const std::vector<TraceSpanRecord>& spans,
-                                           const TraceAnalysisRecord* analysis,
-                                           const PromptDebugRecord* prompt_debug)
+                                                  const std::vector<TraceSpanRecord>& spans,
+                                                  const TraceAnalysisRecord* analysis)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!db_) {
@@ -988,8 +1112,8 @@ bool SqliteTraceRepository::SaveSingleTraceAtomic(const TraceSummary& summary,
     try {
         const char* sql_insert_summary = R"(
             INSERT INTO trace_summary
-            (trace_id, service_name, start_time_ms, end_time_ms, duration_ms, span_count, token_count, risk_level)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            (trace_id, service_name, start_time_ms, end_time_ms, duration_ms, span_count, token_count, risk_level, ai_status, ai_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         )";
         persistence::StmtPtr summary_stmt;
         {
@@ -1011,6 +1135,8 @@ bool SqliteTraceRepository::SaveSingleTraceAtomic(const TraceSummary& summary,
         sqlite3_bind_int64(summary_stmt.get(), 6, static_cast<sqlite3_int64>(summary.span_count));
         sqlite3_bind_int64(summary_stmt.get(), 7, static_cast<sqlite3_int64>(summary.token_count));
         sqlite3_bind_text(summary_stmt.get(), 8, summary.risk_level.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(summary_stmt.get(), 9, summary.ai_status.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(summary_stmt.get(), 10, summary.ai_error.c_str(), -1, SQLITE_STATIC);
         rc = sqlite3_step(summary_stmt.get());
         persistence::checkSqliteError(db_, rc, "Insert trace_summary");
 
@@ -1046,6 +1172,8 @@ bool SqliteTraceRepository::SaveSingleTraceAtomic(const TraceSummary& summary,
             persistence::checkSqliteError(db_, rc, "Insert trace_span");
         }
 
+        // 原子写现在只覆盖主链真实会被查询与展示的三段数据：
+        // summary / spans / analysis。那张废弃调试附属表已经退出产品路径，这里不再写它。
         if (analysis) {
             const char* sql_insert_analysis = R"(
                 INSERT INTO trace_analysis
@@ -1068,31 +1196,7 @@ bool SqliteTraceRepository::SaveSingleTraceAtomic(const TraceSummary& summary,
             rc = sqlite3_step(analysis_stmt.get());
             persistence::checkSqliteError(db_, rc, "Insert trace_analysis");
 
-            UpdateSummaryRiskLevel(db_, analysis->trace_id, analysis->risk_level);
-        }
-
-        if (prompt_debug) {
-            const char* sql_insert_prompt = R"(
-                INSERT INTO prompt_debug
-                (trace_id, input_json, output_json, model, duration_ms, total_tokens, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?);
-            )";
-            persistence::StmtPtr prompt_stmt;
-            {
-                sqlite3_stmt* raw_stmt = nullptr;
-                rc = sqlite3_prepare_v2(db_, sql_insert_prompt, -1, &raw_stmt, nullptr);
-                persistence::checkSqliteError(db_, rc, "Prepare prompt_debug insert");
-                prompt_stmt.reset(raw_stmt);
-            }
-            sqlite3_bind_text(prompt_stmt.get(), 1, prompt_debug->trace_id.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 2, prompt_debug->input_json.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 3, prompt_debug->output_json.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(prompt_stmt.get(), 4, prompt_debug->model.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_int64(prompt_stmt.get(), 5, prompt_debug->duration_ms);
-            sqlite3_bind_int64(prompt_stmt.get(), 6, static_cast<sqlite3_int64>(prompt_debug->total_tokens));
-            sqlite3_bind_text(prompt_stmt.get(), 7, prompt_debug->timestamp.c_str(), -1, SQLITE_STATIC);
-            rc = sqlite3_step(prompt_stmt.get());
-            persistence::checkSqliteError(db_, rc, "Insert prompt_debug");
+            UpdateSummaryAnalysisOutcome(db_, analysis->trace_id, analysis->risk_level);
         }
 
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);

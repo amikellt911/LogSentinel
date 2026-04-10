@@ -32,6 +32,8 @@ struct TraceListItem
     size_t span_count = 0;
     size_t token_count = 0;
     std::string risk_level;
+    // 列表页现在不只看风险等级，还要知道“这条 trace 的 AI 到底有没有真正完成”。
+    std::string ai_status;
 };
 
 struct TraceSearchResult
@@ -70,6 +72,9 @@ struct TraceDetailRecord
     size_t span_count = 0;
     size_t token_count = 0;
     std::string risk_level;
+    // 详情页直接吃这两个字段，避免前端再用“analysis 是否为空”去猜执行态。
+    std::string ai_status;
+    std::string ai_error;
     std::vector<std::string> tags;
     std::optional<TraceAnalysisDetail> analysis;
     std::vector<TraceSpanDetail> spans;
@@ -85,23 +90,27 @@ public:
     bool SaveSingleTraceSummary(const TraceSummary& summary) override;
     bool SaveSingleTraceSpans(const std::string& trace_id, const std::vector<TraceSpanRecord>& spans) override;
     bool SaveSingleTraceAnalysis(const TraceAnalysisRecord& analysis) override;
-    bool SaveSinglePromptDebug(const PromptDebugRecord& record) override;
+    bool UpdateTraceAiState(const std::string& trace_id,
+                            const std::string& ai_status,
+                            const std::string& ai_error) override;
     bool SaveSingleTraceAtomic(const TraceSummary& summary,
                         const std::vector<TraceSpanRecord>& spans,
-                        const TraceAnalysisRecord* analysis,
-                        const PromptDebugRecord* prompt_debug) override;
+                        const TraceAnalysisRecord* analysis) override;
     bool SavePrimaryBatch(const std::vector<TraceSummary>& summaries,
                           const std::vector<TraceSpanRecord>& spans) override;
-    bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses,
-                           const std::vector<PromptDebugRecord>& prompt_debugs) override;
+    bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses) override;
 
     // 读侧先只暴露两个最小入口：列表搜索 + 单条详情。
     // 当前阶段先直接落在 SQLite 仓库里，不急着上升到抽象基类，
     // 否则为了未来可能不会发生的“多存储读实现”先加一层，会把本轮节奏拖慢。
     TraceSearchResult SearchTraces(const TraceSearchRequest& request);
     std::optional<TraceDetailRecord> GetTraceDetail(const std::string& trace_id);
+    bool DeleteTraceById(const std::string& trace_id);
+    size_t DeleteExpiredTracesBatch(int64_t cutoff_ms, size_t limit);
 
 private:
+    bool DeleteTracesByIdsAtomic(const std::vector<std::string>& trace_ids);
+
     std::string db_path_;
     sqlite3* db_ = nullptr;
     std::mutex mutex_;

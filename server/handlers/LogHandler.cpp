@@ -1,14 +1,8 @@
 #include "handlers/LogHandler.h"
-#include "core/LogBatcher.h"
-#include "core/AnalysisTask.h"
 #include "core/SystemRuntimeAccumulator.h"
 #include "core/TraceSessionManager.h"
-#include "MiniMuduo/net/EventLoop.h"
-#include "persistence/SqliteLogRepository.h"
-#include "threadpool/ThreadPool.h"
 #include <algorithm>
 #include <cctype>
-#include <unordered_set>
 #include <nlohmann/json.hpp>
 
 namespace
@@ -42,20 +36,74 @@ bool IsKnownTraceSpanField(const std::string& key)
         "service_name",
         "status",
         "kind",
-        "trace_end",
         "attributes"
     };
     return known_fields.find(key) != known_fields.end();
 }
 
+bool ParseOptionalBoolByField(const nlohmann::json& body,
+                              const std::string& field,
+                              std::optional<bool>* out,
+                              std::string* error)
+{
+    if (field.empty()) {
+        return true;
+    }
+    if (!body.contains(field) || body.at(field).is_null()) {
+        return true;
+    }
+    const nlohmann::json& value = body.at(field);
+    if (!value.is_boolean()) {
+        *error = std::string("Field must be bool: ") + field;
+        return false;
+    }
+    *out = value.get<bool>();
+    return true;
+}
+
+bool ParseConfiguredTraceEnd(const nlohmann::json& body,
+                             const std::string& primary_field,
+                             const std::vector<std::string>& aliases,
+                             std::optional<bool>* out,
+                             std::string* error)
+{
+    std::optional<bool> parsed;
+    // 这里明确采用“主字段优先，别名顺序回退”的规则：
+    // 既然 Settings 已经允许用户指定主字段名，那么主字段一旦命中，就不再继续看别名；
+    // 如果主字段没出现，再按别名列表顺序找第一个合法 bool，避免同一条请求里被多个名字来回覆盖。
+    if (!ParseOptionalBoolByField(body, primary_field, &parsed, error)) {
+        return false;
+    }
+    if (parsed.has_value()) {
+        *out = parsed;
+        return true;
+    }
+
+    for (const std::string& alias : aliases) {
+        parsed.reset();
+        if (!ParseOptionalBoolByField(body, alias, &parsed, error)) {
+            return false;
+        }
+        if (parsed.has_value()) {
+            *out = parsed;
+            return true;
+        }
+    }
+    return true;
+}
+
 void CollectUnknownTopLevelAttributes(const nlohmann::json& body,
+                                      const std::unordered_set<std::string>& dynamic_known_fields,
                                       std::unordered_map<std::string, std::string>* attributes)
 {
     for (auto it = body.begin(); it != body.end(); ++it) {
-        if (IsKnownTraceSpanField(it.key())) {
+        if (IsKnownTraceSpanField(it.key()) ||
+            dynamic_known_fields.find(it.key()) != dynamic_known_fields.end()) {
             continue;
         }
         // 顶层未知字段统一收敛到 attributes，目的是让客户端新增指标时服务端无需立刻改协议。
+        // dynamic_known_fields 会额外带上当前请求生效的 trace_end 主字段和别名，
+        // 避免这些字段一边被标准化成 span.trace_end，一边又脏兮兮地落进 attributes。
         // 这里用 emplace 不覆盖已存在键，确保显式 attributes 的值优先级更高，避免歧义覆盖。
         attributes->emplace(it.key(), JsonValueToAttributeString(it.value()));
     }
@@ -238,44 +286,19 @@ bool ParseOptionalAttributes(const nlohmann::json& body,
 }
 } // namespace
 
-LogHandler::LogHandler(ThreadPool *tpool,
-                       std::shared_ptr<SqliteLogRepository> repo,
-                       std::shared_ptr<LogBatcher> batcher,
-                       TraceSessionManager* trace_session_manager,
-                       SystemRuntimeAccumulator* system_runtime_accumulator)
-    : tpool_(tpool),
-      batcher_(batcher),
-      repo_(repo),
-      trace_session_manager_(trace_session_manager),
-      system_runtime_accumulator_(system_runtime_accumulator)
+LogHandler::LogHandler(TraceSessionManager* trace_session_manager,
+                       SystemRuntimeAccumulator* system_runtime_accumulator,
+                       std::string trace_end_field,
+                       std::vector<std::string> trace_end_aliases)
+    : trace_session_manager_(trace_session_manager),
+      system_runtime_accumulator_(system_runtime_accumulator),
+      trace_end_field_(trace_end_field.empty() ? "trace_end" : std::move(trace_end_field)),
+      trace_end_aliases_(std::move(trace_end_aliases))
 {
-}
-
-void LogHandler::handlePost(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
-{
-    AnalysisTask task;
-    // 没用，因为const(为了通用性)，会降级为拷贝
-    //  task.trace_id = std::move(req.trace_id);
-    //  task.raw_request_body = std::move(req.body_);
-    task.trace_id = req.trace_id;
-    task.raw_request_body = req.body_;
-    task.start_time = std::chrono::steady_clock::now();
-
-    if (batcher_->push(std::move(task)))
-    {
-        resp->setStatusCode(HttpResponse::HttpStatusCode::k202Acceptd);
-        resp->setHeader("Content-Type", "application/json");
-        resp->addCorsHeaders();
-        nlohmann::json j;
-        j["trace_id"] = req.trace_id;
-        resp->body_ = j.dump();
-    }
-    else
-    {
-        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-        resp->addCorsHeaders();
-        resp->body_ = "{\"error\": \"Server is overloaded\"}";
-    }
+    // 主字段和别名已经被收口成冷启动配置，所以这里直接在构造时预展开 known field 集合。
+    // 这样 handleTracePost() 里既不用每次读快照，也不用每次为了过滤 attributes 临时拼一遍 set。
+    trace_end_known_fields_.insert(trace_end_field_);
+    trace_end_known_fields_.insert(trace_end_aliases_.begin(), trace_end_aliases_.end());
 }
 
 void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
@@ -332,7 +355,7 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
         !ParseRequiredString(body, "service_name", &span.service_name, &error) ||
         !ParseOptionalUint(body, "parent_span_id", &span.parent_span_id, &error) ||
         !ParseOptionalInt64(body, "end_time_ms", &span.end_time, &error) ||
-        !ParseOptionalBool(body, "trace_end", &span.trace_end, &error) ||
+        !ParseConfiguredTraceEnd(body, trace_end_field_, trace_end_aliases_, &span.trace_end, &error) ||
         !ParseOptionalStatus(body, &span.status, &error) ||
         !ParseOptionalKind(body, &span.kind, &error) ||
         !ParseOptionalAttributes(body, &span.attributes, &error)) {
@@ -340,7 +363,9 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
         resp->body_ = nlohmann::json{{"error", error}}.dump();
         return;
     }
-    CollectUnknownTopLevelAttributes(body, &span.attributes);
+    // 顶层未知字段收集也跟着这份冷启动口径走：
+    // 既然主字段/别名在进程启动后就固定了，这里直接复用构造期准备好的 known field 集合即可。
+    CollectUnknownTopLevelAttributes(body, trace_end_known_fields_, &span.attributes);
 
     const TraceSessionManager::PushResult push_result = trace_session_manager_->Push(span);
     if (push_result == TraceSessionManager::PushResult::RejectedUnavailable) {
@@ -379,79 +404,4 @@ void LogHandler::handleTracePost(const HttpRequest &req, HttpResponse *resp, con
         response_body["message"] = "Trace accepted; internal dispatch deferred";
     }
     resp->body_ = response_body.dump();
-}
-
-void LogHandler::handleGetResult(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
-{
-    std::string trace_id = req.path().substr(9);
-
-    // 使用 weak_ptr 防止 conn 提前销毁
-    std::weak_ptr<MiniMuduo::net::TcpConnection> weakConn = conn;
-    auto querywork = [trace_id, repo = repo_, weakConn]()
-    {
-        // --- 这部分在 Worker 线程 ---
-        auto result = repo->queryStructResultByTraceId(trace_id);
-        auto conn = weakConn.lock();
-        if (conn)
-        {
-            auto loop = conn->getLoop();
-            loop->queueInLoop([weakConn, trace_id, result]()
-                              {
-            // --- 这部分在 IO 线程 ---
-            auto conn = weakConn.lock();
-            if (conn) { // 检查连接是否还存活
-                HttpResponse resp;
-                resp.addCorsHeaders();
-                if (result) { // result 是 optional<string>
-                    resp.setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
-                    resp.setHeader("Content-Type", "application/json");
-                        // 注意：JSON 字符串中的引号需要转义
-                        // 3. 修正：使用 json 库拼接，而不是手动拼字符串
-                        // 注意：result 已经是 json 字符串了，不要重复序列化，
-                        // 我们需要构造 {"trace_id": "...", "result": JSON_OBJECT}
-                        // 这里的 result.value() 是一个字符串形式的 JSON 对象
-                        // 为了避免转义问题，我们手动拼这一块是合理的，但要确保 result 本身是合法 JSON
-                        // 或者更安全的做法：
-                        // resp.body_ = "{\"trace_id\": \"" + trace_id + "\", \"result\": " + *result + "}"; 
-                        // 鉴于 *result 来自数据库且原本就是合法 JSON，你原来的写法是可以接受的。
-                        // 如果想更稳妥，可以这样：
-                        try {
-                             nlohmann::json root;
-                             root["trace_id"] = trace_id;
-                             root["result"] = *result; // 解析后再放入，保证嵌套正确
-                             resp.body_ = root.dump();
-                        } catch (...) {
-                             // 极端情况：数据库里的 json 坏了
-                             resp.body_ = "{\"trace_id\": \"" + trace_id + "\", \"result\": null, \"error\": \"Data corrupted\"}";
-                        }
-                } else {
-                    resp.setStatusCode(HttpResponse::HttpStatusCode::k404NotFound);
-                    resp.body_ = "{\"error\": \"Trace ID not found\"}";
-                }
-
-                MiniMuduo::net::Buffer buf;
-                resp.appendToBuffer(&buf);
-                conn->send(std::move(buf));
-            } });
-        }
-    };
-
-    if (tpool_->submit(std::move(querywork)))
-    {
-        resp->isHandledAsync = true;
-        // 对于 GET 请求，我们不立即返回任何东西，因为响应是异步的
-        // 如果想给客户端一个即时反馈，可以考虑接受请求后立即返回一个空的 202，但这不常用
-    }
-    else
-    {
-        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
-        resp->addCorsHeaders();
-        resp->body_ = "{\"error\": \"Server is overloaded\"}";
-
-        // 只有在这种同步失败的情况下，才需要在这里发送响应
-        // MiniMuduo::net::Buffer buf;
-        // resp->appendToBuffer(&buf);
-        // isHandledAsync = false会自动发送
-        // conn->send(std::move(buf));
-    }
 }

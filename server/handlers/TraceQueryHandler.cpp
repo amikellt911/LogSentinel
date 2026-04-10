@@ -139,6 +139,8 @@ nlohmann::json BuildSearchResultJson(const TraceSearchResult& result)
         row["span_count"] = item.span_count;
         row["token_count"] = item.token_count;
         row["risk_level"] = item.risk_level;
+        // 列表先返回结构化 ai_status，前端自己映射“处理中/已关闭/主路失败”等文案。
+        row["ai_status"] = item.ai_status;
         items.push_back(std::move(row));
     }
 
@@ -172,6 +174,10 @@ nlohmann::json BuildTraceDetailJson(const TraceDetailRecord& detail)
     root["span_count"] = detail.span_count;
     root["token_count"] = detail.token_count;
     root["risk_level"] = detail.risk_level;
+    // 详情页除了看 analysis，还要知道“为什么没有 analysis”。
+    // 所以这里把 ai_status/ai_error 一起回给前端，避免它再根据空值做脏猜测。
+    root["ai_status"] = detail.ai_status;
+    root["ai_error"] = detail.ai_error;
     root["tags"] = detail.tags;
     root["spans"] = std::move(spans);
     if (detail.analysis.has_value()) {

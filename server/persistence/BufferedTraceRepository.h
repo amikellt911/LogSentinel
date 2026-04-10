@@ -15,7 +15,7 @@
 // BufferedTraceRepository 不是底层 Repository 的替身，它更像一个“前面一层的缓冲写入器”。
 // 既然当前持久化时间线已经拆成：
 // 1) Dispatch 前就能拿到 summary + spans
-// 2) AI 返回后才拿到 analysis + prompt_debug
+// 2) AI 返回后才拿到 analysis
 // 那这一层就只暴露两个 append 入口，内部再持有真正的 TraceRepository sink。
 class BufferedTraceRepository
 {
@@ -23,14 +23,12 @@ public:
     using TraceSummary = TraceRepository::TraceSummary;
     using TraceSpanRecord = TraceRepository::TraceSpanRecord;
     using TraceAnalysisRecord = TraceRepository::TraceAnalysisRecord;
-    using PromptDebugRecord = TraceRepository::PromptDebugRecord;
 
     struct Config
     {
         size_t primary_summary_reserve = 64;
         size_t primary_span_reserve = 512;
         size_t analysis_reserve = 64;
-        size_t prompt_debug_reserve = 64;
         size_t initial_buffer_count = 4;
         int64_t primary_flush_interval_ms = 200;
         int64_t analysis_flush_interval_ms = 500;
@@ -58,18 +56,16 @@ public:
     struct AnalysisBufferGroup
     {
         std::vector<TraceAnalysisRecord> analyses;
-        std::vector<PromptDebugRecord> prompt_debugs;
         int64_t first_enqueue_ms = 0;
 
         bool Empty() const
         {
-            return analyses.empty() && prompt_debugs.empty();
+            return analyses.empty();
         }
 
         void ClearButKeepCapacity()
         {
             analyses.clear();
-            prompt_debugs.clear();
             first_enqueue_ms = 0;
         }
     };
@@ -83,7 +79,6 @@ public:
     struct TraceAnalysisWrite
     {
         std::optional<TraceAnalysisRecord> analysis;
-        std::optional<PromptDebugRecord> prompt_debug;
     };
 
     struct RuntimeStatsSnapshot
@@ -99,7 +94,6 @@ public:
         uint64_t analysis_flush_fail_count = 0;
         uint64_t analysis_flush_total_ns = 0;
         uint64_t analysis_flushed_analysis_count = 0;
-        uint64_t analysis_flushed_prompt_debug_count = 0;
     };
 
     explicit BufferedTraceRepository(std::shared_ptr<TraceRepository> sink);
@@ -108,6 +102,11 @@ public:
 
     bool AppendPrimary(TracePrimaryWrite write);
     bool AppendAnalysis(TraceAnalysisWrite write);
+    // 失败/跳过态每条 trace 最多写一次，量级远低于 spans/analysis 批量 flush，
+    // 所以这里先直接透传给底层 repo，不专门再做一层状态缓冲桶。
+    bool UpdateTraceAiState(const std::string& trace_id,
+                            const std::string& ai_status,
+                            const std::string& ai_error);
     RuntimeStatsSnapshot SnapshotRuntimeStats() const;
     std::string DescribeRuntimeStats() const;
 
@@ -167,5 +166,4 @@ private:
     std::atomic<uint64_t> analysis_flush_fail_count_{0};
     std::atomic<uint64_t> analysis_flush_total_ns_{0};
     std::atomic<uint64_t> analysis_flushed_analysis_count_{0};
-    std::atomic<uint64_t> analysis_flushed_prompt_debug_count_{0};
 };

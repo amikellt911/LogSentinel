@@ -73,15 +73,9 @@ HttpContext 的解析函数通过 `const char*` 指针进行操作,除了赋值 
 
 ### 4.3 性能测试
 
-通过 `performance_test.sh` 进行性能测试,测试结果:
+历史上的 `performance_test.sh` 已归档；当前主链压测请优先使用 Trace 相关脚本与文档。
 
-| 测试场景 | QPS | 日志文件 |
-|---------|-----|---------|
-| 无超时 + 有日志 | ~4k | `base_performance_results.log` |
-| 无超时 + 无日志 | ~98k | `base_performance_results_without_log.log` |
-| 60s 超时 + 无日志 | ~25k | `base_performance_results_without_log_has_timeout_60s.log` |
-
-> **说明**: 有日志情况下 QPS 较低,因为日志为同步自旋日志,并且要写入 I/O,优化空间很大。
+> **说明**: 上面这组数据属于早期 `/logs` 旧链口径，只保留历史参考意义，不再代表当前 Trace 主链性能。
 
 ## 5. 总结
 

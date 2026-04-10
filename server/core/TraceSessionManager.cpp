@@ -16,6 +16,13 @@
 
 namespace
 {
+    constexpr size_t kMaxTraceAiErrorLength = 1024;
+    constexpr const char* kAiStatusCompleted = "completed";
+    constexpr const char* kAiStatusSkippedManual = "skipped_manual";
+    constexpr const char* kAiStatusSkippedCircuit = "skipped_circuit";
+    constexpr const char* kAiStatusFailedPrimary = "failed_primary";
+    constexpr const char* kAiStatusFailedBoth = "failed_both";
+
     std::string toLowerCopy(std::string value)
     {
         std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c)
@@ -61,6 +68,22 @@ namespace
             return usage->total_tokens;
         }
         return summary.token_count;
+    }
+
+    std::string TruncateTraceAiError(std::string error)
+    {
+        if (error.size() <= kMaxTraceAiErrorLength) {
+            return error;
+        }
+        error.resize(kMaxTraceAiErrorLength);
+        return error;
+    }
+
+    std::string BuildDualAiError(const std::string& primary_error,
+                                 const std::string& fallback_error)
+    {
+        return TruncateTraceAiError("primary: " + primary_error +
+                                    " | fallback: " + fallback_error);
     }
 
     SystemBackpressureStatus ToSystemBackpressureStatus(TraceSessionManager::OverloadState overload_state)
@@ -196,28 +219,83 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
                                          INotifier *notifier,
                                          int64_t idle_timeout_ms,
                                          int64_t wheel_tick_ms,
+                                         int64_t sealed_grace_window_ms,
+                                         int64_t retry_base_delay_ms,
                                          size_t wheel_size,
                                          size_t buffered_span_hard_limit,
                                          size_t active_session_hard_limit,
+                                         int active_session_overload_percent,
+                                         int active_session_critical_percent,
+                                         int buffered_spans_overload_percent,
+                                         int buffered_spans_critical_percent,
+                                         int pending_tasks_overload_percent,
+                                         int pending_tasks_critical_percent,
                                          ServiceRuntimeAccumulator* service_runtime_accumulator,
-                                         SystemRuntimeAccumulator* system_runtime_accumulator)
-    : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
+                                         SystemRuntimeAccumulator* system_runtime_accumulator,
+                                         bool ai_analysis_enabled,
+                                         bool ai_circuit_breaker_enabled,
+                                         size_t ai_failure_threshold,
+                                         int64_t ai_cooldown_ms,
+                                         TraceAiProvider* fallback_trace_ai,
+                                         bool ai_auto_degrade_enabled)
+    : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), ai_analysis_enabled_(ai_analysis_enabled), ai_circuit_breaker_enabled_(ai_circuit_breaker_enabled), fallback_trace_ai_(fallback_trace_ai), ai_auto_degrade_enabled_(ai_auto_degrade_enabled), ai_failure_threshold_(std::max<size_t>(1, ai_failure_threshold)), ai_cooldown_ms_(ai_cooldown_ms > 0 ? ai_cooldown_ms : 60000), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
+    // sealed/retry 这两档时间现在也跟着启动配置走，避免状态机里继续保留 1/2 tick 的硬编码。
+    sealed_grace_ticks_ = ComputeDelayTicks(sealed_grace_window_ms);
+    retry_base_delay_ticks_ = ComputeDelayTicks(retry_base_delay_ms);
     time_wheel_.resize(wheel_size_);
     // 先把 completed tombstone 的桶位也按同样的 wheel_size 建好。
     // 这样后面只要跟着 current_tick_ 同步推进，就能在同一套 tick 节奏里做过期回收。
     completed_trace_wheel_.resize(wheel_size_);
-    buffered_span_watermark_ = BuildWatermark(buffered_span_hard_limit_);
-    active_session_watermark_ = BuildWatermark(active_session_hard_limit_);
+    // 三组背压阈值现在改成 Settings 冷启动配置驱动，避免继续把 55/75/90 写死在状态机里。
+    buffered_span_watermark_ = BuildWatermark(buffered_span_hard_limit_,
+                                              buffered_spans_overload_percent,
+                                              buffered_spans_critical_percent);
+    active_session_watermark_ = BuildWatermark(active_session_hard_limit_,
+                                               active_session_overload_percent,
+                                               active_session_critical_percent);
     const size_t pending_task_hard_limit =
         thread_pool_ ? std::max<size_t>(1, thread_pool_->maxQueueSize()) : 1;
-    pending_task_watermark_ = BuildWatermark(pending_task_hard_limit);
+    pending_task_watermark_ = BuildWatermark(pending_task_hard_limit,
+                                             pending_tasks_overload_percent,
+                                             pending_tasks_critical_percent);
     // dispatch queue 先按 worker queue 的一半建硬上限，目的是让“主线程摘 session”和“AI worker 真正吃任务”
     // 之间至少隔一层更窄的静态闸门；后面如果压测显示过窄，再按结果调整。
     dispatch_queue_hard_limit_ = std::max<size_t>(1, pending_task_hard_limit / 2);
-    dispatch_queue_watermark_ = BuildWatermark(dispatch_queue_hard_limit_);
+    dispatch_queue_watermark_ = BuildWatermark(dispatch_queue_hard_limit_,
+                                               pending_tasks_overload_percent,
+                                               pending_tasks_critical_percent);
     dispatch_thread_ = std::thread(&TraceSessionManager::DispatchLoop, this);
+}
+
+bool TraceSessionManager::IsAiCircuitOpen(int64_t now_ms) const
+{
+    if (!ai_circuit_breaker_enabled_) {
+        return false;
+    }
+    return ai_circuit_open_until_ms_.load(std::memory_order_acquire) > now_ms;
+}
+
+void TraceSessionManager::RecordAiCircuitSuccess()
+{
+    if (!ai_circuit_breaker_enabled_) {
+        return;
+    }
+    ai_consecutive_failures_.store(0, std::memory_order_release);
+    ai_circuit_open_until_ms_.store(0, std::memory_order_release);
+}
+
+void TraceSessionManager::RecordAiCircuitFailure(int64_t now_ms)
+{
+    if (!ai_circuit_breaker_enabled_) {
+        return;
+    }
+    const uint64_t failures =
+        ai_consecutive_failures_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (failures >= ai_failure_threshold_) {
+        ai_circuit_open_until_ms_.store(now_ms + ai_cooldown_ms_, std::memory_order_release);
+    }
 }
 
 TraceSessionManager::~TraceSessionManager()
@@ -231,40 +309,56 @@ TraceSessionManager::~TraceSessionManager()
     std::clog << "[TraceRuntimeStats] " << DescribeRuntimeStats() << std::endl;
 }
 
-TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_limit)
+TraceSessionManager::Watermark TraceSessionManager::BuildWatermark(size_t hard_limit,
+                                                                  int overload_percent,
+                                                                  int critical_percent)
 {
     const size_t safe_hard_limit = std::max<size_t>(hard_limit, 1);
+    const int safe_overload_percent = std::max(1, std::min(overload_percent, 100));
+    const int safe_critical_percent =
+        std::max(safe_overload_percent, std::min(critical_percent, 100));
+    // Settings 当前只开放 overload / critical 两档百分比，low 不单独暴露。
+    // 这里先固定回退 10 个百分点做回滞，避免状态在 overload 边界附近来回抖动。
+    const int low_percent = std::max(1, safe_overload_percent - 10);
     Watermark mark;
-    mark.low = std::max<size_t>(1, safe_hard_limit * 55 / 100);
-    mark.high = std::max(mark.low, std::max<size_t>(1, safe_hard_limit * 75 / 100));
-    mark.critical = std::max(mark.high, std::max<size_t>(1, safe_hard_limit * 90 / 100));
+    mark.low = std::max<size_t>(1, safe_hard_limit * static_cast<size_t>(low_percent) / 100);
+    mark.high =
+        std::max(mark.low,
+                 std::max<size_t>(1, safe_hard_limit * static_cast<size_t>(safe_overload_percent) / 100));
+    mark.critical =
+        std::max(mark.high,
+                 std::max<size_t>(1, safe_hard_limit * static_cast<size_t>(safe_critical_percent) / 100));
     mark.critical = std::min(mark.critical, safe_hard_limit);
     return mark;
 }
 
-uint64_t TraceSessionManager::ComputeSealDelayTicks(TraceSession::SealReason reason)
+uint64_t TraceSessionManager::ComputeDelayTicks(int64_t delay_ms) const
 {
-    switch (reason)
+    if (delay_ms <= 0 || wheel_tick_ms_ <= 0)
     {
-    case TraceSession::SealReason::TraceEnd:
-        return 2;
-    case TraceSession::SealReason::Capacity:
-    case TraceSession::SealReason::TokenLimit:
-    case TraceSession::SealReason::DuplicateSpan:
         return 1;
     }
-    return 1;
+    return static_cast<uint64_t>((delay_ms + wheel_tick_ms_ - 1) / wheel_tick_ms_);
 }
 
-uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count)
+uint64_t TraceSessionManager::ComputeSealDelayTicks(TraceSession::SealReason reason) const
 {
+    (void)reason;
+    return std::max<uint64_t>(1, sealed_grace_ticks_);
+}
+
+uint64_t TraceSessionManager::ComputeRetryDelayTicks(size_t retry_count) const
+{
+    const uint64_t base_ticks = std::max<uint64_t>(1, retry_base_delay_ticks_);
     if (retry_count == 0)
     {
-        return 1;
+        return base_ticks;
     }
-    constexpr uint64_t kMaxRetryDelayTicks = 16;
+    // 继续保留最多 16 倍 base delay 的上限，避免下游长期故障时把单条 trace 的重试时间拖得过长。
+    const uint64_t max_retry_delay_ticks = std::max<uint64_t>(base_ticks, base_ticks * 16);
     const size_t shift = std::min<size_t>(retry_count - 1, 4);
-    return std::min<uint64_t>(1ULL << shift, kMaxRetryDelayTicks);
+    const uint64_t scaled_delay_ticks = base_ticks << shift;
+    return std::min<uint64_t>(scaled_delay_ticks, max_retry_delay_ticks);
 }
 
 void TraceSessionManager::DispatchLoop()
@@ -1216,13 +1310,14 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     TraceSessionManager *manager = this;
     BufferedTraceRepository *buffered_trace_repo = buffered_trace_repo_;
     TraceAiProvider *trace_ai = trace_ai_;
+    TraceAiProvider *fallback_trace_ai = fallback_trace_ai_;
     INotifier *notifier = notifier_;
     ServiceRuntimeAccumulator* service_runtime_accumulator = service_runtime_accumulator_;
     SystemRuntimeAccumulator* system_runtime_accumulator = system_runtime_accumulator_;
     const std::string *worker_trace_payload = trace_payload_ptr;
     const TraceRepository::TraceSummary *worker_summary = summary_ptr;
     const uint64_t worker_enqueue_ns = NowSteadyNs();
-    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, service_runtime_accumulator, system_runtime_accumulator, worker_enqueue_ns, session_holder, worker_trace_payload, worker_summary, analysis_observation_span_records]() mutable
+    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, fallback_trace_ai, notifier, service_runtime_accumulator, system_runtime_accumulator, worker_enqueue_ns, session_holder, worker_trace_payload, worker_summary, analysis_observation_span_records]() mutable
                               {
         if (!manager || !session_holder || !(*session_holder) || !worker_trace_payload || !worker_summary) {
             return;
@@ -1236,7 +1331,24 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         TraceRepository::TraceAnalysisRecord* analysis_ptr = nullptr;
         size_t alert_token_count = worker_summary->token_count;
         std::optional<TraceAiUsage> completed_usage;
-        if (trace_ai) {
+        std::string ai_status_override;
+        std::string ai_error_override;
+        const int64_t ai_now_ms = NowSteadyMs();
+        if (!manager->ai_analysis_enabled_) {
+            // 这里是用户主动关闭 AI 的语义，不是失败。
+            // 所以 worker 仍要正常收尾，只把 summary 状态改成 skipped_manual，不能伪造一条失败 analysis。
+            ai_status_override = kAiStatusSkippedManual;
+        } else if (manager->IsAiCircuitOpen(ai_now_ms)) {
+            // 熔断打开时这条 trace 仍然要正常落主数据，只是跳过本次 AI 调用。
+            // 这里不再递增失败次数，因为 skipped_circuit 表达的是“被保护性短路”，不是一次新的 provider 调用失败。
+            ai_status_override = kAiStatusSkippedCircuit;
+        } else if (!trace_ai) {
+            // provider 为空时这条 trace 不可能真的完成分析。
+            // 这里直接记 failed_primary，避免主记录永远卡在 pending。
+            ai_status_override = kAiStatusFailedPrimary;
+            ai_error_override = "Trace AI provider unavailable";
+            manager->RecordAiCircuitFailure(ai_now_ms);
+        } else {
             if (system_runtime_accumulator) {
                 // 系统监控里的 AI 调用总数要落在“真正准备调模型”的时间点，
                 // 不能在 submit 成功时就提前加，否则排队中断或后续没进入模型都算脏数据。
@@ -1253,22 +1365,68 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
                 // 所以后面发告警时单独走 alert_token_count，避免为了一个展示口径去改数据库主记录。
                 alert_token_count = ResolveAlertTokenCount(*worker_summary, ai_response.usage);
                 completed_usage = ai_response.usage;
+                manager->RecordAiCircuitSuccess();
             } catch (const std::exception& e) {
-                analysis_record.trace_id = worker_summary->trace_id;
-                analysis_record.risk_level = "unknown";
-                analysis_record.summary = "AI_ANALYSIS_FAILED";
-                analysis_record.root_cause = e.what();
-                analysis_record.solution = "请检查 AI 代理与模型服务状态，稍后重试该 trace 的分析。";
-                analysis_record.confidence = 0.0;
-                analysis_ptr = &analysis_record;
+                const std::string primary_error = TruncateTraceAiError(e.what());
+                const bool should_try_fallback =
+                    manager->ai_auto_degrade_enabled_ && fallback_trace_ai != nullptr;
+                if (!should_try_fallback) {
+                    // 这里吃到的 e.what() 现在既可能是本地 HTTP/JSON 协议错误，
+                    // 也可能是 proxy 已经归一好的 provider 失败文本（例如 [429 RESOURCE_EXHAUSTED] quota exhausted）。
+                    // 如果当前没开自动降级，就直接把主路失败写回 ai_error。
+                    ai_status_override = kAiStatusFailedPrimary;
+                    ai_error_override = primary_error;
+                    manager->RecordAiCircuitFailure(NowSteadyMs());
+                } else {
+                    try {
+                        // 自动降级只在主路真正失败后才触发，而且 fallback 仍然复用同一份 trace payload。
+                        // 这样不会把 provider 切换的复杂度扩散到序列化或提示词渲染层。
+                        TraceAiResponse fallback_response = fallback_trace_ai->AnalyzeTrace(*worker_trace_payload);
+                        analysis_record = manager->BuildAnalysisRecord(worker_summary->trace_id, fallback_response.analysis);
+                        analysis_ptr = &analysis_record;
+                        alert_token_count = ResolveAlertTokenCount(*worker_summary, fallback_response.usage);
+                        completed_usage = fallback_response.usage;
+                        manager->RecordAiCircuitSuccess();
+                    } catch (const std::exception& fallback_error) {
+                        ai_status_override = kAiStatusFailedBoth;
+                        ai_error_override = BuildDualAiError(primary_error,
+                                                             TruncateTraceAiError(fallback_error.what()));
+                        manager->RecordAiCircuitFailure(NowSteadyMs());
+                    } catch (...) {
+                        ai_status_override = kAiStatusFailedBoth;
+                        ai_error_override = BuildDualAiError(primary_error,
+                                                             "Unknown non-std exception");
+                        manager->RecordAiCircuitFailure(NowSteadyMs());
+                    }
+                }
             } catch (...) {
-                analysis_record.trace_id = worker_summary->trace_id;
-                analysis_record.risk_level = "unknown";
-                analysis_record.summary = "AI_ANALYSIS_FAILED";
-                analysis_record.root_cause = "Unknown non-std exception";
-                analysis_record.solution = "请检查 AI 代理与模型服务状态，稍后重试该 trace 的分析。";
-                analysis_record.confidence = 0.0;
-                analysis_ptr = &analysis_record;
+                const std::string primary_error = "Unknown non-std exception";
+                const bool should_try_fallback =
+                    manager->ai_auto_degrade_enabled_ && fallback_trace_ai != nullptr;
+                if (!should_try_fallback) {
+                    ai_status_override = kAiStatusFailedPrimary;
+                    ai_error_override = primary_error;
+                    manager->RecordAiCircuitFailure(NowSteadyMs());
+                } else {
+                    try {
+                        TraceAiResponse fallback_response = fallback_trace_ai->AnalyzeTrace(*worker_trace_payload);
+                        analysis_record = manager->BuildAnalysisRecord(worker_summary->trace_id, fallback_response.analysis);
+                        analysis_ptr = &analysis_record;
+                        alert_token_count = ResolveAlertTokenCount(*worker_summary, fallback_response.usage);
+                        completed_usage = fallback_response.usage;
+                        manager->RecordAiCircuitSuccess();
+                    } catch (const std::exception& fallback_error) {
+                        ai_status_override = kAiStatusFailedBoth;
+                        ai_error_override = BuildDualAiError(primary_error,
+                                                             TruncateTraceAiError(fallback_error.what()));
+                        manager->RecordAiCircuitFailure(NowSteadyMs());
+                    } catch (...) {
+                        ai_status_override = kAiStatusFailedBoth;
+                        ai_error_override = BuildDualAiError(primary_error,
+                                                             "Unknown non-std exception");
+                        manager->RecordAiCircuitFailure(NowSteadyMs());
+                    }
+                }
             }
             const uint64_t ai_end_ns = NowSteadyNs();
             manager->ai_total_ns_.fetch_add(ai_end_ns - ai_begin_ns, std::memory_order_relaxed);
@@ -1285,12 +1443,16 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         bool saved = true;
         if (!buffered_trace_repo) {
             saved = false;
-        } else {
+        } else if (analysis_ptr) {
             BufferedTraceRepository::TraceAnalysisWrite analysis_write;
-            if (analysis_ptr) {
-                analysis_write.analysis = *analysis_ptr;
-            }
+            analysis_write.analysis = *analysis_ptr;
             saved = buffered_trace_repo->AppendAnalysis(std::move(analysis_write));
+        } else if (!ai_status_override.empty()) {
+            // 没有 analysis 可写时，必须把最终状态直接落回 summary。
+            // 否则查询层只能看到 pending，却分不清是人工关闭、provider 缺失还是调用失败。
+            saved = buffered_trace_repo->UpdateTraceAiState(worker_summary->trace_id,
+                                                            ai_status_override,
+                                                            ai_error_override);
         }
         manager->analysis_enqueue_total_ns_.fetch_add(NowSteadyNs() - enqueue_begin_ns, std::memory_order_relaxed);
         manager->worker_done_count_.fetch_add(1, std::memory_order_relaxed);

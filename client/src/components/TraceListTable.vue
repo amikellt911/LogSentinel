@@ -57,6 +57,15 @@
           </template>
         </el-table-column>
 
+        <!-- 列表里单独拉一列 AI 状态，是为了把“风险等级未知”和“AI 没跑/失败”拆开。 -->
+        <el-table-column prop="ai_status" label="AI 状态" width="120">
+          <template #default="{ row }">
+            <span class="px-2 py-1 rounded text-xs font-bold" :class="getAiStatusBadgeClass(row.ai_status)">
+              {{ getAiStatusLabel(row.ai_status) }}
+            </span>
+          </template>
+        </el-table-column>
+
         <!-- 操作按钮（统一为查看详情） -->
         <el-table-column :label="$t('traceExplorer.table.actions')" width="120" fixed="right">
           <template #default="{ row }">
@@ -141,6 +150,39 @@ function getLevelBadgeClass(level: string): string {
       return 'bg-green-900/50 text-green-400 border border-green-500/30'
     default:
       return 'bg-gray-700 text-gray-300'
+  }
+}
+
+function getAiStatusLabel(status: string): string {
+  switch (status) {
+    case 'completed':
+      return '已完成'
+    case 'skipped_manual':
+      return '已关闭'
+    case 'skipped_circuit':
+      return '熔断跳过'
+    case 'failed_primary':
+      return '主路失败'
+    case 'failed_both':
+      return '双路失败'
+    default:
+      return '处理中'
+  }
+}
+
+function getAiStatusBadgeClass(status: string): string {
+  switch (status) {
+    case 'completed':
+      return 'bg-emerald-900/40 text-emerald-300 border border-emerald-500/30'
+    case 'skipped_manual':
+      return 'bg-slate-700/50 text-slate-200 border border-slate-500/30'
+    case 'skipped_circuit':
+      return 'bg-amber-900/40 text-amber-300 border border-amber-500/30'
+    case 'failed_primary':
+    case 'failed_both':
+      return 'bg-rose-900/40 text-rose-300 border border-rose-500/30'
+    default:
+      return 'bg-blue-900/40 text-blue-300 border border-blue-500/30'
   }
 }
 

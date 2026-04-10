@@ -5,6 +5,7 @@
 本项目是一个“C++ 高并发日志接入 + Trace 聚合 + 可选 AI 推理（Python proxy）+ 存储/查询/告警”的系统。
 当前已跑通的 Trace 主链路为：POST /logs/spans -> TraceSessionManager -> BufferedTraceRepository -> SqliteTraceRepository。
 当前 Trace 聚合采用“两阶段延迟关闭”语义：先通过 sealed grace window 吸收短暂乱序 Span，再通过 TIME_WAIT tombstone 拦截已完成 Trace 的晚到请求，避免重复落库。
+当前 MVP5 的 Settings/AI 主线以 Trace 链路为准；旧 `/logs` 批处理分析链已经从活代码主线移除，不再作为“配置是否真实生效”的判断依据，除非 `CurrentTask.md` 明确要求回头恢复或重建它。
 
 ## 禁止项与边界
 
@@ -31,7 +32,7 @@
 ## 编码风格与命名规范
 
 - 默认使用 C++17，优先 RAII 与智能指针管理所有权。
-- 遵循现有模块命名（如 `LogBatcher`、`SqliteLogRepository`、`HttpServer`）与文件结构。
+- 遵循现有模块命名（如 `TraceSessionManager`、`SqliteTraceRepository`、`HttpServer`）与文件结构。
 - Vue/TS 使用 SFC，视图放在 `client/src/views`，通用组件放在 `client/src/components`。
 - 仓库未统一配置格式化工具，请保持缩进与大括号风格与周边代码一致。
 
