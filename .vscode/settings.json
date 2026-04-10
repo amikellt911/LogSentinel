@@ -89,5 +89,6 @@
         "persistence/data/**"
     ],
     "cmake.sourceDirectory": "/home/llt/Project/llt/LogSentinel/server",
-    "cmake.buildDirectory": "${workspaceFolder}/server/build"
+    "cmake.buildDirectory": "${workspaceFolder}/server/build",
+    "terminal.integrated.gpuAcceleration": "off"
 }

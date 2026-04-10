@@ -46,11 +46,43 @@ protected:
         return count;
     }
 
+    bool TableExists(const std::string& table_name) {
+        sqlite3* db = nullptr;
+        int rc = sqlite3_open_v2(db_path.c_str(), &db, SQLITE_OPEN_READONLY, nullptr);
+        if (rc != SQLITE_OK) {
+            if (db) {
+                sqlite3_close_v2(db);
+            }
+            return false;
+        }
+        const char* sql = R"(
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table' AND name = ?;
+        )";
+        sqlite3_stmt* stmt = nullptr;
+        rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+        if (rc != SQLITE_OK) {
+            sqlite3_close_v2(db);
+            return false;
+        }
+        sqlite3_bind_text(stmt, 1, table_name.c_str(), -1, SQLITE_TRANSIENT);
+        bool exists = false;
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            exists = sqlite3_column_int(stmt, 0) > 0;
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close_v2(db);
+        return exists;
+    }
+
     struct SummaryRow {
         std::string service_name;
         int64_t start_time_ms = 0;
         int64_t duration_ms = 0;
         std::string risk_level;
+        std::string ai_status;
+        std::string ai_error;
     };
 
     std::optional<SummaryRow> QuerySummary(const std::string& trace_id) {
@@ -63,7 +95,7 @@ protected:
             return std::nullopt;
         }
         const char* sql = R"(
-            SELECT service_name, start_time_ms, duration_ms, risk_level
+            SELECT service_name, start_time_ms, duration_ms, risk_level, ai_status, ai_error
             FROM trace_summary
             WHERE trace_id = ?;
         )";
@@ -81,6 +113,8 @@ protected:
             out.start_time_ms = sqlite3_column_int64(stmt, 1);
             out.duration_ms = sqlite3_column_int64(stmt, 2);
             out.risk_level = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+            out.ai_status = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+            out.ai_error = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
             row = out;
         }
         sqlite3_finalize(stmt);
@@ -128,18 +162,6 @@ protected:
         return analysis;
     }
 
-    persistence::PromptDebugRecord MakePrompt(const std::string& trace_id) {
-        persistence::PromptDebugRecord prompt;
-        prompt.trace_id = trace_id;
-        prompt.input_json = "{}";
-        prompt.output_json = "{}";
-        prompt.model = "gemini-2.0-flash-exp";
-        prompt.duration_ms = 410;
-        prompt.total_tokens = 685;
-        prompt.timestamp = "2026-01-09 10:00:00";
-        return prompt;
-    }
-
 protected:
     std::unique_ptr<SqliteTraceRepository> repo;
     std::string db_path;
@@ -152,7 +174,7 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicSummaryAndSpans)
     spans.push_back(MakeSpan("trace-1", "span-1", ""));
     spans.push_back(MakeSpan("trace-1", "span-2", "span-1"));
 
-    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, nullptr);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr);
     EXPECT_TRUE(ok);
 
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 1);
@@ -170,6 +192,9 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceSummaryPersistsRow)
     ASSERT_TRUE(row.has_value());
     EXPECT_EQ(row->service_name, summary.service_name);
     EXPECT_EQ(row->duration_ms, summary.duration_ms);
+    // 新写入的主记录要显式带上 pending，避免查询层把“还没分析完”误判成“关闭了/失败了”。
+    EXPECT_EQ(row->ai_status, "pending");
+    EXPECT_TRUE(row->ai_error.empty());
 }
 
 TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceSpansPersistsRows)
@@ -209,6 +234,13 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAnalysisPersistsRow)
     bool ok = repo->SaveSingleTraceAnalysis(analysis);
     EXPECT_TRUE(ok);
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 1);
+
+    auto row = QuerySummary(summary.trace_id);
+    ASSERT_TRUE(row.has_value());
+    // analysis 真落库后，summary 上的风险等级和 AI 状态都要一起收敛成最终成功态。
+    EXPECT_EQ(row->risk_level, analysis.risk_level);
+    EXPECT_EQ(row->ai_status, "completed");
+    EXPECT_TRUE(row->ai_error.empty());
 }
 
 TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAnalysisFailsWithoutSummary)
@@ -219,23 +251,26 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAnalysisFailsWithoutSummary)
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
 }
 
-TEST_F(SqliteTraceRepositoryTest, SaveSinglePromptDebugPersistsRow)
+TEST_F(SqliteTraceRepositoryTest, UpdateTraceAiStatePersistsSkippedManualWithoutAnalysisRow)
 {
-    persistence::TraceSummary summary = MakeSummary("single-prompt-1");
+    persistence::TraceSummary summary = MakeSummary("manual-disabled-1");
     ASSERT_TRUE(repo->SaveSingleTraceSummary(summary));
 
-    persistence::PromptDebugRecord prompt = MakePrompt(summary.trace_id);
-    bool ok = repo->SaveSinglePromptDebug(prompt);
+    bool ok = repo->UpdateTraceAiState(summary.trace_id, "skipped_manual", "");
     EXPECT_TRUE(ok);
-    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM prompt_debug;"), 1);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+
+    auto row = QuerySummary(summary.trace_id);
+    ASSERT_TRUE(row.has_value());
+    EXPECT_EQ(row->ai_status, "skipped_manual");
+    EXPECT_TRUE(row->ai_error.empty());
 }
 
-TEST_F(SqliteTraceRepositoryTest, SaveSinglePromptDebugFailsWithoutSummary)
+TEST_F(SqliteTraceRepositoryTest, SchemaDoesNotCreatePromptDebugTable)
 {
-    persistence::PromptDebugRecord prompt = MakePrompt("missing-trace");
-    bool ok = repo->SaveSinglePromptDebug(prompt);
-    EXPECT_FALSE(ok);
-    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM prompt_debug;"), 0);
+    // prompt_debug 已经不在 MVP5 主链产品范围里，
+    // 所以仓储初始化后不应该再顺手创建这张“没人读、没人用”的表。
+    EXPECT_FALSE(TableExists("prompt_debug"));
 }
 
 TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicPersistsSummaryFields)
@@ -244,7 +279,7 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicPersistsSummaryFields)
     std::vector<persistence::TraceSpanRecord> spans;
     spans.push_back(MakeSpan("trace-1", "span-1", ""));
 
-    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, nullptr);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr);
     EXPECT_TRUE(ok);
 
     auto row = QuerySummary("trace-1");
@@ -263,24 +298,12 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicWithAnalysis)
 
     persistence::TraceAnalysisRecord analysis = MakeAnalysis("trace-2");
 
-    bool ok = repo->SaveSingleTraceAtomic(summary, spans, &analysis, nullptr);
+    // 原子写现在只覆盖 summary / spans / analysis，
+    // 所以这个用例就是新的完整路径，不再额外夹带任何废弃调试附属表。
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, &analysis);
     EXPECT_TRUE(ok);
 
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 1);
-}
-
-TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicWithPromptDebug)
-{
-    persistence::TraceSummary summary = MakeSummary("trace-3");
-    std::vector<persistence::TraceSpanRecord> spans;
-    spans.push_back(MakeSpan("trace-3", "span-1", ""));
-
-    persistence::PromptDebugRecord prompt = MakePrompt("trace-3");
-
-    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, &prompt);
-    EXPECT_TRUE(ok);
-
-    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM prompt_debug;"), 1);
 }
 
 TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicRejectsOrphanSpan)
@@ -289,7 +312,7 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicRejectsOrphanSpan)
     std::vector<persistence::TraceSpanRecord> spans;
     spans.push_back(MakeSpan("trace-4", "span-1", ""));
 
-    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr, nullptr);
+    bool ok = repo->SaveSingleTraceAtomic(summary, spans, nullptr);
     EXPECT_TRUE(ok);
 
     // 直接写入不存在 trace_summary 的 span，应触发外键失败并返回 false
@@ -298,7 +321,169 @@ TEST_F(SqliteTraceRepositoryTest, SaveSingleTraceAtomicRejectsOrphanSpan)
     std::vector<persistence::TraceSpanRecord> bad_spans;
     bad_spans.push_back(MakeSpan("missing-trace", "span-x", ""));
 
-    bool bad = repo->SaveSingleTraceAtomic(summary, bad_spans, nullptr, nullptr);
+    bool bad = repo->SaveSingleTraceAtomic(summary, bad_spans, nullptr);
     EXPECT_FALSE(bad);
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 1);
+}
+
+TEST_F(SqliteTraceRepositoryTest, GetTraceDetailReturnsSummarySpansAndAnalysis)
+{
+    persistence::TraceSummary summary = MakeSummary("detail-trace-1");
+    summary.service_name = "order-service";
+    summary.start_time_ms = 1000;
+    summary.end_time_ms = 1600;
+    summary.duration_ms = 600;
+    summary.span_count = 2;
+    summary.token_count = 42;
+    ASSERT_TRUE(repo->SaveSingleTraceSummary(summary));
+
+    persistence::TraceSpanRecord child_span = MakeSpan(summary.trace_id, "span-2", "span-1");
+    child_span.service_name = "payment-service";
+    child_span.operation = "charge";
+    child_span.start_time_ms = 1200;
+    child_span.duration_ms = 200;
+
+    persistence::TraceSpanRecord root_span = MakeSpan(summary.trace_id, "span-1", "");
+    root_span.service_name = "order-service";
+    root_span.operation = "create-order";
+    root_span.start_time_ms = 1000;
+    root_span.duration_ms = 600;
+
+    std::vector<persistence::TraceSpanRecord> spans;
+    // 故意按乱序写入，验证详情查询会按 start_time_ms ASC, span_id ASC 排好。
+    spans.push_back(child_span);
+    spans.push_back(root_span);
+    ASSERT_TRUE(repo->SaveSingleTraceSpans(summary.trace_id, spans));
+
+    persistence::TraceAnalysisRecord analysis = MakeAnalysis(summary.trace_id);
+    analysis.risk_level = "critical";
+    analysis.summary = "trace summary";
+    analysis.root_cause = "db slow";
+    analysis.solution = "scale out";
+    analysis.confidence = 0.91;
+    ASSERT_TRUE(repo->SaveSingleTraceAnalysis(analysis));
+
+    std::optional<TraceDetailRecord> detail = repo->GetTraceDetail(summary.trace_id);
+    ASSERT_TRUE(detail.has_value());
+    EXPECT_EQ(detail->trace_id, summary.trace_id);
+    EXPECT_EQ(detail->service_name, summary.service_name);
+    EXPECT_EQ(detail->duration_ms, summary.duration_ms);
+    EXPECT_EQ(detail->token_count, summary.token_count);
+    EXPECT_EQ(detail->risk_level, analysis.risk_level);
+    EXPECT_TRUE(detail->tags.empty());
+
+    ASSERT_TRUE(detail->analysis.has_value());
+    EXPECT_EQ(detail->analysis->risk_level, analysis.risk_level);
+    EXPECT_EQ(detail->analysis->summary, analysis.summary);
+    EXPECT_EQ(detail->analysis->root_cause, analysis.root_cause);
+    EXPECT_EQ(detail->analysis->solution, analysis.solution);
+    EXPECT_DOUBLE_EQ(detail->analysis->confidence, analysis.confidence);
+
+    ASSERT_EQ(detail->spans.size(), 2u);
+    EXPECT_EQ(detail->spans[0].span_id, "span-1");
+    EXPECT_EQ(detail->spans[0].service_name, "order-service");
+    EXPECT_EQ(detail->spans[0].raw_status, "OK");
+    EXPECT_EQ(detail->spans[1].span_id, "span-2");
+    ASSERT_TRUE(detail->spans[1].parent_id.has_value());
+    EXPECT_EQ(detail->spans[1].parent_id.value(), "span-1");
+}
+
+TEST_F(SqliteTraceRepositoryTest, GetTraceDetailReturnsNulloptWhenTraceMissing)
+{
+    std::optional<TraceDetailRecord> detail = repo->GetTraceDetail("missing-trace");
+    EXPECT_FALSE(detail.has_value());
+}
+
+TEST_F(SqliteTraceRepositoryTest, DeleteTraceByIdRemovesSummarySpansAndAnalysisTogether)
+{
+    persistence::TraceSummary summary = MakeSummary("delete-trace-1");
+    std::vector<persistence::TraceSpanRecord> spans;
+    spans.push_back(MakeSpan(summary.trace_id, "span-1", ""));
+    spans.push_back(MakeSpan(summary.trace_id, "span-2", "span-1"));
+    persistence::TraceAnalysisRecord analysis = MakeAnalysis(summary.trace_id);
+
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(summary, spans, &analysis));
+    ASSERT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 1);
+    ASSERT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 2);
+    ASSERT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 1);
+
+    EXPECT_TRUE(repo->DeleteTraceById(summary.trace_id));
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 0);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+}
+
+TEST_F(SqliteTraceRepositoryTest, DeleteExpiredTracesBatchRemovesOnlyExpiredTraceIds)
+{
+    persistence::TraceSummary expired_with_end = MakeSummary("expired-end");
+    expired_with_end.start_time_ms = 1000;
+    expired_with_end.end_time_ms = 1500;
+
+    persistence::TraceSummary expired_without_end = MakeSummary("expired-start");
+    expired_without_end.start_time_ms = 1800;
+    expired_without_end.end_time_ms.reset();
+
+    persistence::TraceSummary fresh = MakeSummary("fresh-trace");
+    fresh.start_time_ms = 4000;
+    fresh.end_time_ms = 5000;
+    persistence::TraceAnalysisRecord expired_with_end_analysis = MakeAnalysis(expired_with_end.trace_id);
+    persistence::TraceAnalysisRecord expired_without_end_analysis = MakeAnalysis(expired_without_end.trace_id);
+    persistence::TraceAnalysisRecord fresh_analysis = MakeAnalysis(fresh.trace_id);
+
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(
+        expired_with_end,
+        {MakeSpan(expired_with_end.trace_id, "span-a", "")},
+        &expired_with_end_analysis));
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(
+        expired_without_end,
+        {MakeSpan(expired_without_end.trace_id, "span-b", "")},
+        &expired_without_end_analysis));
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(
+        fresh,
+        {MakeSpan(fresh.trace_id, "span-c", "")},
+        &fresh_analysis));
+
+    const size_t deleted = repo->DeleteExpiredTracesBatch(/*cutoff_ms*/3000, /*limit*/10);
+    EXPECT_EQ(deleted, 2u);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 1);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 1);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 1);
+    EXPECT_TRUE(QuerySummary("fresh-trace").has_value());
+    EXPECT_FALSE(QuerySummary("expired-end").has_value());
+    EXPECT_FALSE(QuerySummary("expired-start").has_value());
+}
+
+TEST_F(SqliteTraceRepositoryTest, DeleteExpiredTracesBatchDeletesOldestExpiredTracesFirst)
+{
+    persistence::TraceSummary oldest = MakeSummary("trace-oldest");
+    oldest.start_time_ms = 1000;
+    oldest.end_time_ms = 1100;
+
+    persistence::TraceSummary middle = MakeSummary("trace-middle");
+    middle.start_time_ms = 2000;
+    middle.end_time_ms = 2100;
+
+    persistence::TraceSummary newest_expired = MakeSummary("trace-newest-expired");
+    newest_expired.start_time_ms = 2500;
+    newest_expired.end_time_ms = 2600;
+    persistence::TraceAnalysisRecord oldest_analysis = MakeAnalysis(oldest.trace_id);
+    persistence::TraceAnalysisRecord middle_analysis = MakeAnalysis(middle.trace_id);
+    persistence::TraceAnalysisRecord newest_analysis = MakeAnalysis(newest_expired.trace_id);
+
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(oldest,
+                                            {MakeSpan(oldest.trace_id, "span-oldest", "")},
+                                            &oldest_analysis));
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(middle,
+                                            {MakeSpan(middle.trace_id, "span-middle", "")},
+                                            &middle_analysis));
+    ASSERT_TRUE(repo->SaveSingleTraceAtomic(newest_expired,
+                                            {MakeSpan(newest_expired.trace_id, "span-newest", "")},
+                                            &newest_analysis));
+
+    // 这里锁死“最老优先 + limit 生效”的删除语义，避免 retention 一轮删的是随机过期 trace。
+    const size_t deleted = repo->DeleteExpiredTracesBatch(/*cutoff_ms*/3000, /*limit*/2);
+    EXPECT_EQ(deleted, 2u);
+    EXPECT_FALSE(QuerySummary("trace-oldest").has_value());
+    EXPECT_FALSE(QuerySummary("trace-middle").has_value());
+    EXPECT_TRUE(QuerySummary("trace-newest-expired").has_value());
 }

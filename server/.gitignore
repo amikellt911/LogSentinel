@@ -21,3 +21,4 @@ tests/build
 *.svg
 *.script
 *.folded
+.codex

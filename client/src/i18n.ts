@@ -10,7 +10,8 @@ const messages = {
     },
     layout: {
       serviceMonitor: 'Service Monitor',
-      dashboard: 'System Status',
+      servicePrototype: 'Service Prototype',
+      dashboard: 'System Monitor',
       logs: 'Live Logs',
       settings: 'Settings',
       systemRunning: 'SYSTEM RUNNING',
@@ -38,6 +39,7 @@ const messages = {
       estimatedCost: 'Estimated Cost',
       today: 'today',
       avgTokensPerBatch: 'Avg Tokens/Batch',
+      avgTokensPerCall: 'Avg Tokens/Call',
       perBatch: 'per batch',
       batchArchive: 'Batch Archive',
       last1h: 'Last 1h',
@@ -97,6 +99,7 @@ const messages = {
         traceId: 'Trace ID',
         traceIdPlaceholder: 'Enter Trace ID',
         serviceName: 'Service',
+        serviceNameExactPlaceholder: 'Enter entry service name (exact match)',
         allServices: 'All Services',
         timeRange: 'Time Range',
         startTime: 'Start Time',
@@ -177,7 +180,7 @@ const messages = {
     },
     dashboard: {
       totalLogs: 'Total Logs Processed',
-      aiTrigger: 'AI Trigger Count',
+      aiTrigger: 'AI Call Count',
       backpressure: 'Back-pressure Status',
       memory: 'Memory Usage',
       normal: 'Normal',
@@ -186,12 +189,12 @@ const messages = {
       stable: 'System Stable',
       throttling: 'Throttling Active',
       congested: 'Queue Congested',
-      ingestRate: 'Ingest Rate (QPS)',
-      aiRate: 'AI Throughput',
-      realtimeTitle: 'Real-time Ingestion vs AI Processing',
+      ingestRate: 'Ingest Rate',
+      aiRate: 'AI Completion Rate',
+      realtimeTitle: 'System Throughput Trend',
       calls: 'calls',
-      netLatency: 'Task Queue Time',
-      aiLatency: 'AI Latency (Inference)',
+      netLatency: 'AI Queue Wait Time',
+      aiLatency: 'AI Inference Latency',
       queue: 'Queue',
       riskTitle: 'Risk Distribution',
       recentAlerts: 'Recent Alerts',
@@ -326,7 +329,8 @@ const messages = {
     },
     layout: {
       serviceMonitor: '服务监控',
-      dashboard: '系统状态',
+      servicePrototype: '服务监控原型',
+      dashboard: '系统监控',
       logs: '实时日志',
       settings: '系统设置',
       systemRunning: '系统运行中',
@@ -354,6 +358,7 @@ const messages = {
       estimatedCost: '预估成本',
       today: '今日',
       avgTokensPerBatch: '平均 Token/批次',
+      avgTokensPerCall: '平均 Token/次调用',
       perBatch: '每批次',
       batchArchive: '批次存档',
       last1h: '最近 1 小时',
@@ -413,6 +418,7 @@ const messages = {
         traceId: 'Trace ID',
         traceIdPlaceholder: '输入 Trace ID',
         serviceName: '服务名称',
+        serviceNameExactPlaceholder: '输入入口服务名（精确匹配）',
         allServices: '全部服务',
         timeRange: '时间范围',
         startTime: '开始时间',
@@ -493,7 +499,7 @@ const messages = {
     },
     dashboard: {
       totalLogs: '日志处理总数',
-      aiTrigger: 'AI 触发次数',
+      aiTrigger: 'AI 调用总数',
       backpressure: '背压状态',
       memory: '内存占用',
       normal: '正常',
@@ -502,13 +508,13 @@ const messages = {
       stable: '系统稳定',
       throttling: '限流中',
       congested: '队列拥堵',
-      ingestRate: '摄入速率 (QPS)',
-      aiRate: 'AI 吞吐量',
-      realtimeTitle: '实时摄入 vs AI 处理',
+      ingestRate: '接入速率',
+      aiRate: 'AI 完成速率',
+      realtimeTitle: '系统吞吐趋势',
       calls: '次调用',
-      netLatency: '任务排队时间',
-      aiLatency: 'AI 延迟 (模型推理)',
-      queue: '队列',
+      netLatency: 'AI 队列等待时间',
+      aiLatency: 'AI 推理延迟',
+      queue: '队列占用',
       riskTitle: '风险分布',
       recentAlerts: '最近告警',
       table: {
@@ -637,8 +643,10 @@ const messages = {
 
 const i18n = createI18n({
   legacy: false, // Use Composition API
-  locale: 'en',
-  fallbackLocale: 'en',
+  // 默认先用中文，避免入口预取设置失败时整站先回退成英文。
+  // 真正的最终语言仍然由 main.ts 预取到的 app_language 再覆盖。
+  locale: 'zh',
+  fallbackLocale: 'zh',
   globalInjection: true, // Enables $t in templates
   messages
 })

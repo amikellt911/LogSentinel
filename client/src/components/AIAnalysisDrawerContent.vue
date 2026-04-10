@@ -18,6 +18,9 @@
               #{{ tag }}
             </span>
           </div>
+          <span class="px-3 py-1 rounded-full text-xs font-bold border" :class="getAiStatusBadgeClass(traceDetail.ai_status)">
+            {{ getAiStatusLabel(traceDetail.ai_status) }}
+          </span>
           <!-- 风险等级徽章 -->
           <span
             v-if="traceDetail.ai_analysis"
@@ -49,8 +52,15 @@
         </div>
       </div>
 
-      <div v-else class="text-gray-500 text-sm italic">
-        {{ $t('traceExplorer.drawer.noAnalysis') }}
+      <div v-else class="space-y-2">
+        <!-- 没有 ai_analysis 不等于“什么都不知道”。
+             这里优先展示后端落下来的 ai_status，明确告诉用户是手动关闭、熔断跳过还是调用失败。 -->
+        <div class="text-gray-300 text-sm">
+          {{ getAiStatusDescription(traceDetail.ai_status) }}
+        </div>
+        <div v-if="traceDetail.ai_error" class="rounded border border-red-500/20 bg-red-950/20 px-3 py-2 text-xs text-red-200 whitespace-pre-wrap break-all">
+          {{ traceDetail.ai_error }}
+        </div>
       </div>
     </div>
   </div>
@@ -84,6 +94,54 @@ function getLevelBadgeClass(level: string): string {
       return 'bg-green-900/50 text-green-400 border border-green-500/30'
     default:
       return 'bg-gray-700 text-gray-300'
+  }
+}
+
+function getAiStatusLabel(status: string): string {
+  switch (status) {
+    case 'completed':
+      return '已完成'
+    case 'skipped_manual':
+      return '已关闭'
+    case 'skipped_circuit':
+      return '熔断跳过'
+    case 'failed_primary':
+      return '主路失败'
+    case 'failed_both':
+      return '双路失败'
+    default:
+      return '处理中'
+  }
+}
+
+function getAiStatusDescription(status: string): string {
+  switch (status) {
+    case 'skipped_manual':
+      return 'AI 分析已被手动关闭，本次 trace 只保留聚合结果。'
+    case 'skipped_circuit':
+      return 'AI 当前处于熔断跳过状态，本次 trace 未发起分析。'
+    case 'failed_primary':
+      return '主 AI 分析失败，本次 trace 没有生成分析结果。'
+    case 'failed_both':
+      return '主 AI 和降级 AI 都失败了，本次 trace 没有生成分析结果。'
+    default:
+      return 'AI 分析尚未完成。'
+  }
+}
+
+function getAiStatusBadgeClass(status: string): string {
+  switch (status) {
+    case 'completed':
+      return 'bg-emerald-900/40 text-emerald-300 border-emerald-500/30'
+    case 'skipped_manual':
+      return 'bg-slate-700/50 text-slate-200 border-slate-500/30'
+    case 'skipped_circuit':
+      return 'bg-amber-900/40 text-amber-300 border-amber-500/30'
+    case 'failed_primary':
+    case 'failed_both':
+      return 'bg-rose-900/40 text-rose-300 border-rose-500/30'
+    default:
+      return 'bg-blue-900/40 text-blue-300 border-blue-500/30'
   }
 }
 </script>

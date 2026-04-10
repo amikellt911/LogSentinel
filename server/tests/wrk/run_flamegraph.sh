@@ -11,7 +11,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SERVER_BIN="${ROOT_DIR}/server/build/LogSentinel"
-WRK_SCRIPT="${ROOT_DIR}/server/tests/wrk/trace_model.lua"
+# 默认仍走老的 trace_model.lua，保证历史 flamegraph 口径不被这次 active-pool 升级直接改脏。
+# 如果要切到新脚本，调用方只需要在环境变量里覆写 WRK_SCRIPT 即可。
+WRK_SCRIPT="${WRK_SCRIPT:-${ROOT_DIR}/server/tests/wrk/trace_model.lua}"
 PACED_SENDER="${ROOT_DIR}/server/tests/wrk/trace_paced_sender.py"
 RESULT_ROOT="${ROOT_DIR}/server/tests/wrk/results"
 FLAMEGRAPH_DIR="${FLAMEGRAPH_DIR:-${HOME}/tools/FlameGraph}"
@@ -27,6 +29,8 @@ WARMUP_CONNECTIONS="${WARMUP_CONNECTIONS:-20}"
 DURATION="${DURATION:-15s}"
 CONNECTIONS="${CONNECTIONS:-100}"
 WRK_THREADS="${WRK_THREADS:-1}"
+ACTIVE_POOL_SIZE="${ACTIVE_POOL_SIZE:-4}"
+TRACE_WRK_ROLE_PLAN="${TRACE_WRK_ROLE_PLAN:-}"
 LOAD_GENERATOR="${LOAD_GENERATOR:-wrk}"
 PACED_BATCH_TRACES="${PACED_BATCH_TRACES:-5}"
 PACED_BATCH_SLEEP_MS="${PACED_BATCH_SLEEP_MS:-100}"
@@ -74,6 +78,9 @@ usage() {
   DURATION=15s
   CONNECTIONS=100
   WRK_THREADS=1
+  WRK_SCRIPT=/path/to/trace_model_active_pool.lua
+  ACTIVE_POOL_SIZE=4
+  TRACE_WRK_ROLE_PLAN="end,end,end,end,capacity,capacity,timeout,timeout"
   PACED_BATCH_TRACES=5
   PACED_BATCH_SLEEP_MS=100
   PACED_REQUEST_TIMEOUT_MS=1000
@@ -287,11 +294,13 @@ start_server() {
 run_warmup() {
     WARMUP_LOG="${RUN_DIR}/warmup.log"
     log "warmup profile=${PROFILE} connections=${WARMUP_CONNECTIONS} duration=${WARMUP_DURATION}"
-    TRACE_WRK_MODE="${MODE}" TRACE_WRK_THREADS="${WRK_THREADS}" \
+    # warmup 和正式阶段必须吃同一套 Lua 脚本与角色计划，
+    # 否则“热起来的是老模型、采样的是新模型”，火焰图会被两套流量口径混脏。
+    TRACE_WRK_MODE="${MODE}" TRACE_WRK_THREADS="${WRK_THREADS}" TRACE_WRK_ROLE_PLAN="${TRACE_WRK_ROLE_PLAN}" \
         taskset_wrap "${WRK_CPUSET}" \
         wrk -t"${WRK_THREADS}" -c"${WARMUP_CONNECTIONS}" -d"${WARMUP_DURATION}" --latency \
         -s "${WRK_SCRIPT}" "http://127.0.0.1:${PORT}" -- \
-        "${MODE}" "${SPANS_PER_TRACE}" "${TIMEOUT_CUTOFF}" "${TOKEN_PAYLOAD_SIZE}" \
+        "${MODE}" "${SPANS_PER_TRACE}" "${TIMEOUT_CUTOFF}" "${TOKEN_PAYLOAD_SIZE}" "${ACTIVE_POOL_SIZE}" \
         > "${WARMUP_LOG}" 2>&1
     sleep "${WARMUP_SETTLE_SEC}"
 }
@@ -327,6 +336,9 @@ run_perf_and_load() {
             echo "connections=${CONNECTIONS}"
             echo "duration=${DURATION}"
             echo "wrk_threads=${WRK_THREADS}"
+            echo "wrk_script=${WRK_SCRIPT}"
+            echo "active_pool_size=${ACTIVE_POOL_SIZE}"
+            echo "trace_wrk_role_plan=${TRACE_WRK_ROLE_PLAN:-<unset>}"
             echo "server_cpuset=${SERVER_CPUSET}"
             echo "wrk_cpuset=${WRK_CPUSET}"
             echo "perf_freq=${PERF_FREQ}"
@@ -334,11 +346,11 @@ run_perf_and_load() {
             echo "perf_event=${PERF_EVENT}"
             echo "load_generator=${LOAD_GENERATOR}"
             echo
-            TRACE_WRK_MODE="${MODE}" TRACE_WRK_THREADS="${WRK_THREADS}" \
+            TRACE_WRK_MODE="${MODE}" TRACE_WRK_THREADS="${WRK_THREADS}" TRACE_WRK_ROLE_PLAN="${TRACE_WRK_ROLE_PLAN}" \
                 taskset_wrap "${WRK_CPUSET}" \
                 wrk -t"${WRK_THREADS}" -c"${CONNECTIONS}" -d"${DURATION}" --latency \
                 -s "${WRK_SCRIPT}" "http://127.0.0.1:${PORT}" -- \
-                "${MODE}" "${SPANS_PER_TRACE}" "${TIMEOUT_CUTOFF}" "${TOKEN_PAYLOAD_SIZE}"
+                "${MODE}" "${SPANS_PER_TRACE}" "${TIMEOUT_CUTOFF}" "${TOKEN_PAYLOAD_SIZE}" "${ACTIVE_POOL_SIZE}"
             echo "===== WRK RUN END ====="
         } | tee "${WRK_LOG}"
     elif [[ "${LOAD_GENERATOR}" == "paced" ]]; then
@@ -447,6 +459,9 @@ mkdir -p "${RUN_DIR}"
     echo "duration=${DURATION}"
     echo "connections=${CONNECTIONS}"
     echo "wrk_threads=${WRK_THREADS}"
+    echo "wrk_script=${WRK_SCRIPT}"
+    echo "active_pool_size=${ACTIVE_POOL_SIZE}"
+    echo "trace_wrk_role_plan=${TRACE_WRK_ROLE_PLAN:-<unset>}"
     echo "load_generator=${LOAD_GENERATOR}"
     echo "paced_batch_traces=${PACED_BATCH_TRACES}"
     echo "paced_batch_sleep_ms=${PACED_BATCH_SLEEP_MS}"

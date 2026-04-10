@@ -57,43 +57,26 @@
           </template>
         </el-table-column>
 
-        <!-- 操作按钮（拆分为 3 个独立按钮） -->
-        <el-table-column :label="$t('traceExplorer.table.actions')" width="140" fixed="right">
+        <!-- 列表里单独拉一列 AI 状态，是为了把“风险等级未知”和“AI 没跑/失败”拆开。 -->
+        <el-table-column prop="ai_status" label="AI 状态" width="120">
           <template #default="{ row }">
-            <div class="flex gap-1">
-              <!-- AI 分析按钮 -->
-              <el-tooltip :content="$t('traceExplorer.table.aiAnalysis')" placement="top">
-                <el-button
-                  type="primary"
-                  :icon="Cpu"
-                  circle
-                  size="small"
-                  @click.stop="handleAIAnalysis(row)"
-                />
-              </el-tooltip>
+            <span class="px-2 py-1 rounded text-xs font-bold" :class="getAiStatusBadgeClass(row.ai_status)">
+              {{ getAiStatusLabel(row.ai_status) }}
+            </span>
+          </template>
+        </el-table-column>
 
-              <!-- 调用链按钮 -->
-              <el-tooltip :content="$t('traceExplorer.table.callChain')" placement="top">
-                <el-button
-                  type="success"
-                  :icon="Histogram"
-                  circle
-                  size="small"
-                  @click.stop="handleCallChain(row)"
-                />
-              </el-tooltip>
-
-              <!-- Prompt 按钮 -->
-              <el-tooltip :content="$t('traceExplorer.table.promptDebugger')" placement="top">
-                <el-button
-                  type="warning"
-                  :icon="Document"
-                  circle
-                  size="small"
-                  @click.stop="handlePromptDebug(row)"
-                />
-              </el-tooltip>
-            </div>
+        <!-- 操作按钮（统一为查看详情） -->
+        <el-table-column :label="$t('traceExplorer.table.actions')" width="120" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              type="primary"
+              :icon="View"
+              size="small"
+              @click.stop="handleViewDetail(row)"
+            >
+              {{ $t('traceExplorer.table.viewDetails') }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -105,8 +88,8 @@
         {{ $t('traceExplorer.pagination.total') }}: {{ total }}
       </div>
       <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
+        :current-page="currentPage"
+        :page-size="pageSize"
         :page-sizes="[20, 50, 100]"
         :total="total"
         layout="sizes, prev, pager, next"
@@ -119,8 +102,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Cpu, Histogram, Document } from '@element-plus/icons-vue'
+import { View } from '@element-plus/icons-vue'
 import type { TraceListItem } from '../types/trace'
 
 // Props
@@ -128,25 +110,21 @@ interface Props {
   data: TraceListItem[]
   loading?: boolean
   total: number
+  currentPage: number
+  pageSize: number
 }
 
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   loading: false
 })
 
 // Emits
 const emit = defineEmits<{
   'row-click': [row: TraceListItem]
-  'ai-analysis': [row: TraceListItem]
-  'call-chain': [row: TraceListItem]
-  'prompt-debug': [row: TraceListItem]
+  'view-detail': [row: TraceListItem]
   'page-change': [page: number]
   'size-change': [size: number]
 }>()
-
-// 分页状态
-const currentPage = ref(1)
-const pageSize = ref(20)
 
 /**
  * 格式化数字（千分位分隔符）
@@ -175,6 +153,39 @@ function getLevelBadgeClass(level: string): string {
   }
 }
 
+function getAiStatusLabel(status: string): string {
+  switch (status) {
+    case 'completed':
+      return '已完成'
+    case 'skipped_manual':
+      return '已关闭'
+    case 'skipped_circuit':
+      return '熔断跳过'
+    case 'failed_primary':
+      return '主路失败'
+    case 'failed_both':
+      return '双路失败'
+    default:
+      return '处理中'
+  }
+}
+
+function getAiStatusBadgeClass(status: string): string {
+  switch (status) {
+    case 'completed':
+      return 'bg-emerald-900/40 text-emerald-300 border border-emerald-500/30'
+    case 'skipped_manual':
+      return 'bg-slate-700/50 text-slate-200 border border-slate-500/30'
+    case 'skipped_circuit':
+      return 'bg-amber-900/40 text-amber-300 border border-amber-500/30'
+    case 'failed_primary':
+    case 'failed_both':
+      return 'bg-rose-900/40 text-rose-300 border border-rose-500/30'
+    default:
+      return 'bg-blue-900/40 text-blue-300 border border-blue-500/30'
+  }
+}
+
 /**
  * 根据耗时返回样式类名
  */
@@ -192,31 +203,16 @@ function handleRowClick(row: TraceListItem) {
 }
 
 /**
- * AI 分析按钮点击事件
+ * 查看详情按钮点击事件
  */
-function handleAIAnalysis(row: TraceListItem) {
-  emit('ai-analysis', row)
-}
-
-/**
- * 调用链按钮点击事件
- */
-function handleCallChain(row: TraceListItem) {
-  emit('call-chain', row)
-}
-
-/**
- * Prompt 按钮点击事件
- */
-function handlePromptDebug(row: TraceListItem) {
-  emit('prompt-debug', row)
+function handleViewDetail(row: TraceListItem) {
+  emit('view-detail', row)
 }
 
 /**
  * 页码变化
  */
 function handleCurrentChange(page: number) {
-  currentPage.value = page
   emit('page-change', page)
 }
 
@@ -224,7 +220,6 @@ function handleCurrentChange(page: number) {
  * 每页数量变化
  */
 function handleSizeChange(size: number) {
-  pageSize.value = size
   emit('size-change', size)
 }
 
