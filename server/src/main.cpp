@@ -346,6 +346,23 @@ int main(int argc, char* argv[])
     const std::string effective_trace_ai_model = startup_app_config.ai_model;
     const std::string effective_trace_ai_api_key = startup_app_config.ai_api_key;
     const bool effective_ai_analysis_enabled = startup_app_config.ai_analysis_enabled;
+    // 自动降级这一刀也按冷启动配置消费：
+    // 既然主/备 provider 都是在启动时构对象，那 provider/model/api_key 三元组自然也不能运行中热切。
+    const bool effective_ai_auto_degrade = startup_app_config.ai_auto_degrade;
+    const std::string effective_ai_fallback_provider = startup_app_config.ai_fallback_provider;
+    const std::string effective_ai_fallback_model = startup_app_config.ai_fallback_model;
+    const std::string effective_ai_fallback_api_key = startup_app_config.ai_fallback_api_key;
+    const bool effective_ai_circuit_breaker = startup_app_config.ai_circuit_breaker;
+    const int effective_ai_failure_threshold =
+        startup_app_config.ai_failure_threshold > 0
+            ? startup_app_config.ai_failure_threshold
+            : 5;
+    const int effective_ai_cooldown_seconds =
+        startup_app_config.ai_cooldown_seconds > 0
+            ? startup_app_config.ai_cooldown_seconds
+            : 60;
+    const int64_t effective_ai_cooldown_ms =
+        static_cast<int64_t>(effective_ai_cooldown_seconds) * 1000;
     // 水位阈值同样收口成冷启动配置：
     // 它们直接驱动 TraceSessionManager 的背压状态机，不适合运行中热切。
     // 这一刀只开放 overload/critical 两档，low 仍由后端内部派生回滞阈值。
@@ -388,6 +405,14 @@ int main(int argc, char* argv[])
     }
     if (effective_retry_base_delay_ms <= 0) {
         std::cerr << "Fatal Error: effective retry_base_delay_ms must be > 0" << std::endl;
+        return -1;
+    }
+    if (effective_ai_failure_threshold <= 0) {
+        std::cerr << "Fatal Error: effective ai_failure_threshold must be > 0" << std::endl;
+        return -1;
+    }
+    if (effective_ai_cooldown_seconds <= 0) {
+        std::cerr << "Fatal Error: effective ai_cooldown_seconds must be > 0" << std::endl;
         return -1;
     }
     if (effective_wm_active_sessions_overload <= 0 || effective_wm_active_sessions_overload > 100 ||
@@ -505,6 +530,7 @@ int main(int argc, char* argv[])
     }
     std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(std::move(webhook_channels));
     std::shared_ptr<TraceAiProvider> trace_ai;
+    std::shared_ptr<TraceAiProvider> fallback_trace_ai;
     const bool enable_trace_ai =
         effective_ai_analysis_enabled && (auto_start_proxy || trace_ai_provider_explicit);
     if (enable_trace_ai) {
@@ -522,12 +548,35 @@ int main(int argc, char* argv[])
         options.model = effective_trace_ai_model;
         options.api_key = effective_trace_ai_api_key;
         trace_ai = CreateTraceAiProvider(options);
+        if (effective_ai_auto_degrade) {
+            TraceAiBackend fallback_backend = TraceAiBackend::Mock;
+            // fallback 也按同一套冷启动工厂构造，区别只在 backend/model/api_key。
+            // 这样主/备两路 provider 都保持“单次调用对象”的边界，不把动态切路由塞进 provider 内部。
+            if (!TryParseTraceAiBackend(effective_ai_fallback_provider, &fallback_backend)) {
+                std::cerr << "Fatal Error: unsupported ai_fallback_provider '"
+                          << effective_ai_fallback_provider << "'. expected one of: mock|gemini"
+                          << std::endl;
+                return -1;
+            }
+            TraceAiFactoryOptions fallback_options;
+            fallback_options.base_url = trace_ai_base_url;
+            fallback_options.backend = fallback_backend;
+            fallback_options.timeout_ms = trace_ai_timeout_ms;
+            fallback_options.prompt_template = effective_trace_prompt_template;
+            fallback_options.model = effective_ai_fallback_model;
+            fallback_options.api_key = effective_ai_fallback_api_key;
+            fallback_trace_ai = CreateTraceAiProvider(fallback_options);
+        }
         std::cout << "Trace AI enabled via proxy. provider=" << effective_trace_ai_provider
                   << ", base_url=" << trace_ai_base_url
                   << ", timeout_ms=" << trace_ai_timeout_ms
                   << ", ai_language=" << startup_app_config.ai_language
                   << ", model=" << effective_trace_ai_model
                   << ", api_key=" << (effective_trace_ai_api_key.empty() ? "<empty>" : "<configured>")
+                  << ", auto_degrade=" << (effective_ai_auto_degrade ? "true" : "false")
+                  << ", fallback_provider=" << effective_ai_fallback_provider
+                  << ", fallback_model=" << effective_ai_fallback_model
+                  << ", fallback_api_key=" << (effective_ai_fallback_api_key.empty() ? "<empty>" : "<configured>")
                   << std::endl;
     } else {
         // 这里区分的是“主链是否真的允许发起 AI 分析”，不是 trace 查询能力本身。
@@ -595,7 +644,12 @@ int main(int argc, char* argv[])
         effective_wm_pending_tasks_critical,
         service_runtime_accumulator.get(),
         system_runtime_accumulator.get(),
-        effective_ai_analysis_enabled);
+        effective_ai_analysis_enabled,
+        effective_ai_circuit_breaker,
+        static_cast<size_t>(effective_ai_failure_threshold),
+        effective_ai_cooldown_ms,
+        fallback_trace_ai.get(),
+        effective_ai_auto_degrade);
     const double trace_sweep_interval_sec =
         static_cast<double>(effective_trace_sweep_interval_ms) / 1000.0;
     std::cout << "Trace session sweep enabled. sweep_interval_ms=" << effective_trace_sweep_interval_ms
@@ -609,6 +663,10 @@ int main(int argc, char* argv[])
               << ", wm_buffered_spans=" << effective_wm_buffered_spans_overload << "/" << effective_wm_buffered_spans_critical
               << ", wm_pending_tasks=" << effective_wm_pending_tasks_overload << "/" << effective_wm_pending_tasks_critical
               << ", ai_analysis_enabled=" << (effective_ai_analysis_enabled ? "true" : "false")
+              << ", ai_auto_degrade=" << (effective_ai_auto_degrade ? "true" : "false")
+              << ", ai_circuit_breaker=" << (effective_ai_circuit_breaker ? "true" : "false")
+              << ", ai_failure_threshold=" << effective_ai_failure_threshold
+              << ", ai_cooldown_seconds=" << effective_ai_cooldown_seconds
               << ", buffered_span_limit=" << trace_buffered_span_limit
               << ", active_session_limit=" << trace_active_session_limit
               << ", worker_queue_size=" << worker_queue_size << std::endl;

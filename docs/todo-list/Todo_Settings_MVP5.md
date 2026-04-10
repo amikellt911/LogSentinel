@@ -79,4 +79,10 @@
 - [x] 在 C++ 侧解析 proxy 的统一 Trace 失败协议，`ok=false` 时保留 `code/status/message`
 - [x] 为 TraceProxyAi 协议解析补单测，锁定成功/失败两条解析路径
 - [x] 运行 `TraceProxyAi + TraceSessionManager` 相关最小测试，确认失败信息能继续落到 `ai_error`
+- [x] 将 `ai_circuit_breaker/ai_failure_threshold/ai_cooldown_seconds` 接进 `main.cpp -> TraceSessionManager` 冷启动消费链
+- [x] 为 TraceSessionManager 熔断补单测，锁定“达到阈值后跳过 AI”和“冷却后重新放行”两条语义
+- [x] 运行 `test_trace_session_manager_unit` 与 `LogSentinel` 最小验证，确认 `skipped_circuit` 链路可用
+- [x] 将 `ai_auto_degrade/ai_fallback_provider/ai_fallback_model/ai_fallback_api_key` 接进 `main.cpp -> TraceSessionManager` 冷启动消费链
+- [x] 为 TraceSessionManager 自动降级补单测，锁定“主路失败后 fallback 成功”和“主备都失败”两条语义
+- [x] 运行 `test_trace_session_manager_unit` 与 `LogSentinel` 最小验证，确认 `failed_both` 与 fallback 成功链路可用
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

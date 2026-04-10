@@ -186,9 +186,11 @@ class ThrowingTraceAi : public TraceAiProvider
 {
 public:
     std::string error_message = "Trace AI Provider Error: [429 RESOURCE_EXHAUSTED] quota exhausted";
+    std::atomic<int> called_count{0};
 
     TraceAiResponse AnalyzeTrace(const std::string&) override
     {
+        called_count.fetch_add(1, std::memory_order_acq_rel);
         throw std::runtime_error(error_message);
     }
 };
@@ -830,6 +832,256 @@ TEST_F(TraceSessionManagerUnitTest, DispatchStoresNormalizedProxyFailureMessageA
     EXPECT_FALSE(repo.last_analysis.has_value());
     EXPECT_EQ(repo.last_ai_status, "failed_primary");
     EXPECT_EQ(repo.last_ai_error, "Trace AI Provider Error: [429 RESOURCE_EXHAUSTED] quota exhausted");
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchSkipsAiWhenCircuitBreakerIsOpen)
+{
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    ThrowingTraceAi ai;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                &ai,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                /*notifier*/nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/4096,
+                                /*active_session_hard_limit*/1024,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
+                                /*service_runtime_accumulator*/nullptr,
+                                /*system_runtime_accumulator*/nullptr,
+                                /*ai_analysis_enabled*/true,
+                                /*ai_circuit_breaker_enabled*/true,
+                                /*ai_failure_threshold*/2,
+                                /*ai_cooldown_ms*/60000);
+
+    SpanEvent span1 = MakeSpan(2055, 601, 1000);
+    span1.trace_end = true;
+    ASSERT_EQ(manager.Push(span1), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.update_ai_state_count.load(std::memory_order_acquire) >= 1;
+    }));
+
+    SpanEvent span2 = MakeSpan(2056, 602, 2000);
+    span2.trace_end = true;
+    ASSERT_EQ(manager.Push(span2), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.update_ai_state_count.load(std::memory_order_acquire) >= 2;
+    }));
+
+    SpanEvent span3 = MakeSpan(2057, 603, 3000);
+    span3.trace_end = true;
+    ASSERT_EQ(manager.Push(span3), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.update_ai_state_count.load(std::memory_order_acquire) >= 3;
+    }));
+
+    // 前两次失败后熔断应当打开，所以第三条 trace 不该再真的调 AI。
+    // 这里同时锁住状态和调用次数，避免只是把 status 写成 skipped_circuit，但底下其实还在继续打模型。
+    EXPECT_EQ(ai.called_count.load(std::memory_order_acquire), 2);
+    EXPECT_EQ(repo.last_ai_status, "skipped_circuit");
+    EXPECT_TRUE(repo.last_ai_error.empty());
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchRetriesAiAfterCircuitCooldownExpires)
+{
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    ThrowingTraceAi ai;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                &ai,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                /*notifier*/nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/4096,
+                                /*active_session_hard_limit*/1024,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
+                                /*service_runtime_accumulator*/nullptr,
+                                /*system_runtime_accumulator*/nullptr,
+                                /*ai_analysis_enabled*/true,
+                                /*ai_circuit_breaker_enabled*/true,
+                                /*ai_failure_threshold*/1,
+                                /*ai_cooldown_ms*/30);
+
+    SpanEvent span1 = MakeSpan(3055, 701, 1000);
+    span1.trace_end = true;
+    ASSERT_EQ(manager.Push(span1), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.update_ai_state_count.load(std::memory_order_acquire) >= 1;
+    }));
+
+    SpanEvent span2 = MakeSpan(3056, 702, 2000);
+    span2.trace_end = true;
+    ASSERT_EQ(manager.Push(span2), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.update_ai_state_count.load(std::memory_order_acquire) >= 2;
+    }));
+    ASSERT_EQ(repo.last_ai_status, "skipped_circuit");
+    ASSERT_EQ(ai.called_count.load(std::memory_order_acquire), 1);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    SpanEvent span3 = MakeSpan(3057, 703, 3000);
+    span3.trace_end = true;
+    ASSERT_EQ(manager.Push(span3), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.update_ai_state_count.load(std::memory_order_acquire) >= 3;
+    }));
+
+    // 冷却时间过后熔断应当自动放行一次调用，所以第三条 trace 会再次真的进入 AI 路径并失败。
+    EXPECT_EQ(ai.called_count.load(std::memory_order_acquire), 2);
+    EXPECT_EQ(repo.last_ai_status, "failed_primary");
+    EXPECT_EQ(repo.last_ai_error, "Trace AI Provider Error: [429 RESOURCE_EXHAUSTED] quota exhausted");
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchFallsBackToSecondaryAiWhenPrimaryFails)
+{
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    ThrowingTraceAi primary_ai;
+    StubTraceAi fallback_ai;
+    fallback_ai.response.analysis.summary = "fallback-summary";
+    fallback_ai.response.analysis.risk_level = RiskLevel::WARNING;
+    fallback_ai.response.analysis.root_cause = "fallback-root-cause";
+    fallback_ai.response.analysis.solution = "fallback-solution";
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                &primary_ai,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                /*notifier*/nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/4096,
+                                /*active_session_hard_limit*/1024,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
+                                /*service_runtime_accumulator*/nullptr,
+                                /*system_runtime_accumulator*/nullptr,
+                                /*ai_analysis_enabled*/true,
+                                /*ai_circuit_breaker_enabled*/true,
+                                /*ai_failure_threshold*/5,
+                                /*ai_cooldown_ms*/60000,
+                                /*fallback_trace_ai*/&fallback_ai,
+                                /*ai_auto_degrade_enabled*/true);
+
+    SpanEvent span = MakeSpan(4055, 801, 1000);
+    span.trace_end = true;
+
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.save_analysis_called.load(std::memory_order_acquire);
+    }));
+
+    // 主路失败后 fallback 成功时，最终语义仍然应该是 completed。
+    // 所以这里锁的是 analysis 真写入，而不是再去写 failed_primary/failed_both 这种失败状态。
+    EXPECT_EQ(primary_ai.called_count.load(std::memory_order_acquire), 1);
+    EXPECT_TRUE(fallback_ai.called.load(std::memory_order_acquire));
+    ASSERT_TRUE(repo.last_analysis.has_value());
+    EXPECT_EQ(repo.last_analysis->summary, "fallback-summary");
+    EXPECT_FALSE(repo.update_ai_state_called.load(std::memory_order_acquire));
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchMarksFailedBothWhenPrimaryAndFallbackBothFail)
+{
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    ThrowingTraceAi primary_ai;
+    ThrowingTraceAi fallback_ai;
+    primary_ai.error_message = "primary provider failed";
+    fallback_ai.error_message = "fallback provider failed";
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                &primary_ai,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                /*notifier*/nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/4096,
+                                /*active_session_hard_limit*/1024,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
+                                /*service_runtime_accumulator*/nullptr,
+                                /*system_runtime_accumulator*/nullptr,
+                                /*ai_analysis_enabled*/true,
+                                /*ai_circuit_breaker_enabled*/true,
+                                /*ai_failure_threshold*/5,
+                                /*ai_cooldown_ms*/60000,
+                                /*fallback_trace_ai*/&fallback_ai,
+                                /*ai_auto_degrade_enabled*/true);
+
+    SpanEvent span = MakeSpan(4056, 802, 2000);
+    span.trace_end = true;
+
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.update_ai_state_called.load(std::memory_order_acquire);
+    }));
+
+    // 主备都失败时不能再模糊地只记 primary failed，
+    // 否则前端根本看不出来自动降级其实已经尝试过，排障也分不清到底停在第几层。
+    EXPECT_EQ(primary_ai.called_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(fallback_ai.called_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(repo.last_ai_status, "failed_both");
+    EXPECT_EQ(repo.last_ai_error, "primary: primary provider failed | fallback: fallback provider failed");
 
     pool.shutdown();
 }

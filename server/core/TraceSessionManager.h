@@ -198,7 +198,16 @@ public:
                                  SystemRuntimeAccumulator* system_runtime_accumulator = nullptr,
                                  // ai_analysis_enabled 是“用户主动允许不允许”这层总开关。
                                  // 关闭后 worker 仍要正常收尾，只是不再调用模型，而是把 ai_status 标成 skipped_manual。
-                                 bool ai_analysis_enabled = true);
+                                 bool ai_analysis_enabled = true,
+                                 // 熔断参数同样按冷启动配置消费：当前只做“失败阈值 + 冷却时间”这一刀，
+                                 // 不额外引入半开状态枚举，避免在答辩前把状态机膨胀得太重。
+                                 bool ai_circuit_breaker_enabled = true,
+                                 size_t ai_failure_threshold = 5,
+                                 int64_t ai_cooldown_ms = 60000,
+                                 // fallback_trace_ai 和 ai_auto_degrade_enabled 共同决定“主路失败后要不要再试一次备路”。
+                                 // 这一步先只做固定主/备两路，不把 provider 切换逻辑塞回 TraceProxyAi 动态改请求。
+                                 TraceAiProvider* fallback_trace_ai = nullptr,
+                                 bool ai_auto_degrade_enabled = false);
     ~TraceSessionManager();
 
     size_t size() const;
@@ -227,6 +236,20 @@ private:
     // 系统监控只吃主链埋点快照，不应该反过来驱动 TraceSessionManager 的状态机。
     SystemRuntimeAccumulator* system_runtime_accumulator_ = nullptr;
     bool ai_analysis_enabled_ = true;
+    bool ai_circuit_breaker_enabled_ = true;
+    // fallback provider 只服务“主路失败后的第二次尝试”。
+    // 如果没开自动降级，或者启动时根本没构出 fallback 对象，这里就保持空指针。
+    TraceAiProvider* fallback_trace_ai_ = nullptr;
+    // 自动降级和熔断不是一回事：
+    // 前者表达“主路失败后要不要再试备路”，后者表达“这一小段时间内是否整条 AI 链都先别打了”。
+    bool ai_auto_degrade_enabled_ = false;
+    size_t ai_failure_threshold_ = 5;
+    int64_t ai_cooldown_ms_ = 60000;
+    // 熔断状态只需要两份最小运行态：
+    // 1) 连续失败数决定何时打开熔断；
+    // 2) 开路截止时间决定当前 trace 是继续调 AI，还是直接 skipped_circuit。
+    std::atomic<uint64_t> ai_consecutive_failures_{0};
+    std::atomic<int64_t> ai_circuit_open_until_ms_{0};
     size_t capacity_ = 0;
     size_t token_limit_ = 0;
     TokenEstimator token_estimator_;
@@ -291,6 +314,13 @@ private:
     // 根据连续失败次数计算退避 tick，起点来自 retry_base_delay_ms 配置。
     // 第一次失败先等 base tick，后面按 2 倍递增，但仍保留一个有限上限避免无限拉长。
     uint64_t ComputeRetryDelayTicks(size_t retry_count) const;
+    // 熔断窗口只负责判断“这次 trace 还允不允许真正调用 AI”。
+    // 如果已经开路，就直接记 skipped_circuit，不再进入 provider。
+    bool IsAiCircuitOpen(int64_t now_ms) const;
+    // AI 调用成功后，把连续失败数和开路窗口一起清零，表示主链 provider 已恢复。
+    void RecordAiCircuitSuccess();
+    // AI 调用最终失败后累计连续失败次数；达到阈值时打开冷却窗口。
+    void RecordAiCircuitFailure(int64_t now_ms);
     // completed tombstone 进入 TIME_WAIT：写入精确查找表并挂进独立 wheel，避免晚到 span 复活旧 trace。
     void AddCompletedTombstoneLocked(size_t trace_key);
     // 命中且仍未过期时返回 true；若发现只是 map 里的过期脏数据，会在这里顺手清掉。
