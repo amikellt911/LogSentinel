@@ -13,22 +13,16 @@
         />
       </div>
 
-      <!-- 服务名称下拉选择 -->
+      <!-- 服务名称精确匹配 -->
       <div class="flex flex-col gap-1">
         <label class="text-gray-400 text-xs font-bold uppercase">{{ $t('traceExplorer.search.serviceName') }}</label>
-        <el-select
+        <el-input
           v-model="searchCriteria.service_name"
-          :placeholder="$t('traceExplorer.search.allServices')"
+          :placeholder="$t('traceExplorer.search.serviceNameExactPlaceholder')"
           size="small"
           clearable
-          class="w-40"
-        >
-          <el-option label="user-service" value="user-service" />
-          <el-option label="order-service" value="order-service" />
-          <el-option label="payment-service" value="payment-service" />
-          <el-option label="inventory-service" value="inventory-service" />
-          <el-option label="notification-service" value="notification-service" />
-        </el-select>
+          class="w-56"
+        />
       </div>
 
       <!-- 时间范围快捷选择 -->
@@ -88,19 +82,6 @@
         </el-select>
       </div>
 
-      <!-- 最小耗时过滤 -->
-      <div class="flex flex-col gap-1">
-        <label class="text-gray-400 text-xs font-bold uppercase">{{ $t('traceExplorer.search.minDuration') }}</label>
-        <el-input-number
-          v-model="searchCriteria.min_duration"
-          :min="0"
-          :step="100"
-          size="small"
-          :placeholder="$t('traceExplorer.search.minDurationPlaceholder')"
-          class="w-32"
-        />
-      </div>
-
       <!-- 操作按钮 -->
       <div class="flex gap-2 ml-auto">
         <el-button size="small" @click="handleReset">
@@ -116,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import type { TraceSearchCriteria } from '../types/trace'
 
@@ -125,7 +106,7 @@ interface Props {
   loading?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), {
+withDefaults(defineProps<Props>(), {
   loading: false
 })
 
@@ -140,8 +121,7 @@ const searchCriteria = reactive<TraceSearchCriteria>({
   trace_id: '',
   service_name: '',
   time_range: '24h',
-  risk_level: [],
-  min_duration: undefined
+  risk_level: []
 })
 
 // 自定义时间范围
@@ -169,7 +149,6 @@ function handleReset() {
   searchCriteria.service_name = ''
   searchCriteria.time_range = '24h'
   searchCriteria.risk_level = []
-  searchCriteria.min_duration = undefined
   customTimeStart.value = ''
   customTimeEnd.value = ''
   emit('reset')

@@ -173,25 +173,17 @@
 - `trace-idle-timeout-ms=800`
 - `trace-max-dispatch-per-tick=64`
 
-## 7. 共享线程池和压测口径
-
-既然 `LogBatcher` 和 `TraceSessionManager` 当前共用同一个 `ThreadPool`，那么 benchmark 口径必须先收紧。
+## 7. 压测口径
 
 第一版统一只打：
 
 - `POST /logs/spans`
 
-不同时打：
-
-- `POST /logs`
-
-这样做的原因很简单：
-
-既然同池竞争会把 `LogBatcher` 那条链路的 AI 批处理、原始日志入库也混进来，那么第一版压 trace 时，结果就会脏得很难解释。
+旧 `/logs` 批处理链已经从主程序活路由和构建目标里移除，所以这里不再混测任何旧链接口。
 
 所以第一版 benchmark 的口径就是：
 
-只测 trace 聚合链路，不测老的 `/logs` 批处理链路。
+只测 trace 聚合链路。
 
 ## 8. 第一版实验矩阵
 

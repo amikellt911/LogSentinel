@@ -3,10 +3,13 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <queue>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -19,6 +22,8 @@ class ThreadPool;
 class BufferedTraceRepository;
 class TraceAiProvider;
 class INotifier;
+class ServiceRuntimeAccumulator;
+class SystemRuntimeAccumulator;
 
 struct SpanEvent
 {
@@ -68,7 +73,9 @@ struct TraceSession
         // 容量打满：目的是及时截断内存增长，所以只给最短 grace。
         Capacity,
         // token 打满：和容量一样，属于保护性封口，不应该再等太久。
-        TokenLimit
+        TokenLimit,
+        // 发送重复span
+        DuplicateSpan,
     };
 
     enum class LifecycleState
@@ -116,6 +123,10 @@ struct TraceSession
     uint64_t next_retry_tick = 0;
     // 主数据（summary + spans）一旦已经送进缓冲写入器，submit 失败回滚后就不能重复送。
     bool primary_enqueued = false;
+    // 第一步先只缓存最值钱的两样：AI 输入 payload 和 webhook/analysis 还会复用的 summary。
+    // 既然 ready retry 会话已经不再吸收新 span，那么这两份 prepared 数据可以安全复用。
+    std::optional<std::string> prepared_trace_payload;
+    std::optional<TraceRepository::TraceSummary> prepared_summary;
 };
 
 class TraceSessionManager
@@ -164,13 +175,46 @@ public:
                                  INotifier* notifier = nullptr,
                                  int64_t idle_timeout_ms = 5000,
                                  int64_t wheel_tick_ms = 500,
+                                 // sealed_grace_window_ms 控制 session 命中 trace_end/capacity/token_limit
+                                 // 之后还能继续吸收 late span 的短窗口；当前先统一成一个值，不再按 reason 分多档。
+                                 int64_t sealed_grace_window_ms = 1000,
+                                 // retry_base_delay_ms 是 dispatch 失败后的第一档重试等待时间，
+                                 // 后续连续失败仍然沿用指数退避，只是把“起始 tick”改成配置驱动。
+                                 int64_t retry_base_delay_ms = 500,
                                  size_t wheel_size = 512,
                                  size_t buffered_span_hard_limit = 4096,
-                                 size_t active_session_hard_limit = 1024);
+                                 size_t active_session_hard_limit = 1024,
+                                 // 三组水位阈值当前只开放 overload/critical 两档百分比；
+                                 // low 不单独暴露给 Settings，而是由内部自动派生一个更低的回滞阈值。
+                                 int active_session_overload_percent = 75,
+                                 int active_session_critical_percent = 90,
+                                 int buffered_spans_overload_percent = 75,
+                                 int buffered_spans_critical_percent = 90,
+                                 int pending_tasks_overload_percent = 75,
+                                 int pending_tasks_critical_percent = 90,
+                                 ServiceRuntimeAccumulator* service_runtime_accumulator = nullptr,
+                                 // system_runtime_accumulator 只负责系统运行态埋点，
+                                 // 不参与 Trace 聚合/分发语义判断，所以和服务监控累加器一样保持可选注入。
+                                 SystemRuntimeAccumulator* system_runtime_accumulator = nullptr,
+                                 // ai_analysis_enabled 是“用户主动允许不允许”这层总开关。
+                                 // 关闭后 worker 仍要正常收尾，只是不再调用模型，而是把 ai_status 标成 skipped_manual。
+                                 bool ai_analysis_enabled = true,
+                                 // 熔断参数同样按冷启动配置消费：当前只做“失败阈值 + 冷却时间”这一刀，
+                                 // 不额外引入半开状态枚举，避免在答辩前把状态机膨胀得太重。
+                                 bool ai_circuit_breaker_enabled = true,
+                                 size_t ai_failure_threshold = 5,
+                                 int64_t ai_cooldown_ms = 60000,
+                                 // fallback_trace_ai 和 ai_auto_degrade_enabled 共同决定“主路失败后要不要再试一次备路”。
+                                 // 这一步先只做固定主/备两路，不把 provider 切换逻辑塞回 TraceProxyAi 动态改请求。
+                                 TraceAiProvider* fallback_trace_ai = nullptr,
+                                 bool ai_auto_degrade_enabled = false);
     ~TraceSessionManager();
 
     size_t size() const;
     PushResult Push(const SpanEvent& span);
+    // 当前主链路不依赖这个公开 Dispatch 入口。
+    // 现在推荐的正常路径是：Push/Seal -> 时间轮 sweep -> dispatch queue -> ProcessDispatchJob。
+    // 这里暂时保留，主要是为了兼容少量旧测试/手工触发入口，后续若彻底无调用方再考虑继续收口。
     bool Dispatch(size_t trace_key);
     RuntimeStatsSnapshot SnapshotRuntimeStats() const;
     std::string DescribeRuntimeStats() const;
@@ -188,6 +232,24 @@ private:
     BufferedTraceRepository* buffered_trace_repo_ = nullptr;
     TraceAiProvider* trace_ai_ = nullptr;
     INotifier* notifier_ = nullptr;
+    ServiceRuntimeAccumulator* service_runtime_accumulator_ = nullptr;
+    // 系统监控只吃主链埋点快照，不应该反过来驱动 TraceSessionManager 的状态机。
+    SystemRuntimeAccumulator* system_runtime_accumulator_ = nullptr;
+    bool ai_analysis_enabled_ = true;
+    bool ai_circuit_breaker_enabled_ = true;
+    // fallback provider 只服务“主路失败后的第二次尝试”。
+    // 如果没开自动降级，或者启动时根本没构出 fallback 对象，这里就保持空指针。
+    TraceAiProvider* fallback_trace_ai_ = nullptr;
+    // 自动降级和熔断不是一回事：
+    // 前者表达“主路失败后要不要再试备路”，后者表达“这一小段时间内是否整条 AI 链都先别打了”。
+    bool ai_auto_degrade_enabled_ = false;
+    size_t ai_failure_threshold_ = 5;
+    int64_t ai_cooldown_ms_ = 60000;
+    // 熔断状态只需要两份最小运行态：
+    // 1) 连续失败数决定何时打开熔断；
+    // 2) 开路截止时间决定当前 trace 是继续调 AI，还是直接 skipped_circuit。
+    std::atomic<uint64_t> ai_consecutive_failures_{0};
+    std::atomic<int64_t> ai_circuit_open_until_ms_{0};
     size_t capacity_ = 0;
     size_t token_limit_ = 0;
     TokenEstimator token_estimator_;
@@ -212,6 +274,17 @@ private:
         size_t high = 0;
         size_t critical = 0;
     };
+    struct DispatchingInflightState
+    {
+        // inflight 只负责拦截“这条 trace 正在分发中”，第一步先只记最小 epoch，
+        // 避免晚到 span 在 session 已摘出、tombstone 还没写入的窗口里把旧 trace 复活。
+        uint64_t session_epoch = 0;
+    };
+    struct DispatchJob
+    {
+        // 第二步先把 queue 骨架搭起来，job 直接持有 session 所有权，避免后面又回 manager 取一次。
+        std::unique_ptr<TraceSession> session;
+    };
 
     // 构建 trace 的父子关系索引，后续用于树形遍历与序列化。
     TraceIndex BuildTraceIndex(const TraceSession& session);
@@ -226,13 +299,28 @@ private:
                                                              const LogAnalysisResult& analysis);
     // 计算当前 idle_timeout 对应的 tick 数；至少返回 1，避免 0 tick 导致不触发。
     uint64_t ComputeTimeoutTicks() const;
-    // 按 hard limit 预计算 low/high/critical 三档阈值，构造期缓存后供准入门禁直接读取。
-    static Watermark BuildWatermark(size_t hard_limit);
-    // sealed 会话使用短窗口而不是完整 idle timeout。trace_end 给 2 tick，
-    // capacity/token_limit 给 1 tick，目的是吸收少量乱序 span，但不把封口抖成长期收集。
-    static uint64_t ComputeSealDelayTicks(TraceSession::SealReason reason);
-    // 根据连续失败次数计算退避 tick，避免 ready retry 会话固定每 tick 原地撞线程池。
-    static uint64_t ComputeRetryDelayTicks(size_t retry_count);
+    // 毫秒配置在进入状态机前统一折算成 tick。
+    // 既然时间轮真正调度的是 tick 而不是毫秒，那么这里必须向上取整并至少保留 1 tick，
+    // 否则配置值小于 wheel_tick_ms_ 时会被截成 0，最终表现成“设置了但完全不生效”。
+    uint64_t ComputeDelayTicks(int64_t delay_ms) const;
+    // 按 hard limit 和 overload/critical 百分比预计算水位。
+    // low 不单独开放配置，而是从 overload 百分比向下退一小段，专门给 back_to_low 回滞使用。
+    static Watermark BuildWatermark(size_t hard_limit,
+                                    int overload_percent,
+                                    int critical_percent);
+    // sealed 窗口现在改成配置驱动：所有 seal reason 共用同一个短窗口，
+    // 目的是先把 Settings 里的单个 sealed_grace_window_ms 真正落地，后面若要细分 reason 再扩。
+    uint64_t ComputeSealDelayTicks(TraceSession::SealReason reason) const;
+    // 根据连续失败次数计算退避 tick，起点来自 retry_base_delay_ms 配置。
+    // 第一次失败先等 base tick，后面按 2 倍递增，但仍保留一个有限上限避免无限拉长。
+    uint64_t ComputeRetryDelayTicks(size_t retry_count) const;
+    // 熔断窗口只负责判断“这次 trace 还允不允许真正调用 AI”。
+    // 如果已经开路，就直接记 skipped_circuit，不再进入 provider。
+    bool IsAiCircuitOpen(int64_t now_ms) const;
+    // AI 调用成功后，把连续失败数和开路窗口一起清零，表示主链 provider 已恢复。
+    void RecordAiCircuitSuccess();
+    // AI 调用最终失败后累计连续失败次数；达到阈值时打开冷却窗口。
+    void RecordAiCircuitFailure(int64_t now_ms);
     // completed tombstone 进入 TIME_WAIT：写入精确查找表并挂进独立 wheel，避免晚到 span 复活旧 trace。
     void AddCompletedTombstoneLocked(size_t trace_key);
     // 命中且仍未过期时返回 true；若发现只是 map 里的过期脏数据，会在这里顺手清掉。
@@ -243,6 +331,14 @@ private:
     // 避免公开入口互相调用时重复加锁导致死锁。
     PushResult PushLocked(const SpanEvent& span, int64_t now_ms);
     bool DispatchLocked(size_t trace_key);
+    // 从 manager 主容器中摘出一条 session，后续交给 dispatch 线程锁外处理。
+    std::unique_ptr<TraceSession> DetachSessionLocked(size_t trace_key, size_t* span_count);
+    // dispatch 失败时把 session 放回 manager，并切到 ReadyRetryLater 语义等待后续重投。
+    void RestoreSessionLocked(std::unique_ptr<TraceSession> session, size_t span_count);
+    // 有界 dispatch queue 的最小入队入口；第一步先只表达“能否抢到分发通道”。
+    bool EnqueueDispatchJobLocked(DispatchJob* job);
+    // dispatch 线程消费 job 后继续沿用现有主链路逻辑；后续再逐步拆成更细阶段。
+    void ProcessDispatchJob(DispatchJob job);
     // 基于当前积压指标刷新 overload_state_，统一收口新老 trace 的准入门禁状态。
     void RefreshOverloadState();
     // 当前请求是否应该在入口被拒绝：Overload 拒新 trace，Critical 新老都拒。
@@ -259,6 +355,9 @@ private:
     void SealSessionLocked(TraceSession& session, TraceSession::SealReason reason);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
     void RebuildTimeWheel();
+    // dispatch 线程第一步只做生命周期与队列骨架占位，后面再逐步接业务逻辑。
+    void DispatchLoop();
+    void StopDispatchThread();
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。
     std::vector<std::unique_ptr<TraceSession>> sessions_;
     // 通过 trace_key 快速定位到 vector 下标，避免线性扫描带来的开销。
@@ -268,11 +367,17 @@ private:
     // completed tombstone 只记“最近刚完成过的 trace_key”，用于短时间内拦截 late span 复活旧 trace。
     // map 负责 O(1) 判断是否仍在 tombstone 窗口内，value 是它的过期 tick。
     std::unordered_map<size_t, uint64_t> completed_trace_expire_tick_;
+    // dispatching_inflight_ 记录“已离开 manager、但尚未进入 tombstone”的 trace。
+    // 第一步先只做轻量占位，不在这里再次持有 session 所有权，避免状态双持有。
+    std::unordered_map<size_t, DispatchingInflightState> dispatching_inflight_;
     // 和活跃 session 时间轮分开存，避免把“等待 dispatch”和“等待遗忘”两套语义塞进同一种节点。
     std::vector<std::vector<size_t>> completed_trace_wheel_;
     size_t wheel_size_ = 512;
     int64_t idle_timeout_ms_ = 5000;
     int64_t wheel_tick_ms_ = 500;
+    // 冷启动配置在构造时先换算成 tick，后面状态机只读缓存值，不再每次临时做毫秒到 tick 的折算。
+    uint64_t sealed_grace_ticks_ = 2;
+    uint64_t retry_base_delay_ticks_ = 1;
     // completed tombstone 默认保留 25 tick；当前 tick=200ms 时大约是 5s。
     uint64_t completed_trace_tombstone_ticks_ = 25;
     uint64_t timeout_ticks_ = 10;
@@ -289,6 +394,8 @@ private:
     Watermark buffered_span_watermark_;
     Watermark active_session_watermark_;
     Watermark pending_task_watermark_;
+    Watermark dispatch_queue_watermark_;
+    size_t dispatch_queue_hard_limit_ = 1;
     // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
     OverloadState overload_state_ = OverloadState::Normal;
     // 这批统计只服务“后链路是否真的跑了、各阶段墙钟耗时多少”，
@@ -302,6 +409,12 @@ private:
     std::atomic<uint64_t> ai_total_ns_{0};
     std::atomic<uint64_t> analysis_enqueue_calls_{0};
     std::atomic<uint64_t> analysis_enqueue_total_ns_{0};
+    // 独立 dispatch 线程的有界队列：第一步先占好结构，后面再把 sweep/dispatch 逐步接过来。
+    std::mutex dispatch_queue_mutex_;
+    std::condition_variable dispatch_queue_cv_;
+    std::queue<DispatchJob> dispatch_queue_;
+    bool dispatch_stopping_ = false;
+    std::thread dispatch_thread_;
     // TraceSessionManager 当前会被 HTTP 处理线程和主 loop 定时器线程同时访问，
     // 这把锁先用最保守的方式把内部状态机串行化，优先保证正确性。
     mutable std::mutex mutex_;

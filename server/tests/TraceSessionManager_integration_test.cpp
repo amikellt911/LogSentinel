@@ -23,19 +23,23 @@ std::unique_ptr<BufferedTraceRepository> MakeBufferedTraceRepository(TraceReposi
 class FixedTraceAi : public TraceAiProvider
 {
 public:
-    LogAnalysisResult result{
-        .summary = "fixed-trace-summary",
-        .risk_level = RiskLevel::WARNING,
-        .root_cause = "fixed-root-cause",
-        .solution = "fixed-solution",
+    TraceAiResponse response{
+        .analysis =
+            LogAnalysisResult{
+                .summary = "fixed-trace-summary",
+                .risk_level = RiskLevel::WARNING,
+                .root_cause = "fixed-root-cause",
+                .solution = "fixed-solution",
+            },
+        .usage = std::nullopt,
     };
 
     std::string last_payload;
 
-    LogAnalysisResult AnalyzeTrace(const std::string& trace_payload) override
+    TraceAiResponse AnalyzeTrace(const std::string& trace_payload) override
     {
         last_payload = trace_payload;
-        return result;
+        return response;
     }
 };
 }
@@ -325,8 +329,10 @@ protected:
     }
 
     void SweepProtectionSealWindow(TraceSessionManager& manager) {
-        // capacity/token_limit 属于保护性封口，只给 1 tick。
-        SweepTicks(manager, /*tick_count*/1);
+        // 现在 trace_end / capacity / token_limit / duplicate_span 都统一走同一个 sealed grace 配置。
+        // integration test 既然不跑 main 里的定时 sweep，这里就也必须推进 2 tick，
+        // 否则测试还停留在旧的“保护性封口只等 1 tick”心智上，会比真实实现更早断言。
+        SweepTicks(manager, /*tick_count*/2);
     }
 
     SpanEvent MakeSpan(size_t trace_key, size_t span_id, std::optional<size_t> parent_id) {
@@ -413,8 +419,8 @@ TEST_F(TraceSessionManagerIntegrationTest, BufferedMainPathPersistsPrimaryAndAna
     EXPECT_EQ(summary->start_time_ms, 1000);
     EXPECT_EQ(summary->duration_ms, 400);
     EXPECT_EQ(summary->span_count, 2);
-    // summary 在 Dispatch 前先入 primary 缓冲，因此这里仍应保持主数据阶段的默认风险等级。
-    EXPECT_EQ(summary->risk_level, "unknown");
+    // analysis flush 成功后，SQLite 会把最终 risk_level 回写到 trace_summary，列表页直接读主表即可拿到最新等级。
+    EXPECT_EQ(summary->risk_level, "warning");
 
     auto root_row = QuerySpan("1010");
     ASSERT_TRUE(root_row.has_value());
@@ -454,8 +460,9 @@ TEST_F(TraceSessionManagerIntegrationTest, BufferedRepositoryDestructorDrainsRem
         BufferedTraceRepository::Config buffer_config;
         buffer_config.primary_summary_reserve = 64;
         buffer_config.primary_span_reserve = 64;
+        // analysis 缓冲区现在只服务 trace_analysis 这一张表，
+        // 所以这里保留 analysis_reserve 就够了，不再给废弃调试支线预留容量。
         buffer_config.analysis_reserve = 64;
-        buffer_config.prompt_debug_reserve = 64;
         // 故意把时间阈值拉长，确保测试关注的是“析构 drain”，不是后台定时 flush。
         buffer_config.primary_flush_interval_ms = 60 * 1000;
         buffer_config.analysis_flush_interval_ms = 60 * 1000;
@@ -588,6 +595,8 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnDuplicateSpanId)
     SpanEvent dup = MakeSpan(3, 300, std::nullopt);
     EXPECT_EQ(manager.Push(dup), TraceSessionManager::PushResult::Accepted);
 
+    // duplicate_span 当前走“1 tick 封口后异步 dispatch”语义，所以这里也要手动推进一次 protection seal window。
+    SweepProtectionSealWindow(manager);
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_span;", 1, std::chrono::seconds(3)));
     EXPECT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_analysis;", 1, std::chrono::seconds(3)));

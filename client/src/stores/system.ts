@@ -75,17 +75,32 @@ export interface AlertInfoResponse {
     time: string
 }
 
-export interface DashboardStatsResponse {
+export interface SystemRuntimeOverviewResponse {
     total_logs: number
-    critical_risk: number
-    error_risk: number
-    warning_risk: number
-    info_risk: number
-    safe_risk: number
-    unknown_risk: number
-    avg_response_time: number
-    recent_alerts: AlertInfoResponse[]
-    latest_batch_summary?: string
+    ai_call_total: number
+    ai_queue_wait_ms: number
+    ai_inference_latency_ms: number
+    memory_rss_mb: number
+    backpressure_status: 'Normal' | 'Active' | 'Full'
+}
+
+export interface SystemTokenStatsResponse {
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+    avg_tokens_per_call: number
+}
+
+export interface SystemMetricPointResponse {
+    time_ms: number
+    ingest_rate: number
+    ai_completion_rate: number
+}
+
+export interface SystemRuntimeSnapshotResponse {
+    overview: SystemRuntimeOverviewResponse
+    token_stats: SystemTokenStatsResponse
+    timeseries: SystemMetricPointResponse[]
 }
 
 export interface HistoricalLogItemResponse {
@@ -127,13 +142,15 @@ export const useSystemStore = defineStore('system', () => {
   const pollingInterval = ref<number | null>(null)
 
   // Metrics
-  const totalLogsProcessed = ref(1245890) // Default to previous mock value
-  const netLatency = ref(0.05) // ms
-  const aiLatency = ref(800) // ms
-  const aiTriggerCount = ref(8420)
-  const memoryUsage = ref<number[]>([]) // Array for history
-  const memoryPercent = ref(68)
-  const queuePercent = ref(12)
+  const totalLogsProcessed = ref(0)
+  const aiQueueWaitMs = ref(0)
+  const aiInferenceLatencyMs = ref(0)
+  const aiCallTotal = ref(0)
+  const inputTokens = ref(0)
+  const outputTokens = ref(0)
+  const totalTokens = ref(0)
+  const avgTokensPerCall = ref(0)
+  const memoryRssMb = ref(0)
   const backpressureStatus = ref<'Normal' | 'Active' | 'Full'>('Normal')
   
   const chartData = ref<MetricPoint[]>([])
@@ -326,70 +343,6 @@ export const useSystemStore = defineStore('system', () => {
     }
   }
 
-  function updateMockData() {
-    // 1. Total Logs
-    const inc = Math.floor(Math.random() * 50) + 10
-    totalLogsProcessed.value += inc
-
-    // 2. AI Count
-    if (Math.random() > 0.5) {
-      aiTriggerCount.value += Math.floor(Math.random() * 5)
-    }
-
-    // 3. Backpressure & Queue
-    if (Math.random() > 0.95) {
-       // Occasional spikes
-       queuePercent.value = Math.min(100, queuePercent.value + Math.floor(Math.random() * 15))
-    } else {
-       // Drain
-       queuePercent.value = Math.max(5, queuePercent.value - Math.floor(Math.random() * 5))
-    }
-
-    if (queuePercent.value > 80) backpressureStatus.value = 'Full'
-    else if (queuePercent.value > 50) backpressureStatus.value = 'Active'
-    else backpressureStatus.value = 'Normal'
-
-    // 4. Memory & Latency
-    const newMem = Math.floor(Math.random() * 30) + 40 // 40-70%
-    memoryPercent.value = newMem
-    memoryUsage.value.push(newMem)
-    if (memoryUsage.value.length > 20) memoryUsage.value.shift()
-
-    // Latency jitter
-    netLatency.value = Math.max(0.01, +(netLatency.value + (Math.random() - 0.5) * 0.05).toFixed(3))
-    aiLatency.value = Math.max(100, Math.floor(aiLatency.value + (Math.random() - 0.5) * 100))
-
-    // Risk Stats Jitter (Rarely add to counts)
-    if (Math.random() > 0.8) riskStats.Safe += Math.floor(Math.random() * 10)
-    if (Math.random() > 0.98) riskStats.Info += 1
-    if (Math.random() > 0.99) riskStats.Warning += 1
-    if (Math.random() > 0.995) {
-        riskStats.Error += 1
-        // Add alert
-        recentAlerts.value.unshift({
-            id: Date.now(),
-            time: dayjs().format('HH:mm:ss'),
-            service: ['DB-Connector', 'Ingress', 'AI-Worker'][Math.floor(Math.random() * 3)],
-            level: 'Error',
-            summary: 'Simulated system error event detected'
-        })
-        if (recentAlerts.value.length > 7) recentAlerts.value.pop()
-    }
-
-    // 5. Chart Data
-    const now = dayjs().format('HH:mm:ss')
-    const qps = Math.floor(Math.random() * 1000) + 500
-    const aiRate = Math.floor(qps * (Math.random() * 0.2 + 0.1)) // 10-30% of QPS
-
-    chartData.value.push({
-      time: now,
-      qps,
-      aiRate
-    })
-    if (chartData.value.length > 60) chartData.value.shift()
-  }
-
-
   // --- Actions ---
 
   function toggleSystem(value: boolean) {
@@ -417,48 +370,34 @@ export const useSystemStore = defineStore('system', () => {
         
         if (!res.ok) throw new Error('Failed to fetch dashboard stats');
         
-        const data: DashboardStatsResponse = await res.json();
-        
-        // Update State
-        totalLogsProcessed.value = data.total_logs;
-        netLatency.value = data.avg_response_time;
-        
-        riskStats.Critical = data.critical_risk;
-        riskStats.Error = data.error_risk;
-        riskStats.Warning = data.warning_risk;
-        riskStats.Info = data.info_risk;
-        // Use explicit safe_risk if backend provides it, otherwise fallback (though backend should provide it now)
-        riskStats.Safe = data.safe_risk || (data.total_logs - (data.critical_risk + data.error_risk + data.warning_risk + data.info_risk + data.unknown_risk));
+        const data: SystemRuntimeSnapshotResponse = await res.json();
 
-        recentAlerts.value = data.recent_alerts.map(a => ({
-            id: a.trace_id,
-            time: formatToBeijingTime(a.time),
-            service: 'LogSentinel',
-            level: 'Error',
-            summary: a.summary
+        // Dashboard 现在已经切到后端系统运行态快照，不再沿用旧的 dashboard mock/风险分布结构。
+        // 这里直接按 overview/token_stats/timeseries 三段映射，避免前端再自己拼假数据。
+        totalLogsProcessed.value = data.overview.total_logs;
+        aiQueueWaitMs.value = data.overview.ai_queue_wait_ms;
+        aiInferenceLatencyMs.value = data.overview.ai_inference_latency_ms;
+        aiCallTotal.value = data.overview.ai_call_total;
+        memoryRssMb.value = data.overview.memory_rss_mb;
+        backpressureStatus.value = data.overview.backpressure_status;
+
+        inputTokens.value = data.token_stats.input_tokens;
+        outputTokens.value = data.token_stats.output_tokens;
+        totalTokens.value = data.token_stats.total_tokens;
+        avgTokensPerCall.value = data.token_stats.avg_tokens_per_call;
+
+        // 后端 timeseries 的 time_ms 当前来自内部采样时钟，不是给用户直接看的墙上时间。
+        // 所以前端这里只借用“点的顺序”回填展示标签，保证折线图连续且不把 steady_clock 数字直接暴露到界面上。
+        const now = dayjs();
+        chartData.value = data.timeseries.map((point, index, all) => ({
+          time: now.subtract(all.length - 1 - index, 'second').format('HH:mm:ss'),
+          qps: point.ingest_rate,
+          aiRate: point.ai_completion_rate
         }));
-        
-        if (data.latest_batch_summary) {
-            latestBatchSummary.value = data.latest_batch_summary
-        }
-
-        // Simulate missing data for visual completeness until backend supports it
-        const now = dayjs().format('HH:mm:ss')
-        const qps = Math.floor(Math.random() * 100 + 50); // Mock QPS
-        const aiRate = Math.floor(qps * 0.1);
-        chartData.value.push({ time: now, qps, aiRate });
-        if (chartData.value.length > 60) chartData.value.shift();
-
-        memoryPercent.value = 45 + Math.floor(Math.random() * 5); // Mock 45-50%
 
     } catch (e) {
-        if (isSimulationMode.value) {
-            console.warn("Dashboard fetch failed, falling back to mock data:", e);
-            updateMockData();
-        } else {
-            console.error("Dashboard fetch failed:", e);
-            showBackendError();
-        }
+        console.error("Dashboard fetch failed:", e);
+        showBackendError();
     }
   }
 
@@ -717,17 +656,6 @@ export const useSystemStore = defineStore('system', () => {
 
   function startPolling() {
     if (pollingInterval.value) return
-    
-    // Initial data population if empty (for chart)
-    if (chartData.value.length === 0) {
-        for (let i = 0; i < 60; i++) {
-             chartData.value.push({
-                time: dayjs().subtract(60-i, 'second').format('HH:mm:ss'),
-                qps: 0,
-                aiRate: 0
-             })
-        }
-    }
 
     // Initial fetch
     fetchDashboardStats();
@@ -774,13 +702,15 @@ export const useSystemStore = defineStore('system', () => {
     syncedSettings, // Exposed for debugging if needed
     isDirty,
     totalLogsProcessed,
-    netLatency,
-    aiLatency,
-    aiTriggerCount,
+    aiQueueWaitMs,
+    aiInferenceLatencyMs,
+    aiCallTotal,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    avgTokensPerCall,
     backpressureStatus,
-    queuePercent,
-    memoryUsage,
-    memoryPercent,
+    memoryRssMb,
     chartData,
     riskStats,
     recentAlerts,

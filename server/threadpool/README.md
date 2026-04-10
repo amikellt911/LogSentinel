@@ -38,15 +38,9 @@ src/testserverpool.cpp.
 
 ### 4.2 性能测试
 
-通过 `performance_test.sh` 进行性能测试,测试结果:
+历史上的 `performance_test.sh` 已归档；当前线程池相关压测请以 Trace 主链 benchmark 脚本为准。
 
-| 测试场景 | QPS | 日志文件 |
-|---------|-----|---------|
-| 有业务内容（用sleep模拟） + 同步无线程池架构| ~35k | `base_performance_results_without_log_between_threadpool.log` |
-| 无业务内容 + 同步无线程池架构 | ~98k | `base_performance_results_without_log.log` |
-|  有业务内容（用sleep模拟） + 异步线程池架构 | ~50k | `threadpool_performance_results_without_log.log.log` |
-
-> **说明**: 异步的作用。
+> **说明**: 上面这组数据属于早期 `/logs` 旧链实验结果，只保留历史参考意义，不再代表当前主链路表现。
 
 ## 5. 总结
 

@@ -99,3 +99,22 @@
 - [x] 补最小单测：tombstone 存活期内吸收 late span，不再新建 session
 - [x] 补最小单测：tombstone 过期后允许同 `trace_id` 重新建 session
 - [x] 修正 `TraceSessionManager` 集成测试口径：sealed trace 需手动 sweep 到 deadline 后才会 dispatch
+
+
+## 2026-04-01：Dispatch 拆锁 + 独立分发线程（待做）
+- [ ] 确认本轮范围：先收口 TraceSessionManager 的 dispatch 主链，不把服务监控改动混进这一轮
+- [x] 为 `TraceSession` 增加最小 prepared 缓存字段：`prepared_trace_payload`、`prepared_summary`
+- [x] 为 `TraceSessionManager` 增加 `DispatchingInflight` 轻量拦截表，只记录 `trace_key + session_epoch` 这类最小信息
+- [ ] 设计并接入有界 `dispatch queue`（先用 `mutex + condition_variable`，容量与 `worker_queue_size` 关联）
+- [ ] 将 `SweepExpiredSessions` 触发的 ready trace 改成“摘 session -> 标记 inflight -> 投递 dispatch 线程”
+- [ ] 明确 `dispatch queue submit` 失败回滚：移除 inflight、恢复 session、挂 `ReadyRetryLater`
+- [ ] 将 `DispatchLocked` 重构为“两段式”：锁内只摘 session / 改状态，锁外做建树、序列化、build、append、submit
+- [x] 锁外处理时先看 prepared optional，再看 `primary_enqueued`，避免重复 `SerializeTrace` 和重复 `AppendPrimary`
+- [ ] 收口 `primary_enqueued=true` 的重试路径：跳过 `AppendPrimary`，仅复用/补齐 `prepared_trace_payload` 与 `prepared_summary`
+- [x] 收口 `ProcessDispatchJob` 的 prepared 读取顺序：先读缓存，再补算缺失项，避免“为了补 primary 顺手重算 summary”这类无意义 CPU 开销
+- [ ] 明确 worker `submit` 失败回滚：移除 inflight、恢复 session、挂 retry，不重复 primary 主数据写入
+- [ ] 收口成功路径：worker `submit` 成功后写 completed tombstone，并移除 inflight 标记
+- [ ] 调整晚到 span 对 inflight trace 的处理语义，避免 dispatch 期间同 `trace_id` 被新建成新 session
+- [ ] 补单测：dispatch queue 满回滚、worker submit 失败回滚、`primary_enqueued` 重试不重复主写、inflight 拦截 late span
+- [x] 修正异步 dispatch 后的单测断言口径：对 retry/rollback 相关用例先等待 session 回滚完成，再检查 `ReadyRetryLater` / `retry_count` / `next_retry_tick`
+- [ ] 完成构建与 TraceSessionManager 相关回归验证，并根据结果决定后续是否继续做 dispatch queue 水位联动

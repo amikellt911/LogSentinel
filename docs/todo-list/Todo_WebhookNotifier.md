@@ -12,3 +12,30 @@
 - [x] 编译验证通知模块改动无回归
 - [x] 追加本次 TraceAlertEvent 发送实现 dev-log 记录
 - [x] 将 risk_level 过滤策略迁移到 TraceSessionManager，WebhookNotifier 仅负责发送
+- [x] 将 `WebhookNotifier` 入参从纯 URL 列表升级为 `WebhookChannel(provider/webhook_url/enabled)` 渠道列表
+- [x] 拆出 `IWebhookFormatter / GenericWebhookFormatter / FeishuWebhookFormatter`，避免在 notifier 内硬编码平台分支
+- [x] 先补 `WebhookNotifier` 单测，锁飞书 `post` 模板、`enabled=false` 跳过和 provider 分流语义
+- [x] 维持现有 `cpr` 发送逻辑不动，只把 payload 组装与发送通道解耦
+- [x] 编译并运行 `WebhookNotifier` 测试，确认通知层结构改造无回归
+- [x] 追加本次飞书 formatter 改造 dev-log 记录
+- [x] 新增独立 webhook 手工联调入口，支持启动参数传 `provider/webhook_url`
+- [x] 手工联调入口默认构造一条假 `TraceAlertEvent`，不依赖主链、Settings 或数据库
+- [x] 编译并验证手工联调入口至少能正常打印 `--help`
+- [x] 追加本次 webhook 手工联调入口 dev-log 记录
+- [x] 重新打开 `cpr/curl` 的 HTTPS 支持，允许真实飞书 webhook 通过 TLS 发送
+- [x] 补全 webhook 失败日志，输出 transport error code/message，避免 `Status: 0` 时无法定位
+- [x] 编译并验证 `manual_webhook_notifier` 在开启 HTTPS 后仍可正常构建和打印 `--help`
+- [x] 追加本次 HTTPS 与错误日志修正 dev-log 记录
+- [x] 在 `main.cpp` 增加临时 `--webhook-provider/--webhook-url` 启动参数，先绕开 Settings 打通真实外发
+- [x] 主程序启动时将临时 webhook 参数映射为 `WebhookChannel`，与本地 mock webhook 共存
+- [x] 编译验证 `LogSentinel` 主程序在新增 webhook 启动参数后无回归
+- [x] 追加本次主程序临时 webhook 直连入口 dev-log 记录
+- [x] 为 `post_random_trace_once.py` 增加可控的 critical 产出模式，便于 webhook 端到端联调
+- [x] 先补脚本测试，锁 `critical` 模式下生成的 trace 一定带有显式 critical 标记
+- [x] 运行 Python 测试验证脚本改动无回归
+- [x] 追加本次 critical 发数脚本改造 dev-log 记录
+- [x] 为 `WebhookChannel` 增加可选 `secret` 字段，并把飞书签名链接进 notifier 发送路径
+- [x] 先补 `WebhookNotifier` 单测，锁 `secret` 存在时必须自动追加 `timestamp/sign`
+- [x] 为主程序临时参数和手工联调入口补 `--webhook-secret`
+- [x] 编译并运行通知层测试，确认签名改动无回归
+- [x] 追加本次飞书签名支持 dev-log 记录

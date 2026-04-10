@@ -7,6 +7,90 @@
 
 using json = nlohmann::json;
 
+namespace {
+
+// config 接口只负责标量配置 patch。
+// 一旦这里放对象/数组进去，存储层虽然也能 dump 成字符串，但语义已经脏了：
+// 前端以为自己在存结构化配置，Repository 以为自己在存简单 key-value，后面谁都说不清。
+std::string ConvertConfigValueToString(const json& value, const std::string& key)
+{
+    if (value.is_string())
+    {
+        return value.get<std::string>();
+    }
+    if (value.is_boolean())
+    {
+        return value.get<bool>() ? "1" : "0";
+    }
+    if (value.is_number_integer() || value.is_number_unsigned())
+    {
+        return std::to_string(value.get<long long>());
+    }
+    if (value.is_number_float())
+    {
+        return std::to_string(value.get<double>());
+    }
+    throw std::invalid_argument("Error: config key requires scalar value: " + key);
+}
+
+std::map<std::string, std::string> ParseConfigUpdatesPayload(const std::string& request_body)
+{
+    auto j = json::parse(request_body);
+    if (!j.contains("items") || !j["items"].is_array())
+    {
+        throw std::invalid_argument("Error: JSON format invalid, 'items' array missing.");
+    }
+
+    std::map<std::string, std::string> updates;
+    for (const auto& item : j["items"])
+    {
+        if (!item.is_object())
+        {
+            throw std::invalid_argument("Error: each config item must be an object.");
+        }
+        if (!item.contains("key") || !item.contains("value"))
+        {
+            throw std::invalid_argument("Error: each config item must contain 'key' and 'value'.");
+        }
+
+        const std::string key = item.at("key").get<std::string>();
+        updates[key] = ConvertConfigValueToString(item.at("value"), key);
+    }
+    return updates;
+}
+
+std::vector<AlertChannel> ParseChannelPayload(const std::string& request_body)
+{
+    auto j = json::parse(request_body);
+    if (!j.is_array())
+    {
+        throw std::invalid_argument("Error: channels payload must be an array.");
+    }
+
+    std::vector<AlertChannel> channels;
+    channels.reserve(j.size());
+
+    for (size_t i = 0; i < j.size(); ++i)
+    {
+        const auto& item = j.at(i);
+        if (!item.is_object())
+        {
+            throw std::invalid_argument("Error: each channel item must be an object.");
+        }
+
+        if (!item.contains("name") || !item.contains("webhook_url") || !item.contains("alert_threshold"))
+        {
+            throw std::invalid_argument("Error: channel requires 'name', 'webhook_url' and 'alert_threshold'.");
+        }
+
+        channels.push_back(item.get<AlertChannel>());
+    }
+
+    return channels;
+}
+
+} // namespace
+
 ConfigHandler::ConfigHandler(std::shared_ptr<SqliteConfigRepository> repo, ThreadPool *tpool)
     : repo_(repo), tpool_(tpool)
 {
@@ -82,61 +166,9 @@ void ConfigHandler::handleUpdateAppConfig(const HttpRequest &req, HttpResponse *
     {
         try
         {
-            // 解析 JSON
-            auto j = json::parse(requestBody);
-            std::map<std::string, std::string> updates;
-            if (!j.contains("items") || !j["items"].is_array())
-            {
-                throw std::invalid_argument("Error: JSON format invalid, 'items' array missing.");
-            }
-
-            // 将 JSON 对象打平成 map<string, string>
-            // Repository 接口目前接受 map<string,string>，所以需要做类型转换
-            for (const auto &item : j["items"])
-            {
-                if (item.contains("key") && item.contains("value"))
-                {
-                    // 1. Key 肯定是字符串，可以直接取
-                    std::string key = item["key"].get<std::string>();
-
-                    // 2. Value 不要急着 get<string>，先拿引用！
-                    // const auto& 此时类型依然是 nlohmann::json
-                    const auto &json_val = item["value"];
-
-                    // 3. 现在可以对着 json 对象问类型了
-                    if (json_val.is_string())
-                    {
-                        // 如果是字符串，直接取
-                        updates[key] = json_val.get<std::string>();
-                    }
-                    else if (json_val.is_boolean())
-                    {
-                        // 如果是布尔，取出来转 "0"/"1"
-                        updates[key] = json_val.get<bool>() ? "1" : "0";
-                    }
-                    else if (json_val.is_number())
-                    {
-                        // 如果是数字，统一转 string
-                        if (json_val.is_number_float())
-                        {
-                            updates[key] = std::to_string(json_val.get<double>());
-                        }
-                        else
-                        {
-                            updates[key] = std::to_string(json_val.get<long long>());
-                        }
-                    }
-                    else if (json_val.is_null())
-                    {
-                        updates[key] = ""; // 或者其他处理
-                    }
-                    else
-                    {
-                        // 数组或对象等复杂类型，直接序列化成字符串存进去
-                        updates[key] = json_val.dump();
-                    }
-                }
-            }
+            // 这里退回到最小职责：只校验请求形状和标量值，字段契约不在 Handler 再维护第二份。
+            // 既然之后只会接新设置页，就没必要在这一层继续背一份重复白名单。
+            std::map<std::string, std::string> updates = ParseConfigUpdatesPayload(requestBody);
 
             repo->handleUpdateAppConfig(updates);
 
@@ -260,8 +292,9 @@ void ConfigHandler::handleUpdateChannels(const HttpRequest &req, HttpResponse *r
     {
         try
         {
-            json j = json::parse(requestBody);
-            std::vector<AlertChannel> channels = j.get<std::vector<AlertChannel>>();
+            // channels 同样只保留最小格式校验：必须是数组、元素必须成形。
+            // 更细的字段契约后面统一交给新前端和存储层口径，不在这里重复维护。
+            std::vector<AlertChannel> channels = ParseChannelPayload(requestBody);
 
             repo->handleUpdateChannel(channels);
 
