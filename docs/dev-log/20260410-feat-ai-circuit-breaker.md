@@ -90,3 +90,45 @@ feat(trace-ai): 接通自动降级主备 provider 切换链路
 - `test_trace_session_manager_unit`：44/44 通过
 - 新增自动降级两条语义测试：2/2 通过
 - `LogSentinel`：链接通过
+
+---
+
+## Git Commit Message
+
+test(trace): 收口集成测试中的外部 proxy 依赖
+
+## Modification
+
+- `server/tests/TraceSessionManager_integration_test.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260410-feat-ai-circuit-breaker.md`
+
+## 这次补了哪些注释
+
+- 在 `server/tests/TraceSessionManager_integration_test.cpp` 里补了中文注释，说明为什么这 6 条期待 `trace_analysis` 的集成测试不能继续使用 `MockTraceAi`，而要改成 `FixedTraceAi`。
+- 在 `server/tests/TraceSessionManager_integration_test.cpp` 里补了中文注释，说明 `trace_summary.risk_level` 现在应该跟着固定桩 analysis 回写，不再沿用旧的 `unknown` 断言。
+
+## Learning Tips
+
+### Newbie Tips
+
+集成测试不等于“把一切外部依赖都拉起来一起跑”。如果这组测试的目标是验证 `TraceSessionManager -> BufferedTraceRepository -> SQLite`，那 AI 这层最稳的办法就是用固定桩，把输入输出钉死。否则你测到的就不是主链，而是“本机有没有 proxy、proxy 有没有启动、HTTP 有没有超时”。
+
+### Function Explanation
+
+`FixedTraceAi` 是纯内存测试替身，它直接返回固定 `TraceAiResponse`。这样 integration test 可以稳定断言 `trace_analysis` 和 `trace_summary.risk_level`，不用再依赖 `MockTraceAi` 走 HTTP。
+
+### Pitfalls
+
+`MockTraceAi` 这个名字很容易误导人，以为它还是纯假的测试实现。但它现在其实会请求 `/analyze/trace/mock`，已经属于“外部依赖客户端”了。只要测试还在拿它断言“必定有一条 analysis 落库”，这组测试就天然会抖。
+
+## Verification
+
+- `cmake --build server/build --target test_trace_session_manager_integration`
+- `./server/build/test_trace_session_manager_integration`
+- `cd server/build && ctest -R "^TraceSessionManagerIntegrationTest\\." --output-on-failure`
+
+## Verification Result
+
+- `test_trace_session_manager_integration`：13/13 通过
+- CI 同口径 `ctest -R "^TraceSessionManagerIntegrationTest\\."`：13/13 通过

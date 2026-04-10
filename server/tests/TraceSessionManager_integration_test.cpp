@@ -6,7 +6,7 @@
 #include <sqlite3.h>
 #include <thread>
 
-#include "ai/MockTraceAi.h"
+#include "ai/TraceAiProvider.h"
 #include "core/TraceSessionManager.h"
 #include "persistence/BufferedTraceRepository.h"
 #include "persistence/SqliteTraceRepository.h"
@@ -355,14 +355,16 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnTraceEndAndPersistsAnalys
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
-    MockTraceAi ai;
+    // 这里必须用固定桩，而不是 MockTraceAi。
+    // 原因是 MockTraceAi 现在会真实访问本地 proxy，已经不再是“纯内存假实现”；
+    // integration test 这一组要测的是 C++ 主链和 SQLite 持久化，不应该被外部 Python 进程是否存在牵着跑。
+    FixedTraceAi ai;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
     SpanEvent span = MakeSpan(1, 100, std::nullopt);
     span.trace_end = true;
 
-    // 依赖 AI Proxy 已启动，否则分析阶段会失败导致等待超时。
     EXPECT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
     SweepTraceEndSealWindow(manager);
 
@@ -513,7 +515,8 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnCapacityAndStoresParentId
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
-    MockTraceAi ai;
+    // 这里期待稳定产出 trace_analysis，所以必须用固定桩把外部 proxy 依赖隔离掉。
+    FixedTraceAi ai;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/2, /*token_limit*/0);
 
@@ -584,7 +587,9 @@ TEST_F(TraceSessionManagerIntegrationTest, DispatchesOnDuplicateSpanId)
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
-    MockTraceAi ai;
+    // duplicate span 这个用例要验证“提前封口后 analysis 也能落库”，
+    // 所以这里继续用固定桩，避免测试结果跟本机有没有 proxy 绑定。
+    FixedTraceAi ai;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
@@ -608,7 +613,9 @@ TEST_F(TraceSessionManagerIntegrationTest, PersistsSummarySpanAndAnalysisFields)
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
-    MockTraceAi ai;
+    // 这条用例本质是在查字段落库，不是在查 MockTraceAi/HTTP 协议。
+    // 所以 analysis 字段断言必须建立在固定输出之上，不能继续依赖外部 proxy 返回什么。
+    FixedTraceAi ai;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
@@ -640,7 +647,9 @@ TEST_F(TraceSessionManagerIntegrationTest, PersistsSummarySpanAndAnalysisFields)
     EXPECT_EQ(summary->service_name, "order-service");
     EXPECT_EQ(summary->start_time_ms, 1000);
     EXPECT_EQ(summary->duration_ms, 300);
-    EXPECT_EQ(summary->risk_level, "unknown");
+    // analysis flush 成功后，risk_level 会从固定桩的结果回写到 trace_summary，
+    // 所以这里不能再继续沿用旧的 unknown 口径。
+    EXPECT_EQ(summary->risk_level, "warning");
 
     auto root_row = QuerySpan("400");
     ASSERT_TRUE(root_row.has_value());
@@ -666,12 +675,10 @@ TEST_F(TraceSessionManagerIntegrationTest, PersistsSummarySpanAndAnalysisFields)
     auto analysis = QueryAnalysis("4");
     ASSERT_TRUE(analysis.has_value());
     EXPECT_EQ(analysis->trace_id, "4");
-    // 这里不再把 risk_level 固定为 unknown：
-    // 当前风险等级由 MockTraceAi/Proxy 基于 payload 动态给出，固定断言会导致环境差异下不稳定。
-    EXPECT_FALSE(analysis->risk_level.empty());
-    EXPECT_FALSE(analysis->summary.empty());
-    EXPECT_FALSE(analysis->root_cause.empty());
-    EXPECT_FALSE(analysis->solution.empty());
+    EXPECT_EQ(analysis->risk_level, "warning");
+    EXPECT_EQ(analysis->summary, "fixed-trace-summary");
+    EXPECT_EQ(analysis->root_cause, "fixed-root-cause");
+    EXPECT_EQ(analysis->solution, "fixed-solution");
 
     pool.shutdown();
 }
@@ -710,7 +717,8 @@ TEST_F(TraceSessionManagerIntegrationTest, TreatsMissingParentAsRoot)
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
-    MockTraceAi ai;
+    // 这里查的是缺失父节点时的遍历与落库语义，analysis 只需要“稳定存在”即可。
+    FixedTraceAi ai;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 
@@ -737,7 +745,8 @@ TEST_F(TraceSessionManagerIntegrationTest, HandlesOutOfOrderSpans)
 {
     ThreadPool pool(1);
     SqliteTraceRepository repo(db_path);
-    MockTraceAi ai;
+    // 乱序 span 用例关注的是 parent_id 和聚合顺序，不应该再额外依赖外部 mock proxy。
+    FixedTraceAi ai;
     auto buffered_repo = MakeBufferedTraceRepository(&repo);
     TraceSessionManager manager(&pool, buffered_repo.get(), &ai, /*capacity*/10, /*token_limit*/0);
 

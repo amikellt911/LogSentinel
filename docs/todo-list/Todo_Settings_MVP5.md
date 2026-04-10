@@ -85,4 +85,6 @@
 - [x] 将 `ai_auto_degrade/ai_fallback_provider/ai_fallback_model/ai_fallback_api_key` 接进 `main.cpp -> TraceSessionManager` 冷启动消费链
 - [x] 为 TraceSessionManager 自动降级补单测，锁定“主路失败后 fallback 成功”和“主备都失败”两条语义
 - [x] 运行 `test_trace_session_manager_unit` 与 `LogSentinel` 最小验证，确认 `failed_both` 与 fallback 成功链路可用
+- [x] 收口 `TraceSessionManagerIntegrationTest` 的 AI 口径：把依赖外部 proxy 的 `MockTraceAi` 断言改成固定桩，避免 CI 因外部依赖抖动而误红
+- [x] 重跑 `test_trace_session_manager_integration`，确认 6 条期待 `trace_analysis` 的集成用例重新通过
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）
