@@ -21,8 +21,10 @@ MVP5：以前后端联调和答辩交付为目标，补齐 Trace 可查询、运
 - [x] 暴露 Trace 主链路 runtime stats 接口，覆盖 `TraceSessionManager` 与 `BufferedTraceRepository` 关键指标
 - [x] 前端 `Dashboard` / `ServiceMonitor` 至少接通一批核心真实指标
 - [x] 收口 Webhook 告警链路：至少支持 1 个真实外部平台（先飞书），能把 critical trace 发到真实群机器人
-- [ ] 梳理 Settings 页面字段，去掉假重启、假生效或误导性语义
+- [ ] 梳理 Settings 页面字段，去掉假重启、假生效或误导性语义，并完成一轮“真实生效”联调验收
+- [ ] 接入第 2 个真实 AI provider（当前真实 provider 只有 Gemini，fallback 骨架已就位）
 - [ ] 固定 benchmark 命令、参数、结果模板，沉淀论文可直接引用的数据和截图
+- [ ] 做一轮最终演示验收，固化“发 span -> 聚合落库 -> Trace 查询 -> 运行态 -> Webhook/AI 状态”的答辩脚本
 
 不做：
 - [ ] 不做新一轮高并发极限优化
@@ -39,7 +41,7 @@ MVP5：以前后端联调和答辩交付为目标，补齐 Trace 可查询、运
 - [x] 再接通 `TraceExplorer`，把列表、详情抽屉、调用链、AI 分析切到真实数据
 - [x] 再把 runtime stats 暴露给前端，收口系统状态与背压展示
 - [x] 再把 critical trace -> webhook 外发链路收口到真实平台（先飞书），形成可演示告警闭环
-- [ ] 最后清理 Settings 的假能力，并完成 benchmark 结果归档与联调验收
+- [ ] 最后做 Settings 真实生效联调、第二个真实 provider、benchmark 归档与答辩验收
 
 ## 验收标准
 - [x] `TraceExplorer` 能真实看到 trace 列表与详情，而不是 mock 数据
@@ -59,5 +61,8 @@ MVP5：以前后端联调和答辩交付为目标，补齐 Trace 可查询、运
 - Trace 读侧已经完成最小手工联调：错误态、成功态、复杂拓扑态 3 组脚本都已准备，可直接往当前运行实例灌数验证列表、详情、AI 分析与瀑布图。
 - Runtime 状态页当前已完成两块：`Dashboard` 与 `ServiceMonitor` 都已切到真实后端快照，原型页也已替换到正式 `/service` 路由上。
 - Webhook 当前已完成飞书真实联调：支持 HTTPS、`post` 消息模板、可选签名校验、手工联调入口、主程序临时启动参数直连，以及 `post_random_trace_once.py --critical` 端到端触发。
-- 当前剩余主线集中在两块：一是把 Settings 里的告警渠道/相关配置真正接回主程序读取与生效，二是补 benchmark 命令、结果模板与答辩截图材料。
+- Settings 主链当前已经吃到一批关键字段：端口、线程数、Trace 聚合时序、水位阈值、Webhook、Prompt、AI provider/model/api_key、AI 总开关、熔断、自动降级、日志保留天数。
+- Trace AI 当前已经具备最小可靠性骨架：`skipped_manual / skipped_circuit / failed_primary / failed_both / completed` 五类状态可落库，主 provider 失败后可以自动尝试 fallback provider。
+- 当前剩余主线集中在四块：一是把 Settings 做一轮“真实生效”联调验收，二是接入第 2 个真实 AI provider，三是补 benchmark 命令/结果模板/截图，四是做最终答辩演示脚本收口。
+- 就当前主框架和主要功能闭环来说，论文初稿已经可以开写；后面补的主要是实验数据、演示材料和少量收口项，不是再重做主架构。
 - 后续可能补一个 Trace 可视化小增强：当前瀑布图更偏“按 service 的时间泳道图”，适合看耗时与并行重叠，但不够直观看父子/子孙结构。若 Trace 主链与状态页验收通过、且仍有时间，优先考虑“小补而不是重写”：保留当前瀑布图作为时间视图，再补一个轻量 span tree / 缩进结构视图，专门展示 parent-child 层级；暂不计划重做整套瀑布图 y 轴。
