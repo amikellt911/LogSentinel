@@ -87,4 +87,6 @@
 - [x] 运行 `test_trace_session_manager_unit` 与 `LogSentinel` 最小验证，确认 `failed_both` 与 fallback 成功链路可用
 - [x] 收口 `TraceSessionManagerIntegrationTest` 的 AI 口径：把依赖外部 proxy 的 `MockTraceAi` 断言改成固定桩，避免 CI 因外部依赖抖动而误红
 - [x] 重跑 `test_trace_session_manager_integration`，确认 6 条期待 `trace_analysis` 的集成用例重新通过
+- [x] 删除前端旧壳层里的“模拟模式 / 系统待机-运行中”假开关，避免继续误导真实控制面
+- [x] 清理 `History/LiveLogs` 对 `isSimulationMode/isRunning` 的旧分支，确保前端默认直连后端、不再偷偷回退 mock
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

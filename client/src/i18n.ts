@@ -14,8 +14,6 @@ const messages = {
       dashboard: 'System Monitor',
       logs: 'Live Logs',
       settings: 'Settings',
-      systemRunning: 'SYSTEM RUNNING',
-      systemIdle: 'SYSTEM IDLE',
       missionControl: 'Mission Control Dashboard',
       eventStream: 'Real-time Event Stream',
       configuration: 'System Configuration',
@@ -23,8 +21,7 @@ const messages = {
       traceExplorer: 'Trace Explorer',
       aiEngine: 'AI Engine',
       history: 'Historical Logs',
-      benchmark: 'Performance Arena',
-      simMode: 'SIM MODE'
+      benchmark: 'Performance Arena'
     },
     aiEngine: {
       title: 'AI Engine Center',
@@ -333,8 +330,6 @@ const messages = {
       dashboard: '系统监控',
       logs: '实时日志',
       settings: '系统设置',
-      systemRunning: '系统运行中',
-      systemIdle: '系统待机',
       missionControl: '任务控制仪表盘',
       eventStream: '实时事件流',
       configuration: '系统配置',
@@ -342,8 +337,7 @@ const messages = {
       traceExplorer: 'Trace 追溯',
       aiEngine: 'AI 引擎中心',
       history: '历史日志',
-      benchmark: '基准测试',
-      simMode: '模拟模式'
+      benchmark: '基准测试'
     },
     aiEngine: {
       title: 'AI 引擎中心',

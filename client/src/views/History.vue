@@ -98,11 +98,8 @@
  <script setup lang="ts">
  import { ref, computed, onMounted } from 'vue'
  import { Search } from '@element-plus/icons-vue'
- import { useSystemStore, type LogEntry } from '../stores/system'
+ import type { LogEntry } from '../stores/system'
  import { formatToBeijingTime } from '../utils/timeFormat'
- import dayjs from 'dayjs'
- 
- const systemStore = useSystemStore()
  const loading = ref(false)
  const filterLevel = ref('')
  const searchQuery = ref('')
@@ -127,36 +124,9 @@
     refreshLogs()
  }
  
- async function refreshLogs() {
-    loading.value = true
-    try {
-       if (systemStore.isSimulationMode) {
-           // --- Mock Data Mode ---
-           await new Promise(r => setTimeout(r, 600)) // Fake latency
-           
-           totalLogs.value = 500
-           const mockPage = []
-           for(let i=0; i<pageSize.value; i++) {
-               const r = Math.random()
-               let level = 'info'
-               if (r > 0.95) level = 'critical'
-               else if (r > 0.9) level = 'error'
-               else if (r > 0.8) level = 'warning'
-               else if (r > 0.6) level = 'safe'
-               
-               mockPage.push({
-                   id: `mock-trace-${Date.now()}-${i}`,
-                   timestamp: dayjs().subtract(i * 10, 'minute').format('YYYY-MM-DD HH:mm:ss'),
-                   level: (level.charAt(0).toUpperCase() + level.slice(1)) as any, // UI expects Title Case for badges currently
-                   message: systemStore.settings.general.language === 'zh'
-                       ? `模拟日志条目 #${i} 用于演示目的。分析结果：${level === 'critical' ? '检测到严重风险' : '常规操作'}。`
-                       : `Simulated log entry #${i} for demo purposes. Analysis result: ${level === 'critical' ? 'Critical risk detected' : 'Routine operation'}.`
-               })
-           }
-           historyLogs.value = mockPage
-           return
-       }
- 
+async function refreshLogs() {
+   loading.value = true
+   try {
        // Server-side filtering
        const params = new URLSearchParams({
           page: String(currentPage.value),
@@ -194,8 +164,8 @@
        }
     } catch(e) {
        console.error("Fetch failed", e)
-       // Fallback to empty or error state, but don't auto-mock if simulation mode is OFF
-       // unless we want to be very resilient. For now, empty is correct if backend is down and SimMode is off.
+       // 历史页现在只认真实后端返回。
+       // 拉取失败时保持空态或错误态即可，不能再偷偷拼一页 mock 数据把真实问题盖掉。
     } finally {
        loading.value = false
     }

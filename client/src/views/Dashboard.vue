@@ -54,7 +54,7 @@
     <div class="min-h-[350px] bg-gray-800/30 border border-gray-700 rounded p-4 relative flex flex-col">
       <div class="flex justify-between items-center mb-4">
         <h3 class="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full" :class="systemStore.isRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-600'"></span>
+          <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
           {{ $t('dashboard.realtimeTitle') }}
         </h3>
         <div class="flex gap-4 text-xs font-mono">

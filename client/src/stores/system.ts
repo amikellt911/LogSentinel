@@ -137,8 +137,6 @@ export interface SettingsResponse {
 
 export const useSystemStore = defineStore('system', () => {
   // --- State ---
-  const isRunning = ref(false)
-  const isSimulationMode = ref(true) // Default to true (safe mode)
   const pollingInterval = ref<number | null>(null)
 
   // Metrics
@@ -243,116 +241,7 @@ export const useSystemStore = defineStore('system', () => {
   // Cold Config Keys that require restart
   // const REQUIRE_RESTART_KEYS = ['kernel_worker_threads', 'kernel_io_buffer'] // Unused for now as we hardcode the check
 
-  // --- Constants for Mocking ---
-  const LOG_MESSAGES = {
-    Info: [
-      'Received batch of events from ingress-nginx',
-      'Processing chunk ID #49281',
-      'Flushing buffer to disk...',
-      'AI analysis completed for request #8821',
-      'Health check passed: component=db-connector'
-    ],
-    Safe: [
-      'Routine operation completed',
-      'All systems nominal',
-      'Regular maintenance task finished'
-    ],
-    Warning: [
-      'High latency detected in ingress (150ms)',
-      'Buffer usage > 60%, scaling consumers',
-      'Retry attempt 1/3 for downstream service',
-      'Memory fragment warning in worker #2'
-    ],
-    Error: [
-      'Connection timeout to database',
-      'Service temporarily unavailable',
-      'Failed to process request: invalid format'
-    ],
-    Critical: [
-      'SQL Injection attempt detected from IP 192.168.1.104',
-      'Anomaly detection triggered: Unusual payload size',
-      'Unauthorized access attempt on /admin/config',
-      'Cross-Site Scripting (XSS) signature match'
-    ]
-  }
-
-  const LOG_MESSAGES_ZH = {
-    Info: [
-      '从 ingress-nginx 接收到一批事件',
-      '正在处理分块 ID #49281',
-      '正在将缓冲区刷新到磁盘...',
-      '请求 #8821 的 AI 分析已完成',
-      '健康检查通过: component=db-connector'
-    ],
-    Safe: [
-      '常规操作已完成',
-      '所有系统运行正常',
-      '定期维护任务已完成'
-    ],
-    Warning: [
-      '检测到 Ingress 高延迟 (150ms)',
-      '缓冲区使用率 > 60%，正在扩展消费者',
-      '下游服务重试尝试 1/3',
-      '工作线程 #2 中的内存碎片警告'
-    ],
-    Error: [
-      '数据库连接超时',
-      '服务暂时不可用',
-      '处理请求失败：格式无效'
-    ],
-    Critical: [
-      '检测到来自 IP 192.168.1.104 的 SQL 注入尝试',
-      '异常检测触发：异常载荷大小',
-      '未授权访问尝试 /admin/config',
-      '跨站脚本 (XSS) 签名匹配'
-    ]
-  }
-
-  // --- Mock Actions ---
-
-  function generateRandomLog() {
-    const r = Math.random()
-    let level: 'Critical' | 'Error' | 'Warning' | 'Info' | 'Safe' | 'Unknown' = 'Info'
-    if (r > 0.96) level = 'Critical'
-    else if (r > 0.90) level = 'Error'
-    else if (r > 0.85) level = 'Warning'
-    else if (r > 0.70) level = 'Safe'
-
-    const messageSet = settings.ai.language === 'zh' ? LOG_MESSAGES_ZH : LOG_MESSAGES
-    // @ts-ignore
-    const messages = messageSet[level]
-    const message = messages[Math.floor(Math.random() * messages.length)] || 'Unknown system event'
-
-    // 生成 trace_id 和 span_id
-    const traceNum = Math.floor(Math.random() * 9000) + 1000
-    const spanNum = Math.floor(Math.random() * 900) + 100
-    const trace_id = `trace_${traceNum}`
-    const span_id = `span_${spanNum}`
-
-    logs.value.push({
-      id: Date.now() + Math.random(),
-      timestamp: dayjs().format('HH:mm:ss.SSS'),
-      level,
-      trace_id,
-      span_id,
-      message
-    })
-
-    if (logs.value.length > 200) {
-      logs.value.shift()
-    }
-  }
-
   // --- Actions ---
-
-  function toggleSystem(value: boolean) {
-    isRunning.value = value
-    if (value) {
-      startPolling()
-    } else {
-      stopPolling()
-    }
-  }
 
   // Throttle error messages to avoid spamming
   let lastErrorTime = 0;
@@ -422,19 +311,16 @@ export const useSystemStore = defineStore('system', () => {
                   id: item.trace_id,
                   timestamp: formatToBeijingTime(item.processed_at),
                   level: level as any,
+                  trace_id: item.trace_id,
+                  span_id: '',
                   message: item.summary
               };
           });
 
       } catch (e) {
-          if (isSimulationMode.value) {
-              console.warn("Logs fetch failed, falling back to mock data:", e);
-              generateRandomLog();
-              generateRandomLog();
-          } else {
-             console.error("Logs fetch failed:", e);
-             // Error already shown by dashboard fetch usually, so maybe skip or show unique error
-          }
+          // 历史 / 日志读侧现在必须保持“连不上就报错”的真实口径。
+          // 继续在这里偷偷塞 mock，只会让用户误以为后端还在正常返回数据。
+          console.error("Logs fetch failed:", e);
       }
   }
 
@@ -669,13 +555,6 @@ export const useSystemStore = defineStore('system', () => {
     }, 1000) 
   }
 
-  function stopPolling() {
-    if (pollingInterval.value) {
-      clearInterval(pollingInterval.value)
-      pollingInterval.value = null
-    }
-  }
-
   // Explicit log polling actions
   const logPollingInterval = ref<number | null>(null)
   
@@ -695,9 +574,11 @@ export const useSystemStore = defineStore('system', () => {
       }
   }
 
+  // 旧壳层的“系统运行/待机”开关已经删掉：
+  // store 创建后默认就持续轮询真实后端，后端挂了就走错误提示，不再靠前端假开关决定要不要连。
+  startPolling()
+
   return {
-    isRunning,
-    isSimulationMode,
     settings,
     syncedSettings, // Exposed for debugging if needed
     isDirty,
@@ -716,7 +597,6 @@ export const useSystemStore = defineStore('system', () => {
     recentAlerts,
     latestBatchSummary,
     logs,
-    toggleSystem,
     fetchSettings,
     saveSettings: saveSettingsWithLogic,
     startLogPolling,

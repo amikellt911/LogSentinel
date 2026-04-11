@@ -61,3 +61,56 @@ Verification Result
 - `LogSentinel` 编译通过
 - 显式 `--db` 启动时打印并使用 `/tmp/logsentinel_dbpath_fix.db`
 - 默认启动时打印并使用 `/home/llt/Project/llt/LogSentinel/server/persistence/data/LogSentinel.db`
+
+---
+
+Git Commit Message
+refactor(frontend): 移除旧壳层模拟模式与运行待机假开关
+
+Modification
+- client/src/layout/MainLayout.vue
+- client/src/stores/system.ts
+- client/src/views/Dashboard.vue
+- client/src/views/LiveLogs.vue
+- client/src/views/History.vue
+- client/src/i18n.ts
+- docs/todo-list/Todo_Settings_MVP5.md
+
+Learning Tips
+
+Newbie Tips
+如果一个前端开关根本不对应真实后端控制面，那它不是“演示增强”，而是误导。用户一旦把“页面上能点”理解成“系统真的会这么运行”，后面的联调判断会全乱。
+
+Newbie Tips
+删 UI 开关时，不能只删模板。还要顺着状态流看 store、watch、轮询、mock fallback 有没有一起清掉，否则只是把按钮藏起来，假逻辑还在背后跑。
+
+Function Explanation
+这次 `system.ts` 里保留了自动轮询，但删掉了 `toggleSystem / isRunning / isSimulationMode`。意思不是“前端永远知道后端正常”，而是“前端默认持续尝试真实请求，成不成功由接口结果决定，不再靠本地假状态决定”。
+
+Pitfalls
+`History.vue` 这种页面最容易藏“拉不到后端就临时拼一页 mock 数据”的分支。这个分支开发期看着省事，但一到联调阶段就会把真正的后端问题盖住。
+
+本次补的中文注释
+- `client/src/layout/MainLayout.vue`
+  - 说明为什么要移除“模拟模式 / 系统待机-运行中”假控制面
+- `client/src/stores/system.ts`
+  - 说明为什么历史/日志读侧不能再偷偷塞 mock
+  - 说明为什么 store 创建后默认持续轮询真实后端
+- `client/src/views/LiveLogs.vue`
+  - 说明为什么进入页面就直接开始真实日志轮询
+- `client/src/views/History.vue`
+  - 说明为什么历史页拉取失败时只能保持空态/错误态，不能回退 mock
+
+Verification
+- `npm run build`
+
+Verification Result
+- 构建仍未通过，但当前剩余报错都来自旧页面/旧组件的历史 TypeScript 问题，与这次删除假开关无关：
+  - `src/components/AIEngineSearchBar.vue`
+  - `src/components/BatchArchiveList.vue`
+  - `src/components/BusinessHealthCards.vue`
+  - `src/components/PromptDebugger.vue`
+  - `src/components/RiskDistribution.vue`
+  - `src/components/TraceWaterfall.vue`
+  - `src/views/AIEngine.vue`
+  - `src/views/Settings.vue`

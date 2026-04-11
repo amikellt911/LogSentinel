@@ -54,41 +54,8 @@
         <div class="text-lg font-medium text-gray-300">
           {{ currentRouteName }}
         </div>
-        
-        <div class="flex items-center gap-4">
-          <!-- Simulation Mode Toggle -->
-          <div class="flex items-center gap-2 border-r border-gray-700 pr-4 mr-2">
-            <span class="text-xs font-mono uppercase tracking-widest text-gray-500">
-              {{ $t('layout.simMode') }}
-            </span>
-            <el-switch
-              v-model="systemStore.isSimulationMode"
-              size="small"
-              inline-prompt
-              active-text="ON"
-              inactive-text="OFF"
-              style="--el-switch-on-color: #e6a23c;" 
-            />
-          </div>
-
-          <span 
-            class="text-xs font-mono uppercase tracking-widest transition-colors duration-300"
-            :class="systemStore.isRunning ? 'text-success' : 'text-gray-500'"
-          >
-            {{ systemStore.isRunning ? $t('layout.systemRunning') : $t('layout.systemIdle') }}
-          </span>
-          
-          <!-- Big Toggle Switch -->
-          <el-switch
-            v-model="systemStore.isRunning"
-            @change="handleToggle"
-            style="--el-switch-on-color: #13ce66; --el-switch-off-color: #ff4949"
-            size="large"
-            inline-prompt
-            active-text="ON"
-            inactive-text="OFF"
-          />
-        </div>
+        <!-- 旧壳层里的“模拟模式 / 系统待机-运行中”都属于假控制面：
+             现在前端默认就是真连后端，连不上就报错或空态，不再继续保留会误导用户的全局开关。 -->
       </el-header>
 
       <!-- Main Content -->
@@ -106,13 +73,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { useSystemStore } from '../stores/system'
 import { Odometer, Monitor, Setting, Clock } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
 
 const route = useRoute()
-const systemStore = useSystemStore()
 const { t } = useI18n()
 
 const currentRouteName = computed(() => {
@@ -126,22 +90,6 @@ const currentRouteName = computed(() => {
     default: return t('layout.dashboard')
   }
 })
-
-function handleToggle(val: string | number | boolean) {
-  // Validation Logic
-  if (val === true) {
-    if (systemStore.settings.ai.provider !== 'mock' && !systemStore.settings.ai.apiKey) {
-      ElMessage.error(t('settings.ai.apiKeyPlaceholder'))
-      // Reset switch asynchronously to avoid flicker issue or immediate revert
-      setTimeout(() => {
-        systemStore.toggleSystem(false)
-      }, 0)
-      return
-    }
-  }
-  
-  systemStore.toggleSystem(val as boolean)
-}
 </script>
 
 <style scoped>

@@ -67,9 +67,8 @@
     
     <!-- Status Footer -->
     <div class="px-4 py-1 bg-gray-900 border-t border-gray-800 text-xs text-green-500 flex items-center gap-2">
-      <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse" v-if="systemStore.isRunning"></span>
-      <span v-else class="w-2 h-2 bg-gray-500 rounded-full"></span>
-      <span>{{ systemStore.isRunning ? $t('logs.receiving') : $t('logs.paused') }}</span>
+      <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+      <span>{{ $t('logs.receiving') }}</span>
     </div>
   </div>
 </template>
@@ -97,21 +96,14 @@ watch(() => systemStore.logs.length, () => {
 
 onMounted(() => {
   scrollToBottom()
-  // Start explicit polling for this view
-  if (systemStore.isRunning) {
-      systemStore.startLogPolling()
-  }
+  // 这页不再受前端“运行/待机”假开关控制：
+  // 进入页面就直接开始拉真实日志，拉不到就是后端不可用，而不是前端先把自己关掉。
+  systemStore.startLogPolling()
 })
 
 // Stop polling when leaving this view
 onUnmounted(() => {
     systemStore.stopLogPolling()
-})
-
-// Also watch isRunning to toggle polling if changed while on this page
-watch(() => systemStore.isRunning, (newVal) => {
-    if (newVal) systemStore.startLogPolling()
-    else systemStore.stopLogPolling()
 })
 </script>
 
