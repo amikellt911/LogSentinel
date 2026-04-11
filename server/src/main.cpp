@@ -21,6 +21,7 @@
 #include "core/SystemRuntimeAccumulator.h"
 #include "core/TraceRetentionService.h"
 #include "core/TraceSessionManager.h"
+#include "util/DbPathResolver.h"
 #include "util/DevSubprocessManager.h"
 #include <filesystem>
 #include <chrono>
@@ -108,6 +109,7 @@ private:
 int main(int argc, char* argv[])
 {
     std::string db_path = "LogSentinel.db"; // 生产环境默认名
+    bool db_path_explicit = false;
     int port = 8080;
     bool port_explicit = false;
     // 当前处于 TraceExplorer 联调阶段，开发时默认自动拉起本地 AI proxy，
@@ -143,6 +145,7 @@ int main(int argc, char* argv[])
         std::string arg = argv[i];
         if (arg == "--db" && i + 1 < argc) {
             db_path = argv[++i];
+            db_path_explicit = true;
         } else if (arg == "--port" && i + 1 < argc) {
             port = std::stoi(argv[++i]);
             port_explicit = true;
@@ -256,6 +259,16 @@ int main(int argc, char* argv[])
                   << std::endl;
         return -1;
     }
+
+    const std::filesystem::path executable_path = DbPathResolver::ResolveCurrentExecutablePath();
+    const std::filesystem::path resolved_db_path =
+        db_path_explicit
+            ? DbPathResolver::ResolveExplicitDatabasePath(db_path, std::filesystem::current_path())
+            : DbPathResolver::ResolveDefaultDatabasePath(db_path, executable_path);
+    // 启动阶段直接把最终 DB 路径算死并打印出来：
+    // 这样“默认路径到底落哪”“用户删的是不是同一份库”这些问题在日志里一眼就能看见。
+    db_path = resolved_db_path.string();
+    std::cout << "Resolved database path: " << db_path << std::endl;
 
     std::signal(SIGINT, HandleProcessSignal);
     std::signal(SIGTERM, HandleProcessSignal);

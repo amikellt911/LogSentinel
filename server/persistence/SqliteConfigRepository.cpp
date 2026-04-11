@@ -122,22 +122,17 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
 
 SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
 {
-    // 1. 路径处理
-    std::string final_path;
-    if (db_path.find('/') != std::string::npos || db_path.find('\\') != std::string::npos)
-    {
-        final_path = db_path;
-    }
-    else
-    {
-        std::string data_path = "../persistence/data/";
-        if (!std::filesystem::exists(data_path))
-        {
+    // Repository 不再自己决定“默认库应该落在哪”：
+    // main.cpp 现在会把最终路径先解析好，再传进来；这里的职责只剩下按给定路径打开 DB。
+    std::string final_path = db_path;
+    if (final_path != ":memory:") {
+        const std::filesystem::path final_db_path(final_path);
+        const std::filesystem::path parent_directory = final_db_path.parent_path();
+        if (!parent_directory.empty() && !std::filesystem::exists(parent_directory)) {
             std::error_code ec;
-            std::filesystem::create_directories(data_path, ec);
-            if (ec) throw std::runtime_error("Failed to create directory: " + data_path);
+            std::filesystem::create_directories(parent_directory, ec);
+            if (ec) throw std::runtime_error("Failed to create directory: " + parent_directory.string());
         }
-        final_path = data_path + db_path;
     }
 
     // 2. 打开数据库

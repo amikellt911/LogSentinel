@@ -58,6 +58,7 @@ add_library(http_module STATIC
 )
 
 add_library(util_module STATIC
+    util/DbPathResolver.cpp
     util/TraceIdGenerator.cpp
     util/DevSubprocessManager.cpp
 )
@@ -166,6 +167,10 @@ add_executable(test_threadpool
   tests/threadpool_test.cpp
 )
 
+add_executable(test_db_path_resolver
+  tests/DbPathResolver_test.cpp
+)
+
 add_executable(test_trace_session_manager_unit
   tests/TraceSessionManager_unit_test.cpp
 )
@@ -219,6 +224,10 @@ target_link_libraries(test_threadpool PRIVATE
 GTest::gtest_main
 threadpool_module
 )
+target_link_libraries(test_db_path_resolver PRIVATE
+GTest::gtest_main
+util_module
+)
 target_link_libraries(test_trace_session_manager_unit PRIVATE
 GTest::gtest_main
 core_module
@@ -262,6 +271,7 @@ notification_module
 # 统一使用 gtest_discover_tests 注册，避免与 add_test 重复注册导致同一测试二进制被 CTest 跑两次。
 gtest_discover_tests(test_http_context)
 gtest_discover_tests(test_threadpool)
+gtest_discover_tests(test_db_path_resolver)
 gtest_discover_tests(test_trace_session_manager_unit)
 gtest_discover_tests(test_trace_session_manager_integration)
 gtest_discover_tests(test_trace_retention_service)

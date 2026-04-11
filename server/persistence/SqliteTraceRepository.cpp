@@ -84,18 +84,15 @@ void UpdateSummaryAnalysisOutcome(sqlite3* db,
 SqliteTraceRepository::SqliteTraceRepository(const std::string& db_path)
     : db_path_(db_path)
 {
-    std::string final_path;
-    // 兼容 :memory: 与普通文件路径，保持与现有 SQLite 仓库一致的路径策略，避免配置分叉。
-    if (db_path_ == ":memory:") {
-        final_path = db_path_;
-    } else if (db_path_.find('/') != std::string::npos || db_path_.find('\\') != std::string::npos) {
-        final_path = db_path_;
-    } else {
-        std::string data_path = "../persistence/data/";
-        if (!std::filesystem::exists(data_path)) {
-            std::filesystem::create_directories(data_path);
+    std::string final_path = db_path_;
+    // Trace 仓储也跟配置仓储保持同一条边界：
+    // main.cpp 负责决定最终 DB 路径，这里只负责确保父目录存在并打开那份文件。
+    if (final_path != ":memory:") {
+        const std::filesystem::path final_db_path(final_path);
+        const std::filesystem::path parent_directory = final_db_path.parent_path();
+        if (!parent_directory.empty() && !std::filesystem::exists(parent_directory)) {
+            std::filesystem::create_directories(parent_directory);
         }
-        final_path = data_path + db_path_;
     }
 
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
