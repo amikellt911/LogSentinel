@@ -99,6 +99,7 @@ public:
     bool SavePrimaryBatch(const std::vector<TraceSummary>& summaries,
                           const std::vector<TraceSpanRecord>& spans) override;
     bool SaveAnalysisBatch(const std::vector<TraceAnalysisRecord>& analyses) override;
+    bool UpdateTraceAiStateBatch(const std::vector<TraceAiStateWrite>& writes) override;
 
     // 读侧先只暴露两个最小入口：列表搜索 + 单条详情。
     // 当前阶段先直接落在 SQLite 仓库里，不急着上升到抽象基类，

@@ -56,16 +56,18 @@ public:
     struct AnalysisBufferGroup
     {
         std::vector<TraceAnalysisRecord> analyses;
+        std::vector<TraceRepository::TraceAiStateWrite> ai_states;
         int64_t first_enqueue_ms = 0;
 
         bool Empty() const
         {
-            return analyses.empty();
+            return analyses.empty() && ai_states.empty();
         }
 
         void ClearButKeepCapacity()
         {
             analyses.clear();
+            ai_states.clear();
             first_enqueue_ms = 0;
         }
     };

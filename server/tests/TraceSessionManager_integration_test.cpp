@@ -557,7 +557,19 @@ TEST_F(TraceSessionManagerIntegrationTest, AiDisabledPersistsSkippedManualStatus
 
     ASSERT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
 
-    auto summary = QuerySummary("909");
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    bool status_updated = false;
+    std::optional<TraceSessionManagerIntegrationTest::SummaryRow> summary;
+    while (std::chrono::steady_clock::now() < deadline) {
+        summary = QuerySummary("909");
+        if (summary.has_value() && summary->ai_status == "skipped_manual") {
+            status_updated = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    ASSERT_TRUE(status_updated) << "ai_status failed to update to skipped_manual within timeout";
     ASSERT_TRUE(summary.has_value());
     EXPECT_EQ(summary->ai_status, "skipped_manual");
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);

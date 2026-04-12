@@ -858,6 +858,53 @@ bool SqliteTraceRepository::UpdateTraceAiState(const std::string& trace_id,
     return true;
 }
 
+bool SqliteTraceRepository::UpdateTraceAiStateBatch(const std::vector<TraceAiStateWrite>& writes)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) {
+        return false;
+    }
+    if (writes.empty()) {
+        return true;
+    }
+
+    // 将多个状态更新打包在一个事务里，避免 SQLite 逐条更新导致大量 fsync 性能雪崩
+    char* errmsg = nullptr;
+    int rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, &errmsg);
+    if (errmsg) {
+        sqlite3_free(errmsg);
+        errmsg = nullptr;
+    }
+    if (rc != SQLITE_OK) {
+        return false;
+    }
+
+    auto rollback = [this]() {
+        char* err = nullptr;
+        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, &err);
+        if (err) {
+            sqlite3_free(err);
+        }
+    };
+
+    try {
+        for (const auto& write : writes) {
+            UpdateSummaryAiState(db_, write.trace_id, write.ai_status, write.ai_error);
+        }
+
+        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &errmsg);
+        if (errmsg) {
+            sqlite3_free(errmsg);
+            errmsg = nullptr;
+        }
+        persistence::checkSqliteError(db_, rc, "Commit trace ai state transaction");
+    } catch (const std::exception&) {
+        rollback();
+        return false;
+    }
+    return true;
+}
+
 bool SqliteTraceRepository::SavePrimaryBatch(const std::vector<TraceSummary>& summaries,
                                              const std::vector<TraceSpanRecord>& spans)
 {

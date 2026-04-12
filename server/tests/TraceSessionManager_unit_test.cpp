@@ -931,7 +931,7 @@ TEST_F(TraceSessionManagerUnitTest, DispatchRetriesAiAfterCircuitCooldownExpires
                                 /*ai_analysis_enabled*/true,
                                 /*ai_circuit_breaker_enabled*/true,
                                 /*ai_failure_threshold*/1,
-                                /*ai_cooldown_ms*/30);
+                                /*ai_cooldown_ms*/2000);
 
     SpanEvent span1 = MakeSpan(3055, 701, 1000);
     span1.trace_end = true;
@@ -951,7 +951,8 @@ TEST_F(TraceSessionManagerUnitTest, DispatchRetriesAiAfterCircuitCooldownExpires
     ASSERT_EQ(repo.last_ai_status, "skipped_circuit");
     ASSERT_EQ(ai.called_count.load(std::memory_order_acquire), 1);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // 冷却时间为 2000ms，所以休眠 2100ms 确保它过期。
+    std::this_thread::sleep_for(std::chrono::milliseconds(2100));
 
     SpanEvent span3 = MakeSpan(3057, 703, 3000);
     span3.trace_end = true;

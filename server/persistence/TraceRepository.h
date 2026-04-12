@@ -14,6 +14,12 @@ public:
     using TraceSpanRecord = persistence::TraceSpanRecord;
     using TraceAnalysisRecord = persistence::TraceAnalysisRecord;
 
+    struct TraceAiStateWrite {
+        std::string trace_id;
+        std::string ai_status;
+        std::string ai_error;
+    };
+
     // 最小表结构建议（用于 TraceExplorer）：
     // 1) trace_summary: trace_id, service_name, start_time_ms, end_time_ms, duration_ms,
     //    span_count, token_count, risk_level, ai_status, ai_error, tags
@@ -68,6 +74,17 @@ public:
     {
         for (const auto& analysis : analyses) {
             if (!SaveSingleTraceAnalysis(analysis)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // 批量更新 AI 状态。
+    virtual bool UpdateTraceAiStateBatch(const std::vector<TraceAiStateWrite>& writes)
+    {
+        for (const auto& write : writes) {
+            if (!UpdateTraceAiState(write.trace_id, write.ai_status, write.ai_error)) {
                 return false;
             }
         }

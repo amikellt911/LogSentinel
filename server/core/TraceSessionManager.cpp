@@ -1255,16 +1255,6 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         summary_ptr = &session->prepared_summary.value();
     }
 
-    if (summary_ptr && !ai_analysis_enabled_ && session->prepared_summary.has_value())
-    {
-        // 人工关闭 AI 这一支的最终状态在 dispatch 前就已经确定了，不需要等 worker 再“追写”一次。
-        // 既然 primary 是异步 flush，而 skipped_manual 以前走的是同步 UPDATE，
-        // 那么一旦 UPDATE 先跑、summary 后插入，主表就会被默认 pending 覆盖回去。
-        // 所以这里必须把最终 ai_status 直接写进 prepared_summary，再跟着 primary 一起入缓冲。
-        session->prepared_summary->ai_status = kAiStatusSkippedManual;
-        summary_ptr = &session->prepared_summary.value();
-    }
-
     // primary 指的是“主数据首段”：
     // 1) trace_summary：给列表页、详情页和后续 analysis 结果做主键骨架；
     // 2) span_records：给瀑布图/调用链详情提供原始 span 明细。

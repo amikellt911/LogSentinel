@@ -129,12 +129,29 @@ bool BufferedTraceRepository::UpdateTraceAiState(const std::string& trace_id,
                                                  const std::string& ai_status,
                                                  const std::string& ai_error)
 {
-    // AI 状态更新是低频“每条 trace 最多一次”的控制面写入，
-    // 这里直接透传到底层 repo，避免为了这点流量再补一套状态缓冲与 flush 时序。
-    if (!sink_) {
-        return false;
+    analysis_append_calls_.fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(analysis_mutex_);
+
+    if (!current_analysis_) {
+        current_analysis_ = CreateAnalysisBuffer();
     }
-    return sink_->UpdateTraceAiState(trace_id, ai_status, ai_error);
+    if (!next_analysis_) {
+        next_analysis_ = CreateAnalysisBuffer();
+    }
+
+    if (current_analysis_->Empty()) {
+        current_analysis_->first_enqueue_ms = NowMs();
+    }
+
+    current_analysis_->ai_states.push_back({trace_id, ai_status, ai_error});
+
+    if (!ShouldFlushAnalysisCurrentBySizeLocked()) {
+        return true;
+    }
+
+    RotateAnalysisBuffersLocked();
+    flush_cv_.notify_one();
+    return true;
 }
 
 BufferedTraceRepository::PrimaryBufferPtr BufferedTraceRepository::CreatePrimaryBuffer() const
@@ -170,7 +187,8 @@ bool BufferedTraceRepository::ShouldFlushAnalysisCurrentBySizeLocked() const
     }
 
     // analysis 这条线现在只剩一张 analysis 表，所以主水位直接按 analyses 条数判断即可。
-    return current_analysis_->analyses.size() >= config_.analysis_reserve;
+    // 但是加上了 ai_states 后，也要算上它的数量，避免大量跳过状态导致缓冲积压。
+    return (current_analysis_->analyses.size() + current_analysis_->ai_states.size()) >= config_.analysis_reserve;
 }
 
 bool BufferedTraceRepository::ShouldFlushPrimaryCurrentByTimeLocked(int64_t now_ms) const
@@ -363,6 +381,13 @@ void BufferedTraceRepository::FlushLoop()
                     analysis_flush_fail_count_.fetch_add(1, std::memory_order_relaxed);
                 }
             }
+            if (!analysis_buffer->ai_states.empty()) {
+                const bool saved = sink_->UpdateTraceAiStateBatch(analysis_buffer->ai_states);
+                // 这里暂且把 ai_states 也算进 analysis 的失败次数里，简化埋点
+                if (!saved) {
+                    analysis_flush_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
             RecycleAnalysisBuffer(std::move(analysis_buffer));
         }
 
@@ -411,6 +436,13 @@ void BufferedTraceRepository::FlushLoop()
                 analysis_flush_calls_.fetch_add(1, std::memory_order_relaxed);
                 analysis_flush_total_ns_.fetch_add(NowNs() - flush_begin_ns, std::memory_order_relaxed);
                 analysis_flushed_analysis_count_.fetch_add(analysis_buffer->analyses.size(), std::memory_order_relaxed);
+                if (!saved) {
+                    analysis_flush_fail_count_.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            if (!analysis_buffer->ai_states.empty()) {
+                const bool saved = sink_->UpdateTraceAiStateBatch(analysis_buffer->ai_states);
+                // 这里暂且把 ai_states 也算进 analysis 的失败次数里，简化埋点
                 if (!saved) {
                     analysis_flush_fail_count_.fetch_add(1, std::memory_order_relaxed);
                 }

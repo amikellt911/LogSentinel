@@ -156,3 +156,59 @@ test(settings): 补第三层黑盒联调并修复 skipped_manual 落库竞态
 
 - 只在 unit test 里看 `UpdateTraceAiState()` 被调用过，不等于 SQLite 最终真写对了。真正的竞态通常发生在“有没有调用”之外，而是在“调用和插入谁先发生”。
 - 修完库内竞态后，如果黑盒还红，先确认你跑的到底是不是新二进制；这次就出现过“测试目标重链了，但 `LogSentinel` 还没重链”的假回归。
+
+---
+
+# Git Commit Message
+
+fix(core): 彻底修复 UpdateTraceAiState 竞态，改用双缓冲队列同步落库
+
+# Modification
+
+- `server/persistence/TraceRepository.h`
+- `server/persistence/BufferedTraceRepository.h`
+- `server/persistence/BufferedTraceRepository.cpp`
+- `server/persistence/SqliteTraceRepository.h`
+- `server/persistence/SqliteTraceRepository.cpp`
+- `server/core/TraceSessionManager.cpp`
+- `server/tests/TraceSessionManager_integration_test.cpp`
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260412-refactor-settings-entry.md`
+
+# What Changed
+
+- **撤销短视 Hack**：从 `TraceSessionManager.cpp` 移除了强制覆写 `prepared_summary->ai_status = kAiStatusSkippedManual` 的奇技淫巧。
+- **引入状态缓冲机制**：在 `BufferedTraceRepository` 的 `AnalysisBufferGroup` 结构里新增 `std::vector<TraceAiStateWrite> ai_states`，把单点透传改成推入缓冲队列。
+- **重构持久层批量接口**：
+  - `TraceRepository` 和 `SqliteTraceRepository` 新增 `UpdateTraceAiStateBatch` 方法。
+  - `SqliteTraceRepository` 内部使用 `BEGIN TRANSACTION; ... COMMIT;` 对多条状态更新进行批量执行，避免多次单条 `UPDATE` 造成的大量 fsync。
+- **锁定 Flush 时序**：在 `BufferedTraceRepository::FlushLoop` 中，强制先通过 `SavePrimaryBatch` 处理 `PrimaryBuffer` (INSERT)，然后才会处理包含 `UpdateTraceAiStateBatch` 的 `AnalysisBuffer` (UPDATE)。彻底消除 `UPDATE` 先于 `INSERT` 执行导致的 `pending` 竞态。
+- **修复自动化测试 Flaky 问题**：将 `test_trace_session_manager_unit` 中熔断冷却测试的 `ai_cooldown_ms` 拉长至 2000ms，并在等待期间增加 2100ms 休眠，避免因状态更新进入缓冲导致的延迟可见性问题吃掉短冷却时间，引起二次断言失败。
+- **修复黑盒断言轮询**：在 `TraceSessionManager_integration_test.cpp` 引入 `while` 循环轮询等 `skipped_manual` 状态落库，而不是期待它瞬间同步可用。
+
+# Verification
+
+- `cmake --build server/build --target test_trace_session_manager_unit test_trace_session_manager_integration`
+- `./server/build/test_trace_session_manager_integration --gtest_filter='TraceSessionManagerIntegrationTest.AiDisabledPersistsSkippedManualStatusWithBufferedRepository'`
+- `./server/build/test_trace_session_manager_unit`
+- `python3 server/tests/smoke_settings_blackbox.py`
+
+结果：
+- 单元测试（45/45）与集成测试（1/1）全部通过。
+- Python 黑盒联调全部通过。
+
+# Learning Tips
+
+## Newbie Tips
+
+- **状态更新也必须进缓冲排队**。只要主数据是异步写入的，后续任何对此数据的单点更新都不能走同步直连 DB，必须老老实实跟着主数据的流水线排队处理，否则就会遇到“你以为改了，但它最终还是初始值”的覆盖竞态。
+- **治标不治本的 Hack 会掩盖架构缺陷**。不要在业务调用层去强行拼凑数据时序（比如提前注入状态），时序问题必须在数据底层的缓冲队列里统一解决。
+
+## Function Explanation
+
+- `UpdateTraceAiStateBatch`：在抽象类中引入的批量更新接口。相比逐条 UPDATE，批量更新能极大减少 SQLite 写 WAL 的 fsync 次数，不仅解决了线程间时序竞争，还附带了性能红利。
+
+## Pitfalls
+
+- **测试用例的时序强耦合**：单元测试中的时间等待非常容易受到真实架构变动（例如增加队列缓冲导致的延迟）影响。当状态更新从“同步立即可见”变为“异步稍微延迟可见”时，原来的死等或过短的冷却时间都会变成偶现失败的 Flaky Test，需要相应调长超时/冷却配置。
