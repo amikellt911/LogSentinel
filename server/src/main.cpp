@@ -119,7 +119,10 @@ int main(int argc, char* argv[])
     bool auto_start_webhook_mock = false;
     std::string trace_ai_provider = "mock";
     std::string trace_ai_base_url = "http://127.0.0.1:8001";
-    int trace_ai_timeout_ms = 10000;
+    // 默认超时先抬到 30s。
+    // 真实 GLM 链路在免费额度、冷启动或网络波动下首包可能明显慢于 mock/gemini，本地 10s 太激进。
+    int trace_ai_timeout_ms = 30000;
+    bool trace_ai_timeout_explicit = false;
     int trace_sweep_interval_ms = 500;
     bool trace_sweep_interval_explicit = false;
     int trace_idle_timeout_ms = 5000;
@@ -167,6 +170,7 @@ int main(int argc, char* argv[])
             trace_ai_base_url = argv[++i];
         } else if (arg == "--trace-ai-timeout-ms" && i + 1 < argc) {
             trace_ai_timeout_ms = std::stoi(argv[++i]);
+            trace_ai_timeout_explicit = true;
         } else if (arg == "--trace-sweep-interval-ms" && i + 1 < argc) {
             trace_sweep_interval_ms = std::stoi(argv[++i]);
             trace_sweep_interval_explicit = true;
@@ -358,6 +362,10 @@ int main(int argc, char* argv[])
                    : trace_ai_provider);
     const std::string effective_trace_ai_model = startup_app_config.ai_model;
     const std::string effective_trace_ai_api_key = startup_app_config.ai_api_key;
+    // AI 调用超时也必须走冷启动配置。
+    // 否则前端把 ai_timeout_ms 改成 30000，看起来已经保存成功，但后端实际还在沿用硬编码 10s，就会变成假配置。
+    const int effective_trace_ai_timeout_ms =
+        trace_ai_timeout_explicit ? trace_ai_timeout_ms : startup_app_config.ai_timeout_ms;
     const bool effective_ai_analysis_enabled = startup_app_config.ai_analysis_enabled;
     // 自动降级这一刀也按冷启动配置消费：
     // 既然主/备 provider 都是在启动时构对象，那 provider/model/api_key 三元组自然也不能运行中热切。
@@ -556,7 +564,7 @@ int main(int argc, char* argv[])
         TraceAiFactoryOptions options;
         options.base_url = trace_ai_base_url;
         options.backend = backend;
-        options.timeout_ms = trace_ai_timeout_ms;
+        options.timeout_ms = effective_trace_ai_timeout_ms;
         options.prompt_template = effective_trace_prompt_template;
         options.model = effective_trace_ai_model;
         options.api_key = effective_trace_ai_api_key;
@@ -574,7 +582,7 @@ int main(int argc, char* argv[])
             TraceAiFactoryOptions fallback_options;
             fallback_options.base_url = trace_ai_base_url;
             fallback_options.backend = fallback_backend;
-            fallback_options.timeout_ms = trace_ai_timeout_ms;
+            fallback_options.timeout_ms = effective_trace_ai_timeout_ms;
             fallback_options.prompt_template = effective_trace_prompt_template;
             fallback_options.model = effective_ai_fallback_model;
             fallback_options.api_key = effective_ai_fallback_api_key;
@@ -582,7 +590,7 @@ int main(int argc, char* argv[])
         }
         std::cout << "Trace AI enabled via proxy. provider=" << effective_trace_ai_provider
                   << ", base_url=" << trace_ai_base_url
-                  << ", timeout_ms=" << trace_ai_timeout_ms
+                  << ", timeout_ms=" << effective_trace_ai_timeout_ms
                   << ", ai_language=" << startup_app_config.ai_language
                   << ", model=" << effective_trace_ai_model
                   << ", api_key=" << (effective_trace_ai_api_key.empty() ? "<empty>" : "<configured>")

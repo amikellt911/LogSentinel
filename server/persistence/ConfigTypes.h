@@ -38,6 +38,9 @@ struct AppConfig {
     bool ai_analysis_enabled = true;
     std::string ai_language = "en";
     std::string app_language = "en";
+    // 这个超时控制的是 C++ 后端等待 Python proxy 返回 Trace AI 结果的最长时间。
+    // 如果这里太短，像 GLM 免费额度这类首包慢的 provider 就会在模型还没回包前被后端提前判死。
+    int ai_timeout_ms = 30000;
 
     // 基础设置
     int http_port = 8080;
@@ -84,7 +87,7 @@ struct AppConfig {
 
     // 序列化宏 (注意：字段名需与 JSON key 及 DB config_key 一致)
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AppConfig, 
-        ai_provider, ai_model, ai_api_key, ai_analysis_enabled, ai_language, app_language,
+        ai_provider, ai_model, ai_api_key, ai_analysis_enabled, ai_language, app_language, ai_timeout_ms,
         http_port, log_retention_days,
         ai_retry_enabled, ai_retry_max_attempts,
         ai_auto_degrade, ai_fallback_provider, ai_fallback_model, ai_fallback_api_key,

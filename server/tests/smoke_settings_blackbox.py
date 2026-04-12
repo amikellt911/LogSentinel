@@ -532,6 +532,7 @@ def run_flow(args: argparse.Namespace) -> int:
         {"key": "http_port", "value": str(configured)},
         {"key": "trace_end_aliases", "value": json.dumps(["end"])},
         {"key": "ai_analysis_enabled", "value": "0"},
+        {"key": "ai_timeout_ms", "value": "30000"},
         {"key": "kernel_worker_threads", "value": "2"},
         {"key": "log_retention_days", "value": "1"},
         {"key": "collecting_idle_timeout_ms", "value": "30000"},
@@ -564,12 +565,19 @@ def run_flow(args: argparse.Namespace) -> int:
             raise RuntimeError(f"trace_end_aliases 回填不正确: {app_config.get('trace_end_aliases')}")
         if bool(app_config.get("ai_analysis_enabled", True)) is not False:
             raise RuntimeError(f"ai_analysis_enabled 回填不正确: {app_config.get('ai_analysis_enabled')}")
+        if int(app_config.get("ai_timeout_ms", 0)) != 30000:
+            raise RuntimeError(f"ai_timeout_ms 回填不正确: {app_config.get('ai_timeout_ms')}")
         if int(app_config.get("kernel_worker_threads", 0)) != 2:
             raise RuntimeError(f"kernel_worker_threads 回填不正确: {app_config.get('kernel_worker_threads')}")
         if int(app_config.get("log_retention_days", 0)) != 1:
             raise RuntimeError(f"log_retention_days 回填不正确: {app_config.get('log_retention_days')}")
         if "Thread Model:" not in startup_logs:
             raise RuntimeError("未读到线程模型启动日志，无法证明 kernel_worker_threads 被消费")
+        # timeout_ms 直接出现在启动日志里，最适合作为冷启动消费的黑盒证据。
+        # 这里只看日志，是因为真正值钱的问题是“后端到底有没有把 Settings 的超时拿来构造 TraceProxyAi”，
+        # 而不是 SQLite 里有没有这行 key。
+        if "timeout_ms=30000" not in startup_logs:
+            raise RuntimeError("启动日志没有打印 timeout_ms=30000，无法证明 ai_timeout_ms 被真实消费")
 
         trace_key = int(time.time() * 1000)
         trace_id = str(trace_key)
@@ -789,7 +797,7 @@ def run_flow(args: argparse.Namespace) -> int:
 
         print(
             "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
-            "ai_analysis_enabled、prompt/active_prompt_id、webhook channel、"
+            "ai_analysis_enabled、ai_timeout_ms、prompt/active_prompt_id、webhook channel、"
             "kernel_worker_threads、log_retention_days 都已验证"
         )
         return 0

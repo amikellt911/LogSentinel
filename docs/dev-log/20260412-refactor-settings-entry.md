@@ -427,6 +427,64 @@ fix(ai): 补全 TraceProxyAi 传输层错误详情
 - 如果只看 `status_code`，你会把“连接失败”和“服务端返回 500”这两类完全不同的问题混成一类，后面越查越偏。
 - 只补日志、不补单测，下次很容易又有人把 `HTTP 0` 简化回原来的空壳文本。这个回归点必须锁住。
 
+---
+
+# Git Commit Message
+
+fix(settings): 接通 ai_timeout_ms 的后端冷启动消费
+
+# Modification
+
+- `server/persistence/ConfigTypes.h`
+- `server/persistence/SqliteConfigRepository.cpp`
+- `server/src/main.cpp`
+- `server/tests/smoke_settings_blackbox.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260412-refactor-settings-entry.md`
+
+# What Changed
+
+- 在 `AppConfig` 中正式加入 `ai_timeout_ms`，默认值设为 `30000`
+- 在 `SqliteConfigRepository.cpp` 中补齐：
+  - `ai_timeout_ms` 的 seed
+  - `ai_timeout_ms` 的读取与投影
+- 在 `main.cpp` 中把 Trace AI 超时改成：
+  - `CLI > Settings > 默认值`
+- 后端日志现在会打印真正生效的 `timeout_ms`
+- 扩展 `smoke_settings_blackbox.py`：
+  - 保存 `ai_timeout_ms=30000`
+  - 重启后校验 `/settings/all` 回填
+  - 校验启动日志包含 `timeout_ms=30000`
+
+# Verification
+
+- `cmake --build server/build --target LogSentinel test_trace_session_manager_unit`
+- `./server/build/test_trace_session_manager_unit --gtest_filter='TraceProxyTransportErrorTest.*'`
+- `python3 server/tests/smoke_settings_blackbox.py`
+- `git diff --check`
+
+结果：
+- 后端重链通过
+- 传输层错误测试仍通过
+- Settings 黑盒通过，确认 `ai_timeout_ms` 已被真实消费
+
+# Learning Tips
+
+## Newbie Tips
+
+- “前端有字段”和“后端真消费了字段”完全是两回事。这个问题本质上就是典型的假配置：页面能改，数据库能存，但主程序启动时根本没用它。
+- 对这类冷启动配置，最硬的证据往往不是查库，而是看启动日志和实际行为。因为真正的语义是“它有没有进入构造函数”，不是“它有没有存在于 SQLite”。
+
+## Function Explanation
+
+- `trace_ai_timeout_explicit`：这次加的 CLI 优先级标记。作用不是多此一举，而是保住命令行 override 的语义，不让 Settings 无意间把手工调试参数覆盖掉。
+- `effective_trace_ai_timeout_ms`：最终生效值。这里统一收口，避免主路和 fallback 两边各自再写一套判断，后面很容易漂移。
+
+## Pitfalls
+
+- 如果只把默认值从 10s 改到 30s，但不把 Settings 消费链接上，这个 bug 只是“变得没那么容易复现”，没有真的修掉。
+- 如果只查 `/settings/all` 回填，不看启动日志，你仍然无法证明 `TraceProxyAi` 构造时用的到底是不是 30000。
+
 ## Function Explanation
 
 - `LocalProbeService`：这次黑盒里内嵌的本地探针服务，同时扮演“假 AI proxy”和“假 webhook server”。这样脚本自己就能拿到实收请求，不需要再依赖额外外部进程。

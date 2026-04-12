@@ -85,6 +85,9 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         else if (key == "ai_analysis_enabled") config.ai_analysis_enabled = IsTruthyConfigValue(val);
         else if (key == "ai_language") config.ai_language = val;
         else if (key == "app_language") config.app_language = val;
+        // 这里吃的是“后端等待 proxy 返回”的超时，不是 provider 自己内部的 HTTP 超时。
+        // 只有把它放进冷启动快照，Settings 里的 AI 调用超时才不是假保存。
+        else if (key == "ai_timeout_ms") config.ai_timeout_ms = std::stoi(val);
         else if (key == "http_port") config.http_port = std::stoi(val);
         else if (key == "log_retention_days") config.log_retention_days = std::stoi(val);
         else if (key == "ai_retry_enabled") config.ai_retry_enabled = IsTruthyConfigValue(val);
@@ -201,6 +204,9 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('ai_analysis_enabled', '1', 'Trace AI 分析总开关'),
             ('ai_language', 'en', '解析语言'),
             ('app_language', 'en', '界面语言'),
+            -- 这里给 30s，是为了覆盖像 GLM 这类首包可能偏慢的真实 provider；
+            -- 旧的 10s 对 mock/gemini 够用，但对真实跨境/免费额度链路太激进，容易在模型返回前被后端先超时。
+            ('ai_timeout_ms', '30000', 'Trace AI 调用超时ms'),
             ('http_port', '8080', 'HTTP服务端口'),
             ('log_retention_days', '7', '日志保留天数'),
             ('ai_retry_enabled', '0', 'AI自动重试开关'),

@@ -126,3 +126,12 @@
 - [x] 为传输层错误信息补最小单测，锁定 `HTTP 0` 和普通非 200 两条报错格式
 - [x] 运行 `TraceProxyAi` 相关最小测试与构建，确认没有引入新的 AI 协议回归
 - [x] 追加 2026-04-12 dev-log，记录这轮 `TraceProxyAi` 错误诊断增强与中文注释位置
+- [x] 打通 `ai_timeout_ms` 的真实消费链：从 Settings 存储到 `main.cpp` 冷启动超时配置
+- [x] 为 `ai_timeout_ms` 补黑盒验证，锁定“保存后重启日志打印 timeout_ms=30000”
+- [x] 运行 Settings 黑盒脚本，确认 `ai_timeout_ms` 与既有配置项一起通过
+- [x] 追加 2026-04-12 dev-log，记录这轮 `ai_timeout_ms` 修复与中文注释位置
+- [ ] 透传 `timeout_ms` 到 Python proxy，避免 C++ 外层超时和 GLM 上游超时撞在一起
+- [ ] 为 `GLM` provider 补超时透传测试，锁定“上游 timeout 要略早于外层 caller timeout”
+- [ ] 更新手工联调脚本，让 `probe-proxy` 能单独设置 provider timeout 与本地等待超时
+- [ ] 运行 `ai_proxy_trace_protocol` 最小测试，确认超时透传没有破坏既有协议
+- [ ] 追加 2026-04-12 dev-log，记录这轮超时链路修复与中文注释位置

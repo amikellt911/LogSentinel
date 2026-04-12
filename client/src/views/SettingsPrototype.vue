@@ -95,6 +95,16 @@
                       <el-option label="中文 (Chinese)" value="zh" />
                     </el-select>
                   </el-form-item>
+
+                  <el-form-item label="AI 调用超时 (ms)">
+                    <el-input-number
+                      v-model="ai.aiTimeoutMs"
+                      :min="1000"
+                      :step="5000"
+                      class="w-full"
+                      :disabled="!ai.analysisEnabled"
+                    />
+                  </el-form-item>
                 </div>
               </div>
 
@@ -741,6 +751,7 @@ const ai = reactive({
   model: 'gemini-2.5-flash',
   apiKey: '',
   language: 'zh',
+  aiTimeoutMs: 30000,
   retryEnabled: true,
   retryMaxAttempts: 3,
   autoDegrade: true,
@@ -1344,6 +1355,7 @@ async function persistSettings() {
       { key: 'ai_model', value: ai.model },
       { key: 'ai_api_key', value: ai.apiKey },
       { key: 'ai_language', value: ai.language },
+      { key: 'ai_timeout_ms', value: ai.aiTimeoutMs.toString() },
       { key: 'ai_retry_enabled', value: ai.retryEnabled ? '1' : '0' },
       { key: 'ai_retry_max_attempts', value: ai.retryMaxAttempts.toString() },
       { key: 'ai_auto_degrade', value: ai.autoDegrade ? '1' : '0' },
