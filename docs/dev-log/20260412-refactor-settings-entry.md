@@ -374,6 +374,59 @@ test(ai-proxy): 补 GLM 手工联调脚本
 - 不能让 `send-spans` 偷偷去改后端设置。因为那样你会误以为“脚本一跑就代表后端已经切到 glm 了”，实际上当前 provider/model/api_key 还是冷启动语义。
 - 不能在 `probe-proxy` 里复用后端 span JSON。proxy 真正吃的是“最终渲染好的 trace prompt”，不是 `/logs/spans` 的原始输入格式，把两者混成一套只会把测试边界搞脏。
 
+---
+
+# Git Commit Message
+
+fix(ai): 补全 TraceProxyAi 传输层错误详情
+
+# Modification
+
+- `server/ai/TraceProxyTransportError.h`
+- `server/ai/TraceProxyAi.cpp`
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260412-refactor-settings-entry.md`
+
+# What Changed
+
+- 新增 `TraceProxyTransportError.h`，统一构造 `TraceProxyAi` 的传输层报错文本
+- 当 `cpr` 返回 `status_code=0` 或带有 `error.message` 时，错误文本现在会显式带出：
+  - `url`
+  - `cpr_error_code`
+  - `cpr_error_message`
+  - `Body`
+- `TraceProxyAi.cpp` 不再继续抛空壳 `HTTP 0, Body:`，而是走统一的传输层错误格式
+- 补了两条最小单测，锁住：
+  - `HTTP 0` 时必须带出 cpr 连接错误详情
+  - 普通非 200 响应仍然必须保留 body
+
+# Verification
+
+- `cmake --build server/build --target test_trace_session_manager_unit LogSentinel`
+- `./server/build/test_trace_session_manager_unit --gtest_filter='TraceProxyTransportErrorTest.*'`
+
+结果：
+- 新增 2 条单测通过
+- `LogSentinel` 重链通过
+
+# Learning Tips
+
+## Newbie Tips
+
+- `HTTP 0` 通常不是“业务接口返回了 0”，而是 HTTP 客户端压根没拿到有效响应，常见原因是连不上、超时、TLS 握手失败。
+- 调试链路问题时，最值钱的不是马上改业务逻辑，而是先把传输层错误显式打印出来。不然你面对的只是症状，不是根因。
+
+## Function Explanation
+
+- `cpr::Response.error`：`cpr` 对 libcurl 传输层错误的封装。这里真正能告诉你“是不是连不上 127.0.0.1:8001”“是不是超时”的，就是它的 `code` 和 `message`。
+- `BuildTraceProxyTransportErrorMessage(...)`：这次新加的统一报错构造函数。目的不是抽象炫技，而是避免 `TraceProxyAi.cpp` 每次手拼错误字符串时继续漏掉关键上下文。
+
+## Pitfalls
+
+- 如果只看 `status_code`，你会把“连接失败”和“服务端返回 500”这两类完全不同的问题混成一类，后面越查越偏。
+- 只补日志、不补单测，下次很容易又有人把 `HTTP 0` 简化回原来的空壳文本。这个回归点必须锁住。
+
 ## Function Explanation
 
 - `LocalProbeService`：这次黑盒里内嵌的本地探针服务，同时扮演“假 AI proxy”和“假 webhook server”。这样脚本自己就能拿到实收请求，不需要再依赖额外外部进程。

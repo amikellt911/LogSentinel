@@ -13,6 +13,7 @@
 
 #include "ai/TraceAiProvider.h"
 #include "ai/TraceProxyProtocol.h"
+#include "ai/TraceProxyTransportError.h"
 #define private public
 #include "core/TraceSessionManager.h"
 #undef private
@@ -267,6 +268,40 @@ TEST(TraceProxyProtocolTest, ThrowsNormalizedProviderFailureWhenOkIsFalse)
     } catch (const std::runtime_error& e) {
         EXPECT_STREQ(e.what(), "Trace AI Provider Error: [429 RESOURCE_EXHAUSTED] quota exhausted");
     }
+}
+
+TEST(TraceProxyTransportErrorTest, IncludesCprErrorDetailsWhenStatusCodeIsZero)
+{
+    cpr::Response response;
+    response.status_code = 0;
+    // 这里模拟的就是“根本没连上 proxy”。
+    // 如果错误文本里没有 cpr 细节，前端最终只会看到一条空壳 HTTP 0，根本没法继续定位。
+    response.error.code = cpr::ErrorCode::COULDNT_CONNECT;
+    response.error.message = "Failed to connect to 127.0.0.1:8001";
+
+    const std::string message = BuildTraceProxyTransportErrorMessage(
+        "http://127.0.0.1:8001/analyze/trace/glm",
+        response);
+
+    EXPECT_NE(message.find("HTTP 0"), std::string::npos);
+    EXPECT_NE(message.find("cpr_error_code"), std::string::npos);
+    EXPECT_NE(message.find("Failed to connect to 127.0.0.1:8001"), std::string::npos);
+}
+
+TEST(TraceProxyTransportErrorTest, PreservesHttpBodyForNon200Responses)
+{
+    cpr::Response response;
+    response.status_code = 500;
+    response.text = "{\"detail\":\"proxy internal error\"}";
+
+    const std::string message = BuildTraceProxyTransportErrorMessage(
+        "http://127.0.0.1:8001/analyze/trace/glm",
+        response);
+
+    // 普通 HTTP 非 200 也仍然要保留 body，
+    // 否则 Python proxy 明明已经返回了 detail/error JSON，C++ 侧还是会把根因吃掉。
+    EXPECT_NE(message.find("HTTP 500"), std::string::npos);
+    EXPECT_NE(message.find("proxy internal error"), std::string::npos);
 }
 
 class TraceSessionManagerUnitTest : public ::testing::Test

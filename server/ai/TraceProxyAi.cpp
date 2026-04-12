@@ -1,5 +1,6 @@
 #include "ai/TraceProxyProtocol.h"
 #include "ai/TraceProxyAi.h"
+#include "ai/TraceProxyTransportError.h"
 
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
@@ -49,8 +50,9 @@ TraceAiResponse TraceProxyAi::AnalyzeTrace(const std::string& trace_payload)
 
     cpr::Response r = session.Post();
     if (r.status_code != 200) {
-        throw std::runtime_error("Trace AI Proxy Error: HTTP " + std::to_string(r.status_code) +
-                                 ", Body: " + r.text);
+        // status_code=0 代表这次根本没拿到有效 HTTP 响应，通常是连接、超时或 TLS 这类传输层问题。
+        // 这里统一把 cpr 的 error.code / error.message 也带出来，避免前端和日志只剩一条空壳 HTTP 0。
+        throw std::runtime_error(BuildTraceProxyTransportErrorMessage(analyze_trace_url_, r));
     }
 
     nlohmann::json response_json;
