@@ -109,4 +109,8 @@
 - [x] 为 Settings 真实生效补第三层黑盒联调：锁 `webhook channel` 的 `threshold/secret/webhook_url` 真实消费语义
 - [x] 重跑第三层黑盒脚本，确认 prompt 真进 proxy、warning 不告警、critical 真外发
 - [x] 追加 2026-04-12 dev-log，记录这轮 prompt/webhook 黑盒联调与中文注释位置
+- [x] 为 Settings 真实生效补第三层黑盒联调：锁 `kernel_worker_threads` 的冷启动消费语义
+- [x] 为 Settings 真实生效补第三层黑盒联调：锁 `log_retention_days` 的启动清理语义
+- [x] 重跑第三层黑盒脚本，确认线程数与 retention 清理都通过
+- [x] 追加 2026-04-12 dev-log，记录这轮 worker/retention 黑盒联调与中文注释位置
 - [x] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

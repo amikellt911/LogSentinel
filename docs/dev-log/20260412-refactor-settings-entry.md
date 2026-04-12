@@ -268,3 +268,57 @@ test(settings): 补 prompt 与 webhook channel 第三层黑盒联调
 
 - 如果 prompt 黑盒只断言 `/settings/all` 回填正确，那本质上还是“存储测试”，不是“消费测试”。
 - webhook 黑盒如果只发 critical，一样证明不了 threshold 过滤；必须先来一条 warning，确认它真的被挡住。
+
+---
+
+# Git Commit Message
+
+test(settings): 补 worker threads 与 retention 第三层黑盒联调
+
+# Modification
+
+- `server/tests/smoke_settings_blackbox.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260412-refactor-settings-entry.md`
+
+# What Changed
+
+- 继续扩展 `server/tests/smoke_settings_blackbox.py`，在现有端口/alias/AI/prompt/webhook 黑盒基础上，再覆盖：
+  - `kernel_worker_threads`
+  - `log_retention_days`
+- `kernel_worker_threads` 的验证方式：
+  - 保存为 2
+  - 重启后直接抓启动日志里的 `Thread Model: ... 2 worker threads`
+  - 不再只看 `/settings/all` 回填，避免把“存进去”和“真建线程”混为一谈
+- `log_retention_days` 的验证方式：
+  - 在第三次启动前，直接向 SQLite 塞一条 2 天前的 trace 和一条当前 trace
+  - 依赖启动清理把旧 trace 删掉、保留新 trace
+  - 用数据库结果直接证明 retention 真执行了
+
+# Verification
+
+- `python3 server/tests/smoke_settings_blackbox.py`
+- `git diff --check`
+
+结果：
+- 黑盒脚本通过
+- 已确认：
+  - `kernel_worker_threads=2` 在重启后真的进入线程池创建日志
+  - `log_retention_days=1` 会在启动清理时删掉过期 trace，但保留未过期 trace
+
+# Learning Tips
+
+## Newbie Tips
+
+- 像 `kernel_worker_threads` 这种冷启动参数，真正有价值的证据往往不在配置接口回填，而在启动日志或实际线程行为里。
+- retention 这种后台任务如果不先人工造旧数据，就只能证明“功能存在”，证明不了“过期判定和删除动作真的发生了”。
+
+## Function Explanation
+
+- `wait_process_log_contains(...)`：轮询进程输出直到出现目标文本，用来给“启动期一次性生效”的配置项留证据。
+- `seed_retention_trace_rows(...)`：直接往 SQLite 塞一条过期 trace 和一条新 trace，让 retention 测试能避开前链路干扰，专门验证清理语义。
+
+## Pitfalls
+
+- 只查 `/settings/all` 的 `kernel_worker_threads=2` 不足以证明真生效，因为这只能说明数据库里是 2，不能说明线程池真按 2 条 worker 建起来。
+- retention 如果在服务运行中再插旧数据，启动清理这条语义就被你自己绕开了；测试启动清理，就必须在启动前把旧数据准备好。

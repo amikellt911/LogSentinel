@@ -264,6 +264,34 @@ def read_available_process_logs(proc: Optional[subprocess.Popen], max_bytes: int
     return "".join(chunks)
 
 
+def wait_process_log_contains(proc: subprocess.Popen,
+                              expected_text: str,
+                              timeout_sec: float,
+                              max_bytes_per_poll: int = 4096) -> str:
+    """
+    轮询进程输出，直到出现目标文本。
+
+    `kernel_worker_threads` 这种设置真正生效的位置只在启动期建线程池那一瞬间。
+    它不是运行时指标，单靠 `/settings/all` 只能证明“库里存的是 2”，
+    证明不了后端这次启动到底有没有真的按 2 条 worker 线程建起来。
+    所以这里直接盯启动日志，是这条黑盒最短也最硬的证据。
+    """
+    deadline = time.time() + timeout_sec
+    collected = ""
+
+    while time.time() < deadline:
+        collected += read_available_process_logs(proc, max_bytes=max_bytes_per_poll)
+        if expected_text in collected:
+            return collected
+        if proc.poll() is not None:
+            break
+        time.sleep(0.2)
+
+    raise RuntimeError(
+        f"服务日志未在 {timeout_sec}s 内出现目标文本: {expected_text}\n已收集日志:\n{collected}"
+    )
+
+
 def stop_server(proc: Optional[subprocess.Popen]) -> None:
     if proc is None:
         return
@@ -410,6 +438,70 @@ def query_trace_analysis_count(db_path: Path, trace_id: str) -> int:
         conn.close()
 
 
+def seed_retention_trace_rows(db_path: Path, expired_trace_id: str, fresh_trace_id: str) -> None:
+    """
+    直接往 SQLite 塞一条过期 trace 和一条新 trace。
+
+    retention 测试不能只看配置回填，因为真正有价值的问题是：
+    启动后那轮后台清理到底有没有按 cutoff 把旧数据删掉。
+    所以这里在第三次启动前先人工造数据，再让启动清理去删，证据最直接。
+    """
+    now_ms = int(time.time() * 1000)
+    two_days_ms = 2 * 24 * 60 * 60 * 1000
+    expired_start_ms = now_ms - two_days_ms
+    fresh_start_ms = now_ms
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO trace_summary
+            (trace_id, service_name, start_time_ms, end_time_ms, duration_ms, span_count, token_count, risk_level, ai_status, ai_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (expired_trace_id, "retention-service", expired_start_ms, expired_start_ms + 100, 100, 1, 0, "unknown", "completed", ""),
+        )
+        cur.execute(
+            """
+            INSERT INTO trace_span
+            (trace_id, span_id, parent_id, service_name, operation, start_time_ms, duration_ms, status, attributes_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (expired_trace_id, expired_trace_id + "-span", None, "retention-service", "expired-op", expired_start_ms, 100, "OK", "{}"),
+        )
+        cur.execute(
+            """
+            INSERT INTO trace_summary
+            (trace_id, service_name, start_time_ms, end_time_ms, duration_ms, span_count, token_count, risk_level, ai_status, ai_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (fresh_trace_id, "retention-service", fresh_start_ms, fresh_start_ms + 100, 100, 1, 0, "unknown", "completed", ""),
+        )
+        cur.execute(
+            """
+            INSERT INTO trace_span
+            (trace_id, span_id, parent_id, service_name, operation, start_time_ms, duration_ms, status, attributes_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (fresh_trace_id, fresh_trace_id + "-span", None, "retention-service", "fresh-op", fresh_start_ms, 100, "OK", "{}"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def trace_exists(db_path: Path, trace_id: str) -> bool:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM trace_summary WHERE trace_id = ?", (trace_id,))
+        row = cur.fetchone()
+        return bool(row and int(row[0]) > 0)
+    finally:
+        conn.close()
+
+
 def wait_until(predicate: Any, timeout_sec: float, interval_sec: float = 0.2) -> None:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
@@ -440,6 +532,8 @@ def run_flow(args: argparse.Namespace) -> int:
         {"key": "http_port", "value": str(configured)},
         {"key": "trace_end_aliases", "value": json.dumps(["end"])},
         {"key": "ai_analysis_enabled", "value": "0"},
+        {"key": "kernel_worker_threads", "value": "2"},
+        {"key": "log_retention_days", "value": "1"},
         {"key": "collecting_idle_timeout_ms", "value": "30000"},
         {"key": "sealed_grace_window_ms", "value": "400"},
         {"key": "sweep_tick_ms", "value": "100"},
@@ -460,6 +554,7 @@ def run_flow(args: argparse.Namespace) -> int:
         # 第二次启动故意不传 --port，迫使 main.cpp 从配置快照里取 http_port。
         proc = start_server(server_bin, db_path, None)
         wait_server_ready(new_url, args.ready_timeout, proc)
+        startup_logs = wait_process_log_contains(proc, "2 worker threads", timeout_sec=3.0)
 
         settings = fetch_all_settings(new_url)
         app_config = settings.get("config", {})
@@ -469,6 +564,12 @@ def run_flow(args: argparse.Namespace) -> int:
             raise RuntimeError(f"trace_end_aliases 回填不正确: {app_config.get('trace_end_aliases')}")
         if bool(app_config.get("ai_analysis_enabled", True)) is not False:
             raise RuntimeError(f"ai_analysis_enabled 回填不正确: {app_config.get('ai_analysis_enabled')}")
+        if int(app_config.get("kernel_worker_threads", 0)) != 2:
+            raise RuntimeError(f"kernel_worker_threads 回填不正确: {app_config.get('kernel_worker_threads')}")
+        if int(app_config.get("log_retention_days", 0)) != 1:
+            raise RuntimeError(f"log_retention_days 回填不正确: {app_config.get('log_retention_days')}")
+        if "Thread Model:" not in startup_logs:
+            raise RuntimeError("未读到线程模型启动日志，无法证明 kernel_worker_threads 被消费")
 
         trace_key = int(time.time() * 1000)
         trace_id = str(trace_key)
@@ -568,6 +669,10 @@ def run_flow(args: argparse.Namespace) -> int:
         proc = None
         wait_old_port_closed(new_url, 3.0)
 
+        expired_trace_id = "retention-expired-trace"
+        fresh_trace_id = "retention-fresh-trace"
+        seed_retention_trace_rows(db_path, expired_trace_id, fresh_trace_id)
+
         # prompt / provider / webhook channel 都是冷启动消费。
         # 所以这里必须再次重启，而且要显式把 trace_ai_base_url 指向本地假 proxy，
         # 这样才能证明后端真把 prompt/model/key 下发出去了，而不是只存进 SQLite。
@@ -578,6 +683,10 @@ def run_flow(args: argparse.Namespace) -> int:
                             trace_ai_base_url=probe_service.base_url,
                             trace_ai_timeout_ms=args.proxy_timeout_ms)
         wait_server_ready(new_url, args.ready_timeout, proc)
+        wait_process_log_contains(proc, "2 worker threads", timeout_sec=3.0)
+        wait_until(lambda: not trace_exists(db_path, expired_trace_id), timeout_sec=args.dispatch_timeout)
+        if not trace_exists(db_path, fresh_trace_id):
+            raise RuntimeError("启动清理不应该把未过期 trace 一起删掉")
 
         prompt_phase_settings = fetch_all_settings(new_url)
         prompt_phase_config = prompt_phase_settings.get("config", {})
@@ -680,7 +789,8 @@ def run_flow(args: argparse.Namespace) -> int:
 
         print(
             "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
-            "ai_analysis_enabled、prompt/active_prompt_id、webhook channel 都已验证"
+            "ai_analysis_enabled、prompt/active_prompt_id、webhook channel、"
+            "kernel_worker_threads、log_retention_days 都已验证"
         )
         return 0
     except Exception as exc:
