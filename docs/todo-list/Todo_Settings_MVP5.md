@@ -119,3 +119,6 @@
 - [x] 在 `main.py` 注册 `glm` provider，并补最小注释说明当前只先接 Trace 主链
 - [x] 运行 `GLM` provider 相关最小测试，确认不引入新的 proxy 协议回归
 - [x] 追加 2026-04-12 dev-log，记录这轮 GLM provider 接入与中文注释位置
+- [x] 新增 `GLM` 最小手工联调脚本：支持直打 proxy 与发送 demo trace
+- [x] 运行脚本最小自检（至少 `--help`），确认参数解析和输出说明可用
+- [x] 追加 2026-04-12 dev-log，记录这轮 GLM 手工联调脚本与中文注释位置

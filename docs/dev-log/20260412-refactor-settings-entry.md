@@ -322,6 +322,58 @@ feat(ai-proxy): 接入 GLM trace provider
 - 不要把 `trace_text` 在 provider 里再拼一遍。Trace 路由上层已经把 `trace_context` 渲染进最终 prompt 了；如果下层再追加一次，同一份上下文就会重复输入模型。
 - 不要把 “GLM provider 已注册” 等价成 “所有旧接口都支持”。这次只先接了 `analyze_trace`，其余抽象方法如果偷偷返回假值，会把路由语义搞脏，不如先明确 `NotImplementedError`。
 
+---
+
+# Git Commit Message
+
+test(ai-proxy): 补 GLM 手工联调脚本
+
+# Modification
+
+- `server/tests/manual_glm_trace_probe.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260412-refactor-settings-entry.md`
+
+# What Changed
+
+- 新增 `server/tests/manual_glm_trace_probe.py`，只提供两种最小动作：
+  - `probe-proxy`：直打 `Python proxy /analyze/trace/glm`
+  - `send-spans`：往后端发送一条 demo trace
+- 脚本参数允许你自己选择：
+  - `api_key`
+  - `model`
+  - `proxy/server` 地址
+- 明确区分了两类联调语义：
+  - `probe-proxy` 只验证 `GLM` 模型调用本身
+  - `send-spans` 只验证 Trace 主链送数，不假装自动切后端 provider
+- 已补可执行位，后续可直接 `./server/tests/manual_glm_trace_probe.py ...`
+
+# Verification
+
+- `python3 server/tests/manual_glm_trace_probe.py --help`
+- `python3 server/tests/manual_glm_trace_probe.py probe-proxy --help`
+- `python3 server/tests/manual_glm_trace_probe.py send-spans --help`
+
+结果：
+- 参数解析和帮助输出正常
+
+# Learning Tips
+
+## Newbie Tips
+
+- “模型调用通不通”和“后端端到端有没有真的切到 glm”是两回事。前者只要直打 proxy 就能验，后者因为当前是冷启动配置，必须先改设置并重启后端。
+- 手工联调脚本最怕职责过量。一个脚本里什么都自动做，看起来省事，实际排障最痛苦。这里故意拆成 `probe-proxy` 和 `send-spans` 两个动作，就是为了把根因边界切开。
+
+## Function Explanation
+
+- `argparse` 的 `subparsers`：把一个脚本拆成多个子命令。这里用它，是为了让 `probe-proxy` 和 `send-spans` 共用一个文件，但参数语义不互相污染。
+- `requests.post(...).raise_for_status()`：把 HTTP 非 2xx 直接提升成异常。`send-spans` 用它，是因为这个动作只负责“后端有没有收下 span”，HTTP 层失败就该立刻停。
+
+## Pitfalls
+
+- 不能让 `send-spans` 偷偷去改后端设置。因为那样你会误以为“脚本一跑就代表后端已经切到 glm 了”，实际上当前 provider/model/api_key 还是冷启动语义。
+- 不能在 `probe-proxy` 里复用后端 span JSON。proxy 真正吃的是“最终渲染好的 trace prompt”，不是 `/logs/spans` 的原始输入格式，把两者混成一套只会把测试边界搞脏。
+
 ## Function Explanation
 
 - `LocalProbeService`：这次黑盒里内嵌的本地探针服务，同时扮演“假 AI proxy”和“假 webhook server”。这样脚本自己就能拿到实收请求，不需要再依赖额外外部进程。
