@@ -1029,6 +1029,60 @@ TEST_F(TraceSessionManagerUnitTest, DispatchFallsBackToSecondaryAiWhenPrimaryFai
     pool.shutdown();
 }
 
+TEST_F(TraceSessionManagerUnitTest, DispatchDoesNotCallFallbackWhenAutoDegradeDisabled)
+{
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    ThrowingTraceAi primary_ai;
+    StubTraceAi fallback_ai;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                &primary_ai,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                /*notifier*/nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/4096,
+                                /*active_session_hard_limit*/1024,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
+                                /*service_runtime_accumulator*/nullptr,
+                                /*system_runtime_accumulator*/nullptr,
+                                /*ai_analysis_enabled*/true,
+                                /*ai_circuit_breaker_enabled*/true,
+                                /*ai_failure_threshold*/5,
+                                /*ai_cooldown_ms*/60000,
+                                /*fallback_trace_ai*/&fallback_ai,
+                                /*ai_auto_degrade_enabled*/false);
+
+    SpanEvent span = MakeSpan(4057, 803, 3000);
+    span.trace_end = true;
+
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.update_ai_state_called.load(std::memory_order_acquire);
+    }));
+
+    // 这里故意传了 fallback_ai，但 auto_degrade=false。
+    // 所以配置生效的关键不是“有没有备路对象”，而是“开关没开时绝不能偷跑备路”。
+    EXPECT_EQ(primary_ai.called_count.load(std::memory_order_acquire), 1);
+    EXPECT_FALSE(fallback_ai.called.load(std::memory_order_acquire));
+    EXPECT_EQ(repo.last_ai_status, "failed_primary");
+    EXPECT_FALSE(repo.last_ai_error.empty());
+
+    pool.shutdown();
+}
+
 TEST_F(TraceSessionManagerUnitTest, DispatchMarksFailedBothWhenPrimaryAndFallbackBothFail)
 {
     ThreadPool pool(1);

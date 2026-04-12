@@ -90,4 +90,11 @@
 - [x] 删除前端旧壳层里的“模拟模式 / 系统待机-运行中”假开关，避免继续误导真实控制面
 - [x] 清理 `History/LiveLogs` 对 `isSimulationMode/isRunning` 的旧分支，确保前端默认直连后端、不再偷偷回退 mock
 - [x] 将 `/settings` 正式切到 `SettingsPrototype`，并从左侧导航移除独立 `settings-prototype` 双轨入口
+- [x] 为 Settings 真实生效补第二层 `gtest`：优先锁定 `trace_end_field / trace_end_aliases` 的解析与 dispatch 语义
+- [x] 为 Settings 真实生效补第二层 `gtest`：锁定 `ai_analysis_enabled` 的手动关闭语义
+- [x] 为 Settings 真实生效补第二层 `gtest`：补 `ai_circuit_breaker / ai_failure_threshold / ai_cooldown_seconds` 的触发与恢复语义
+- [x] 为 Settings 真实生效补第二层 `gtest`：锁定 `ai_auto_degrade` 的开关差异
+- [x] 为 Settings 真实生效补第二层 `gtest`：锁定 `span_capacity / collecting_idle_timeout_ms / sealed_grace_window_ms` 的关键时序语义
+- [x] 运行本轮新增设置 `gtest` 与相关最小构建，确认没有引入新的回归
+- [x] 追加 2026-04-12 dev-log，记录这轮 Settings 第二层自动化测试与中文注释位置
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

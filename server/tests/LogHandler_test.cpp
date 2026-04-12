@@ -1,8 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "core/TraceSessionManager.h"
@@ -23,6 +27,10 @@ std::unique_ptr<BufferedTraceRepository> MakeBufferedTraceRepository(TraceReposi
 class FakeTraceRepository : public TraceRepository
 {
 public:
+    std::atomic<bool> save_primary_called{false};
+    TraceSummary last_summary;
+    std::vector<TraceSpanRecord> last_spans;
+
     // LogHandler 这里只验证入口返回码，不验证持久化细节，
     // 所以 fake repo 只保留当前 Trace 主链还会调用到的最小接口集合。
     bool SaveSingleTraceSummary(const TraceSummary&) override
@@ -37,6 +45,19 @@ public:
 
     bool SaveSingleTraceAnalysis(const TraceAnalysisRecord&) override
     {
+        return true;
+    }
+
+    bool SavePrimaryBatch(const std::vector<TraceSummary>& summaries,
+                          const std::vector<TraceSpanRecord>& spans) override
+    {
+        // 这组设置测试最终看的就是“主数据有没有因为配置命中而真的被 dispatch 出去”。
+        // 所以 fake repo 只记录最后一份 summary/spans，不去模拟完整 SQLite 语义。
+        if (!summaries.empty()) {
+            last_summary = summaries.back();
+        }
+        last_spans = spans;
+        save_primary_called.store(true, std::memory_order_release);
         return true;
     }
 
@@ -79,6 +100,31 @@ protected:
         return req;
     }
 
+    HttpRequest MakeTraceRequestWithExtraFields(size_t trace_key,
+                                               size_t span_id,
+                                               const nlohmann::json& extra_fields)
+    {
+        nlohmann::json body = {
+            {"trace_key", trace_key},
+            {"span_id", span_id},
+            {"start_time_ms", 1000},
+            {"name", "unit-test-span"},
+            {"service_name", "unit-test-service"},
+        };
+        // 这组设置测试要验证的是“结束字段口径真的改变了解析结果”。
+        // 所以这里额外开放一个 extra_fields，按用例把 custom end field / alias 塞进同一条请求体里。
+        for (auto it = extra_fields.begin(); it != extra_fields.end(); ++it) {
+            body[it.key()] = it.value();
+        }
+
+        HttpRequest req;
+        req.method_ = "POST";
+        req.path_ = "/logs/spans";
+        req.version_ = "HTTP/1.1";
+        req.body_ = body.dump();
+        return req;
+    }
+
     SpanEvent MakeSpan(size_t trace_key, size_t span_id)
     {
         SpanEvent span;
@@ -93,6 +139,28 @@ protected:
     nlohmann::json ParseBody(const HttpResponse& resp)
     {
         return nlohmann::json::parse(resp.body_);
+    }
+
+    void SweepTraceEndSealWindow(TraceSessionManager& manager,
+                                 int64_t idle_timeout_ms = 5000,
+                                 size_t max_dispatch_per_tick = 8)
+    {
+        // LogHandler 设置测试不能依赖真实定时器，否则分不清是 trace_end 别名生效，
+        // 还是 idle timeout 自己把会话收走了。这里手动推进 2 tick，只验证 sealed grace 这条链。
+        manager.SweepExpiredSessions(/*now_ms*/1000, idle_timeout_ms, max_dispatch_per_tick);
+        manager.SweepExpiredSessions(/*now_ms*/1500, idle_timeout_ms, max_dispatch_per_tick);
+    }
+
+    bool WaitUntil(const std::function<bool()>& predicate, int timeout_ms = 1000)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (predicate()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return predicate();
     }
 };
 
@@ -203,6 +271,86 @@ TEST_F(LogHandlerTracePostTest, HandleTracePostReturns202WithoutDeferredBeforeSe
     EXPECT_EQ(body.contains("deferred"), false);
     EXPECT_EQ(body.contains("message"), false);
     EXPECT_EQ(resp.headers_.count("Retry-After"), 0u);
+
+    pool.shutdown();
+}
+
+TEST_F(LogHandlerTracePostTest, HandleTracePostRecognizesConfiguredTraceEndField)
+{
+    ThreadPool pool(1, 16);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/ 8, /*token_limit*/ 0);
+    LogHandler handler(&manager, nullptr, /*trace_end_field*/"trace_done");
+    HttpRequest req = MakeTraceRequestWithExtraFields(21, 2101, {{"trace_done", true}});
+    HttpResponse resp;
+
+    handler.handleTracePost(req, &resp, nullptr);
+
+    ASSERT_EQ(resp.statusCode_, HttpResponse::HttpStatusCode::k202Acceptd);
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.save_primary_called.load(std::memory_order_acquire);
+    }));
+
+    // 这里只推进 sealed grace 的 2 tick，不给 idle timeout 任何机会。
+    // 所以如果 custom field 没被识别成 trace_end，这条 trace 不可能在这里提前落库。
+    EXPECT_EQ(repo.last_summary.trace_id, "21");
+    EXPECT_EQ(repo.last_spans.size(), 1u);
+
+    pool.shutdown();
+}
+
+TEST_F(LogHandlerTracePostTest, HandleTracePostRecognizesConfiguredTraceEndAlias)
+{
+    ThreadPool pool(1, 16);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/ 8, /*token_limit*/ 0);
+    LogHandler handler(&manager,
+                       nullptr,
+                       /*trace_end_field*/"trace_done",
+                       /*trace_end_aliases*/{"finished", "end_flag"});
+    HttpRequest req = MakeTraceRequestWithExtraFields(22, 2201, {{"finished", true}});
+    HttpResponse resp;
+
+    handler.handleTracePost(req, &resp, nullptr);
+
+    ASSERT_EQ(resp.statusCode_, HttpResponse::HttpStatusCode::k202Acceptd);
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.save_primary_called.load(std::memory_order_acquire);
+    }));
+    EXPECT_EQ(repo.last_summary.trace_id, "22");
+    EXPECT_EQ(repo.last_spans.size(), 1u);
+
+    pool.shutdown();
+}
+
+TEST_F(LogHandlerTracePostTest, HandleTracePostDoesNotTreatUnknownFieldAsConfiguredTraceEnd)
+{
+    ThreadPool pool(1, 16);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool, buffered_repo.get(), nullptr, /*capacity*/ 8, /*token_limit*/ 0);
+    LogHandler handler(&manager,
+                       nullptr,
+                       /*trace_end_field*/"trace_done",
+                       /*trace_end_aliases*/{"finished"});
+    HttpRequest req = MakeTraceRequestWithExtraFields(23, 2301, {{"done_like", true}});
+    HttpResponse resp;
+
+    handler.handleTracePost(req, &resp, nullptr);
+
+    ASSERT_EQ(resp.statusCode_, HttpResponse::HttpStatusCode::k202Acceptd);
+    SweepTraceEndSealWindow(manager);
+
+    // 这里只推进 2 tick sealed grace，idle timeout 还是 5000ms。
+    // 所以 unknown field 场景下不应该误落库，否则说明配置口径把无关字段也当成 trace_end 了。
+    EXPECT_FALSE(WaitUntil([&repo]() {
+        return repo.save_primary_called.load(std::memory_order_acquire);
+    }, 200));
+    EXPECT_EQ(manager.size(), 1u);
 
     pool.shutdown();
 }
