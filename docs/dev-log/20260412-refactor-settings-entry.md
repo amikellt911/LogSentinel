@@ -212,3 +212,59 @@ fix(core): 彻底修复 UpdateTraceAiState 竞态，改用双缓冲队列同步�
 ## Pitfalls
 
 - **测试用例的时序强耦合**：单元测试中的时间等待非常容易受到真实架构变动（例如增加队列缓冲导致的延迟）影响。当状态更新从“同步立即可见”变为“异步稍微延迟可见”时，原来的死等或过短的冷却时间都会变成偶现失败的 Flaky Test，需要相应调长超时/冷却配置。
+
+---
+
+# Git Commit Message
+
+test(settings): 补 prompt 与 webhook channel 第三层黑盒联调
+
+# Modification
+
+- `server/tests/smoke_settings_blackbox.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260412-refactor-settings-entry.md`
+
+# What Changed
+
+- 扩展 `server/tests/smoke_settings_blackbox.py`，在原有 `http_port / trace_end_aliases / ai_analysis_enabled` 黑盒基础上，继续覆盖：
+  - `prompt / active_prompt_id`：通过本地假 AI proxy 记录后端实发 `prompt/model/api_key`
+  - `webhook channel`：通过本地假 webhook server 记录真实外发 payload
+- 新黑盒流程分两段：
+  - 先验证冷启动端口切换、alias、生效后的 `skipped_manual`
+  - 再写入 prompt/channel 配置并重启，通过 warning/critical 两条 trace 分别验证 prompt 下发和 webhook 阈值过滤
+- 黑盒里现在额外锁住了：
+  - 只有 active prompt 的业务内容会进入最终 prompt 模板
+  - `ai_language=zh` 会影响最终 prompt 模板
+  - `threshold=critical` 时 warning 不发、critical 才发
+  - 配置了 `secret` 的飞书 webhook 会自动补 `timestamp/sign`
+
+# Verification
+
+- `python3 server/tests/smoke_settings_blackbox.py`
+- `git diff --check`
+
+结果：
+- 黑盒脚本通过
+- 已确认：
+  - `prompt` 真从 Settings 进入 C++ 冷启动模板，再下发到 AI proxy
+  - `active_prompt_id` 真决定最终使用哪条 prompt
+  - `webhook channel` 的 `webhook_url / threshold / secret` 都被真实消费
+  - `warning` 不告警，`critical` 真外发，且 payload 带飞书签名字段
+
+# Learning Tips
+
+## Newbie Tips
+
+- Prompt 这种配置最容易写成“只存不吃”。如果你只是查 SQLite 或 `/settings/all`，你最多只能证明它保存了，不能证明模型调用时真的用了它。
+- Webhook 这种配置也一样。只看 notifier 对象构造成功没有意义，真正值钱的是“warning 不发、critical 才发、发出去的 payload 长什么样”。
+
+## Function Explanation
+
+- `LocalProbeService`：这次黑盒里内嵌的本地探针服务，同时扮演“假 AI proxy”和“假 webhook server”。这样脚本自己就能拿到实收请求，不需要再依赖额外外部进程。
+- `active_prompt_id`：`SystemConfig` 启动时优先按这个 id 取 prompt；如果找不到，才回退到第一个 `is_active=true` 的 prompt。
+
+## Pitfalls
+
+- 如果 prompt 黑盒只断言 `/settings/all` 回填正确，那本质上还是“存储测试”，不是“消费测试”。
+- webhook 黑盒如果只发 critical，一样证明不了 threshold 过滤；必须先来一条 warning，确认它真的被挡住。

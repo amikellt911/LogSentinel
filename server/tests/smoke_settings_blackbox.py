@@ -5,7 +5,7 @@ Settings 第三层黑盒联调脚本。
 这层测试不再盯类级别行为，而是走真实后端进程：
 1. 先通过 `/settings/config` 写入冷启动配置；
 2. 再重启后端；
-3. 最后通过端口变化、真实 `/logs/spans` 请求和 SQLite 落库结果，证明配置确实被消费。
+3. 最后通过端口变化、真实 `/logs/spans` 请求、AI proxy 实收 prompt 和 webhook 实际外发，证明配置确实被消费。
 """
 
 from __future__ import annotations
@@ -16,11 +16,135 @@ import os
 import select
 import sqlite3
 import subprocess
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import requests
+
+
+class ProbeState:
+    """
+    本地探针状态。
+
+    这里把“假 AI proxy”和“假 webhook server”合在同一个进程里，不是为了偷懒，
+    而是为了把第三层黑盒真正缺的两个观测点放到同一份共享状态里：
+    1. 后端到底把什么 prompt 下发给了 AI；
+    2. 后端到底有没有按 channel 配置真的把告警发出去。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.trace_requests: list[dict[str, Any]] = []
+        self.webhook_payloads: list[dict[str, Any]] = []
+
+    def record_trace_request(self, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self.trace_requests.append(payload)
+
+    def record_webhook_payload(self, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self.webhook_payloads.append(payload)
+
+    def snapshot_trace_requests(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self.trace_requests)
+
+    def snapshot_webhook_payloads(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self.webhook_payloads)
+
+    def clear_webhook_payloads(self) -> None:
+        with self._lock:
+            self.webhook_payloads.clear()
+
+
+class ProbeRequestHandler(BaseHTTPRequestHandler):
+    server: "ProbeServer"
+
+    def do_POST(self) -> None:  # noqa: N802
+        content_length = int(self.headers.get("Content-Length", "0"))
+        raw_body = self.rfile.read(content_length).decode("utf-8")
+
+        try:
+            payload = json.loads(raw_body) if raw_body else {}
+        except json.JSONDecodeError:
+            payload = {"raw_body": raw_body}
+
+        if self.path == "/analyze/trace/mock":
+            self.server.state.record_trace_request(payload)
+            trace_text = str(payload.get("trace_text", ""))
+            risk_level = "critical"
+            if "webhook-warning-sentinel" in trace_text:
+                risk_level = "warning"
+
+            response = {
+                "ok": True,
+                "analysis": {
+                    "summary": f"probe-{risk_level}-summary",
+                    "risk_level": risk_level,
+                    "root_cause": f"probe-{risk_level}-root-cause",
+                    "solution": f"probe-{risk_level}-solution",
+                    "confidence": 0.91,
+                },
+                "usage": {
+                    "input_tokens": 11,
+                    "output_tokens": 7,
+                    "total_tokens": 18,
+                },
+            }
+            self._send_json(200, response)
+            return
+
+        if self.path == "/webhook":
+            self.server.state.record_webhook_payload(payload)
+            self._send_json(200, {"errcode": 0, "errmsg": "ok"})
+            return
+
+        self._send_json(404, {"error": f"unsupported path: {self.path}"})
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+        # 黑盒脚本失败时我们只关心结构化探针状态，不需要 http.server 的访问日志刷屏。
+        return
+
+    def _send_json(self, status_code: int, payload: dict[str, Any]) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class ProbeServer(ThreadingHTTPServer):
+    def __init__(self, server_address: tuple[str, int], state: ProbeState) -> None:
+        super().__init__(server_address, ProbeRequestHandler)
+        self.state = state
+
+
+class LocalProbeService:
+    def __init__(self) -> None:
+        self.state = ProbeState()
+        self.server = ProbeServer(("127.0.0.1", 0), self.state)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    @property
+    def port(self) -> int:
+        return int(self.server.server_address[1])
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=3)
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,6 +167,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--configured-port", type=int, default=18181, help="通过设置写入数据库的目标端口")
     parser.add_argument("--ready-timeout", type=float, default=10.0, help="服务就绪等待超时（秒）")
     parser.add_argument("--dispatch-timeout", type=float, default=8.0, help="trace_summary 等待超时（秒）")
+    parser.add_argument("--proxy-timeout-ms", type=int, default=5000, help="后端调用本地假 AI proxy 的超时")
     parser.add_argument("--keep-artifacts", action="store_true", help="失败后保留临时数据库文件")
     return parser.parse_args()
 
@@ -51,7 +176,12 @@ def base_url(port: int) -> str:
     return f"http://127.0.0.1:{port}"
 
 
-def start_server(server_bin: Path, db_path: Path, port: Optional[int]) -> subprocess.Popen:
+def start_server(server_bin: Path,
+                 db_path: Path,
+                 port: Optional[int],
+                 trace_ai_provider: Optional[str] = None,
+                 trace_ai_base_url: Optional[str] = None,
+                 trace_ai_timeout_ms: Optional[int] = None) -> subprocess.Popen:
     """
     启动后端进程。
 
@@ -65,6 +195,12 @@ def start_server(server_bin: Path, db_path: Path, port: Optional[int]) -> subpro
     cmd = [str(server_bin), "--db", str(db_path), "--no-auto-start-proxy"]
     if port is not None:
         cmd.extend(["--port", str(port)])
+    if trace_ai_provider:
+        cmd.extend(["--trace-ai-provider", trace_ai_provider])
+    if trace_ai_base_url:
+        cmd.extend(["--trace-ai-base-url", trace_ai_base_url])
+    if trace_ai_timeout_ms and trace_ai_timeout_ms > 0:
+        cmd.extend(["--trace-ai-timeout-ms", str(trace_ai_timeout_ms)])
 
     print(f"[settings-blackbox] 启动服务: {' '.join(cmd)}")
     return subprocess.Popen(
@@ -172,6 +308,28 @@ def post_config_patch(url: str, items: list[dict]) -> None:
         raise RuntimeError(f"POST /settings/config 失败: status={resp.status_code}, body={resp.text}")
 
 
+def post_prompts(url: str, prompts: list[dict]) -> None:
+    resp = requests.post(
+        f"{url}/settings/prompts",
+        headers={"Content-Type": "application/json"},
+        json=prompts,
+        timeout=3.0,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"POST /settings/prompts 失败: status={resp.status_code}, body={resp.text}")
+
+
+def post_channels(url: str, channels: list[dict]) -> None:
+    resp = requests.post(
+        f"{url}/settings/channels",
+        headers={"Content-Type": "application/json"},
+        json=channels,
+        timeout=3.0,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"POST /settings/channels 失败: status={resp.status_code}, body={resp.text}")
+
+
 def fetch_all_settings(url: str) -> dict:
     resp = requests.get(f"{url}/settings/all", timeout=3.0)
     if resp.status_code != 200:
@@ -252,18 +410,26 @@ def query_trace_analysis_count(db_path: Path, trace_id: str) -> int:
         conn.close()
 
 
+def wait_until(predicate: Any, timeout_sec: float, interval_sec: float = 0.2) -> None:
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        if predicate():
+            return
+        time.sleep(interval_sec)
+    raise RuntimeError("等待条件超时")
+
+
 def run_flow(args: argparse.Namespace) -> int:
     server_bin = Path(args.server_bin).resolve()
     db_path = Path(args.db).resolve()
     bootstrap = args.bootstrap_port
     configured = args.configured_port
     proc: Optional[subprocess.Popen] = None
+    probe_service: Optional[LocalProbeService] = None
 
     if bootstrap == configured:
         raise ValueError("bootstrap-port 与 configured-port 不能相同，否则无法证明端口切换生效")
 
-    trace_key = int(time.time() * 1000)
-    trace_id = str(trace_key)
     old_url = base_url(bootstrap)
     new_url = base_url(configured)
 
@@ -304,6 +470,8 @@ def run_flow(args: argparse.Namespace) -> int:
         if bool(app_config.get("ai_analysis_enabled", True)) is not False:
             raise RuntimeError(f"ai_analysis_enabled 回填不正确: {app_config.get('ai_analysis_enabled')}")
 
+        trace_key = int(time.time() * 1000)
+        trace_id = str(trace_key)
         root = {
             "trace_key": trace_key,
             "span_id": trace_key + 1,
@@ -334,7 +502,186 @@ def run_flow(args: argparse.Namespace) -> int:
         if analysis_count != 0:
             raise RuntimeError(f"ai_analysis_enabled=false 时不应写 trace_analysis，实际条数: {analysis_count}")
 
-        print("[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、ai_analysis_enabled 都已验证")
+        probe_service = LocalProbeService()
+        probe_service.start()
+
+        prompt_payload = [
+            {
+                "id": 0,
+                "name": "prompt-inactive",
+                "content": json.dumps(
+                    {
+                        "domain_goal": "PROMPT_INACTIVE_SENTINEL",
+                        "focus_areas": ["ignore-me"],
+                    }
+                ),
+                "is_active": 0,
+            },
+            {
+                "id": 0,
+                "name": "prompt-active",
+                "content": json.dumps(
+                    {
+                        "domain_goal": "PROMPT_ACTIVE_SENTINEL",
+                        "focus_areas": ["capture-active-prompt"],
+                        "output_preference": ["return concise json fields"],
+                    }
+                ),
+                "is_active": 1,
+            },
+        ]
+        post_prompts(new_url, prompt_payload)
+
+        prompt_settings = fetch_all_settings(new_url)
+        prompts = prompt_settings.get("prompts", [])
+        active_prompt = next((item for item in prompts if item.get("name") == "prompt-active"), None)
+        if not active_prompt or not active_prompt.get("id"):
+            raise RuntimeError("未能从 /settings/all 读回 active prompt 的真实 id")
+
+        post_config_patch(
+            new_url,
+            [
+                {"key": "ai_analysis_enabled", "value": "1"},
+                {"key": "ai_provider", "value": "mock"},
+                {"key": "ai_model", "value": "probe-model"},
+                {"key": "ai_api_key", "value": "probe-key"},
+                {"key": "ai_language", "value": "zh"},
+                {"key": "active_prompt_id", "value": str(active_prompt["id"])},
+            ],
+        )
+        post_channels(
+            new_url,
+            [
+                {
+                    "id": 0,
+                    "name": "probe-feishu-channel",
+                    "provider": "feishu",
+                    "webhook_url": f"{probe_service.base_url}/webhook",
+                    "secret": "probe-secret",
+                    "alert_threshold": "critical",
+                    "is_active": 1,
+                }
+            ],
+        )
+
+        stop_server(proc)
+        proc = None
+        wait_old_port_closed(new_url, 3.0)
+
+        # prompt / provider / webhook channel 都是冷启动消费。
+        # 所以这里必须再次重启，而且要显式把 trace_ai_base_url 指向本地假 proxy，
+        # 这样才能证明后端真把 prompt/model/key 下发出去了，而不是只存进 SQLite。
+        proc = start_server(server_bin,
+                            db_path,
+                            None,
+                            trace_ai_provider="mock",
+                            trace_ai_base_url=probe_service.base_url,
+                            trace_ai_timeout_ms=args.proxy_timeout_ms)
+        wait_server_ready(new_url, args.ready_timeout, proc)
+
+        prompt_phase_settings = fetch_all_settings(new_url)
+        prompt_phase_config = prompt_phase_settings.get("config", {})
+        if bool(prompt_phase_config.get("ai_analysis_enabled", False)) is not True:
+            raise RuntimeError("prompt/webhook 阶段 ai_analysis_enabled 没有在重启后生效")
+        if int(prompt_phase_config.get("active_prompt_id", 0)) != int(active_prompt["id"]):
+            raise RuntimeError("active_prompt_id 回填不正确")
+
+        warning_trace_key = int(time.time() * 1000) + 100
+        warning_trace_id = str(warning_trace_key)
+        warning_root = {
+            "trace_key": warning_trace_key,
+            "span_id": warning_trace_key + 1,
+            "start_time_ms": 1700000001000,
+            "end_time_ms": 1700000001100,
+            "name": "webhook-warning-root",
+            "service_name": "settings-blackbox-service",
+            "status": "OK",
+        }
+        warning_child = {
+            "trace_key": warning_trace_key,
+            "span_id": warning_trace_key + 2,
+            "parent_span_id": warning_trace_key + 1,
+            "start_time_ms": 1700000001110,
+            "end_time_ms": 1700000001200,
+            "name": "webhook-warning-sentinel",
+            "service_name": "settings-blackbox-service",
+            "status": "ERROR",
+            "trace_end": True,
+        }
+        probe_service.state.clear_webhook_payloads()
+        post_span(new_url, warning_root)
+        post_span(new_url, warning_child)
+        wait_trace_summary_status(db_path, warning_trace_id, "completed", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, warning_trace_id) != 1:
+            raise RuntimeError("warning trace 应该产出 1 条 trace_analysis")
+        trace_requests = probe_service.state.snapshot_trace_requests()
+        if not trace_requests:
+            raise RuntimeError("假 AI proxy 没收到任何 trace 请求，无法证明 prompt 被消费")
+        last_trace_request = trace_requests[-1]
+        rendered_prompt = str(last_trace_request.get("prompt", ""))
+        if "PROMPT_ACTIVE_SENTINEL" not in rendered_prompt:
+            raise RuntimeError("proxy 实收 prompt 不包含 active prompt 的标记文本")
+        if "PROMPT_INACTIVE_SENTINEL" in rendered_prompt:
+            raise RuntimeError("proxy 实收 prompt 混入了 inactive prompt 的内容")
+        if "Use Chinese for all natural-language fields" not in rendered_prompt:
+            raise RuntimeError("ai_language=zh 没有进入最终 prompt 模板")
+        if str(last_trace_request.get("model", "")) != "probe-model":
+            raise RuntimeError("proxy 实收请求没有带上新的 model")
+        if str(last_trace_request.get("api_key", "")) != "probe-key":
+            raise RuntimeError("proxy 实收请求没有带上新的 api_key")
+
+        # 先打 warning 再看 webhook，是为了证明 channel.threshold 真起作用了。
+        # 如果这里直接拿 critical 去测，只能证明“会不会发”，证明不了阈值过滤这层设置真的被消费。
+        time.sleep(1.0)
+        if probe_service.state.snapshot_webhook_payloads():
+            raise RuntimeError("warning 级别不应该命中 threshold=critical 的 webhook 渠道")
+
+        critical_trace_key = int(time.time() * 1000) + 200
+        critical_trace_id = str(critical_trace_key)
+        critical_root = {
+            "trace_key": critical_trace_key,
+            "span_id": critical_trace_key + 1,
+            "start_time_ms": 1700000002000,
+            "end_time_ms": 1700000002100,
+            "name": "webhook-critical-root",
+            "service_name": "settings-blackbox-service",
+            "status": "OK",
+        }
+        critical_child = {
+            "trace_key": critical_trace_key,
+            "span_id": critical_trace_key + 2,
+            "parent_span_id": critical_trace_key + 1,
+            "start_time_ms": 1700000002110,
+            "end_time_ms": 1700000002200,
+            "name": "webhook-critical-sentinel",
+            "service_name": "settings-blackbox-service",
+            "status": "ERROR",
+            "trace_end": True,
+        }
+        post_span(new_url, critical_root)
+        post_span(new_url, critical_child)
+        wait_trace_summary_status(db_path, critical_trace_id, "completed", args.dispatch_timeout)
+        wait_until(lambda: len(probe_service.state.snapshot_webhook_payloads()) >= 1,
+                   timeout_sec=args.dispatch_timeout)
+
+        webhook_payload = probe_service.state.snapshot_webhook_payloads()[0]
+        if webhook_payload.get("msg_type") != "post":
+            raise RuntimeError("feishu webhook payload 的 msg_type 不正确")
+        if "timestamp" not in webhook_payload or "sign" not in webhook_payload:
+            raise RuntimeError("配置了 secret 的飞书 webhook 负载必须带 timestamp/sign")
+        title = (
+            webhook_payload.get("content", {})
+            .get("post", {})
+            .get("zh_cn", {})
+            .get("title", "")
+        )
+        if "critical" not in str(title).lower():
+            raise RuntimeError("critical webhook 的标题没有带上风险等级")
+
+        print(
+            "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
+            "ai_analysis_enabled、prompt/active_prompt_id、webhook channel 都已验证"
+        )
         return 0
     except Exception as exc:
         logs = read_available_process_logs(proc)
@@ -342,9 +689,16 @@ def run_flow(args: argparse.Namespace) -> int:
         if logs:
             print("[settings-blackbox] 服务日志片段：")
             print(logs)
+        if probe_service is not None:
+            print("[settings-blackbox] 探针 trace 请求快照：")
+            print(json.dumps(probe_service.state.snapshot_trace_requests(), indent=2, ensure_ascii=False))
+            print("[settings-blackbox] 探针 webhook 请求快照：")
+            print(json.dumps(probe_service.state.snapshot_webhook_payloads(), indent=2, ensure_ascii=False))
         return 1
     finally:
         cleanup(proc, db_path, args.keep_artifacts)
+        if probe_service is not None:
+            probe_service.stop()
 
 
 def main() -> int:

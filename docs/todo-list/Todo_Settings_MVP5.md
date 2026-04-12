@@ -105,4 +105,8 @@
 - [x] 为 `ai_analysis_enabled=false` 在 BufferedTraceRepository 下补一条 SQLite 集成测试，先锁住 `pending` 竞态红灯
 - [x] 修复 `primary flush` 与 `UpdateTraceAiState` 的先后竞态，确保人工关闭 AI 后最终落库状态是 `skipped_manual`
 - [x] 重跑第三层黑盒脚本与相关集成测试，确认 `pending` 竞态被收掉
-- [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）
+- [x] 为 Settings 真实生效补第三层黑盒联调：锁 `prompt/active_prompt_id` 的冷启动消费语义
+- [x] 为 Settings 真实生效补第三层黑盒联调：锁 `webhook channel` 的 `threshold/secret/webhook_url` 真实消费语义
+- [x] 重跑第三层黑盒脚本，确认 prompt 真进 proxy、warning 不告警、critical 真外发
+- [x] 追加 2026-04-12 dev-log，记录这轮 prompt/webhook 黑盒联调与中文注释位置
+- [x] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）
