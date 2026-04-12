@@ -120,6 +120,9 @@ protected:
         int64_t start_time_ms = 0;
         int64_t duration_ms = 0;
         std::string risk_level;
+        // 这里把 ai_status 一起读出来，是为了直接观察“summary 先插入默认 pending，
+        // 后续状态更新有没有真的追上来”这条时间线。
+        std::string ai_status;
         int span_count = 0;
     };
 
@@ -133,7 +136,7 @@ protected:
             return std::nullopt;
         }
         const char* sql = R"(
-            SELECT service_name, start_time_ms, duration_ms, risk_level, span_count
+            SELECT service_name, start_time_ms, duration_ms, risk_level, ai_status, span_count
             FROM trace_summary
             WHERE trace_id = ?;
         )";
@@ -151,7 +154,8 @@ protected:
             out.start_time_ms = sqlite3_column_int64(stmt, 1);
             out.duration_ms = sqlite3_column_int64(stmt, 2);
             out.risk_level = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-            out.span_count = sqlite3_column_int(stmt, 4);
+            out.ai_status = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+            out.span_count = sqlite3_column_int(stmt, 5);
             row = out;
         }
         sqlite3_finalize(stmt);
@@ -507,6 +511,56 @@ TEST_F(TraceSessionManagerIntegrationTest, BufferedRepositoryDestructorDrainsRem
     ASSERT_TRUE(analysis.has_value());
     EXPECT_EQ(analysis->risk_level, "warning");
     EXPECT_EQ(analysis->summary, "fixed-trace-summary");
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerIntegrationTest, AiDisabledPersistsSkippedManualStatusWithBufferedRepository)
+{
+    ThreadPool pool(1);
+    SqliteTraceRepository repo(db_path);
+    FixedTraceAi ai;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    // 这条测试必须走真 BufferedTraceRepository + 真 SQLite。
+    // 原因不是想把链路拉长，而是这次黑盒打出来的竞态就发生在：
+    // 1) summary 先异步 flush；
+    // 2) skipped_manual 再同步 Update；
+    // fake repo/纯单元测试都看不到这个先后顺序。
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                &ai,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                /*notifier*/nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/4096,
+                                /*active_session_hard_limit*/1024,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
+                                /*service_runtime_accumulator*/nullptr,
+                                /*system_runtime_accumulator*/nullptr,
+                                /*ai_analysis_enabled*/false);
+
+    SpanEvent span = MakeSpan(909, 9090, std::nullopt);
+    span.trace_end = true;
+
+    EXPECT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+    SweepTraceEndSealWindow(manager);
+
+    ASSERT_TRUE(WaitForCount("SELECT COUNT(*) FROM trace_summary;", 1, std::chrono::seconds(3)));
+
+    auto summary = QuerySummary("909");
+    ASSERT_TRUE(summary.has_value());
+    EXPECT_EQ(summary->ai_status, "skipped_manual");
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
 
     pool.shutdown();
 }

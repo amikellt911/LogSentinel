@@ -97,4 +97,12 @@
 - [x] 为 Settings 真实生效补第二层 `gtest`：锁定 `span_capacity / collecting_idle_timeout_ms / sealed_grace_window_ms` 的关键时序语义
 - [x] 运行本轮新增设置 `gtest` 与相关最小构建，确认没有引入新的回归
 - [x] 追加 2026-04-12 dev-log，记录这轮 Settings 第二层自动化测试与中文注释位置
+- [x] 为 Settings 真实生效补第三层黑盒联调：先锁 `http_port` 的重启后生效语义
+- [x] 为 Settings 真实生效补第三层黑盒联调：锁 `trace_end_aliases` 的冷启动消费语义
+- [x] 为 Settings 真实生效补第三层黑盒联调：锁 `ai_analysis_enabled` 的冷启动消费语义
+- [x] 运行第三层黑盒脚本，确认端口切换、alias dispatch 与 `skipped_manual` 都通过
+- [x] 追加 2026-04-12 dev-log，记录这轮 Settings 第三层黑盒联调与中文注释位置
+- [x] 为 `ai_analysis_enabled=false` 在 BufferedTraceRepository 下补一条 SQLite 集成测试，先锁住 `pending` 竞态红灯
+- [x] 修复 `primary flush` 与 `UpdateTraceAiState` 的先后竞态，确保人工关闭 AI 后最终落库状态是 `skipped_manual`
+- [x] 重跑第三层黑盒脚本与相关集成测试，确认 `pending` 竞态被收掉
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）
