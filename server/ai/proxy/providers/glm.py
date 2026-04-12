@@ -120,6 +120,16 @@ class GlmProvider(AIProvider):
             "total_tokens": total_tokens,
         }
 
+    def _resolve_upstream_timeout_seconds(self, timeout_ms: Optional[int]) -> float:
+        """
+        调用方给的是“整条链路最多等多久”，不是 GLM 上游 HTTP 应该等多久。
+        所以内层要故意比外层早一点超时，让 proxy 还有机会把 TIMEOUT 包装成结构化 JSON 回给 C++，
+        而不是两边一起卡到同一时刻，最后只剩一个空壳 HTTP 0。
+        """
+        if timeout_ms is None or timeout_ms <= 0:
+            return self.timeout_seconds
+        return max(1.0, (timeout_ms - 1000) / 1000.0)
+
     def analyze(self, log_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
         """
         当前主线已经不再依赖旧单日志分析链，这里先明确报未实现。
@@ -127,7 +137,12 @@ class GlmProvider(AIProvider):
         """
         raise NotImplementedError("GLM Provider 暂未实现单日志 analyze，仅支持 Trace 主链 analyze_trace。")
 
-    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
+    def analyze_trace(self,
+                      trace_text: str,
+                      prompt: str,
+                      api_key: Optional[str] = None,
+                      model: Optional[str] = None,
+                      timeout_ms: Optional[int] = None) -> Dict[str, Any]:
         """
         Trace 分析主链：
         1. 用智谱官方 chat/completions REST 接口；
@@ -159,9 +174,10 @@ class GlmProvider(AIProvider):
             "Authorization": f"Bearer {target_api_key}",
             "Content-Type": "application/json",
         }
+        upstream_timeout_seconds = self._resolve_upstream_timeout_seconds(timeout_ms)
 
         try:
-            with httpx.Client(timeout=self.timeout_seconds) as client:
+            with httpx.Client(timeout=upstream_timeout_seconds) as client:
                 response = client.post(
                     f"{self.base_url}/chat/completions",
                     headers=headers,

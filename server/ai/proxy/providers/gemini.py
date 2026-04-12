@@ -106,10 +106,17 @@ class GeminiProvider(AIProvider):
             # 返回一个符合 JSON 结构的错误信息，以免前端解析失败
             return '{"summary": "Error calling AI", "risk_level": "critical", "root_cause": "API Error", "solution": "Check logs"}'
 
-    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
+    def analyze_trace(self,
+                      trace_text: str,
+                      prompt: str,
+                      api_key: Optional[str] = None,
+                      model: Optional[str] = None,
+                      timeout_ms: Optional[int] = None) -> Dict[str, Any]:
         """
         Trace 分析：当前先复用单次 analyze 的结构化输出路径。
         但是 Trace 链路后续还要拿 usage 做 token 监控，所以这里单独补一层外层元数据返回。
+        timeout_ms 目前先只做签名透传占位。
+        Gemini SDK 这一版还没有把它接成可控超时参数，避免为了补这轮 GLM bug 顺手扩大改动面。
         """
         try:
             client, target_model = self._get_client_and_model(api_key, model)

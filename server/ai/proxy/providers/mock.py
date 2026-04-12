@@ -62,10 +62,17 @@ class MockProvider(AIProvider):
 
         return json.dumps(result)
 
-    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
+    def analyze_trace(self,
+                      trace_text: str,
+                      prompt: str,
+                      api_key: Optional[str] = None,
+                      model: Optional[str] = None,
+                      timeout_ms: Optional[int] = None) -> str:
         """
         模拟 Trace 聚合结果分析。
         这里单独实现而不是复用 analyze，便于后续扩展 Trace 专用策略。
+        timeout_ms 对 mock 没有业务意义，但签名要跟真实 provider 保持一致，
+        否则路由层开始透传超时预算后，mock 反而会因为参数不匹配把测试链路打断。
         """
         actual_delay = self.delay + random.uniform(0, 0.1)
         time.sleep(actual_delay)

@@ -263,6 +263,72 @@ test(settings): 补 prompt 与 webhook channel 第三层黑盒联调
 
 # Git Commit Message
 
+fix(ai): 修复 glm 超时链路并透传 provider timeout
+
+# Modification
+
+- `server/ai/TraceProxyAi.cpp`
+- `server/ai/proxy/schemas.py`
+- `server/ai/proxy/main.py`
+- `server/ai/proxy/providers/base.py`
+- `server/ai/proxy/providers/gemini.py`
+- `server/ai/proxy/providers/glm.py`
+- `server/ai/proxy/providers/mock.py`
+- `server/tests/ai_proxy_trace_protocol_test.py`
+- `server/tests/manual_glm_trace_probe.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260412-refactor-settings-entry.md`
+
+# What Changed
+
+- 在 C++ `TraceProxyAi` 请求体里补入 `timeout_ms`，把外层 caller 的总等待预算继续透传给 Python proxy。
+- 在 Python `TraceAnalyzeRequest` 中新增 `timeout_ms` 字段，并在 `/analyze/trace/{provider}` 路由里继续往 provider 透传。
+- 为 `AIProvider` 的 `analyze_trace` 统一补 `timeout_ms` 签名；`mock/gemini` 当前先占位透传，避免参数不匹配打断测试链路。
+- 在 `GlmProvider` 中增加 `_resolve_upstream_timeout_seconds()`，把上游 `httpx` timeout 固定裁成“比外层 caller 早 1 秒”，避免外层和内层同一时刻一起超时。
+- 更新手工联调脚本 `manual_glm_trace_probe.py`：
+  - `--timeout-sec` 负责本地等待 proxy 多久
+  - `--provider-timeout-sec` 负责传给 GLM provider 的上游预算
+  这样就能区分“proxy 自己没回”和“proxy 已经拿到了上游 TIMEOUT 并正常回给你”。
+- 新增两条 Python 测试：
+  - 锁定 `timeout_ms` 从 Trace 路由请求透传到 provider
+  - 锁定 GLM 上游 `httpx` timeout 在 `timeout_ms=30000` 时会裁成 `29.0s`
+
+# Verification
+
+- `source /home/llt/Project/llt/venv/bin/activate && python3 -m unittest server/tests/ai_proxy_trace_protocol_test.py`
+- `cmake --build server/build --target LogSentinel`
+- `source /home/llt/Project/llt/venv/bin/activate && python3 server/tests/manual_glm_trace_probe.py probe-proxy --help`
+- `git diff --check`
+
+结果：
+
+- `ai_proxy_trace_protocol_test.py`：`7/7` 通过
+- `LogSentinel`：重编通过
+- `manual_glm_trace_probe.py probe-proxy --help`：已确认新的双超时参数可见
+- `git diff --check`：通过
+
+# Learning Tips
+
+## Newbie Tips
+
+- “把 timeout 从 10s 改成 30s”不等于真正修好超时链路。只要内层 provider 和外层 caller 用同一个截止时间，还是会出现外层先报 `HTTP 0`、拿不到 proxy 结构化错误 body 的问题。
+- 调试多层网络链路时，要把“本地等待多久”和“上游 provider 允许等多久”拆开看。前者是调试者愿意等多久，后者是 proxy 内部什么时候判定上游失败，这两件事不是一个变量。
+
+## Function Explanation
+
+- `timeout_ms`：这次 Trace AI 请求的总等待预算，先由 C++ 外层持有，再透传给 Python proxy。
+- `_resolve_upstream_timeout_seconds()`：把调用方总预算裁成 GLM 上游 HTTP timeout 的函数。当前规则是固定留 `1s` 提前量，让 proxy 有时间把 TIMEOUT 变成统一 JSON。
+- `call_provider_in_threadpool(...)`：路由层把同步 provider 扔到线程池的桥。测试里不要把红灯绑到它的线程调度细节上，直接 monkeypatch 抓 kwargs 更稳。
+
+## Pitfalls
+
+- 只改 C++ `TraceProxyAi` timeout 没用。因为真正卡住的是 Python proxy 去调用 GLM 上游的那层 HTTP。
+- 只改 Python provider timeout 也没用。因为如果 C++ 不把预算传下来，provider 只能继续用固定值，还是会和外层 timeout 撞车。
+
+---
+
+# Git Commit Message
+
 feat(ai-proxy): 接入 GLM trace provider
 
 # Modification

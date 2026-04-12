@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+import asyncio
 import importlib.util
 import importlib
+import json
 import pathlib
 import sys
 import unittest
@@ -205,6 +207,133 @@ class AiProxyTraceProtocolTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error_status"], "PROVIDER_FORMAT_ERROR")
         self.assertIn("JSON", result["error_message"])
+
+    def test_trace_route_passes_timeout_ms_to_provider(self):
+        module = load_module("ai_proxy_main_timeout", "ai/proxy/main.py")
+        captured = {}
+
+        class FakeRequest:
+            def __init__(self, body: bytes):
+                self._body = body
+                self.headers = {"content-type": "application/json"}
+
+            async def body(self):
+                return self._body
+
+        class FakeProvider:
+            def analyze_trace(self, *args, **kwargs):
+                raise AssertionError("should not execute real provider body in this test")
+
+        async def fake_call_provider_in_threadpool(func, *args, **kwargs):
+            # 这里直接抓路由真正准备下发给 provider 的 kwargs，
+            # 避免再把测试绑到线程池实现细节上，导致红灯原因被 anyio/线程调度噪音污染。
+            captured["func"] = func
+            captured["kwargs"] = kwargs
+            captured["trace_text"] = kwargs["trace_text"]
+            captured["timeout_ms"] = kwargs["timeout_ms"]
+            captured["prompt"] = kwargs["prompt"]
+            captured["model"] = kwargs["model"]
+            captured["api_key"] = kwargs["api_key"]
+            return {
+                "ok": True,
+                "analysis": {
+                    "summary": "ok",
+                    "risk_level": "info",
+                    "root_cause": "none",
+                    "solution": "none",
+                },
+                "usage": None,
+            }
+
+        original_provider = module.providers["glm"]
+        original_call = module.call_provider_in_threadpool
+        module.providers["glm"] = FakeProvider()
+        module.call_provider_in_threadpool = fake_call_provider_in_threadpool
+        try:
+            response = asyncio.run(
+                module.analyze_trace(
+                    "glm",
+                    FakeRequest(
+                        json.dumps(
+                            {
+                                "trace_text": "trace body",
+                                "prompt": "prompt body",
+                                "model": "glm-test",
+                                "api_key": "glm-key",
+                                "timeout_ms": 30000,
+                            }
+                        ).encode("utf-8")
+                    ),
+                )
+            )
+        finally:
+            module.providers["glm"] = original_provider
+            module.call_provider_in_threadpool = original_call
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(captured["trace_text"], "trace body")
+        self.assertEqual(captured["prompt"], "prompt body\n\n<trace_context>\ntrace body\n</trace_context>")
+        self.assertEqual(captured["model"], "glm-test")
+        self.assertEqual(captured["api_key"], "glm-key")
+        self.assertEqual(captured["timeout_ms"], 30000)
+
+    def test_glm_provider_uses_inner_timeout_headroom_from_request_timeout_ms(self):
+        project_root = pathlib.Path(__file__).resolve().parents[1]
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        module = importlib.import_module("ai.proxy.providers.glm")
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "{\"summary\":\"ok\",\"risk_level\":\"info\",\"root_cause\":\"none\",\"solution\":\"none\"}"
+                            }
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                }
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                # 这里锁住“上游 timeout 必须略早于外层 caller timeout”，
+                # 否则 provider 和 C++ 都卡同一时刻时，外层会先超时，永远拿不到 proxy 的结构化失败 JSON。
+                captured["timeout"] = kwargs.get("timeout")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def post(self, url, *, headers=None, json=None):
+                return FakeResponse()
+
+        from unittest import mock
+        with mock.patch.object(module.httpx, "Client", FakeClient):
+            provider = module.GlmProvider(api_key="", model_name="glm-5.1")
+            result = provider.analyze_trace(
+                trace_text="trace text",
+                prompt="rendered trace prompt",
+                api_key="glm-key",
+                model="glm-test",
+                timeout_ms=30000,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured["timeout"], 29.0)
 
 
 if __name__ == "__main__":

@@ -17,9 +17,16 @@ class AIProvider(ABC):
         pass
 
     @abstractmethod
-    def analyze_trace(self, trace_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> Any:
+    def analyze_trace(self,
+                      trace_text: str,
+                      prompt: str,
+                      api_key: Optional[str] = None,
+                      model: Optional[str] = None,
+                      timeout_ms: Optional[int] = None) -> Any:
         """
         执行一次 Trace 聚合结果的分析任务。
+        timeout_ms 表示调用方给这次请求的总等待预算。
+        具体 provider 可以选择忽略，也可以拿它裁剪自己的上游 HTTP 超时。
         """
         pass
 

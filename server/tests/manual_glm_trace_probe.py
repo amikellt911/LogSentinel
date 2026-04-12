@@ -57,10 +57,17 @@ def build_demo_prompt(trace_text: str) -> str:
     )
 
 
-def call_glm_proxy(proxy_base_url: str, api_key: str, model: str, timeout_sec: float) -> int:
+def call_glm_proxy(proxy_base_url: str,
+                   api_key: str,
+                   model: str,
+                   timeout_sec: float,
+                   provider_timeout_sec: float) -> int:
     """
     这个动作只验证 Python proxy -> GLM 的链路。
     它不经过 C++ 后端，所以可以先把“模型调用本身通不通”单独验掉。
+    这里把“本地等待多久”和“provider 允许上游等多久”拆开，
+    因为我们要验证的是 proxy 能不能在上游超时后，及时把结构化 TIMEOUT 回给调用方，
+    而不是让本地 requests 和 provider 上游同时卡死在一个时刻。
     """
     trace_text = build_demo_trace_text()
     prompt = build_demo_prompt(trace_text)
@@ -70,10 +77,13 @@ def call_glm_proxy(proxy_base_url: str, api_key: str, model: str, timeout_sec: f
         "prompt": prompt,
         "api_key": api_key,
         "model": model,
+        "timeout_ms": int(provider_timeout_sec * 1000),
     }
 
     print(f"[glm-probe] proxy_url={url}")
     print(f"[glm-probe] model={model}")
+    print(f"[glm-probe] provider_timeout_sec={provider_timeout_sec}")
+    print(f"[glm-probe] local_timeout_sec={timeout_sec}")
 
     response = requests.post(url, json=payload, timeout=timeout_sec)
     print(f"[glm-probe] http_status={response.status_code}")
@@ -206,7 +216,8 @@ def parse_args() -> argparse.Namespace:
     proxy_parser.add_argument("--proxy-base-url", default="http://127.0.0.1:8001", help="AI proxy 地址")
     proxy_parser.add_argument("--api-key", required=True, help="GLM API Key")
     proxy_parser.add_argument("--model", default="glm-5.1", help="GLM 模型名")
-    proxy_parser.add_argument("--timeout-sec", type=float, default=30.0, help="HTTP 超时（秒）")
+    proxy_parser.add_argument("--timeout-sec", type=float, default=35.0, help="本地等待 proxy 的 HTTP 超时（秒）")
+    proxy_parser.add_argument("--provider-timeout-sec", type=float, default=30.0, help="传给 provider 的上游超时预算（秒）")
 
     span_parser = subparsers.add_parser(
         "send-spans",
@@ -227,6 +238,7 @@ def main() -> int:
             api_key=args.api_key,
             model=args.model,
             timeout_sec=args.timeout_sec,
+            provider_timeout_sec=args.provider_timeout_sec,
         )
     if args.command == "send-spans":
         return send_demo_trace(

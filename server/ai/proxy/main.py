@@ -212,10 +212,14 @@ async def analyze_trace(provider_name: str, request: Request):
                 prompt_template = payload.prompt
             model = payload.model
             api_key = payload.api_key
+            # 这份 timeout_ms 不是给 FastAPI 路由自己用的，而是继续往 provider 透传。
+            # 只有把总等待预算往下带，provider 才能把自己的上游 HTTP 超时裁剪得略早一点。
+            timeout_ms = payload.timeout_ms
         else:
             trace_text = body.decode('utf-8')
             model = None
             api_key = None
+            timeout_ms = None
 
         rendered_prompt = render_trace_prompt(prompt_template, trace_text)
         result = await call_provider_in_threadpool(
@@ -224,6 +228,7 @@ async def analyze_trace(provider_name: str, request: Request):
             prompt=rendered_prompt,
             api_key=api_key,
             model=model,
+            timeout_ms=timeout_ms,
         )
         return normalize_trace_result(provider_name, result)
     except HTTPException:

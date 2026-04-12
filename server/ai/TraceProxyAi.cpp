@@ -46,6 +46,10 @@ TraceAiResponse TraceProxyAi::AnalyzeTrace(const std::string& trace_payload)
     if (!api_key_.empty()) {
         request_json["api_key"] = api_key_;
     }
+    // 这里把 C++ 外层等待预算继续下发给 Python proxy。
+    // 否则 proxy 调 GLM 时只能用自己的固定 timeout，内外两层很容易卡在同一秒同时超时，
+    // 最终外层 caller 先报 HTTP 0，拿不到 proxy 已经包装好的结构化失败 JSON。
+    request_json["timeout_ms"] = timeout_ms_;
     session.SetBody(cpr::Body{request_json.dump()});
 
     cpr::Response r = session.Post();

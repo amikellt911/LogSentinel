@@ -45,6 +45,10 @@ class TraceAnalyzeRequest(BaseModel):
     prompt: Optional[str] = None
     model: Optional[str] = None
     api_key: Optional[str] = None
+    # 这是调用方愿意给本次 Trace 分析支付的总等待预算，单位毫秒。
+    # Python proxy 自己不会把这份预算原样照抄给上游 provider，而是会留一点提前量，
+    # 避免外层 caller 和内层 HTTP 请求在同一时刻一起超时，导致 C++ 永远拿不到结构化失败 JSON。
+    timeout_ms: Optional[int] = None
     
 class BatchAnalysisResponse(BaseModel):
     results: List[Dict[str, Any]]
