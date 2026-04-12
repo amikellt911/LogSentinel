@@ -55,6 +55,14 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 - [x] `Dashboard / ServiceMonitor` 已接真值
 - [x] 飞书 Webhook 已完成真实联调
 - [x] Settings 已接通一批关键字段真实消费
+- [x] Settings 第三层黑盒已覆盖关键冷启动配置：
+  - [x] `http_port`
+  - [x] `trace_end_aliases`
+  - [x] `ai_analysis_enabled`
+  - [x] `prompt / active_prompt_id`
+  - [x] `webhook channel (webhook_url / threshold / secret)`
+  - [x] `kernel_worker_threads`
+  - [x] `log_retention_days`
 - [x] Trace AI 已具备 `skipped_manual / skipped_circuit / failed_primary / failed_both / completed` 最小可靠性骨架
 - [x] 主 provider 失败后可自动尝试 fallback provider
 
@@ -80,6 +88,7 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 ## 备注
 - `MVP5` 已归档到 `docs/archive/current-task/MVP5.md`。
 - 当前论文初稿可以开写；v1.0.0 这轮新增内容主要补实验数据、部署复现能力和正式版本收尾材料。
+- Settings 联调当前已经不是“只验保存回填”，而是已经补到真实黑盒消费验证；继续在 Settings 支线上追加更多黑盒的收益开始下降。
 - 这轮的重点不是再发明更多功能，而是把现有特色讲实、做实：
   - 轻量部署
   - 异常闭环
