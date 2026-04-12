@@ -71,7 +71,7 @@
                     <el-select v-model="ai.provider" class="w-full" :disabled="!ai.analysisEnabled">
                       <el-option label="Local Mock (Dev)" value="mock" />
                       <el-option label="Google Gemini" value="gemini" />
-                      <el-option label="智谱 GLM（后置）" value="zhipu" disabled />
+                      <el-option label="智谱 GLM" value="glm" />
                     </el-select>
                   </el-form-item>
 
@@ -127,7 +127,7 @@
                         <el-select v-model="ai.fallbackProvider" class="w-full" :disabled="!ai.autoDegrade">
                           <el-option label="Local Mock (Dev)" value="mock" />
                           <el-option label="Google Gemini" value="gemini" />
-                          <el-option label="智谱 GLM（后置）" value="zhipu" disabled />
+                          <el-option label="智谱 GLM" value="glm" />
                         </el-select>
                       </el-form-item>
                       <el-form-item label="Fallback Model" class="mb-0">

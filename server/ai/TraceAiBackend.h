@@ -4,11 +4,12 @@
 #include <cctype>
 #include <string>
 
-// Trace AI 后端类型：当前只支持 mock / gemini。
+// Trace AI 后端类型：当前支持 mock / gemini / glm。
 enum class TraceAiBackend
 {
     Mock,
     Gemini,
+    Glm,
 };
 
 inline std::string TraceAiBackendToRouteSegment(TraceAiBackend backend)
@@ -18,6 +19,8 @@ inline std::string TraceAiBackendToRouteSegment(TraceAiBackend backend)
             return "mock";
         case TraceAiBackend::Gemini:
             return "gemini";
+        case TraceAiBackend::Glm:
+            return "glm";
     }
     return "mock";
 }
@@ -39,6 +42,10 @@ inline bool TryParseTraceAiBackend(const std::string& value, TraceAiBackend* out
     }
     if (lower == "gemini") {
         *out = TraceAiBackend::Gemini;
+        return true;
+    }
+    if (lower == "glm" || lower == "zhipu") {
+        *out = TraceAiBackend::Glm;
         return true;
     }
     return false;
