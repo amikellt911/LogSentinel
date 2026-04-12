@@ -114,3 +114,8 @@
 - [x] 重跑第三层黑盒脚本，确认线程数与 retention 清理都通过
 - [x] 追加 2026-04-12 dev-log，记录这轮 worker/retention 黑盒联调与中文注释位置
 - [x] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）
+- [x] 为 Python AI proxy 接入 `GLM` provider，先只打通 Trace 主链 `analyze_trace`
+- [x] 为 `GLM` provider 补红灯测试：锁定 `response_format=json_object`、usage 提取、统一失败协议
+- [x] 在 `main.py` 注册 `glm` provider，并补最小注释说明当前只先接 Trace 主链
+- [x] 运行 `GLM` provider 相关最小测试，确认不引入新的 proxy 协议回归
+- [x] 追加 2026-04-12 dev-log，记录这轮 GLM provider 接入与中文注释位置

@@ -259,6 +259,69 @@ test(settings): 补 prompt 与 webhook channel 第三层黑盒联调
 - Prompt 这种配置最容易写成“只存不吃”。如果你只是查 SQLite 或 `/settings/all`，你最多只能证明它保存了，不能证明模型调用时真的用了它。
 - Webhook 这种配置也一样。只看 notifier 对象构造成功没有意义，真正值钱的是“warning 不发、critical 才发、发出去的 payload 长什么样”。
 
+---
+
+# Git Commit Message
+
+feat(ai-proxy): 接入 GLM trace provider
+
+# Modification
+
+- `server/ai/proxy/providers/glm.py`
+- `server/ai/proxy/main.py`
+- `server/tests/ai_proxy_trace_protocol_test.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260412-refactor-settings-entry.md`
+
+# What Changed
+
+- 新增 `GLM` Python provider，当前只先打通 Trace 主链 `analyze_trace`
+- 使用智谱官方 `chat/completions` REST 接口，走：
+  - `httpx.Client`
+  - `response_format={"type":"json_object"}`
+  - 本地 `json.loads + Pydantic(LogAnalysisResult)` 校验
+- 成功路径会统一返回：
+  - `ok`
+  - `analysis`
+  - `usage(input/output/total_tokens)`
+- 失败路径会统一返回：
+  - `ok=false`
+  - `error_code`
+  - `error_status`
+  - `error_message`
+- 在 `main.py` 注册 `glm` provider，并支持：
+  - `GLM_API_KEY`
+  - `BIGMODEL_API_KEY`
+  - `GLM_MODEL`
+- 为 `GLM` 补最小协议测试，锁定：
+  - 请求体必须带 `response_format=json_object`
+  - usage 提取与归一
+  - 非法 JSON 不能伪造成成功 analysis
+
+# Verification
+
+- `python3 -m unittest server/tests/ai_proxy_trace_protocol_test.py`
+
+结果：
+- `5/5` 通过
+
+# Learning Tips
+
+## Newbie Tips
+
+- 多 provider proxy 最怕的不是“第一次调不通”，而是每家 SDK/HTTP 语义都不一样，最后把重试、熔断、降级都拖脏。既然这里已经有统一 proxy，中间层优先自己控制请求体、超时和错误归一，后面会更稳。
+- 智谱这条链当前正式支持的是 `json_object`，不是服务端强约束的 `json_schema`。所以你不能只靠模型说“我会返回 JSON”，还得自己在本地再做一次 `json.loads + schema` 校验。
+
+## Function Explanation
+
+- `httpx.Client`：Python 里的同步 HTTP 客户端。这里选它，不是因为它“更高级”，而是项目里已经有依赖，而且以后如果要统一代理、超时和连接复用，它比再混一套 `requests` 更顺。
+- `LogAnalysisResult.model_validate(...)`：Pydantic v2 的模型校验入口。这里拿它做 provider 本地兜底，是为了把“字段缺失/风险等级非法”挡在 Python proxy，别把脏数据继续推给 C++。
+
+## Pitfalls
+
+- 不要把 `trace_text` 在 provider 里再拼一遍。Trace 路由上层已经把 `trace_context` 渲染进最终 prompt 了；如果下层再追加一次，同一份上下文就会重复输入模型。
+- 不要把 “GLM provider 已注册” 等价成 “所有旧接口都支持”。这次只先接了 `analyze_trace`，其余抽象方法如果偷偷返回假值，会把路由语义搞脏，不如先明确 `NotImplementedError`。
+
 ## Function Explanation
 
 - `LocalProbeService`：这次黑盒里内嵌的本地探针服务，同时扮演“假 AI proxy”和“假 webhook server”。这样脚本自己就能拿到实收请求，不需要再依赖额外外部进程。

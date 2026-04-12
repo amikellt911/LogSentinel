@@ -84,6 +84,128 @@ class AiProxyTraceProtocolTest(unittest.TestCase):
         self.assertEqual(error_payload["error_status"], "RESOURCE_EXHAUSTED")
         self.assertEqual(error_payload["error_message"], "quota exhausted")
 
+    def test_glm_provider_analyze_trace_uses_json_object_and_extracts_usage(self):
+        project_root = pathlib.Path(__file__).resolve().parents[1]
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        module = importlib.import_module("ai.proxy.providers.glm")
+
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "{\"summary\":\"ok\",\"risk_level\":\"info\",\"root_cause\":\"none\",\"solution\":\"none\"}"
+                            }
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 11,
+                        "completion_tokens": 7,
+                        "total_tokens": 18,
+                    },
+                }
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                # 这里锁的是 provider 走同步 httpx.Client，而不是偷偷换成别的 HTTP 栈。
+                captured["client_kwargs"] = kwargs
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def post(self, url, *, headers=None, json=None):
+                # 这里直接抓最终出站请求，避免测试只盯着本地临时变量而看不到真实 HTTP 载荷。
+                captured["url"] = url
+                captured["headers"] = headers
+                captured["json"] = json
+                return FakeResponse()
+
+        from unittest import mock
+        with mock.patch.object(module.httpx, "Client", FakeClient):
+            provider = module.GlmProvider(api_key="", model_name="glm-5.1")
+            result = provider.analyze_trace(
+                trace_text="trace body should not be duplicated",
+                prompt="rendered trace prompt",
+                api_key="glm-key",
+                model="glm-test",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["analysis"]["summary"], "ok")
+        self.assertEqual(result["usage"]["input_tokens"], 11)
+        self.assertEqual(result["usage"]["output_tokens"], 7)
+        self.assertEqual(result["usage"]["total_tokens"], 18)
+        self.assertEqual(captured["url"], "https://open.bigmodel.cn/api/paas/v4/chat/completions")
+        self.assertEqual(captured["headers"]["Authorization"], "Bearer glm-key")
+        self.assertEqual(captured["json"]["model"], "glm-test")
+        self.assertEqual(captured["json"]["response_format"], {"type": "json_object"})
+        self.assertEqual(captured["json"]["messages"][0]["role"], "user")
+        self.assertEqual(captured["json"]["messages"][0]["content"], "rendered trace prompt")
+
+    def test_glm_provider_analyze_trace_rejects_invalid_json_content(self):
+        project_root = pathlib.Path(__file__).resolve().parents[1]
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        module = importlib.import_module("ai.proxy.providers.glm")
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "not-a-json-object"
+                            }
+                        }
+                    ]
+                }
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def post(self, url, *, headers=None, json=None):
+                return FakeResponse()
+
+        from unittest import mock
+        with mock.patch.object(module.httpx, "Client", FakeClient):
+            provider = module.GlmProvider(api_key="", model_name="glm-5.1")
+            result = provider.analyze_trace(
+                trace_text="trace text",
+                prompt="rendered trace prompt",
+                api_key="glm-key",
+                model="glm-test",
+            )
+
+        # 既然 GLM 这里只能保证 JSON mode，不能保证服务端 schema 强校验，
+        # 那么 provider 就必须自己兜底：无效 JSON 只能算 provider 格式失败，不能伪造成成功 analysis。
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_status"], "PROVIDER_FORMAT_ERROR")
+        self.assertIn("JSON", result["error_message"])
+
 
 if __name__ == "__main__":
     unittest.main()

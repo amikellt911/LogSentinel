@@ -35,6 +35,7 @@ load_dotenv(dotenv_path=dotenv_path)
 # 现在可以使用绝对导入了
 from ai.proxy.providers.base import AIProvider
 from ai.proxy.providers.gemini import GeminiProvider
+from ai.proxy.providers.glm import GlmProvider
 from ai.proxy.providers.mock import MockProvider
 from ai.proxy.schemas import (
     BatchRequestSchema,
@@ -144,6 +145,13 @@ except Exception as e:
     print(f"严重错误: 加载 Gemini 类失败: {e}")
 
 providers["mock"] = MockProvider(delay=0.5)
+
+# GLM 当前先只接 Trace 主链。
+# 既然 provider 抽象层已经统一了 analyze_trace 协议，这里只需要注册实例；
+# 旧 analyze/chat/batch/summarize 暂未实现时，会在 provider 内明确报未实现，而不是假装可用。
+glm_api_key = os.getenv("GLM_API_KEY", "") or os.getenv("BIGMODEL_API_KEY", "")
+glm_model_name = os.getenv("GLM_MODEL", "glm-5.1")
+providers["glm"] = GlmProvider(api_key=glm_api_key, model_name=glm_model_name)
 # 未来可以在这里添加并注册 OpenAI, Claude 等其他 Provider
 # openai_api_key = os.getenv("OPENAI_API_KEY")
 # if openai_api_key:

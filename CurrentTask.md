@@ -65,11 +65,16 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
   - [x] `log_retention_days`
 - [x] Trace AI 已具备 `skipped_manual / skipped_circuit / failed_primary / failed_both / completed` 最小可靠性骨架
 - [x] 主 provider 失败后可自动尝试 fallback provider
+- [x] Python AI proxy 已接入 `GLM` Trace provider 最小闭环：
+  - [x] `chat/completions + response_format=json_object`
+  - [x] 本地 JSON/schema 校验
+  - [x] 统一 `usage / error_status / error_message` 协议
 
 ## 核心任务
 - [ ] 先做 Settings 真实生效联调，固化当前主链配置的验收口径
 - [ ] 再做单入口部署，收口 `/settings` 与 `http_port` 的正式产品语义
 - [ ] 再接 `GLM`，补齐双真实 provider 能力
+- [ ] 再补 `GLM` 的端到端联调与 fallback 黑盒，真正收口双真实 provider
 - [ ] 再补 AI 重试，收口 Trace AI 可靠性链路
 - [ ] 再补实验开关，服务 benchmark 和论文对比
 - [ ] 再固定 benchmark 材料
