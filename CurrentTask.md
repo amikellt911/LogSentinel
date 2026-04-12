@@ -9,10 +9,11 @@
 v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真实生效、双 provider、可对比实验、可复现实验、可一键部署、可一键演示”这 6 件事收完，形成可打 tag 的正式版本。
 
 ## 版本目标
-- [ ] 完成 `Settings` 真实生效联调验收
+- [x] 完成 `Settings` 真实生效联调验收 (2026-04-12)
 - [ ] 完成前后端单入口部署：后端托管 `client/dist`，让 `http_port` 成为系统唯一入口端口
-- [ ] 接入第 2 个真实 AI provider：`GLM`
+- [x] 接入第 2 个真实 AI provider：`GLM` (2026-04-12)
 - [ ] 落地 AI 重试，让 `ai_retry_enabled / ai_retry_max_attempts` 从占位配置变成真实能力
+- [ ] **配置热加载 (Hot-reloading)**: 支持 `ai_provider / ai_model / ai_api_key` 在运行时无感切换，无需重启后端进程，提升演示体验 (待办)
 - [ ] 增加实验/对比开关，用于 benchmark 和论文对比
 - [ ] 固定 benchmark 命令、场景、结果模板和截图
 - [ ] 补 `Docker / docker-compose`，把轻量部署真正做成可复现能力
