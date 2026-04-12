@@ -89,4 +89,5 @@
 - [x] 重跑 `test_trace_session_manager_integration`，确认 6 条期待 `trace_analysis` 的集成用例重新通过
 - [x] 删除前端旧壳层里的“模拟模式 / 系统待机-运行中”假开关，避免继续误导真实控制面
 - [x] 清理 `History/LiveLogs` 对 `isSimulationMode/isRunning` 的旧分支，确保前端默认直连后端、不再偷偷回退 mock
+- [x] 将 `/settings` 正式切到 `SettingsPrototype`，并从左侧导航移除独立 `settings-prototype` 双轨入口
 - [ ] 在 Settings 主链消费基本收口后，统一补一轮“配置真实生效”测试（冷启动配置、Trace Prompt、Webhook、持久化回填）

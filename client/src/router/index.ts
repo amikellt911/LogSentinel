@@ -3,7 +3,6 @@ import MainLayout from '../layout/MainLayout.vue'
 import ServiceMonitorPrototype from '../views/ServiceMonitorPrototype.vue'
 import Dashboard from '../views/Dashboard.vue'
 import TraceExplorer from '../views/TraceExplorer.vue'
-import Settings from '../views/Settings.vue'
 import SettingsPrototype from '../views/SettingsPrototype.vue'
 
 const router = createRouter({
@@ -46,15 +45,17 @@ const router = createRouter({
           redirect: '/'
         },
         {
+          // 设置原型这条线已经完成当前阶段验收，所以 /settings 直接收口到真实页面。
+          // 旧 Settings.vue 先不再暴露正式入口，避免用户继续在两个设置页之间来回跳。
           path: 'settings',
           name: 'settings',
-          component: Settings
+          component: SettingsPrototype
         },
         {
-          // 新设置原型页先独立挂载，避免直接覆盖旧 Settings 页面，方便并行对比。
+          // 兼容之前联调阶段保留下来的旧地址：
+          // 现在统一回到正式设置入口，不再继续维持“双设置页”语义。
           path: 'settings-prototype',
-          name: 'settings-prototype',
-          component: SettingsPrototype
+          redirect: '/settings'
         }
       ]
     }
