@@ -67,12 +67,16 @@ class GeminiProvider(AIProvider):
         if error_status is None:
             error_status = default_status
         error_message = getattr(error, "message", None) or str(error)
+        # Gemini SDK 不保证单独给我们一个 http_status 字段。
+        # 这里在 code 明显长得像 HTTP 状态码时顺手提出来，方便上层重试层优先按 HTTP 语义而不是厂商业务码分类。
+        http_status = error_code if isinstance(error_code, int) and 100 <= error_code <= 599 else None
 
         return {
             "ok": False,
             "error_code": error_code,
             "error_status": error_status,
             "error_message": error_message,
+            "http_status": http_status,
         }
 
     def analyze(self, log_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:

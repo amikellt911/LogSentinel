@@ -145,3 +145,9 @@
 - [x] 为 Settings 第三层黑盒补双失败验证：主备都失败时必须落 `failed_both`
 - [x] 运行 Settings 黑盒脚本，确认双 provider/fallback 链路通过
 - [x] 追加 2026-04-12 dev-log，记录这轮双 provider 黑盒与中文注释位置
+- [x] 为 Python proxy 的 AI 重试补红灯测试：锁定 `retry_enabled / retry_max_attempts` 透传、可重试错误分类、总预算共享语义
+- [x] 在 `schemas/main/provider` 三段接通 AI 重试配置，让 Trace 请求真正把 `retry_enabled / retry_max_attempts` 送到 proxy 重试层
+- [x] 在 Python proxy 落地最小重试执行器：共享 `timeout_ms` 总预算、只重试临时错误、结构错误只额外补一枪
+- [x] 为 C++ TraceProxyAi 透传 `retry_enabled / retry_max_attempts`，并让 `main.cpp` 真正消费 Settings 冷启动配置
+- [x] 运行 AI proxy 单测、后端最小构建与 `git diff --check`，确认这轮 AI 重试没有破坏既有协议
+- [x] 追加 2026-04-13 dev-log，记录这轮 AI 重试实现与中文注释位置

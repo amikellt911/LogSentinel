@@ -46,7 +46,8 @@ class GlmProvider(AIProvider):
                                    error_message: str,
                                    *,
                                    error_code: Optional[int] = None,
-                                   error_status: str = "PROVIDER_ERROR") -> Dict[str, Any]:
+                                   error_status: str = "PROVIDER_ERROR",
+                                   http_status: Optional[int] = None) -> Dict[str, Any]:
         """
         Trace 主链只应该看统一失败协议，不应该再感知 GLM 原始 HTTP/JSON 细节。
         所以不管底下是超时、鉴权还是返回格式坏掉，这里都统一收口成 ok/code/status/message。
@@ -56,6 +57,7 @@ class GlmProvider(AIProvider):
             "error_code": error_code,
             "error_status": error_status,
             "error_message": error_message,
+            "http_status": http_status,
         }
 
     def _extract_error_payload(self, response: httpx.Response) -> Dict[str, Any]:
@@ -74,6 +76,7 @@ class GlmProvider(AIProvider):
                 error_message=error_message,
                 error_code=response.status_code,
                 error_status=error_status,
+                http_status=response.status_code,
             )
 
         if isinstance(error_json, dict):
@@ -98,6 +101,7 @@ class GlmProvider(AIProvider):
             error_message=error_message,
             error_code=error_code,
             error_status=error_status,
+            http_status=response.status_code,
         )
 
     def _build_usage_payload(self, usage_json: Any) -> Optional[Dict[str, int]]:
@@ -189,6 +193,10 @@ class GlmProvider(AIProvider):
                 response_json = response.json()
         except httpx.TimeoutException as exc:
             return self._build_trace_error_payload(str(exc), error_status="TIMEOUT")
+        except httpx.RequestError as exc:
+            # 连接失败、TLS 握手失败、DNS 失败这类场景拿不到 HTTP 状态码。
+            # 对重试层来说，它们和 4xx 的语义完全不同，更接近“临时性网络抖动”。
+            return self._build_trace_error_payload(str(exc), error_status="NETWORK_ERROR")
         except httpx.HTTPError as exc:
             return self._build_trace_error_payload(str(exc), error_status="HTTP_ERROR")
         except ValueError as exc:

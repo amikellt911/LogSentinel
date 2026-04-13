@@ -18,6 +18,10 @@ struct TraceAiFactoryOptions
     // 这样 trace AI 就不会再出现“语言和 prompt 吃的是 Settings，新模型和新密钥还停留在另一条旧链路”这种语义分裂。
     std::string model;
     std::string api_key;
+    // retry 配置同样按冷启动快照透传到单个 provider 调用链。
+    // 这里的 max_attempts 语义是“总尝试次数，包含第一次请求”，不是“额外重试次数”。
+    bool retry_enabled = false;
+    int retry_max_attempts = 3;
 };
 
 // 工厂职责：根据配置创建 TraceAiProvider，避免 main.cpp 堆叠选择逻辑。

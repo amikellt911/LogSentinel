@@ -1,4 +1,6 @@
 # ai/proxy/main.py
+import asyncio
+import inspect
 import os
 from fastapi import FastAPI, Request, HTTPException
 from starlette.concurrency import run_in_threadpool
@@ -124,6 +126,183 @@ def render_trace_prompt(prompt_template: str, trace_text: str) -> str:
         return prompt_template.replace("{{TRACE_CONTEXT}}", trace_text)
     return f"{prompt_template}\n\n<trace_context>\n{trace_text}\n</trace_context>"
 
+
+TRACE_RETRY_BACKOFF_SECONDS = (0.2, 0.5, 1.0)
+TRACE_RETRYABLE_PROVIDER_STATUSES = {
+    "NETWORK_ERROR",
+    "RESOURCE_EXHAUSTED",
+    "TOO_MANY_REQUESTS",
+    "UNAVAILABLE",
+    "INTERNAL",
+    "INTERNAL_ERROR",
+    "SERVER_ERROR",
+    "SERVICE_UNAVAILABLE",
+}
+TRACE_RETRYABLE_STRUCTURE_STATUSES = {
+    "PROVIDER_FORMAT_ERROR",
+    "PROVIDER_SCHEMA_ERROR",
+    "INVALID_PROVIDER_RESPONSE",
+}
+
+
+def normalize_retry_max_attempts(retry_max_attempts: Optional[int]) -> int:
+    """
+    这里把 retry_max_attempts 收口成“总尝试次数，包含第一次请求”。
+    所以最小值必须是 1，避免出现 0 或负数把第一次正常调用也吞掉的怪语义。
+    """
+    if retry_max_attempts is None:
+        return 1
+    return max(1, int(retry_max_attempts))
+
+
+def resolve_trace_failure_http_status(result: Dict[str, Any]) -> Optional[int]:
+    """
+    重试层优先看真实 HTTP 状态码，而不是厂商 body 里的业务 code。
+    但是当前 Gemini SDK 失败载荷不一定显式带 http_status，所以这里允许在 error_code 明显长得像 HTTP 码时兜底复用。
+    """
+    raw_http_status = result.get("http_status")
+    if isinstance(raw_http_status, int):
+        return raw_http_status
+    if isinstance(raw_http_status, str) and raw_http_status.isdigit():
+        return int(raw_http_status)
+
+    raw_error_code = result.get("error_code")
+    if isinstance(raw_error_code, int) and 100 <= raw_error_code <= 599:
+        return raw_error_code
+    if isinstance(raw_error_code, str) and raw_error_code.isdigit():
+        numeric_error_code = int(raw_error_code)
+        if 100 <= numeric_error_code <= 599:
+            return numeric_error_code
+    return None
+
+
+def get_trace_retry_backoff_seconds(completed_attempts: int) -> float:
+    """
+    completed_attempts 表示已经打出去并返回失败的次数。
+    例如第一次失败后准备第二次发送，就拿第 0 档 200ms；后面再失败时逐步升档。
+    """
+    index = max(0, min(completed_attempts - 1, len(TRACE_RETRY_BACKOFF_SECONDS) - 1))
+    return TRACE_RETRY_BACKOFF_SECONDS[index]
+
+
+def should_retry_trace_failure(result: Dict[str, Any],
+                               *,
+                               completed_attempts: int,
+                               retry_enabled: bool,
+                               retry_max_attempts: int,
+                               remaining_ms: Optional[int]) -> bool:
+    """
+    这里的判定顺序刻意很死：
+    1. 先看开关、总次数、剩余预算这些“值不值得再花一枪”的前置条件；
+    2. 再看这次失败是不是临时性抖动。
+    这样可以避免后面把 provider 的零散异常到处 if/else，最后没人说得清一次失败为什么会进入重试。
+    """
+    if not retry_enabled:
+        return False
+    if completed_attempts >= retry_max_attempts:
+        return False
+
+    error_status = str(result.get("error_status", "")).upper()
+    http_status = resolve_trace_failure_http_status(result)
+
+    is_retryable_http = http_status is not None and (http_status == 429 or 500 <= http_status <= 599)
+    is_retryable_provider_status = error_status in TRACE_RETRYABLE_PROVIDER_STATUSES
+    is_retryable_structure_status = error_status in TRACE_RETRYABLE_STRUCTURE_STATUSES
+
+    if is_retryable_structure_status and completed_attempts >= 2:
+        # 结构错误只补一枪。
+        # 因为它常常意味着输出偶发抖动；但如果连补一枪都还是结构坏掉，那更像 prompt/schema 设计问题，不该继续伪装成“系统在恢复”。
+        return False
+
+    if not (is_retryable_http or is_retryable_provider_status or is_retryable_structure_status):
+        return False
+
+    if remaining_ms is None:
+        return True
+
+    backoff_ms = int(get_trace_retry_backoff_seconds(completed_attempts) * 1000)
+    return remaining_ms > backoff_ms
+
+
+async def maybe_await(result: Any) -> Any:
+    """
+    测试里会塞同步 fake sleep，生产里会塞 asyncio.sleep。
+    这里统一做一次“如果可等待就 await，否则直接返回”，避免测试代码为了配合实现被迫写成一堆假 coroutine。
+    """
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
+async def execute_trace_provider_with_retry(provider: AIProvider,
+                                            *,
+                                            trace_text: str,
+                                            prompt: str,
+                                            api_key: Optional[str],
+                                            model: Optional[str],
+                                            timeout_ms: Optional[int],
+                                            retry_enabled: bool,
+                                            retry_max_attempts: Optional[int],
+                                            provider_call_fn=None,
+                                            monotonic_fn=None,
+                                            sleep_fn=asyncio.sleep) -> Any:
+    """
+    Trace 重试统一放在 proxy 路由层，不放进具体 provider。
+    既然 ai_timeout_ms 被定义成“单个 provider 调用链的总预算”，那么每次 attempt 都必须重新看剩余时间，
+    不能把 timeout 在 provider 内部一遍遍重置，否则所谓“总预算”就只是名义存在。
+    """
+    normalized_retry_max_attempts = normalize_retry_max_attempts(retry_max_attempts)
+    if provider_call_fn is None:
+        provider_call_fn = call_provider_in_threadpool
+    monotonic = monotonic_fn or asyncio.get_running_loop().time
+    deadline_seconds = None
+    if timeout_ms is not None and timeout_ms > 0:
+        deadline_seconds = monotonic() + (timeout_ms / 1000.0)
+
+    completed_attempts = 0
+    last_failure_result: Optional[Dict[str, Any]] = None
+
+    while True:
+        effective_timeout_ms = timeout_ms
+        if deadline_seconds is not None and completed_attempts > 0:
+            effective_timeout_ms = int((deadline_seconds - monotonic()) * 1000)
+            if effective_timeout_ms <= 0:
+                if last_failure_result is not None:
+                    return last_failure_result
+                return build_trace_failure_result(
+                    provider_name="proxy",
+                    error_message="Trace retry budget exhausted before provider call.",
+                    error_status="TIMEOUT",
+                )
+
+        completed_attempts += 1
+        result = await provider_call_fn(
+            provider.analyze_trace,
+            trace_text=trace_text,
+            prompt=prompt,
+            api_key=api_key,
+            model=model,
+            timeout_ms=effective_timeout_ms,
+        )
+
+        if not (isinstance(result, dict) and result.get("ok") is False):
+            return result
+
+        last_failure_result = result
+        remaining_ms = None
+        if deadline_seconds is not None:
+            remaining_ms = max(0, int((deadline_seconds - monotonic()) * 1000))
+        if not should_retry_trace_failure(
+            result,
+            completed_attempts=completed_attempts,
+            retry_enabled=retry_enabled,
+            retry_max_attempts=normalized_retry_max_attempts,
+            remaining_ms=remaining_ms,
+        ):
+            return result
+
+        await maybe_await(sleep_fn(get_trace_retry_backoff_seconds(completed_attempts)))
+
 # --- Provider 实例化和注册 ---
 # 在这里，我们创建所有可用的'转换插头'实例，并放入一个字典中进行管理。
 # 这种方式使得添加新的 Provider 变得非常容易。
@@ -215,20 +394,26 @@ async def analyze_trace(provider_name: str, request: Request):
             # 这份 timeout_ms 不是给 FastAPI 路由自己用的，而是继续往 provider 透传。
             # 只有把总等待预算往下带，provider 才能把自己的上游 HTTP 超时裁剪得略早一点。
             timeout_ms = payload.timeout_ms
+            retry_enabled = bool(payload.retry_enabled) if payload.retry_enabled is not None else False
+            retry_max_attempts = payload.retry_max_attempts
         else:
             trace_text = body.decode('utf-8')
             model = None
             api_key = None
             timeout_ms = None
+            retry_enabled = False
+            retry_max_attempts = None
 
         rendered_prompt = render_trace_prompt(prompt_template, trace_text)
-        result = await call_provider_in_threadpool(
-            provider.analyze_trace,
+        result = await execute_trace_provider_with_retry(
+            provider,
             trace_text=trace_text,
             prompt=rendered_prompt,
             api_key=api_key,
             model=model,
             timeout_ms=timeout_ms,
+            retry_enabled=retry_enabled,
+            retry_max_attempts=retry_max_attempts,
         )
         return normalize_trace_result(provider_name, result)
     except HTTPException:

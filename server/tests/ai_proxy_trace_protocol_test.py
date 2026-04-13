@@ -277,6 +277,234 @@ class AiProxyTraceProtocolTest(unittest.TestCase):
         self.assertEqual(captured["api_key"], "glm-key")
         self.assertEqual(captured["timeout_ms"], 30000)
 
+    def test_trace_route_passes_retry_config_to_retry_executor(self):
+        module = load_module("ai_proxy_main_retry_route", "ai/proxy/main.py")
+        captured = {}
+
+        class FakeRequest:
+            def __init__(self, body: bytes):
+                self._body = body
+                self.headers = {"content-type": "application/json"}
+
+            async def body(self):
+                return self._body
+
+        class FakeProvider:
+            def analyze_trace(self, *args, **kwargs):
+                raise AssertionError("route should go through retry executor instead of calling provider directly")
+
+        async def fail_if_called(*args, **kwargs):
+            raise AssertionError("route should delegate to retry executor before touching threadpool bridge")
+
+        async def fake_execute_trace_provider_with_retry(provider, **kwargs):
+            # 这里锁的是“路由层必须把 retry 配置交给统一重试执行器”，
+            # 否则后面就算实现了 should_retry，Settings 里的 ai_retry_* 也永远进不了真实主链。
+            captured["provider"] = provider
+            captured["kwargs"] = kwargs
+            return {
+                "ok": True,
+                "analysis": {
+                    "summary": "ok",
+                    "risk_level": "info",
+                    "root_cause": "none",
+                    "solution": "none",
+                },
+                "usage": None,
+            }
+
+        fake_provider = FakeProvider()
+        original_provider = module.providers["glm"]
+        original_call = module.call_provider_in_threadpool
+        original_execute = getattr(module, "execute_trace_provider_with_retry", None)
+        module.providers["glm"] = fake_provider
+        module.call_provider_in_threadpool = fail_if_called
+        module.execute_trace_provider_with_retry = fake_execute_trace_provider_with_retry
+        try:
+            response = asyncio.run(
+                module.analyze_trace(
+                    "glm",
+                    FakeRequest(
+                        json.dumps(
+                            {
+                                "trace_text": "trace body",
+                                "prompt": "prompt body",
+                                "model": "glm-test",
+                                "api_key": "glm-key",
+                                "timeout_ms": 30000,
+                                "retry_enabled": True,
+                                "retry_max_attempts": 4,
+                            }
+                        ).encode("utf-8")
+                    ),
+                )
+            )
+        finally:
+            module.providers["glm"] = original_provider
+            module.call_provider_in_threadpool = original_call
+            if original_execute is None:
+                delattr(module, "execute_trace_provider_with_retry")
+            else:
+                module.execute_trace_provider_with_retry = original_execute
+
+        self.assertTrue(response["ok"])
+        self.assertIs(captured["provider"], fake_provider)
+        self.assertEqual(captured["kwargs"]["trace_text"], "trace body")
+        self.assertEqual(captured["kwargs"]["timeout_ms"], 30000)
+        self.assertTrue(captured["kwargs"]["retry_enabled"])
+        self.assertEqual(captured["kwargs"]["retry_max_attempts"], 4)
+        self.assertEqual(captured["kwargs"]["model"], "glm-test")
+        self.assertEqual(captured["kwargs"]["api_key"], "glm-key")
+
+    def test_retry_executor_retries_http_429_with_shared_remaining_budget(self):
+        module = load_module("ai_proxy_main_retry_budget", "ai/proxy/main.py")
+
+        class FakeClock:
+            def __init__(self):
+                self.now = 0.0
+
+            def monotonic(self):
+                return self.now
+
+            def sleep(self, seconds: float):
+                self.now += seconds
+
+        class FakeProvider:
+            def __init__(self, clock):
+                self.clock = clock
+                self.timeout_history = []
+                self.calls = 0
+
+            def analyze_trace(self, **kwargs):
+                self.calls += 1
+                self.timeout_history.append(kwargs["timeout_ms"])
+                if self.calls == 1:
+                    # 第一次先消耗 600ms 再返回 429。
+                    # 如果重试实现错误地把 timeout 重新置回 3000ms，第二次这里就会暴露出“预算被重置”。
+                    self.clock.now += 0.6
+                    return {
+                        "ok": False,
+                        "error_status": "HTTP_ERROR",
+                        "http_status": 429,
+                        "error_message": "quota exhausted",
+                    }
+                return {
+                    "ok": True,
+                    "analysis": {
+                        "summary": "ok",
+                        "risk_level": "info",
+                        "root_cause": "none",
+                        "solution": "none",
+                    },
+                    "usage": None,
+                }
+
+        clock = FakeClock()
+        provider = FakeProvider(clock)
+
+        result = asyncio.run(
+            module.execute_trace_provider_with_retry(
+                provider,
+                trace_text="trace body",
+                prompt="prompt body",
+                api_key="glm-key",
+                model="glm-test",
+                timeout_ms=3000,
+                retry_enabled=True,
+                retry_max_attempts=3,
+                monotonic_fn=clock.monotonic,
+                sleep_fn=clock.sleep,
+            )
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(provider.calls, 2)
+        self.assertEqual(provider.timeout_history[0], 3000)
+        # 3000ms 总预算里，第一次 provider 已经花了 600ms，再退避 200ms，
+        # 所以第二次只允许拿到剩余的 2200ms，而不是重新拿满 3000ms。
+        self.assertEqual(provider.timeout_history[1], 2200)
+
+    def test_retry_executor_does_not_retry_http_401(self):
+        module = load_module("ai_proxy_main_retry_401", "ai/proxy/main.py")
+
+        class FakeProvider:
+            def __init__(self):
+                self.calls = 0
+
+            def analyze_trace(self, **kwargs):
+                self.calls += 1
+                return {
+                    "ok": False,
+                    "error_status": "HTTP_ERROR",
+                    "http_status": 401,
+                    "error_message": "bad key",
+                }
+
+        provider = FakeProvider()
+        result = asyncio.run(
+            module.execute_trace_provider_with_retry(
+                provider,
+                trace_text="trace body",
+                prompt="prompt body",
+                api_key="glm-key",
+                model="glm-test",
+                timeout_ms=3000,
+                retry_enabled=True,
+                retry_max_attempts=3,
+            )
+        )
+
+        # 401 是确定性的鉴权失败。
+        # 如果这里还重试，只是在白白烧预算，不会提高成功率。
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_status"], "HTTP_ERROR")
+        self.assertEqual(provider.calls, 1)
+
+    def test_retry_executor_retries_schema_error_only_once(self):
+        module = load_module("ai_proxy_main_retry_schema", "ai/proxy/main.py")
+
+        class FakeProvider:
+            def __init__(self):
+                self.calls = 0
+
+            def analyze_trace(self, **kwargs):
+                self.calls += 1
+                if self.calls <= 2:
+                    return {
+                        "ok": False,
+                        "error_status": "PROVIDER_SCHEMA_ERROR",
+                        "error_message": f"schema drift attempt {self.calls}",
+                    }
+                return {
+                    "ok": True,
+                    "analysis": {
+                        "summary": "should not reach third attempt",
+                        "risk_level": "info",
+                        "root_cause": "none",
+                        "solution": "none",
+                    },
+                    "usage": None,
+                }
+
+        provider = FakeProvider()
+        result = asyncio.run(
+            module.execute_trace_provider_with_retry(
+                provider,
+                trace_text="trace body",
+                prompt="prompt body",
+                api_key="glm-key",
+                model="glm-test",
+                timeout_ms=5000,
+                retry_enabled=True,
+                retry_max_attempts=5,
+            )
+        )
+
+        # 结构错误允许补一枪，但不能一路补到 max_attempts。
+        # 否则稳定的 prompt/schema 设计错误会被伪装成“系统正在努力恢复”。
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_status"], "PROVIDER_SCHEMA_ERROR")
+        self.assertEqual(provider.calls, 2)
+
     def test_glm_provider_uses_inner_timeout_headroom_from_request_timeout_ms(self):
         project_root = pathlib.Path(__file__).resolve().parents[1]
         if str(project_root) not in sys.path:

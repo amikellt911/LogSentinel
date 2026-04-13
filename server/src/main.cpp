@@ -571,6 +571,10 @@ int main(int argc, char* argv[])
         options.prompt_template = effective_trace_prompt_template;
         options.model = effective_trace_ai_model;
         options.api_key = effective_trace_ai_api_key;
+        // retry 配置跟主 provider 一起在冷启动阶段固化。
+        // 这样 TraceSessionManager 后面只面对“单次 AnalyzeTrace 调用”，不需要自己再关心某家 provider 应不应该重试几次。
+        options.retry_enabled = startup_app_config.ai_retry_enabled;
+        options.retry_max_attempts = startup_app_config.ai_retry_max_attempts;
         trace_ai = CreateTraceAiProvider(options);
         if (effective_ai_auto_degrade) {
             TraceAiBackend fallback_backend = TraceAiBackend::Mock;
@@ -589,11 +593,17 @@ int main(int argc, char* argv[])
             fallback_options.prompt_template = effective_trace_prompt_template;
             fallback_options.model = effective_ai_fallback_model;
             fallback_options.api_key = effective_ai_fallback_api_key;
+            // fallback 走的是同一套重试预算语义，只是 provider/model/api_key 三元组不同。
+            // 这里不额外拆一套 fallback_retry_*，先把“每个 provider 调用链都共享自己的 timeout 总预算”这个主语义做实。
+            fallback_options.retry_enabled = startup_app_config.ai_retry_enabled;
+            fallback_options.retry_max_attempts = startup_app_config.ai_retry_max_attempts;
             fallback_trace_ai = CreateTraceAiProvider(fallback_options);
         }
         std::cout << "Trace AI enabled via proxy. provider=" << effective_trace_ai_provider
                   << ", base_url=" << trace_ai_base_url
                   << ", timeout_ms=" << effective_trace_ai_timeout_ms
+                  << ", retry_enabled=" << (startup_app_config.ai_retry_enabled ? "true" : "false")
+                  << ", retry_max_attempts=" << startup_app_config.ai_retry_max_attempts
                   << ", ai_language=" << startup_app_config.ai_language
                   << ", model=" << effective_trace_ai_model
                   << ", api_key=" << (effective_trace_ai_api_key.empty() ? "<empty>" : "<configured>")

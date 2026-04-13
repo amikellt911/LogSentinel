@@ -11,11 +11,15 @@ TraceProxyAi::TraceProxyAi(std::string base_url,
                            int timeout_ms,
                            std::string prompt_template,
                            std::string model,
-                           std::string api_key)
+                           std::string api_key,
+                           bool retry_enabled,
+                           int retry_max_attempts)
     : timeout_ms_(timeout_ms > 0 ? timeout_ms : 10000),
       prompt_template_(std::move(prompt_template)),
       model_(std::move(model)),
-      api_key_(std::move(api_key))
+      api_key_(std::move(api_key)),
+      retry_enabled_(retry_enabled),
+      retry_max_attempts_(retry_max_attempts > 0 ? retry_max_attempts : 1)
 {
     if (!base_url.empty() && base_url.back() == '/') {
         base_url.pop_back();
@@ -50,6 +54,11 @@ TraceAiResponse TraceProxyAi::AnalyzeTrace(const std::string& trace_payload)
     // 否则 proxy 调 GLM 时只能用自己的固定 timeout，内外两层很容易卡在同一秒同时超时，
     // 最终外层 caller 先报 HTTP 0，拿不到 proxy 已经包装好的结构化失败 JSON。
     request_json["timeout_ms"] = timeout_ms_;
+    // retry 配置继续跟着请求体下发。
+    // 既然 ai_timeout_ms 的语义已经收成“单个 provider 调用链总预算”，
+    // 那 proxy 就必须同时知道这条链到底允不允许重试、最多能试几次，不能只知道 timeout 却不知道重试开关。
+    request_json["retry_enabled"] = retry_enabled_;
+    request_json["retry_max_attempts"] = retry_max_attempts_;
     session.SetBody(cpr::Body{request_json.dump()});
 
     cpr::Response r = session.Post();

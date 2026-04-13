@@ -14,7 +14,9 @@ public:
                           int timeout_ms = 10000,
                           std::string prompt_template = "",
                           std::string model = "",
-                          std::string api_key = "");
+                          std::string api_key = "",
+                          bool retry_enabled = false,
+                          int retry_max_attempts = 3);
     ~TraceProxyAi() override;
 
     // 代理返回现在既包含结构化 analysis，也可能带 usage 元数据。
@@ -31,4 +33,8 @@ private:
     // 这样 TraceSessionManager 后面每次只管提交 trace payload，不需要再自己关心 provider 的动态配置细节。
     std::string model_;
     std::string api_key_;
+    // retry 配置不在 SessionManager 热路径里反复判断，而是跟着 provider 对象一起缓存。
+    // 这样每次 AnalyzeTrace 只负责把本次 trace payload 送出去，不需要再自己拼 retry 语义。
+    bool retry_enabled_ = false;
+    int retry_max_attempts_ = 3;
 };

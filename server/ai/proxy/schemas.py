@@ -49,6 +49,12 @@ class TraceAnalyzeRequest(BaseModel):
     # Python proxy 自己不会把这份预算原样照抄给上游 provider，而是会留一点提前量，
     # 避免外层 caller 和内层 HTTP 请求在同一时刻一起超时，导致 C++ 永远拿不到结构化失败 JSON。
     timeout_ms: Optional[int] = None
+    # retry_enabled / retry_max_attempts 属于“单个 provider 调用链”的重试开关，
+    # 不是全局服务级别的重试策略。
+    # 这两个字段由 C++ 冷启动配置透传下来，Python proxy 只负责在本次请求里执行，
+    # 不在进程内额外缓存，避免主/备 provider 之间出现脏状态串味。
+    retry_enabled: Optional[bool] = None
+    retry_max_attempts: Optional[int] = None
     
 class BatchAnalysisResponse(BaseModel):
     results: List[Dict[str, Any]]
