@@ -151,3 +151,7 @@
 - [x] 为 C++ TraceProxyAi 透传 `retry_enabled / retry_max_attempts`，并让 `main.cpp` 真正消费 Settings 冷启动配置
 - [x] 运行 AI proxy 单测、后端最小构建与 `git diff --check`，确认这轮 AI 重试没有破坏既有协议
 - [x] 追加 2026-04-13 dev-log，记录这轮 AI 重试实现与中文注释位置
+- [x] 为 Settings 第三层黑盒补 AI 重试场景：`429 -> success` 必须真的发生二次请求并最终完成
+- [x] 为 Settings 第三层黑盒补 AI 重试负例：`401` 不得重试，必须直接收成 `failed_primary`
+- [x] 运行第三层黑盒脚本，确认 AI 重试冷启动配置和真实请求链路都通过
+- [x] 追加 2026-04-13 dev-log，记录这轮 AI 重试黑盒收尾与中文注释位置

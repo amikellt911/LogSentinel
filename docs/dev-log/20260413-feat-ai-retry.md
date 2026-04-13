@@ -50,3 +50,29 @@
 - Python 默认参数会在定义时绑定。如果把 `call_provider_in_threadpool` 直接写成函数默认值，测试里后续 monkeypatch 不会生效，这次就踩到了这个坑。
 - 重试分类不能只看 `error_status` 字符串。真实 provider 经常同时有 HTTP 状态码和厂商业务码，重试层应该优先认 `http_status`，否则 `429` 很容易被漏判。
 - 如果第一枪也按“剩余预算”重新计算，很容易因为取时钟的细微差值把 `30000` 变成 `29999`，既让测试抖动，也让语义看起来不稳定。
+
+## 追加记录：第三层黑盒收尾
+
+### Modification
+- `server/tests/smoke_settings_blackbox.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `CurrentTask.md`
+
+### What Changed
+- 给 `smoke_settings_blackbox.py` 的本地探针补顺序响应队列，让同一个 provider 可以按“第一次失败、第二次成功”的顺序吐行为。
+- 把本地探针从“静态 fake proxy”升级成“会复用真实 `execute_trace_provider_with_retry` 的 mini proxy”，这样黑盒验证的就是生产里的重试执行器，而不是测试脚本自己手搓的一份假逻辑。
+- 新增两条第三层黑盒：
+  - `429 -> success`：必须看到同一个 provider 被请求两次，最终 `completed`
+  - `401 -> success(诱饵)`：必须只打一枪，最终 `failed_primary`
+
+### Verification
+- `python3 server/tests/smoke_settings_blackbox.py`
+- `git diff --check`
+
+### Newbie Tips
+- 黑盒测试如果把被测模块绕开了，就算跑通也没价值。这次一开始的 fake proxy 直接替代了 Python proxy，结果只能看到一条外层 HTTP 请求，根本证明不了 retry 是否真的发生。
+- “诱饵成功响应”是很有用的黑盒技巧。像 `401` 不重试这种场景，把第二个响应故意设成 success，能防止测试只会验证“失败了”，却验证不了“中间有没有偷偷重试”。
+
+### Pitfalls
+- 如果探针只支持固定响应，不支持顺序队列，那么 `429 -> success` 这种场景就永远写不出来，最后只能退化成单元测试，覆盖不到冷启动配置和真实 HTTP 链路。
+- 顺序队列必须在每次重新设静态行为时清空；否则前一个场景残留的第二枪响应会串到下一个场景，黑盒会出现非常难排查的假阳性或假阴性。

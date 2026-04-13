@@ -60,6 +60,7 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
   - [x] `http_port`
   - [x] `trace_end_aliases`
   - [x] `ai_analysis_enabled`
+  - [x] `ai_retry_enabled / ai_retry_max_attempts`
   - [x] `prompt / active_prompt_id`
   - [x] `webhook channel (webhook_url / threshold / secret)`
   - [x] `kernel_worker_threads`

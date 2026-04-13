@@ -10,7 +10,9 @@ Settings 第三层黑盒联调脚本。
 
 from __future__ import annotations
 
+import asyncio
 import argparse
+import importlib.util
 import json
 import os
 import select
@@ -23,6 +25,23 @@ from pathlib import Path
 from typing import Any, Optional
 
 import requests
+
+
+def load_ai_proxy_main_module():
+    """
+    黑盒这里不再自己手搓一套“像 retry 的逻辑”，而是直接复用真实 Python proxy 里的执行器。
+    这样新增的 AI retry 场景验证的是生产代码本身，不是另写一份测试专用分支。
+    """
+    script_path = Path(__file__).resolve().parents[1] / "ai" / "proxy" / "main.py"
+    spec = importlib.util.spec_from_file_location("settings_blackbox_ai_proxy_main", script_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load ai proxy main module from {script_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+AI_PROXY_MAIN = load_ai_proxy_main_module()
 
 
 class ProbeState:
@@ -40,6 +59,7 @@ class ProbeState:
         self.trace_requests: list[dict[str, Any]] = []
         self.webhook_payloads: list[dict[str, Any]] = []
         self.provider_behaviors: dict[str, dict[str, Any]] = {}
+        self.provider_behavior_sequences: dict[str, list[dict[str, Any]]] = {}
 
     def record_trace_request(self, provider: str, payload: dict[str, Any]) -> None:
         with self._lock:
@@ -70,9 +90,27 @@ class ProbeState:
     def set_provider_behavior(self, provider: str, behavior: dict[str, Any]) -> None:
         with self._lock:
             self.provider_behaviors[provider] = dict(behavior)
+            # 静态行为一旦被重新设置，就把旧的顺序队列清掉。
+            # 否则上一个场景残留的“第二枪响应”会串到下一个场景，黑盒就会变成随机失败。
+            self.provider_behavior_sequences.pop(provider, None)
+
+    def set_provider_behavior_sequence(self, provider: str, behaviors: list[dict[str, Any]]) -> None:
+        with self._lock:
+            # 顺序行为专门服务“同一个 provider 连续被调用多次”的黑盒场景，
+            # 比如主路重试或主路先失败再成功。
+            # 这里故意做成队列优先、静态行为兜底：
+            # - 有队列时，每次请求都消耗下一个响应；
+            # - 队列耗尽后就回退到静态行为或 None，避免测试脚本偷偷复用上一枪结果。
+            self.provider_behavior_sequences[provider] = [dict(item) for item in behaviors]
 
     def get_provider_behavior(self, provider: str) -> Optional[dict[str, Any]]:
         with self._lock:
+            sequence = self.provider_behavior_sequences.get(provider)
+            if sequence:
+                behavior = dict(sequence.pop(0))
+                if not sequence:
+                    self.provider_behavior_sequences.pop(provider, None)
+                return behavior
             behavior = self.provider_behaviors.get(provider)
             if behavior is None:
                 return None
@@ -123,6 +161,54 @@ def build_probe_failure_payload(provider: str,
     }
 
 
+class ProbeTraceProvider:
+    """
+    本地探针里的“假 provider”。
+
+    对 C++ 来说，它看到的仍然是一个会说 Python proxy 协议的 HTTP 服务；
+    对黑盒来说，这个对象负责把每次 provider attempt 都记下来，再按预设队列吐出失败或成功。
+    这样我们既能验证重试有没有发生，也不会把测试绑到真实云 API。
+    """
+
+    def __init__(self,
+                 state: ProbeState,
+                 provider: str,
+                 *,
+                 retry_enabled: bool,
+                 retry_max_attempts: int) -> None:
+        self.state = state
+        self.provider = provider
+        self.retry_enabled = retry_enabled
+        self.retry_max_attempts = retry_max_attempts
+
+    def analyze_trace(self,
+                      trace_text: str,
+                      prompt: str,
+                      api_key: Optional[str] = None,
+                      model: Optional[str] = None,
+                      timeout_ms: Optional[int] = None) -> dict[str, Any]:
+        self.state.record_trace_request(
+            self.provider,
+            {
+                "trace_text": trace_text,
+                "prompt": prompt,
+                "api_key": api_key,
+                "model": model,
+                "timeout_ms": timeout_ms,
+                "retry_enabled": self.retry_enabled,
+                "retry_max_attempts": self.retry_max_attempts,
+            },
+        )
+        behavior = self.state.get_provider_behavior(self.provider)
+        if behavior is None:
+            return build_probe_failure_payload(
+                self.provider,
+                error_status="UNCONFIGURED_PROVIDER",
+                error_message=f"no fake behavior for {self.provider}",
+            )
+        return behavior
+
+
 class ProbeRequestHandler(BaseHTTPRequestHandler):
     server: "ProbeServer"
 
@@ -162,15 +248,39 @@ class ProbeRequestHandler(BaseHTTPRequestHandler):
 
         if self.path.startswith("/analyze/trace/"):
             provider = self.path.rsplit("/", 1)[-1].lower()
-            self.server.state.record_trace_request(provider, payload)
-            behavior = self.server.state.get_provider_behavior(provider)
-            if behavior is None:
-                self._send_json(
-                    404,
-                    {"ok": False, "error_status": "UNCONFIGURED_PROVIDER", "error_message": f"no fake behavior for {provider}"},
+            retry_enabled = bool(payload.get("retry_enabled", False))
+            retry_max_attempts = int(payload.get("retry_max_attempts", 1) or 1)
+            trace_provider = ProbeTraceProvider(
+                self.server.state,
+                provider,
+                retry_enabled=retry_enabled,
+                retry_max_attempts=retry_max_attempts,
+            )
+
+            async def direct_call_provider(func, *args, **kwargs):
+                return func(*args, **kwargs)
+
+            result = asyncio.run(
+                AI_PROXY_MAIN.execute_trace_provider_with_retry(
+                    trace_provider,
+                    trace_text=str(payload.get("trace_text", "")),
+                    prompt=str(payload.get("prompt", "")),
+                    api_key=payload.get("api_key"),
+                    model=payload.get("model"),
+                    timeout_ms=int(payload.get("timeout_ms", 0) or 0) or None,
+                    retry_enabled=retry_enabled,
+                    retry_max_attempts=retry_max_attempts,
+                    provider_call_fn=direct_call_provider,
+                    sleep_fn=lambda _: None,
                 )
+            )
+            # 这里继续返回 Python proxy 的统一 envelope。
+            # C++ 黑盒真正关心的是“最终落到 completed/failed_primary/failed_both 的业务结果”，
+            # 不关心本地探针内部到底用了多少次 attempt。
+            if isinstance(result, dict) and result.get("ok") is False and str(result.get("error_status", "")) == "UNCONFIGURED_PROVIDER":
+                self._send_json(404, result)
                 return
-            self._send_json(200, behavior)
+            self._send_json(200, result)
             return
 
         if self.path == "/webhook":
@@ -1007,6 +1117,22 @@ def run_flow(args: argparse.Namespace) -> int:
                 ],
             )
 
+        def configure_retry_only_provider(primary: str, *, retry_enabled: bool, retry_max_attempts: int) -> None:
+            # 这两个场景故意把 auto_degrade 关掉。
+            # 否则一旦主路失败，后端可能直接走 fallback，黑盒就没法证明“同一个 provider 自己到底有没有先重试”。
+            post_config_patch(
+                new_url,
+                [
+                    {"key": "ai_analysis_enabled", "value": "1"},
+                    {"key": "ai_auto_degrade", "value": "0"},
+                    {"key": "ai_provider", "value": primary},
+                    {"key": "ai_model", "value": provider_model_map[primary]},
+                    {"key": "ai_api_key", "value": provider_api_key_map[primary]},
+                    {"key": "ai_retry_enabled", "value": "1" if retry_enabled else "0"},
+                    {"key": "ai_retry_max_attempts", "value": str(retry_max_attempts)},
+                ],
+            )
+
         # 场景 1：gemini 主路成功，glm 不应该被调用。
         configure_provider_pair("gemini", "glm")
         proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
@@ -1109,10 +1235,65 @@ def run_flow(args: argparse.Namespace) -> int:
             expected_api_key_by_provider=provider_api_key_map,
         )
 
+        # 场景 6：同一个 provider 的第一次 429 失败后，应该先在主路内部重试，再成功完成。
+        configure_retry_only_provider("glm", retry_enabled=True, retry_max_attempts=3)
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        probe_service.state.clear_trace_requests()
+        probe_service.state.set_provider_behavior_sequence(
+            "glm",
+            [
+                build_probe_failure_payload("glm", error_status="HTTP_ERROR", error_message="glm rate limited", error_code=429),
+                build_probe_success_payload("glm", risk_level="warning"),
+            ],
+        )
+        retry_success_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 800, "glm-retry-success")
+        wait_trace_summary_status(db_path, retry_success_trace_id, "completed", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, retry_success_trace_id) != 1:
+            raise RuntimeError("429 -> success 重试场景应该产出 1 条 trace_analysis")
+        assert_last_provider_request(
+            probe_service.state,
+            ["glm", "glm"],
+            expected_model_by_provider=provider_model_map,
+            expected_api_key_by_provider=provider_api_key_map,
+        )
+        retry_success_requests = probe_service.state.snapshot_trace_requests()
+        if any(bool(item.get("retry_enabled")) is not True for item in retry_success_requests):
+            raise RuntimeError("429 -> success 场景里 proxy 实收 retry_enabled 不为 true")
+        if any(int(item.get("retry_max_attempts", 0)) != 3 for item in retry_success_requests):
+            raise RuntimeError("429 -> success 场景里 proxy 实收 retry_max_attempts 不为 3")
+
+        # 场景 7：401 属于确定性鉴权失败，不允许重试。
+        # 这里把第二个响应故意配成 success，就是为了证明“如果真的偷偷重试了，这条用例会被误判成 completed”。
+        configure_retry_only_provider("glm", retry_enabled=True, retry_max_attempts=3)
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        probe_service.state.clear_trace_requests()
+        probe_service.state.set_provider_behavior_sequence(
+            "glm",
+            [
+                build_probe_failure_payload("glm", error_status="HTTP_ERROR", error_message="glm bad key", error_code=401),
+                build_probe_success_payload("glm", risk_level="warning"),
+            ],
+        )
+        retry_reject_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 900, "glm-no-retry-401")
+        wait_trace_summary_status(db_path, retry_reject_trace_id, "failed_primary", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, retry_reject_trace_id) != 0:
+            raise RuntimeError("401 不重试场景不应该产出 trace_analysis")
+        retry_reject_summary = query_trace_summary_row(db_path, retry_reject_trace_id)
+        if not retry_reject_summary:
+            raise RuntimeError("401 不重试场景没有查到 trace_summary")
+        if "401" not in retry_reject_summary["ai_error"]:
+            raise RuntimeError(f"401 不重试场景的 ai_error 没带上 401 线索: {retry_reject_summary['ai_error']}")
+        assert_last_provider_request(
+            probe_service.state,
+            ["glm"],
+            expected_model_by_provider=provider_model_map,
+            expected_api_key_by_provider=provider_api_key_map,
+        )
+
         print(
             "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
             "ai_analysis_enabled、ai_timeout_ms、prompt/active_prompt_id、webhook channel、"
-            "kernel_worker_threads、log_retention_days、双 provider/fallback 都已验证"
+            "kernel_worker_threads、log_retention_days、双 provider/fallback、AI retry 都已验证"
         )
         return 0
     except Exception as exc:
