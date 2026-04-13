@@ -139,3 +139,9 @@
   - [x] 先写 Python 红灯测试，锁定 `timeout_ms` 从路由请求透传到 provider
   - [x] 先写 Python 红灯测试，锁定 `GLM` 上游 `httpx` timeout 比外层 caller timeout 早 1 秒
   - [x] 再改 C++/Python/手工脚本三段超时口径，避免继续出现“外层先超时拿不到 proxy body”
+- [x] 为 Settings 第三层黑盒补双 provider 场景：本地假 proxy 同时支持 `gemini/glm`
+- [x] 为 Settings 第三层黑盒补主路成功验证：`gemini` 主路成功、`glm` 主路成功
+- [x] 为 Settings 第三层黑盒补自动降级验证：`gemini -> glm` 与 `glm -> gemini`
+- [x] 为 Settings 第三层黑盒补双失败验证：主备都失败时必须落 `failed_both`
+- [x] 运行 Settings 黑盒脚本，确认双 provider/fallback 链路通过
+- [x] 追加 2026-04-12 dev-log，记录这轮双 provider 黑盒与中文注释位置

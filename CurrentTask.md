@@ -70,12 +70,18 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
   - [x] `chat/completions + response_format=json_object`
   - [x] 本地 JSON/schema 校验
   - [x] 统一 `usage / error_status / error_message` 协议
+- [x] 双 provider/fallback 黑盒已收口：
+  - [x] `gemini` 主路成功
+  - [x] `glm` 主路成功
+  - [x] `gemini -> glm` 自动降级成功
+  - [x] `glm -> gemini` 自动降级成功
+  - [x] 主备都失败时落 `failed_both`
 
 ## 核心任务
 - [ ] 先做 Settings 真实生效联调，固化当前主链配置的验收口径
 - [ ] 再做单入口部署，收口 `/settings` 与 `http_port` 的正式产品语义
-- [ ] 再接 `GLM`，补齐双真实 provider 能力
-- [ ] 再补 `GLM` 的端到端联调与 fallback 黑盒，真正收口双真实 provider
+- [x] 再接 `GLM`，补齐双真实 provider 能力
+- [x] 再补 `GLM` 的端到端联调与 fallback 黑盒，真正收口双真实 provider
 - [ ] 再补 AI 重试，收口 Trace AI 可靠性链路
 - [ ] 再补实验开关，服务 benchmark 和论文对比
 - [ ] 再固定 benchmark 材料
@@ -84,7 +90,7 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 ## 验收标准
 - [ ] 能给出一份明确的 Settings 联调验收清单，并证明关键配置项真实生效
 - [ ] 后端托管 `client/dist` 后，用户只需要访问一个端口，前端不再硬编码旧 API 端口
-- [ ] `gemini + glm` 至少两家真实 provider 可用，自动降级链路可演示
+- [x] `gemini + glm` 至少两家真实 provider 可用，自动降级链路可演示
 - [ ] `ai_retry_enabled / ai_retry_max_attempts` 已被真实消费，且重试结果与熔断 / 降级链路语义一致
 - [ ] benchmark 命令、参数、结果表和截图可以直接复跑、直接放论文
 - [ ] `docker-compose` 可以一条命令拉起最小演示环境

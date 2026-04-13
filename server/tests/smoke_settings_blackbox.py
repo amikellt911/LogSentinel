@@ -39,10 +39,13 @@ class ProbeState:
         self._lock = threading.Lock()
         self.trace_requests: list[dict[str, Any]] = []
         self.webhook_payloads: list[dict[str, Any]] = []
+        self.provider_behaviors: dict[str, dict[str, Any]] = {}
 
-    def record_trace_request(self, payload: dict[str, Any]) -> None:
+    def record_trace_request(self, provider: str, payload: dict[str, Any]) -> None:
         with self._lock:
-            self.trace_requests.append(payload)
+            flattened = dict(payload)
+            flattened["provider"] = provider
+            self.trace_requests.append(flattened)
 
     def record_webhook_payload(self, payload: dict[str, Any]) -> None:
         with self._lock:
@@ -60,6 +63,65 @@ class ProbeState:
         with self._lock:
             self.webhook_payloads.clear()
 
+    def clear_trace_requests(self) -> None:
+        with self._lock:
+            self.trace_requests.clear()
+
+    def set_provider_behavior(self, provider: str, behavior: dict[str, Any]) -> None:
+        with self._lock:
+            self.provider_behaviors[provider] = dict(behavior)
+
+    def get_provider_behavior(self, provider: str) -> Optional[dict[str, Any]]:
+        with self._lock:
+            behavior = self.provider_behaviors.get(provider)
+            if behavior is None:
+                return None
+            return dict(behavior)
+
+
+def build_probe_success_payload(provider: str,
+                                *,
+                                risk_level: str = "warning",
+                                summary: Optional[str] = None,
+                                root_cause: Optional[str] = None,
+                                solution: Optional[str] = None) -> dict[str, Any]:
+    """
+    本地假 proxy 对双 provider 黑盒统一返回这套结构。
+    这样后端走的仍然是“真实 HTTP + 真实协议解析 + 真实状态流转”，
+    只是把云侧的不稳定性替换成了本地可控的响应。
+    """
+    normalized_provider = provider.lower()
+    normalized_risk = risk_level.lower()
+    return {
+        "ok": True,
+        "provider": normalized_provider,
+        "analysis": {
+            "summary": summary or f"{normalized_provider}-{normalized_risk}-summary",
+            "risk_level": normalized_risk,
+            "root_cause": root_cause or f"{normalized_provider}-{normalized_risk}-root-cause",
+            "solution": solution or f"{normalized_provider}-{normalized_risk}-solution",
+        },
+        "usage": {
+            "input_tokens": 17,
+            "output_tokens": 9,
+            "total_tokens": 26,
+        },
+    }
+
+
+def build_probe_failure_payload(provider: str,
+                                *,
+                                error_status: str,
+                                error_message: str,
+                                error_code: Optional[int] = None) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "provider": provider.lower(),
+        "error_code": error_code,
+        "error_status": error_status,
+        "error_message": error_message,
+    }
+
 
 class ProbeRequestHandler(BaseHTTPRequestHandler):
     server: "ProbeServer"
@@ -74,7 +136,7 @@ class ProbeRequestHandler(BaseHTTPRequestHandler):
             payload = {"raw_body": raw_body}
 
         if self.path == "/analyze/trace/mock":
-            self.server.state.record_trace_request(payload)
+            self.server.state.record_trace_request("mock", payload)
             trace_text = str(payload.get("trace_text", ""))
             risk_level = "critical"
             if "webhook-warning-sentinel" in trace_text:
@@ -96,6 +158,19 @@ class ProbeRequestHandler(BaseHTTPRequestHandler):
                 },
             }
             self._send_json(200, response)
+            return
+
+        if self.path.startswith("/analyze/trace/"):
+            provider = self.path.rsplit("/", 1)[-1].lower()
+            self.server.state.record_trace_request(provider, payload)
+            behavior = self.server.state.get_provider_behavior(provider)
+            if behavior is None:
+                self._send_json(
+                    404,
+                    {"ok": False, "error_status": "UNCONFIGURED_PROVIDER", "error_message": f"no fake behavior for {provider}"},
+                )
+                return
+            self._send_json(200, behavior)
             return
 
         if self.path == "/webhook":
@@ -186,8 +261,9 @@ def start_server(server_bin: Path,
     启动后端进程。
 
     这里固定追加 `--no-auto-start-proxy`：
-    - 当前黑盒只验证 Settings 冷启动配置消费，不验证真实 AI provider；
-    - 把 proxy 拉起来只会增加环境噪音，不能提升这三项配置的证明力度。
+    - 黑盒主线验证的是“后端到底消费了哪些冷启动配置”，不是去测真实云 API；
+    - 当我们显式传入 `trace_ai_base_url` 时，后端会去打本地 fake proxy，继续验证双 provider/fallback；
+    - 不管哪种场景，都没必要再拉起真实 Python proxy，否则只会增加环境噪音。
     """
     if not server_bin.exists():
         raise FileNotFoundError(f"未找到服务可执行文件: {server_bin}")
@@ -436,6 +512,114 @@ def query_trace_analysis_count(db_path: Path, trace_id: str) -> int:
         return int(cur.fetchone()[0])
     finally:
         conn.close()
+
+
+def query_trace_summary_row(db_path: Path, trace_id: str) -> Optional[dict[str, Any]]:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT trace_id, ai_status, ai_error, risk_level
+            FROM trace_summary
+            WHERE trace_id = ?
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (trace_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "trace_id": str(row[0]),
+            "ai_status": str(row[1]),
+            "ai_error": str(row[2] or ""),
+            "risk_level": str(row[3] or ""),
+        }
+    finally:
+        conn.close()
+
+
+def build_demo_trace_pair(trace_key: int, child_name: str, *, trace_end_field: str = "trace_end") -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    双 provider 黑盒这里继续复用“两条 span 组成一条 trace”的最小模型。
+    这样每个场景都还是走真实 Trace 聚合、真实 worker、真实 SQLite 落库，
+    不会因为测试 provider 切换就偷偷绕开主链状态机。
+    """
+    root = {
+        "trace_key": trace_key,
+        "span_id": trace_key + 1,
+        "start_time_ms": 1700000010000,
+        "end_time_ms": 1700000010100,
+        "name": f"{child_name}-root",
+        "service_name": "settings-blackbox-service",
+        "status": "OK",
+    }
+    child = {
+        "trace_key": trace_key,
+        "span_id": trace_key + 2,
+        "parent_span_id": trace_key + 1,
+        "start_time_ms": 1700000010110,
+        "end_time_ms": 1700000010200,
+        "name": child_name,
+        "service_name": "settings-blackbox-service",
+        "status": "ERROR",
+        trace_end_field: True,
+    }
+    return root, child
+
+
+def send_trace_pair(url: str, trace_key: int, child_name: str, *, trace_end_field: str = "trace_end") -> str:
+    root, child = build_demo_trace_pair(trace_key, child_name, trace_end_field=trace_end_field)
+    post_span(url, root)
+    post_span(url, child)
+    return str(trace_key)
+
+
+def restart_server_with_fake_proxy(proc: Optional[subprocess.Popen],
+                                   server_bin: Path,
+                                   db_path: Path,
+                                   new_url: str,
+                                   ready_timeout: float,
+                                   probe_service: LocalProbeService,
+                                   proxy_timeout_ms: int) -> subprocess.Popen:
+    stop_server(proc)
+    wait_old_port_closed(new_url, 3.0)
+    restarted = start_server(server_bin,
+                             db_path,
+                             None,
+                             trace_ai_base_url=probe_service.base_url,
+                             trace_ai_timeout_ms=proxy_timeout_ms)
+    wait_server_ready(new_url, ready_timeout, restarted)
+    wait_process_log_contains(restarted, "Thread Model:", timeout_sec=3.0)
+    return restarted
+
+
+def assert_last_provider_request(state: ProbeState,
+                                 expected_order: list[str],
+                                 *,
+                                 expected_model_by_provider: Optional[dict[str, str]] = None,
+                                 expected_api_key_by_provider: Optional[dict[str, str]] = None) -> None:
+    requests_snapshot = state.snapshot_trace_requests()
+    actual_order = [str(item.get("provider", "")) for item in requests_snapshot]
+    if actual_order != expected_order:
+        raise RuntimeError(f"provider 请求顺序不正确: expected={expected_order}, actual={actual_order}")
+
+    if expected_model_by_provider:
+        for item in requests_snapshot:
+            provider = str(item.get("provider", ""))
+            if provider in expected_model_by_provider and str(item.get("model", "")) != expected_model_by_provider[provider]:
+                raise RuntimeError(
+                    f"{provider} 实收 model 不正确: expected={expected_model_by_provider[provider]}, actual={item.get('model')}"
+                )
+    if expected_api_key_by_provider:
+        for item in requests_snapshot:
+            provider = str(item.get("provider", ""))
+            if provider in expected_api_key_by_provider and str(item.get("api_key", "")) != expected_api_key_by_provider[provider]:
+                raise RuntimeError(
+                    f"{provider} 实收 api_key 不正确: expected={expected_api_key_by_provider[provider]}, actual={item.get('api_key')}"
+                )
 
 
 def seed_retention_trace_rows(db_path: Path, expired_trace_id: str, fresh_trace_id: str) -> None:
@@ -795,10 +979,140 @@ def run_flow(args: argparse.Namespace) -> int:
         if "critical" not in str(title).lower():
             raise RuntimeError("critical webhook 的标题没有带上风险等级")
 
+        # 下面这 5 条是双 provider 黑盒的核心：
+        # 我们不连真实云 API，而是让后端去打同一个本地 fake proxy。
+        # 这样既能锁住“设置里的主/备 provider 到底有没有真实消费”，
+        # 也不会把 CI 绑到外网、配额、真实模型耗时这些不稳定因素上。
+        provider_model_map = {
+            "gemini": "gemini-fake-model",
+            "glm": "glm-fake-model",
+        }
+        provider_api_key_map = {
+            "gemini": "gemini-fake-key",
+            "glm": "glm-fake-key",
+        }
+
+        def configure_provider_pair(primary: str, fallback: str) -> None:
+            post_config_patch(
+                new_url,
+                [
+                    {"key": "ai_analysis_enabled", "value": "1"},
+                    {"key": "ai_auto_degrade", "value": "1"},
+                    {"key": "ai_provider", "value": primary},
+                    {"key": "ai_model", "value": provider_model_map[primary]},
+                    {"key": "ai_api_key", "value": provider_api_key_map[primary]},
+                    {"key": "ai_fallback_provider", "value": fallback},
+                    {"key": "ai_fallback_model", "value": provider_model_map[fallback]},
+                    {"key": "ai_fallback_api_key", "value": provider_api_key_map[fallback]},
+                ],
+            )
+
+        # 场景 1：gemini 主路成功，glm 不应该被调用。
+        configure_provider_pair("gemini", "glm")
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        probe_service.state.clear_trace_requests()
+        probe_service.state.set_provider_behavior("gemini", build_probe_success_payload("gemini", risk_level="warning"))
+        probe_service.state.set_provider_behavior("glm", build_probe_success_payload("glm", risk_level="warning"))
+        gemini_primary_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 300, "gemini-primary-success")
+        wait_trace_summary_status(db_path, gemini_primary_trace_id, "completed", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, gemini_primary_trace_id) != 1:
+            raise RuntimeError("gemini 主路成功场景应该产出 1 条 trace_analysis")
+        assert_last_provider_request(
+            probe_service.state,
+            ["gemini"],
+            expected_model_by_provider=provider_model_map,
+            expected_api_key_by_provider=provider_api_key_map,
+        )
+
+        # 场景 2：glm 主路成功，gemini 不应该被调用。
+        configure_provider_pair("glm", "gemini")
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        probe_service.state.clear_trace_requests()
+        probe_service.state.set_provider_behavior("glm", build_probe_success_payload("glm", risk_level="warning"))
+        probe_service.state.set_provider_behavior("gemini", build_probe_success_payload("gemini", risk_level="warning"))
+        glm_primary_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 400, "glm-primary-success")
+        wait_trace_summary_status(db_path, glm_primary_trace_id, "completed", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, glm_primary_trace_id) != 1:
+            raise RuntimeError("glm 主路成功场景应该产出 1 条 trace_analysis")
+        assert_last_provider_request(
+            probe_service.state,
+            ["glm"],
+            expected_model_by_provider=provider_model_map,
+            expected_api_key_by_provider=provider_api_key_map,
+        )
+
+        # 场景 3：gemini 主路失败，glm fallback 成功。
+        configure_provider_pair("gemini", "glm")
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        probe_service.state.clear_trace_requests()
+        probe_service.state.set_provider_behavior(
+            "gemini",
+            build_probe_failure_payload("gemini", error_status="PRIMARY_TIMEOUT", error_message="gemini primary failed"),
+        )
+        probe_service.state.set_provider_behavior("glm", build_probe_success_payload("glm", risk_level="warning"))
+        gemini_fallback_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 500, "gemini-fallback-to-glm")
+        wait_trace_summary_status(db_path, gemini_fallback_trace_id, "completed", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, gemini_fallback_trace_id) != 1:
+            raise RuntimeError("gemini->glm 自动降级场景应该产出 1 条 trace_analysis")
+        assert_last_provider_request(
+            probe_service.state,
+            ["gemini", "glm"],
+            expected_model_by_provider=provider_model_map,
+            expected_api_key_by_provider=provider_api_key_map,
+        )
+
+        # 场景 4：glm 主路失败，gemini fallback 成功。
+        configure_provider_pair("glm", "gemini")
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        probe_service.state.clear_trace_requests()
+        probe_service.state.set_provider_behavior(
+            "glm",
+            build_probe_failure_payload("glm", error_status="PRIMARY_TIMEOUT", error_message="glm primary failed"),
+        )
+        probe_service.state.set_provider_behavior("gemini", build_probe_success_payload("gemini", risk_level="warning"))
+        glm_fallback_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 600, "glm-fallback-to-gemini")
+        wait_trace_summary_status(db_path, glm_fallback_trace_id, "completed", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, glm_fallback_trace_id) != 1:
+            raise RuntimeError("glm->gemini 自动降级场景应该产出 1 条 trace_analysis")
+        assert_last_provider_request(
+            probe_service.state,
+            ["glm", "gemini"],
+            expected_model_by_provider=provider_model_map,
+            expected_api_key_by_provider=provider_api_key_map,
+        )
+
+        # 场景 5：主备都失败，最终状态必须是 failed_both，且 ai_error 要带上双边失败信息。
+        configure_provider_pair("glm", "gemini")
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        probe_service.state.clear_trace_requests()
+        probe_service.state.set_provider_behavior(
+            "glm",
+            build_probe_failure_payload("glm", error_status="PRIMARY_TIMEOUT", error_message="glm primary failed"),
+        )
+        probe_service.state.set_provider_behavior(
+            "gemini",
+            build_probe_failure_payload("gemini", error_status="FALLBACK_TIMEOUT", error_message="gemini fallback failed"),
+        )
+        failed_both_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 700, "glm-gemini-both-failed")
+        wait_trace_summary_status(db_path, failed_both_trace_id, "failed_both", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, failed_both_trace_id) != 0:
+            raise RuntimeError("主备都失败场景不应该产出 trace_analysis")
+        failed_both_summary = query_trace_summary_row(db_path, failed_both_trace_id)
+        if not failed_both_summary:
+            raise RuntimeError("主备都失败场景没有查到 trace_summary")
+        if "primary:" not in failed_both_summary["ai_error"] or "fallback:" not in failed_both_summary["ai_error"]:
+            raise RuntimeError(f"failed_both 的 ai_error 没带上双边失败信息: {failed_both_summary['ai_error']}")
+        assert_last_provider_request(
+            probe_service.state,
+            ["glm", "gemini"],
+            expected_model_by_provider=provider_model_map,
+            expected_api_key_by_provider=provider_api_key_map,
+        )
+
         print(
             "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
             "ai_analysis_enabled、ai_timeout_ms、prompt/active_prompt_id、webhook channel、"
-            "kernel_worker_threads、log_retention_days 都已验证"
+            "kernel_worker_threads、log_retention_days、双 provider/fallback 都已验证"
         )
         return 0
     except Exception as exc:

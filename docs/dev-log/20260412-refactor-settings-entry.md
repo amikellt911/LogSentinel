@@ -329,6 +329,80 @@ fix(ai): 修复 glm 超时链路并透传 provider timeout
 
 # Git Commit Message
 
+test(settings): 补双 provider 黑盒并修正 no-auto-start-proxy 语义
+
+# Modification
+
+- `server/tests/smoke_settings_blackbox.py`
+- `server/src/main.cpp`
+- `CurrentTask.md`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `docs/dev-log/20260412-refactor-settings-entry.md`
+
+# What Changed
+
+- 扩展 `smoke_settings_blackbox.py` 里的本地探针服务，让同一个 fake proxy 可以同时模拟：
+  - `/analyze/trace/gemini`
+  - `/analyze/trace/glm`
+  - 以及已有的 `/analyze/trace/mock` / `/webhook`
+- 在黑盒主流程中新增 5 条双 provider 场景：
+  - `gemini` 主路成功
+  - `glm` 主路成功
+  - `gemini -> glm` 自动降级成功
+  - `glm -> gemini` 自动降级成功
+  - 主备都失败时落 `failed_both`
+- 为黑盒补了最小 SQLite 查询 helper，直接查 `trace_summary.ai_status / ai_error` 与 `trace_analysis` 条数，而不是只看探针有没有收到请求。
+- 修复 `main.cpp` 里 `--no-auto-start-proxy` 的语义 bug：
+  - 之前它不仅阻止自动拉起 sidecar，还会顺手把整个 Trace AI 主链关掉
+  - 现在它只表示“不自动拉 sidecar”，不再阻止创建 `TraceProxyAi`
+  - 这样像“后端打本地 fake proxy”的黑盒测试和后续单入口部署场景才能成立
+- 同步更新 `CurrentTask.md`，把“双真实 provider + fallback 黑盒已收口”记入当前基线和验收标准
+
+# Verification
+
+- `cmake --build server/build --target LogSentinel`
+- `python3 server/tests/smoke_settings_blackbox.py`
+- `git diff --check`
+
+结果：
+
+- `LogSentinel` 重编通过
+- `smoke_settings_blackbox.py` 通过，已确认：
+  - `gemini` 主路成功
+  - `glm` 主路成功
+  - `gemini -> glm` 自动降级成功
+  - `glm -> gemini` 自动降级成功
+  - 主备都失败时 `trace_summary.ai_status=failed_both`
+- `git diff --check` 通过
+
+# Learning Tips
+
+## Newbie Tips
+
+- `--no-auto-start-proxy` 这种名字很容易把两个语义搅在一起：
+  - “不要自动拉 sidecar”
+  - “整个 AI 主链禁用”
+  这两个不是一回事。只要后端还能打一个已存在的 proxy 地址，AI 主链就应该照常工作。
+- 黑盒测双 provider 时，不要把重点放在“收到了几个 HTTP 请求”。真正值钱的是最终落库状态：
+  - 成功时是不是 `completed`
+  - 双失败时是不是 `failed_both`
+  - `ai_error` 有没有带上主备两边的失败信息
+
+## Function Explanation
+
+- `build_probe_success_payload / build_probe_failure_payload`：本地 fake proxy 用来统一构造成功/失败协议的 helper，专门模拟真实 Python proxy 对 C++ 的外部契约。
+- `restart_server_with_fake_proxy(...)`：把“停旧进程 -> 等端口关闭 -> 用本地 fake proxy 重启后端”这套动作收进一个 helper，避免 5 条场景各自复制一遍重启逻辑。
+- `query_trace_summary_row(...)`：黑盒里直接查 SQLite 主表当前最终状态的 helper，用来证明 worker 收尾后的真实结果，而不是只看内存或日志。
+
+## Pitfalls
+
+- 如果黑盒里继续传 `--trace-ai-provider mock` 这种 CLI override，就会把 Settings 里的 `ai_provider` 冲掉，最后测到的是 CLI，不是配置。
+- 如果不修 `enable_trace_ai` 的条件，只要脚本带了 `--no-auto-start-proxy`，后端就会直接把 AI 主链关掉，表面上像是 provider/fallback 没生效，实际上是根本没构出来。
+
+---
+
+# Git Commit Message
+
 feat(ai-proxy): 接入 GLM trace provider
 
 # Modification

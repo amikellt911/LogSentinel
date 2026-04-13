@@ -552,8 +552,11 @@ int main(int argc, char* argv[])
     std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(std::move(webhook_channels));
     std::shared_ptr<TraceAiProvider> trace_ai;
     std::shared_ptr<TraceAiProvider> fallback_trace_ai;
-    const bool enable_trace_ai =
-        effective_ai_analysis_enabled && (auto_start_proxy || trace_ai_provider_explicit);
+    // `--no-auto-start-proxy` 的语义应该只是“不要替我拉起 Python sidecar”，
+    // 不能顺手把整个 Trace AI 主链也关掉。
+    // 否则像黑盒测试这种“后端打本地 fake proxy、但不需要真实 sidecar”的场景会被误判成 AI disabled，
+    // Settings 里的 ai_provider/fallback_provider 看起来已经保存成功，实际根本没有进入冷启动消费链。
+    const bool enable_trace_ai = effective_ai_analysis_enabled;
     if (enable_trace_ai) {
         TraceAiBackend backend = TraceAiBackend::Mock;
         if (!TryParseTraceAiBackend(effective_trace_ai_provider, &backend)) {
