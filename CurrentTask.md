@@ -13,7 +13,7 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 - [x] 完成前后端单入口部署：后端托管 `client/dist`，让 `http_port` 成为系统唯一入口端口 (2026-04-13)
 - [x] 接入第 2 个真实 AI provider：`GLM` (2026-04-12)
 - [x] 落地 AI 重试，让 `ai_retry_enabled / ai_retry_max_attempts` 从占位配置变成真实能力 (2026-04-13)
-- [x] **配置热加载第一刀 (Hot-reloading)**: 支持 `ai_model / ai_api_key` 在运行时无感切换；`ai_provider` 仍保持冷启动语义 (2026-04-13)
+- [x] **配置热加载第一刀 (Hot-reloading)**: 支持主路与 fallback 的 `model/api_key` 在运行时无感切换；`ai_provider / ai_fallback_provider` 仍保持冷启动语义 (2026-04-13)
 - [ ] 增加实验/对比开关，用于 benchmark 和论文对比
 - [ ] 固定 benchmark 命令、场景、结果模板和截图
 - [ ] 补 `Docker / docker-compose`，把轻量部署真正做成可复现能力
@@ -78,7 +78,9 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
   - [x] `4xx` 鉴权/参数错误与 `TIMEOUT` 不重试
 - [x] Trace AI 已完成热更新第一刀：
   - [x] 运行中修改 `ai_model / ai_api_key` 后，后续 trace 请求会带新值
+  - [x] 运行中修改 `ai_fallback_model / ai_fallback_api_key` 后，后续降级请求会带新值
   - [x] `ai_provider` 仍然由启动期决定，不支持运行中切路由
+  - [x] `ai_fallback_provider` 同样由启动期决定，不支持运行中切路由
   - [x] 热更新实现走“repo 版本号 + provider 本地小快照”语义，不在每次 AI 调用都全量重抓 Settings
 - [x] 双 provider/fallback 黑盒已收口：
   - [x] `gemini` 主路成功
@@ -130,6 +132,6 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 - benchmark 实验开关当前先走 CLI，而不是进 Settings：
   - 目标是把“实验变量”跟“产品配置”拆开，避免为了做对照组去污染 SQLite 冷启动配置。
   - 当前最小三件套已完成：`--disable-ai`、`--disable-webhook`、`--disable-buffered-trace-repo`。
-- 配置热更新当前只收了 `ai_model / ai_api_key`：
+- 配置热更新当前只收了主路与 fallback 的 `model/api_key`：
   - 这是因为它们只是 proxy 请求体字段，适合运行时刷新。
-  - `ai_provider` 会决定 `/analyze/trace/{provider}` 路由，仍然保持冷启动更稳。
+  - `ai_provider / ai_fallback_provider` 会决定 `/analyze/trace/{provider}` 路由，仍然保持冷启动更稳。

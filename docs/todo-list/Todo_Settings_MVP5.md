@@ -178,3 +178,8 @@
 - [x] 在 `TraceProxyAi` 落最小运行时凭证快照，做到“版本没变不刷新，版本变了才重抓快照”
 - [x] 运行最小黑盒/构建验证，确认热更新只影响 `model/api_key`，不碰 provider 路由
 - [x] 追加 2026-04-13 dev-log，记录这轮 `ai_model / ai_api_key` 热更新与中文注释位置
+- [x] 为 `ai_fallback_model / ai_fallback_api_key` 热更新补红灯黑盒：运行中改 fallback 配置、不重启服务，下一次降级请求必须带新值
+- [x] 扩展 `SqliteConfigRepository` 的 AI 运行时版本号覆盖范围，把 fallback 请求体热更新也纳入
+- [x] 给 fallback `TraceProxyAi` 挂同一套版本号 + 小快照 reader，但读取 fallback 字段
+- [x] 运行最小黑盒/构建验证，确认 fallback 热更新只影响 `ai_fallback_model / ai_fallback_api_key`
+- [x] 追加 2026-04-13 dev-log，记录这轮 fallback 热更新与中文注释位置

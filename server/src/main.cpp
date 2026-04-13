@@ -729,6 +729,18 @@ int main(int argc, char* argv[])
             // 这里不额外拆一套 fallback_retry_*，先把“每个 provider 调用链都共享自己的 timeout 总预算”这个主语义做实。
             fallback_options.retry_enabled = startup_app_config.ai_retry_enabled;
             fallback_options.retry_max_attempts = startup_app_config.ai_retry_max_attempts;
+            // fallback provider 也只热更新请求体里的 model/api_key，不热更新路由本身。
+            // 所以这里复用同一条版本号链，但 reader 读取的是 fallback 那组字段。
+            fallback_options.runtime_version_reader = [config_repo]() -> uint64_t {
+                return config_repo->getTraceAiRuntimeVersion();
+            };
+            fallback_options.runtime_credentials_reader = [config_repo]() -> TraceAiRuntimeCredentials {
+                const auto snapshot = config_repo->getSnapshot();
+                return TraceAiRuntimeCredentials{
+                    snapshot ? snapshot->app_config.ai_fallback_model : "",
+                    snapshot ? snapshot->app_config.ai_fallback_api_key : "",
+                };
+            };
             fallback_trace_ai = CreateTraceAiProvider(fallback_options);
         }
         std::cout << "Trace AI enabled via proxy. provider=" << effective_trace_ai_provider

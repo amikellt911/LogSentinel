@@ -1310,6 +1310,44 @@ def run_flow(args: argparse.Namespace) -> int:
             expected_api_key_by_provider=provider_api_key_map,
         )
 
+        # 场景 3.5：provider 路由仍然冷启动，但 fallback 的 model/api_key 应该支持运行中热更新。
+        # 所以这里先用重启把 gemini->glm 这条主备路由钉死，然后不再重启服务，只改 fallback 凭证。
+        hot_reload_fallback_model = "glm-hot-fallback-model"
+        hot_reload_fallback_api_key = "glm-hot-fallback-key"
+        post_config_patch(
+            new_url,
+            [
+                {"key": "ai_fallback_model", "value": hot_reload_fallback_model},
+                {"key": "ai_fallback_api_key", "value": hot_reload_fallback_api_key},
+            ],
+        )
+        probe_service.state.clear_trace_requests()
+        probe_service.state.set_provider_behavior(
+            "gemini",
+            build_probe_failure_payload("gemini", error_status="PRIMARY_TIMEOUT", error_message="gemini primary failed"),
+        )
+        probe_service.state.set_provider_behavior("glm", build_probe_success_payload("glm", risk_level="warning"))
+        gemini_hot_reload_fallback_trace_id = send_trace_pair(
+            new_url,
+            int(time.time() * 1000) + 550,
+            "gemini-fallback-hot-reload-to-glm",
+        )
+        wait_trace_summary_status(db_path, gemini_hot_reload_fallback_trace_id, "completed", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, gemini_hot_reload_fallback_trace_id) != 1:
+            raise RuntimeError("fallback 热更新场景应该产出 1 条 trace_analysis")
+        assert_last_provider_request(
+            probe_service.state,
+            ["gemini", "glm"],
+            expected_model_by_provider={
+                "gemini": provider_model_map["gemini"],
+                "glm": hot_reload_fallback_model,
+            },
+            expected_api_key_by_provider={
+                "gemini": provider_api_key_map["gemini"],
+                "glm": hot_reload_fallback_api_key,
+            },
+        )
+
         # 场景 4：glm 主路失败，gemini fallback 成功。
         configure_provider_pair("glm", "gemini")
         proc = restart_server_with_fake_proxy(proc, server_bin, db_path, frontend_dist, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
@@ -1496,7 +1534,7 @@ def run_flow(args: argparse.Namespace) -> int:
 
         print(
             "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
-            "ai_analysis_enabled、ai_timeout_ms、ai_model/api_key 热更新、prompt/active_prompt_id、webhook channel、"
+            "ai_analysis_enabled、ai_timeout_ms、主路与 fallback 的 model/api_key 热更新、prompt/active_prompt_id、webhook channel、"
             "kernel_worker_threads、log_retention_days、双 provider/fallback、AI retry、"
             "benchmark CLI 开关都已验证"
         )

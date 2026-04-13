@@ -74,9 +74,12 @@ static void ReplaceTraceEndAliases(sqlite3* db, const std::vector<std::string>& 
 
 static bool TouchesTraceAiRuntimeHotKeys(const std::map<std::string, std::string>& mp)
 {
-    // 这条版本线当前只管主 provider 请求体里的 model/api_key。
-    // provider 路由、fallback 三元组和 prompt 仍然按冷启动语义处理，不跟这次热更新混在一起。
-    return mp.find("ai_model") != mp.end() || mp.find("ai_api_key") != mp.end();
+    // 这条版本线只管“已经固定好 provider 路由之后，请求体里还能热切的凭证字段”。
+    // 所以主路和 fallback 的 model/api_key 都算，但 provider/prompt 这些仍然按冷启动处理。
+    return mp.find("ai_model") != mp.end() ||
+           mp.find("ai_api_key") != mp.end() ||
+           mp.find("ai_fallback_model") != mp.end() ||
+           mp.find("ai_fallback_api_key") != mp.end();
 }
 
 // 辅助函数：将 DB 字符串值应用到 AppConfig 结构体

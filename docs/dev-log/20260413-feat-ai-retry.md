@@ -320,3 +320,50 @@
 #### Pitfalls
 - 如果先发布新快照，再去做 SQLite `COMMIT`，一旦事务提交失败，内存态和持久化态就会分叉，后面排查会非常恶心。
 - 黑盒里新增 trace 场景时，要注意它会不会顺手污染 webhook 或 provider 的探针状态；这次就因为新场景默认被 fake proxy 识别成 `critical`，把后面的阈值断言串脏了一次。
+
+## 追加记录：fallback model/api_key 热更新
+
+### Git Commit Message
+`feat(ai): 支持降级模型与密钥热更新`
+
+### Modification
+- `server/persistence/SqliteConfigRepository.h`
+- `server/persistence/SqliteConfigRepository.cpp`
+- `server/ai/TraceAiFactory.h`
+- `server/src/main.cpp`
+- `server/tests/smoke_settings_blackbox.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `CurrentTask.md`
+
+### What Changed
+- 扩展 `trace_ai_runtime_version_` 的命中范围，把 `ai_fallback_model / ai_fallback_api_key` 也纳入同一条 AI 请求体热更新版本线。
+- 保持 `ai_fallback_provider` 冷启动不变，只让 fallback provider 的请求体参数支持运行中刷新。
+- 在 `main.cpp` 给 fallback `TraceProxyAi` 也挂上 `runtime_version_reader + runtime_credentials_reader`，但 reader 读取的是 fallback 字段而不是主路字段。
+- 在第三层黑盒增加一条 `gemini -> glm` 降级场景：先冷启动固定主备路由，再运行中修改 `ai_fallback_model / ai_fallback_api_key`，验证下一次 fallback 请求必须带新值。
+
+### 中文注释
+- `server/persistence/SqliteConfigRepository.h`
+  - 把版本号注释修正成“主路与 fallback 的请求体热更新都覆盖”，避免继续误导成只主路有效。
+- `server/persistence/SqliteConfigRepository.cpp`
+  - 在 `TouchesTraceAiRuntimeHotKeys` 补注释，说明为什么 fallback 的 `model/api_key` 也要纳入同一条版本线。
+- `server/ai/TraceAiFactory.h`
+  - 把 runtime reader 的注释修正成“当前 provider 实例对应的凭证来源”，不再暗示只给主路用。
+- `server/src/main.cpp`
+  - 在 fallback reader 接线处补注释，说明这里只热更新 fallback 请求体字段，不热更新 fallback provider 路由。
+- `server/tests/smoke_settings_blackbox.py`
+  - 在新黑盒场景前补注释，说明必须先冷启动定 provider，再运行中只改 fallback 凭证。
+
+### Verification
+- `cmake --build server/build --target LogSentinel`
+- `/home/llt/Project/llt/venv/bin/python3 server/tests/smoke_settings_blackbox.py`
+
+### Learning Tips
+#### Newbie Tips
+- 同一条版本号线不一定代表“同一份配置对象”。这次主路和 fallback 复用的是“变化探针”，真正读取哪组字段还是由各自的 reader 决定。
+- 如果路由是冷启动、凭证是热更新，那么测试一定要先把路由固定住，再在不重启的情况下改凭证；不然你根本分不清到底是路由生效了还是热更新生效了。
+
+#### Function Explanation
+- `runtime_credentials_reader`：把“这个 provider 该从哪组配置里拿 model/api_key”延迟到运行时决定，但仍然只在版本变化时调用。
+
+#### Pitfalls
+- 不要把 build 和“会反复重启同一个二进制”的黑盒并行跑。链接器改写可执行文件时，黑盒刚好在 `execve`，就会报 `Permission denied`，这次已经踩过一次。
