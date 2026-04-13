@@ -126,3 +126,58 @@
 #### Pitfalls
 - 把“构建二进制”和“需要多次重启执行同一个二进制”的黑盒并行跑，会撞上链接器重写目标文件，进程二次拉起时就可能报 `Permission denied`。这种验证必须串行。
 - `start_server` 这类测试辅助函数一旦新增位置参数，所有调用点都要优先改成命名参数，否则很容易把 `frontend_dist`、`trace_ai_base_url` 这种字符串参数串位，错误表象会非常怪。
+
+## 追加记录：benchmark CLI 开关第一刀
+
+### Git Commit Message
+`feat(server): 增加 benchmark CLI 实验开关`
+
+### Modification
+- `server/src/main.cpp`
+- `server/tests/smoke_settings_blackbox.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `CurrentTask.md`
+
+### What Changed
+- 在 `main.cpp` 增加 `--disable-ai` 与 `--disable-webhook` 两个 CLI 开关，只服务 benchmark/对比实验，不进入正式 Settings。
+- `--disable-ai` 的优先级收口为 `CLI > SQLite/Settings`：
+  - 不自动拉起 proxy
+  - 不构造 Trace AI provider
+  - `TraceSessionManager` 启动时直接按 `ai_analysis_enabled=false` 语义收成 `skipped_manual`
+- `--disable-webhook` 的优先级同样压过 Settings channel 和 CLI webhook override：
+  - 不自动拉起本地 mock webhook
+  - 不注入 CLI webhook 渠道
+  - `notifier` 保持空，Trace 分析和落库链路继续正常工作
+- 给黑盒脚本增加 `extra_args` 透传，补两条第三层场景：
+  - `cli-disable-ai`：必须不打 fake proxy、`trace_analysis` 不新增、`ai_status=skipped_manual`
+  - `cli-disable-webhook`：必须仍然完成 AI 分析，但不能有任何 webhook 外发
+- 修正黑盒日志辅助函数：
+  - 进程 `stdout` 管道改成累计缓冲
+  - 避免先等 `Thread Model` 时把后续 `Trace AI disabled` 启动日志提前消费掉
+
+### 中文注释
+- `server/src/main.cpp`
+  - 在 CLI 参数解析处补注释，说明这两个开关为什么只服务 benchmark，以及为什么优先级必须压过 Settings。
+  - 在 webhook/notifier 分支补注释，说明“关闭通知外发”和“关闭整条分析链”是两回事。
+- `server/tests/smoke_settings_blackbox.py`
+  - 在 `start_server` 补注释，说明为什么要给进程挂 `_log_buffer`。
+  - 在 `read_available_process_logs` 和 `wait_process_log_contains` 补注释，说明 `subprocess.PIPE` 是破坏性读取，黑盒必须自己维护累计日志。
+  - 在两个新黑盒场景前补注释，明确它们锁的是 CLI 优先级，不是普通 Settings 冷启动消费。
+
+### Verification
+- `cmake --build server/build --target LogSentinel`
+- `/home/llt/Project/llt/venv/bin/python3 server/tests/smoke_settings_blackbox.py`
+- `git diff --check`
+
+### Learning Tips
+#### Newbie Tips
+- `subprocess.PIPE` 不是日志文件，它更像一条向前流动的管道。你读过一次，游标就前进了；后面再等另一个关键字时，之前那段字节不会自己回来。
+- benchmark 开关最好和正式产品配置分开。否则你为了做“关 AI”的对照实验，还得先去改 SQLite 里的 `ai_analysis_enabled`，实验变量和业务配置就串味了。
+
+#### Function Explanation
+- `setattr(proc, "_log_buffer", "...")`：这里不是花活，而是给 `Popen` 对象挂一份测试态缓存，让多个日志断言共享同一份历史输出。
+- `proc.poll()`：非阻塞检查子进程是否已经退出。黑盒里经常要边等日志边盯进程活性，这个接口正好做这件事。
+
+#### Pitfalls
+- 启动日志断言如果只看“本次新读到的增量”，很容易出现假阴性：实际上后端已经打印过了，只是前一个断言先把那段输出吃掉了。
+- `--disable-webhook` 这种开关如果写成“直接不创建 notifier”还不够，你还得同时挡掉 mock webhook 注入和 CLI override，不然还是会偷偷发通知。

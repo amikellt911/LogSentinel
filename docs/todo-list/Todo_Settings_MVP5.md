@@ -162,3 +162,8 @@
 - [x] 为单入口部署补黑盒验证：`/`、`/settings`、`/fdasxz`、`/assets/*.js`、`/api/settings/all`
 - [x] 运行最小构建/测试/黑盒与 `git diff --check`，确认单入口部署链路可用
 - [x] 追加 2026-04-13 dev-log，记录这轮单入口部署实现与中文注释位置
+- [x] 为 benchmark CLI 开关补设计/执行条目：`--disable-ai` 与 `--disable-webhook`
+- [x] 为 benchmark CLI 开关补黑盒红灯：锁 CLI 优先级高于 Settings 冷启动配置
+- [x] 在 `main.cpp` 接入 `--disable-ai` 与 `--disable-webhook`，并补启动日志说明
+- [x] 运行最小黑盒/构建验证，确认 AI 与 webhook 的 benchmark 开关真实生效
+- [x] 追加 2026-04-13 dev-log，记录这轮 benchmark CLI 开关实现与中文注释位置

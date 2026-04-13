@@ -207,6 +207,8 @@ int main(int argc, char* argv[])
     std::string webhook_url;
     std::string webhook_secret;
     std::optional<std::string> frontend_dist_arg;
+    bool disable_ai_cli = false;
+    bool disable_webhook_cli = false;
     bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
@@ -280,6 +282,15 @@ int main(int argc, char* argv[])
             // 单入口部署优先允许黑盒和演示脚本显式指定 dist 目录，
             // 这样测试时可以喂一个临时目录，不需要依赖本地已经手工跑过 `npm run build`。
             frontend_dist_arg = argv[++i];
+        } else if (arg == "--disable-ai") {
+            // benchmark 专用 CLI 开关优先级必须高于 Settings：
+            // 否则你明明是想做“关 AI”的对比实验，却还得先去改库里的 ai_analysis_enabled，
+            // 实验变量就会和产品配置语义搅在一起。
+            disable_ai_cli = true;
+        } else if (arg == "--disable-webhook") {
+            // webhook 的 benchmark 开关也按同样口径处理：
+            // 只服务启动期对比实验，不进入正式 Settings 产品面。
+            disable_webhook_cli = true;
         }
     }
 
@@ -535,7 +546,7 @@ int main(int argc, char* argv[])
     }
 
     DevSubprocessManager dev_process_manager;
-    if (auto_start_proxy) {
+    if (auto_start_proxy && !disable_ai_cli) {
         std::optional<std::string> proxy_script = ResolveScriptPath({
             "server/ai/proxy/main.py",
             "ai/proxy/main.py",
@@ -552,7 +563,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    if (auto_start_webhook_mock) {
+    if (auto_start_webhook_mock && !disable_webhook_cli) {
         std::optional<std::string> webhook_script = ResolveScriptPath({
             "server/tests/mock_webhook_server.py",
             "tests/mock_webhook_server.py",
@@ -602,23 +613,30 @@ int main(int argc, char* argv[])
     std::cout << "Thread Model: " << num_io_threads << " I/O threads, "
               << num_worker_threads << " worker threads, "
               << num_query_threads << " query threads." << std::endl;
+    std::cout << "Benchmark switches: disable_ai=" << (disable_ai_cli ? "true" : "false")
+              << ", disable_webhook=" << (disable_webhook_cli ? "true" : "false")
+              << std::endl;
     MiniMuduo::net::EventLoop loop;
     MiniMuduo::net::InetAddress addr(effective_port);
     testServer server(&loop, addr, num_io_threads);
     std::vector<WebhookChannel> webhook_channels =
         BuildWebhookChannelsFromSettings(startup_config_snapshot->channels);
-    if (auto_start_webhook_mock) {
+    if (auto_start_webhook_mock && !disable_webhook_cli) {
         // 开发时自动注入本地 mock webhook，避免“服务已经拉起，但压根没有通知目标”的调试盲区。
         // 这里显式按 generic 渠道注入，是为了让 mock webhook 和真实飞书 webhook 可以并存，而不是互相覆盖。
         webhook_channels.push_back(WebhookChannel{"generic", "http://127.0.0.1:9999/webhook", true, "", "critical"});
     }
-    if (!webhook_url.empty()) {
+    if (!webhook_url.empty() && !disable_webhook_cli) {
         // CLI 直连入口现在降级成调试兜底：
         // settings.channels 已经会在启动时进入 notifier，这里只额外补一个手工 override，
         // 保住现有脚本和答辩临时联调入口，不要求每次都先去页面里保存。
         webhook_channels.push_back(WebhookChannel{webhook_provider, webhook_url, true, webhook_secret, "critical"});
     }
-    if (!webhook_channels.empty()) {
+    if (disable_webhook_cli) {
+        // benchmark 开关打开时，Settings 渠道配置和 CLI webhook override 都统一失效。
+        // 这样黑盒和 wrk 脚本只改启动参数，就能得到“同一套 trace 分析、但完全不外发通知”的对照组。
+        std::cout << "Webhook notifier disabled by CLI benchmark switch (--disable-webhook)." << std::endl;
+    } else if (!webhook_channels.empty()) {
         std::cout << "Webhook notifier enabled. channels=" << webhook_channels.size() << std::endl;
         for (const auto& channel : webhook_channels) {
             std::cout << "  - provider=" << channel.provider
@@ -628,14 +646,17 @@ int main(int argc, char* argv[])
                       << std::endl;
         }
     }
-    std::shared_ptr<INotifier> notifier = std::make_shared<WebhookNotifier>(std::move(webhook_channels));
+    std::shared_ptr<INotifier> notifier;
+    if (!disable_webhook_cli) {
+        notifier = std::make_shared<WebhookNotifier>(std::move(webhook_channels));
+    }
     std::shared_ptr<TraceAiProvider> trace_ai;
     std::shared_ptr<TraceAiProvider> fallback_trace_ai;
     // `--no-auto-start-proxy` 的语义应该只是“不要替我拉起 Python sidecar”，
     // 不能顺手把整个 Trace AI 主链也关掉。
     // 否则像黑盒测试这种“后端打本地 fake proxy、但不需要真实 sidecar”的场景会被误判成 AI disabled，
     // Settings 里的 ai_provider/fallback_provider 看起来已经保存成功，实际根本没有进入冷启动消费链。
-    const bool enable_trace_ai = effective_ai_analysis_enabled;
+    const bool enable_trace_ai = effective_ai_analysis_enabled && !disable_ai_cli;
     if (enable_trace_ai) {
         TraceAiBackend backend = TraceAiBackend::Mock;
         if (!TryParseTraceAiBackend(effective_trace_ai_provider, &backend)) {
@@ -697,6 +718,7 @@ int main(int argc, char* argv[])
         std::cout << "Trace AI disabled. ai_analysis_enabled="
                   << (effective_ai_analysis_enabled ? "true" : "false")
                   << ", auto_start_proxy=" << (auto_start_proxy ? "true" : "false")
+                  << ", disabled_by_cli=" << (disable_ai_cli ? "true" : "false")
                   << ", trace_ai_provider_explicit=" << (trace_ai_provider_explicit ? "true" : "false")
                   << std::endl;
     }
@@ -757,7 +779,7 @@ int main(int argc, char* argv[])
         effective_wm_pending_tasks_critical,
         service_runtime_accumulator.get(),
         system_runtime_accumulator.get(),
-        effective_ai_analysis_enabled,
+        enable_trace_ai,
         effective_ai_circuit_breaker,
         static_cast<size_t>(effective_ai_failure_threshold),
         effective_ai_cooldown_ms,

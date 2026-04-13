@@ -367,6 +367,7 @@ def start_server(server_bin: Path,
                  db_path: Path,
                  port: Optional[int],
                  frontend_dist: Optional[Path] = None,
+                 extra_args: Optional[list[str]] = None,
                  trace_ai_provider: Optional[str] = None,
                  trace_ai_base_url: Optional[str] = None,
                  trace_ai_timeout_ms: Optional[int] = None) -> subprocess.Popen:
@@ -388,6 +389,10 @@ def start_server(server_bin: Path,
         # 单入口黑盒始终显式传 frontend_dist：
         # 这样验证的是“后端静态资源托管逻辑”，不是碰巧复用了开发机本地某份现成的 client/dist。
         cmd.extend(["--frontend-dist", str(frontend_dist)])
+    if extra_args:
+        # benchmark 专用 CLI 开关不进 Settings，所以黑盒需要能把额外启动参数原样透传给后端。
+        # 这里故意做成列表直拼，避免每加一个新开关都继续改测试辅助函数签名。
+        cmd.extend(extra_args)
     if trace_ai_provider:
         cmd.extend(["--trace-ai-provider", trace_ai_provider])
     if trace_ai_base_url:
@@ -396,12 +401,17 @@ def start_server(server_bin: Path,
         cmd.extend(["--trace-ai-timeout-ms", str(trace_ai_timeout_ms)])
 
     print(f"[settings-blackbox] 启动服务: {' '.join(cmd)}")
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
     )
+    # 黑盒后面会多次等待不同的启动日志关键字。
+    # 既然 stdout 管道是“读一次就前进一次”，那么这里就给每个进程挂一个累计缓冲，
+    # 避免前一次断言把日志消费掉之后，后一次再去等另一个关键字时误以为后端没打印。
+    setattr(proc, "_log_buffer", "")
+    return proc
 
 
 def wait_server_ready(url: str, timeout_sec: float, proc: subprocess.Popen) -> None:
@@ -454,7 +464,14 @@ def read_available_process_logs(proc: Optional[subprocess.Popen], max_bytes: int
         chunks.append(data)
         total += len(data)
 
-    return "".join(chunks)
+    newly_read = "".join(chunks)
+    if newly_read:
+        # 这里保留“历史 + 增量”的累计日志，而不是只把本次 read 的结果往外返回。
+        # 原因很直接：黑盒经常先等 `Thread Model`，接着又等 `Trace AI disabled` 之类的后续关键字，
+        # 如果不自己做累计，前一次读取就会把整段启动日志从管道里永久吃掉。
+        log_buffer = getattr(proc, "_log_buffer", "")
+        setattr(proc, "_log_buffer", log_buffer + newly_read)
+    return newly_read
 
 
 def wait_process_log_contains(proc: subprocess.Popen,
@@ -470,7 +487,10 @@ def wait_process_log_contains(proc: subprocess.Popen,
     所以这里直接盯启动日志，是这条黑盒最短也最硬的证据。
     """
     deadline = time.time() + timeout_sec
-    collected = ""
+    # 这里先看累计缓冲，再补读当前增量。
+    # 既然 `subprocess.PIPE` 是破坏性读取，那么黑盒不能假设“上一次没断言这个关键字，日志就还在”。
+    # 用累计缓冲后，多个场景可以复用同一个进程对象反复查不同关键字，不会再把日志断言顺序绑死。
+    collected = getattr(proc, "_log_buffer", "")
 
     while time.time() < deadline:
         collected += read_available_process_logs(proc, max_bytes=max_bytes_per_poll)
@@ -708,13 +728,15 @@ def restart_server_with_fake_proxy(proc: Optional[subprocess.Popen],
                                    new_url: str,
                                    ready_timeout: float,
                                    probe_service: LocalProbeService,
-                                   proxy_timeout_ms: int) -> subprocess.Popen:
+                                   proxy_timeout_ms: int,
+                                   extra_args: Optional[list[str]] = None) -> subprocess.Popen:
     stop_server(proc)
     wait_old_port_closed(new_url, 3.0)
     restarted = start_server(server_bin,
                              db_path,
                              None,
                              frontend_dist=frontend_dist,
+                             extra_args=extra_args,
                              trace_ai_base_url=probe_service.base_url,
                              trace_ai_timeout_ms=proxy_timeout_ms)
     wait_server_ready(new_url, ready_timeout, restarted)
@@ -1364,10 +1386,65 @@ def run_flow(args: argparse.Namespace) -> int:
             expected_api_key_by_provider=provider_api_key_map,
         )
 
+        # 场景 8：CLI `--disable-ai` 必须盖过 SQLite 里已经保存好的 ai_analysis_enabled=1。
+        # 这条黑盒锁的是 benchmark 开关优先级，不是普通 Settings 冷启动消费。
+        proc = restart_server_with_fake_proxy(
+            proc,
+            server_bin,
+            db_path,
+            frontend_dist,
+            new_url,
+            args.ready_timeout,
+            probe_service,
+            args.proxy_timeout_ms,
+            extra_args=["--disable-ai"],
+        )
+        probe_service.state.clear_trace_requests()
+        probe_service.state.clear_webhook_payloads()
+        disabled_ai_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 1000, "cli-disable-ai")
+        wait_trace_summary_status(db_path, disabled_ai_trace_id, "skipped_manual", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, disabled_ai_trace_id) != 0:
+            raise RuntimeError("CLI --disable-ai 场景不应该产出 trace_analysis")
+        if probe_service.state.snapshot_trace_requests():
+            raise RuntimeError("CLI --disable-ai 场景不应该向 fake proxy 发任何 AI 请求")
+        disabled_ai_logs = wait_process_log_contains(proc, "Trace AI disabled.", timeout_sec=3.0)
+        if "--disable-ai" not in disabled_ai_logs and "disabled_by_cli" not in disabled_ai_logs:
+            raise RuntimeError("CLI --disable-ai 场景启动日志没有明确标出 CLI 覆盖")
+
+        # 场景 9：CLI `--disable-webhook` 必须盖过已经配置好的飞书 channel。
+        # 这里仍然让 AI 正常生成 critical，目的是证明被关掉的是“通知外发”，不是整条分析链。
+        probe_service.state.set_provider_behavior("mock", build_probe_success_payload("mock", risk_level="critical"))
+        proc = restart_server_with_fake_proxy(
+            proc,
+            server_bin,
+            db_path,
+            frontend_dist,
+            new_url,
+            args.ready_timeout,
+            probe_service,
+            args.proxy_timeout_ms,
+            extra_args=["--disable-webhook"],
+        )
+        probe_service.state.clear_trace_requests()
+        probe_service.state.clear_webhook_payloads()
+        disabled_webhook_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 1100, "cli-disable-webhook")
+        wait_trace_summary_status(db_path, disabled_webhook_trace_id, "completed", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, disabled_webhook_trace_id) != 1:
+            raise RuntimeError("CLI --disable-webhook 场景应该仍然产出 trace_analysis")
+        wait_until(lambda: len(probe_service.state.snapshot_trace_requests()) >= 1,
+                   timeout_sec=args.dispatch_timeout)
+        time.sleep(1.0)
+        if probe_service.state.snapshot_webhook_payloads():
+            raise RuntimeError("CLI --disable-webhook 场景不应该再有任何 webhook 外发")
+        disabled_webhook_logs = wait_process_log_contains(proc, "Webhook notifier", timeout_sec=3.0)
+        if "disabled" not in disabled_webhook_logs.lower():
+            raise RuntimeError("CLI --disable-webhook 场景启动日志没有明确标出 webhook 被 CLI 关闭")
+
         print(
             "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
             "ai_analysis_enabled、ai_timeout_ms、prompt/active_prompt_id、webhook channel、"
-            "kernel_worker_threads、log_retention_days、双 provider/fallback、AI retry 都已验证"
+            "kernel_worker_threads、log_retention_days、双 provider/fallback、AI retry、"
+            "benchmark CLI 开关都已验证"
         )
         return 0
     except Exception as exc:
