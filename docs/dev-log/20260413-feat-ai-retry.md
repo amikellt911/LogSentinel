@@ -181,3 +181,77 @@
 #### Pitfalls
 - 启动日志断言如果只看“本次新读到的增量”，很容易出现假阴性：实际上后端已经打印过了，只是前一个断言先把那段输出吃掉了。
 - `--disable-webhook` 这种开关如果写成“直接不创建 notifier”还不够，你还得同时挡掉 mock webhook 注入和 CLI override，不然还是会偷偷发通知。
+
+## 追加记录：no-buffer benchmark 开关
+
+### Git Commit Message
+`feat(server): 增加 no-buffer benchmark 开关`
+
+### Modification
+- `server/persistence/TraceWriteSink.h`
+- `server/persistence/DirectTraceWriteSink.h`
+- `server/persistence/DirectTraceWriteSink.cpp`
+- `server/persistence/BufferedTraceRepository.h`
+- `server/core/TraceSessionManager.h`
+- `server/core/TraceSessionManager.cpp`
+- `server/src/main.cpp`
+- `server/CMakeLists.txt`
+- `server/tests/smoke_settings_blackbox.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `CurrentTask.md`
+
+### What Changed
+- 抽了一个最小 `TraceWriteSink` 写入口接口，只保留：
+  - `AppendPrimary`
+  - `AppendAnalysis`
+  - `UpdateTraceAiState`
+- 让 `BufferedTraceRepository` 继续实现这套接口，保持默认主链完全不变。
+- 新增 `DirectTraceWriteSink`，作为 `--disable-buffered-trace-repo` 的 no-buffer 对照组实现：
+  - primary 走 `SaveSingleTraceAtomic`
+  - analysis 走 `SaveSingleTraceAnalysis`
+  - 失败/跳过态走 `UpdateTraceAiState`
+- 把 `TraceSessionManager` 从“只认 `BufferedTraceRepository*`”改成“只认 `TraceWriteSink*`”，这样 manager 不再关心底层到底是双缓冲还是直写 SQLite。
+- 在 `main.cpp` 接入 `--disable-buffered-trace-repo`：
+  - 默认模式仍然构造 `BufferedTraceRepository`
+  - 打开开关时切到 `DirectTraceWriteSink`
+  - 启动日志新增 `Trace persistence mode: buffered/direct-no-buffer`
+- 为第三层黑盒新增 no-buffer 场景，锁定：
+  - CLI 开关生效
+  - trace 仍能收成 `completed`
+  - `trace_analysis` 仍能写出
+
+### 中文注释
+- `server/persistence/TraceWriteSink.h`
+  - 补注释说明为什么这个接口只抽三条写入口，不把查询和 flush 细节也一起抽进去。
+- `server/persistence/DirectTraceWriteSink.h`
+  - 补注释说明它是 benchmark 的 no-buffer 对照组，而不是新的正式产品模式。
+- `server/persistence/DirectTraceWriteSink.cpp`
+  - 在 `AppendPrimary` 和 `AppendAnalysis` 补注释，说明为什么 no-buffer 仍然要守住 primary 原子性、以及为什么要保留空 analysis 兜底。
+- `server/core/TraceSessionManager.h`
+  - 补注释说明 manager 为什么只能依赖写入口接口，不能把具体持久化实现耦合回状态机。
+- `server/core/TraceSessionManager.cpp`
+  - 补注释说明“链路可用”的判断已经从 `BufferedTraceRepository` 收口成 `TraceWriteSink`。
+  - 补注释说明 primary 先进入持久化写入口的语义不变，只是底层实现可能变成 no-buffer。
+- `server/src/main.cpp`
+  - 补注释说明 `--disable-buffered-trace-repo` 的目标是拿掉缓冲写入器，而不是关掉持久化。
+- `server/tests/smoke_settings_blackbox.py`
+  - 补注释说明 no-buffer 场景验证的是写入口切换。
+  - 补注释说明为什么要显式把 provider 再钉回 `glm`，避免前面场景的 provider 状态残留串味。
+
+### Verification
+- `cmake --build server/build --target LogSentinel`
+- `/home/llt/Project/llt/venv/bin/python3 server/tests/smoke_settings_blackbox.py`
+- `git diff --check`
+
+### Learning Tips
+#### Newbie Tips
+- “关缓冲”不等于“直接把缓冲对象传空”。如果上层状态机直接依赖具体类型，你想做对照组时就会被迫在业务代码里撒一堆 `if (no_buffer)`，最后实验开关把主链写烂。
+- 对照实验最好切在“同一层职责边界”上。这次切的是写入口实现，而不是数据库 schema、Trace 聚合逻辑或 AI 协议，所以实验变量才干净。
+
+#### Function Explanation
+- `SaveSingleTraceAtomic`：把一条 trace 的 summary 和 spans 放进同一个事务里写入，避免只写进去半条主数据。
+- `std::shared_ptr<TraceWriteSink>`：这里让启动期决定“装哪种写入口实现”，后面运行态就只认同一份多态对象，不需要把实验开关一路传到 worker 里。
+
+#### Pitfalls
+- 黑盒新增场景时，最容易犯的错不是生产代码，而是沿用了上一场景残留的 provider 配置。这次场景 10 一开始就踩了这个坑，表面看像 no-buffer 失败，实际上是测试自己把 `mock` 和 `glm` 搅混了。
+- 如果 shutdown 统计还无脑去解引用 `buffered_trace_repo`，切到 no-buffer 后进程退出时就会直接空指针崩掉，所以这里必须把 shutdown 打印分成 buffered/no-buffer 两条分支。

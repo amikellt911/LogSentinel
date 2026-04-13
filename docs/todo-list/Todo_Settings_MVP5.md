@@ -167,3 +167,9 @@
 - [x] 在 `main.cpp` 接入 `--disable-ai` 与 `--disable-webhook`，并补启动日志说明
 - [x] 运行最小黑盒/构建验证，确认 AI 与 webhook 的 benchmark 开关真实生效
 - [x] 追加 2026-04-13 dev-log，记录这轮 benchmark CLI 开关实现与中文注释位置
+- [x] 为 `--disable-buffered-trace-repo` 补设计/执行条目，锁定“启动期切换写入口实现”的最小方案
+- [x] 为 `--disable-buffered-trace-repo` 先补红灯：验证 CLI 优先级与 no-buffer 主链仍可完成 trace 落库
+- [x] 抽最小 Trace 写入口接口，并让 `BufferedTraceRepository` 继续实现这套接口
+- [x] 新增直写 SQLite 的 no-buffer 写入口实现，并在 `main.cpp` 接入 `--disable-buffered-trace-repo`
+- [x] 运行最小构建/黑盒验证，确认 no-buffer 对照组真实生效
+- [x] 追加 2026-04-13 dev-log，记录这轮 no-buffer benchmark 开关实现与中文注释位置

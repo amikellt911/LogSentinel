@@ -32,9 +32,9 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
   - [x] 让重试结果与现有熔断 / 自动降级状态口径打通
 - [ ] 增加最小实验开关：
   - [x] `disable_ai`
-  - [ ] `disable_buffered_trace_repo`
+  - [x] `disable_buffered_trace_repo`
   - [x] `disable_webhook`
-  - [ ] 只服务 benchmark / 对比实验，不进正式产品设置页
+  - [x] 只服务 benchmark / 对比实验，不进正式产品设置页
 - [ ] 固定 benchmark：
   - [ ] 压测命令
   - [ ] 参数矩阵
@@ -85,8 +85,8 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 - [x] benchmark 最小 CLI 开关已接通第一刀：
   - [x] `--disable-ai` 会压过 SQLite 里的 `ai_analysis_enabled`
   - [x] `--disable-webhook` 会压过 Settings channel 与 CLI webhook override
-  - [x] 两条开关都已补第三层黑盒，验证优先级和真实消费链
-  - [ ] `--disable_buffered_trace_repo` 仍待实现
+  - [x] `--disable-buffered-trace-repo` 会把写入口从 BufferedTraceRepository 切到同步直写 SQLite
+  - [x] 三条开关都已补第三层黑盒，验证优先级和真实消费链
 
 ## 核心任务
 - [ ] 先做 Settings 真实生效联调，固化当前主链配置的验收口径
@@ -125,4 +125,4 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 - 单入口部署的目标不是“后端顺手拉起前端 dev server”，而是把交付态收口成“后端 API + 前端静态资源”同源访问。
 - benchmark 实验开关当前先走 CLI，而不是进 Settings：
   - 目标是把“实验变量”跟“产品配置”拆开，避免为了做对照组去污染 SQLite 冷启动配置。
-  - 第一刀已完成 `--disable-ai` 与 `--disable-webhook`，下一刀再补 `--disable_buffered_trace_repo`。
+  - 当前最小三件套已完成：`--disable-ai`、`--disable-webhook`、`--disable-buffered-trace-repo`。

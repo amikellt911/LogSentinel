@@ -72,6 +72,7 @@ add_library(core_module STATIC
 )
 add_library(persistence_module STATIC
     persistence/BufferedTraceRepository.cpp
+    persistence/DirectTraceWriteSink.cpp
     persistence/SqliteConfigRepository.cpp
     persistence/SqliteTraceRepository.cpp
 )

@@ -19,7 +19,7 @@
 #include "persistence/TraceRepository.h"
 
 class ThreadPool;
-class BufferedTraceRepository;
+class TraceWriteSink;
 class TraceAiProvider;
 class INotifier;
 class ServiceRuntimeAccumulator;
@@ -168,7 +168,7 @@ public:
     };
 
     explicit TraceSessionManager(ThreadPool* thread_pool,
-                                 BufferedTraceRepository* buffered_trace_repo,
+                                 TraceWriteSink* trace_write_sink,
                                  TraceAiProvider* trace_ai,
                                  size_t capacity,
                                  size_t token_limit,
@@ -229,7 +229,10 @@ private:
     friend class TraceSessionManagerTest_SerializeTraceSortsChildrenByStartTime_Test;
 
     ThreadPool* thread_pool_ = nullptr;
-    BufferedTraceRepository* buffered_trace_repo_ = nullptr;
+    // manager 只依赖“把 primary/analysis/ai_status 写出去”这件事。
+    // 至于底层到底是 BufferedTraceRepository，还是 benchmark 的直写 SQLite 实现，
+    // 都不应该继续泄漏到聚合状态机里。
+    TraceWriteSink* trace_write_sink_ = nullptr;
     TraceAiProvider* trace_ai_ = nullptr;
     INotifier* notifier_ = nullptr;
     ServiceRuntimeAccumulator* service_runtime_accumulator_ = nullptr;

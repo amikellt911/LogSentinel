@@ -1440,6 +1440,33 @@ def run_flow(args: argparse.Namespace) -> int:
         if "disabled" not in disabled_webhook_logs.lower():
             raise RuntimeError("CLI --disable-webhook 场景启动日志没有明确标出 webhook 被 CLI 关闭")
 
+        # 场景 10：CLI `--disable-buffered-trace-repo` 必须切到 no-buffer 写入口。
+        # 这条黑盒锁的是“主数据/analysis 不再先进后台 flush 线程”，不是 AI、告警或别的冷启动配置。
+        # 这里显式把 provider 再钉回 glm，避免复用上一条场景残留的配置状态。
+        # 否则测试表面上是在验证 no-buffer，实际却可能因为 provider 行为没配对而串成假失败。
+        configure_retry_only_provider("glm", retry_enabled=True, retry_max_attempts=3)
+        probe_service.state.set_provider_behavior("glm", build_probe_success_payload("glm", risk_level="warning"))
+        proc = restart_server_with_fake_proxy(
+            proc,
+            server_bin,
+            db_path,
+            frontend_dist,
+            new_url,
+            args.ready_timeout,
+            probe_service,
+            args.proxy_timeout_ms,
+            extra_args=["--disable-buffered-trace-repo"],
+        )
+        probe_service.state.clear_trace_requests()
+        probe_service.state.clear_webhook_payloads()
+        no_buffer_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 1200, "cli-disable-buffered-trace-repo")
+        wait_trace_summary_status(db_path, no_buffer_trace_id, "completed", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, no_buffer_trace_id) != 1:
+            raise RuntimeError("CLI --disable-buffered-trace-repo 场景应该仍然产出 trace_analysis")
+        no_buffer_logs = wait_process_log_contains(proc, "Trace persistence mode:", timeout_sec=3.0)
+        if "no-buffer" not in no_buffer_logs.lower() and "direct" not in no_buffer_logs.lower():
+            raise RuntimeError("CLI --disable-buffered-trace-repo 场景启动日志没有明确标出 no-buffer 写入口")
+
         print(
             "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
             "ai_analysis_enabled、ai_timeout_ms、prompt/active_prompt_id、webhook channel、"

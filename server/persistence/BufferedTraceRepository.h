@@ -11,18 +11,21 @@
 #include <vector>
 
 #include "persistence/TraceRepository.h"
+#include "persistence/TraceWriteSink.h"
 
 // BufferedTraceRepository 不是底层 Repository 的替身，它更像一个“前面一层的缓冲写入器”。
 // 既然当前持久化时间线已经拆成：
 // 1) Dispatch 前就能拿到 summary + spans
 // 2) AI 返回后才拿到 analysis
 // 那这一层就只暴露两个 append 入口，内部再持有真正的 TraceRepository sink。
-class BufferedTraceRepository
+class BufferedTraceRepository : public TraceWriteSink
 {
 public:
-    using TraceSummary = TraceRepository::TraceSummary;
-    using TraceSpanRecord = TraceRepository::TraceSpanRecord;
-    using TraceAnalysisRecord = TraceRepository::TraceAnalysisRecord;
+    using TraceSummary = TraceWriteSink::TraceSummary;
+    using TraceSpanRecord = TraceWriteSink::TraceSpanRecord;
+    using TraceAnalysisRecord = TraceWriteSink::TraceAnalysisRecord;
+    using TracePrimaryWrite = TraceWriteSink::TracePrimaryWrite;
+    using TraceAnalysisWrite = TraceWriteSink::TraceAnalysisWrite;
 
     struct Config
     {
@@ -72,17 +75,6 @@ public:
         }
     };
 
-    struct TracePrimaryWrite
-    {
-        TraceSummary summary;
-        std::vector<TraceSpanRecord> spans;
-    };
-
-    struct TraceAnalysisWrite
-    {
-        std::optional<TraceAnalysisRecord> analysis;
-    };
-
     struct RuntimeStatsSnapshot
     {
         uint64_t primary_append_calls = 0;
@@ -102,13 +94,13 @@ public:
     BufferedTraceRepository(std::shared_ptr<TraceRepository> sink, Config config);
     ~BufferedTraceRepository();
 
-    bool AppendPrimary(TracePrimaryWrite write);
-    bool AppendAnalysis(TraceAnalysisWrite write);
+    bool AppendPrimary(TracePrimaryWrite write) override;
+    bool AppendAnalysis(TraceAnalysisWrite write) override;
     // 失败/跳过态每条 trace 最多写一次，量级远低于 spans/analysis 批量 flush，
     // 所以这里先直接透传给底层 repo，不专门再做一层状态缓冲桶。
     bool UpdateTraceAiState(const std::string& trace_id,
                             const std::string& ai_status,
-                            const std::string& ai_error);
+                            const std::string& ai_error) override;
     RuntimeStatsSnapshot SnapshotRuntimeStats() const;
     std::string DescribeRuntimeStats() const;
 

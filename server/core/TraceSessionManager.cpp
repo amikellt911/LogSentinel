@@ -3,8 +3,8 @@
 #include "ai/TraceAiProvider.h"
 #include "core/ServiceRuntimeAccumulator.h"
 #include "core/SystemRuntimeAccumulator.h"
-#include "persistence/BufferedTraceRepository.h"
 #include "persistence/TraceRepository.h"
+#include "persistence/TraceWriteSink.h"
 #include "notification/INotifier.h"
 #include <algorithm>
 #include <cctype>
@@ -212,7 +212,7 @@ TraceSession::TraceSession(size_t capacity)
 }
 
 TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
-                                         BufferedTraceRepository *buffered_trace_repo,
+                                         TraceWriteSink *trace_write_sink,
                                          TraceAiProvider *trace_ai,
                                          size_t capacity,
                                          size_t token_limit,
@@ -238,7 +238,7 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
                                          int64_t ai_cooldown_ms,
                                          TraceAiProvider* fallback_trace_ai,
                                          bool ai_auto_degrade_enabled)
-    : thread_pool_(thread_pool), buffered_trace_repo_(buffered_trace_repo), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), ai_analysis_enabled_(ai_analysis_enabled), ai_circuit_breaker_enabled_(ai_circuit_breaker_enabled), fallback_trace_ai_(fallback_trace_ai), ai_auto_degrade_enabled_(ai_auto_degrade_enabled), ai_failure_threshold_(std::max<size_t>(1, ai_failure_threshold)), ai_cooldown_ms_(ai_cooldown_ms > 0 ? ai_cooldown_ms : 60000), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
+    : thread_pool_(thread_pool), trace_write_sink_(trace_write_sink), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), ai_analysis_enabled_(ai_analysis_enabled), ai_circuit_breaker_enabled_(ai_circuit_breaker_enabled), fallback_trace_ai_(fallback_trace_ai), ai_auto_degrade_enabled_(ai_auto_degrade_enabled), ai_failure_threshold_(std::max<size_t>(1, ai_failure_threshold)), ai_cooldown_ms_(ai_cooldown_ms > 0 ? ai_cooldown_ms : 60000), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
     // sealed/retry 这两档时间现在也跟着启动配置走，避免状态机里继续保留 1/2 tick 的硬编码。
@@ -446,9 +446,9 @@ TraceSessionManager::PushResult TraceSessionManager::Push(const SpanEvent &span)
 TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent &span, int64_t now_ms)
 {
     // 线程池是 trace 异步分发链路的硬依赖；缺失时直接拒绝，避免后续误报 accepted 后又静默丢数据。
-    // TraceSessionManager 现在只认双缓冲写入器。既然主数据和分析结果都要走分段 append，
-    // 那 thread_pool 和 buffered_trace_repo 缺一个都不能算链路可用。
-    if (!thread_pool_ || !buffered_trace_repo_)
+    // TraceSessionManager 现在只认“Trace 写入口接口”。
+    // 既然主数据和分析结果都要走分段 append，那么 thread_pool 和 trace_write_sink 缺一个都不能算链路可用。
+    if (!thread_pool_ || !trace_write_sink_)
     {
         return PushResult::RejectedUnavailable;
     }
@@ -991,12 +991,12 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         span_records = BuildSpanRecords(order);
     }
 
-    if (buffered_trace_repo_ && session && !session->primary_enqueued)
+    if (trace_write_sink_ && session && !session->primary_enqueued)
     {
-        BufferedTraceRepository::TracePrimaryWrite primary_write;
+        TraceWriteSink::TracePrimaryWrite primary_write;
         primary_write.summary = summary;
         primary_write.spans = span_records;
-        if (!buffered_trace_repo_->AppendPrimary(std::move(primary_write)))
+        if (!trace_write_sink_->AppendPrimary(std::move(primary_write)))
         {
             rollback_session(std::move(session));
             return false;
@@ -1006,12 +1006,12 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
 
     auto session_holder = std::make_shared<std::unique_ptr<TraceSession>>(std::move(session));
     TraceSessionManager *manager = this;
-    BufferedTraceRepository *buffered_trace_repo = buffered_trace_repo_;
+    TraceWriteSink *trace_write_sink = trace_write_sink_;
     TraceAiProvider *trace_ai = trace_ai_;
     INotifier *notifier = notifier_;
     SystemRuntimeAccumulator* system_runtime_accumulator = system_runtime_accumulator_;
     const uint64_t worker_enqueue_ns = NowSteadyNs();
-    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, notifier, system_runtime_accumulator, worker_enqueue_ns, session_holder, trace_payload = std::move(trace_payload), summary = std::move(summary), span_records = std::move(span_records)]() mutable
+    if (!thread_pool_->submit([manager, trace_write_sink, trace_ai, notifier, system_runtime_accumulator, worker_enqueue_ns, session_holder, trace_payload = std::move(trace_payload), summary = std::move(summary), span_records = std::move(span_records)]() mutable
                               {
         if (!manager || !session_holder || !(*session_holder)) {
             return;
@@ -1070,14 +1070,14 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         manager->analysis_enqueue_calls_.fetch_add(1, std::memory_order_relaxed);
         const uint64_t enqueue_begin_ns = NowSteadyNs();
         bool saved = true;
-        if (!buffered_trace_repo) {
+        if (!trace_write_sink) {
             saved = false;
         } else {
-            BufferedTraceRepository::TraceAnalysisWrite analysis_write;
+            TraceWriteSink::TraceAnalysisWrite analysis_write;
             if (analysis_ptr) {
                 analysis_write.analysis = *analysis_ptr;
             }
-            saved = buffered_trace_repo->AppendAnalysis(std::move(analysis_write));
+            saved = trace_write_sink->AppendAnalysis(std::move(analysis_write));
         }
         manager->analysis_enqueue_total_ns_.fetch_add(NowSteadyNs() - enqueue_begin_ns, std::memory_order_relaxed);
         manager->worker_done_count_.fetch_add(1, std::memory_order_relaxed);
@@ -1258,8 +1258,8 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     // primary 指的是“主数据首段”：
     // 1) trace_summary：给列表页、详情页和后续 analysis 结果做主键骨架；
     // 2) span_records：给瀑布图/调用链详情提供原始 span 明细。
-    // 既然这两份数据是后续 AI analysis、告警和查询的基础，那么它们必须先 append 到 BufferedTraceRepository，
-    // 不能等 worker 线程里的 AI 分析跑完再写。否则一旦 AI 线程成功、主数据却还没进缓冲区，
+    // 既然这两份数据是后续 AI analysis、告警和查询的基础，那么它们必须先 append 到 TraceWriteSink，
+    // 不能等 worker 线程里的 AI 分析跑完再写。否则一旦 AI 线程成功、主数据却还没进持久化写入口，
     // 就会出现“analysis 已有结果，但 trace_summary / trace_spans 还没有”的前后错位。
     //
     // 同时这里还要守住“只 append 一次”的约束：
@@ -1267,9 +1267,9 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     // - 如果后面 worker submit 失败，session 会带着 prepared 缓存回滚回 manager；
     // - 下一次 retry 再进 ProcessDispatchJob 时，primary_enqueued=true，说明主数据已经成功入缓冲，
     //   这时就必须跳过 AppendPrimary，避免同一条 trace 重复写出第二份主数据。
-    if (buffered_trace_repo_ && !session->primary_enqueued)
+    if (trace_write_sink_ && !session->primary_enqueued)
     {
-        BufferedTraceRepository::TracePrimaryWrite primary_write;
+        TraceWriteSink::TracePrimaryWrite primary_write;
         // summary_ptr 指向 session 内部 prepared_summary。
         // 这里做一次值拷贝是必要的，因为写入器拿到的是独立 write 对象，不能直接借 session 内部对象跨层保存引用。
         if (summary_ptr)
@@ -1279,7 +1279,7 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         // span_records 是本轮 dispatch 临时构建出来的主数据明细；
         // append 之后当前线程不再需要它，所以直接 move 进写入对象，避免再拷一份 vector 内容。
         primary_write.spans = std::move(span_records);
-        if (!buffered_trace_repo_->AppendPrimary(std::move(primary_write)))
+        if (!trace_write_sink_->AppendPrimary(std::move(primary_write)))
         {
             // AppendPrimary 失败说明“主数据首段”连缓冲写入器这一层都没进去。
             // 既然这时 trace 还停留在 dispatch 中间态，就不能让它继续留在 inflight，否则：
@@ -1308,7 +1308,7 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
 
     auto session_holder = std::make_shared<std::unique_ptr<TraceSession>>(std::move(session));
     TraceSessionManager *manager = this;
-    BufferedTraceRepository *buffered_trace_repo = buffered_trace_repo_;
+    TraceWriteSink *trace_write_sink = trace_write_sink_;
     TraceAiProvider *trace_ai = trace_ai_;
     TraceAiProvider *fallback_trace_ai = fallback_trace_ai_;
     INotifier *notifier = notifier_;
@@ -1317,7 +1317,7 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
     const std::string *worker_trace_payload = trace_payload_ptr;
     const TraceRepository::TraceSummary *worker_summary = summary_ptr;
     const uint64_t worker_enqueue_ns = NowSteadyNs();
-    if (!thread_pool_->submit([manager, buffered_trace_repo, trace_ai, fallback_trace_ai, notifier, service_runtime_accumulator, system_runtime_accumulator, worker_enqueue_ns, session_holder, worker_trace_payload, worker_summary, analysis_observation_span_records]() mutable
+    if (!thread_pool_->submit([manager, trace_write_sink, trace_ai, fallback_trace_ai, notifier, service_runtime_accumulator, system_runtime_accumulator, worker_enqueue_ns, session_holder, worker_trace_payload, worker_summary, analysis_observation_span_records]() mutable
                               {
         if (!manager || !session_holder || !(*session_holder) || !worker_trace_payload || !worker_summary) {
             return;
@@ -1441,18 +1441,18 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
         manager->analysis_enqueue_calls_.fetch_add(1, std::memory_order_relaxed);
         const uint64_t enqueue_begin_ns = NowSteadyNs();
         bool saved = true;
-        if (!buffered_trace_repo) {
+        if (!trace_write_sink) {
             saved = false;
         } else if (analysis_ptr) {
-            BufferedTraceRepository::TraceAnalysisWrite analysis_write;
+            TraceWriteSink::TraceAnalysisWrite analysis_write;
             analysis_write.analysis = *analysis_ptr;
-            saved = buffered_trace_repo->AppendAnalysis(std::move(analysis_write));
+            saved = trace_write_sink->AppendAnalysis(std::move(analysis_write));
         } else if (!ai_status_override.empty()) {
             // 没有 analysis 可写时，必须把最终状态直接落回 summary。
             // 否则查询层只能看到 pending，却分不清是人工关闭、provider 缺失还是调用失败。
-            saved = buffered_trace_repo->UpdateTraceAiState(worker_summary->trace_id,
-                                                            ai_status_override,
-                                                            ai_error_override);
+            saved = trace_write_sink->UpdateTraceAiState(worker_summary->trace_id,
+                                                         ai_status_override,
+                                                         ai_error_override);
         }
         manager->analysis_enqueue_total_ns_.fetch_add(NowSteadyNs() - enqueue_begin_ns, std::memory_order_relaxed);
         manager->worker_done_count_.fetch_add(1, std::memory_order_relaxed);

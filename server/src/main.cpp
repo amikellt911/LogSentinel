@@ -9,8 +9,10 @@
 #include <memory> // For std::unique_ptr
 #include "notification/WebhookNotifier.h"
 #include "persistence/BufferedTraceRepository.h"
+#include "persistence/DirectTraceWriteSink.h"
 #include "persistence/SqliteConfigRepository.h"
 #include "persistence/SqliteTraceRepository.h"
+#include "persistence/TraceWriteSink.h"
 #include "http/Router.h"
 #include "handlers/LogHandler.h"
 #include "handlers/TraceQueryHandler.h"
@@ -209,6 +211,7 @@ int main(int argc, char* argv[])
     std::optional<std::string> frontend_dist_arg;
     bool disable_ai_cli = false;
     bool disable_webhook_cli = false;
+    bool disable_buffered_trace_repo_cli = false;
     bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
@@ -291,6 +294,10 @@ int main(int argc, char* argv[])
             // webhook 的 benchmark 开关也按同样口径处理：
             // 只服务启动期对比实验，不进入正式 Settings 产品面。
             disable_webhook_cli = true;
+        } else if (arg == "--disable-buffered-trace-repo") {
+            // 这条开关的目标不是“关掉持久化”，而是把写路径从双缓冲 flush 线程切到同步直写 SQLite。
+            // benchmark 做对照时，必须保留同样的 trace/AI 功能，只拿掉“缓冲写入器”这一层变量。
+            disable_buffered_trace_repo_cli = true;
         }
     }
 
@@ -582,13 +589,21 @@ int main(int argc, char* argv[])
 
     std::shared_ptr<SqliteTraceRepository> trace_repo;
     std::shared_ptr<SqliteTraceRepository> trace_read_repo;
+    std::shared_ptr<TraceWriteSink> trace_write_sink;
     std::shared_ptr<BufferedTraceRepository> buffered_trace_repo;
     try
     {
         trace_repo = std::make_shared<SqliteTraceRepository>(db_path);
         trace_read_repo = std::make_shared<SqliteTraceRepository>(db_path);
-        // Trace 主数据和分析结果现在都先走双缓冲写入器，再由后台 flush 线程批量落到 SQLite。
-        buffered_trace_repo = std::make_shared<BufferedTraceRepository>(trace_repo);
+        if (disable_buffered_trace_repo_cli) {
+            // no-buffer 对照组直接复用同一个 SQLite repo 做同步写入。
+            // 这样改掉的是“写入口实现”，不是 trace 表结构或查询口径。
+            trace_write_sink = std::make_shared<DirectTraceWriteSink>(trace_repo);
+        } else {
+            // 默认主链继续走双缓冲写入器，再由后台 flush 线程批量落到 SQLite。
+            buffered_trace_repo = std::make_shared<BufferedTraceRepository>(trace_repo);
+            trace_write_sink = buffered_trace_repo;
+        }
     }
     catch (const std::exception &e)
     {
@@ -615,6 +630,10 @@ int main(int argc, char* argv[])
               << num_query_threads << " query threads." << std::endl;
     std::cout << "Benchmark switches: disable_ai=" << (disable_ai_cli ? "true" : "false")
               << ", disable_webhook=" << (disable_webhook_cli ? "true" : "false")
+              << ", disable_buffered_trace_repo=" << (disable_buffered_trace_repo_cli ? "true" : "false")
+              << std::endl;
+    std::cout << "Trace persistence mode: "
+              << (disable_buffered_trace_repo_cli ? "direct/no-buffer" : "buffered")
               << std::endl;
     MiniMuduo::net::EventLoop loop;
     MiniMuduo::net::InetAddress addr(effective_port);
@@ -759,7 +778,7 @@ int main(int argc, char* argv[])
                                                                                   static_cast<size_t>(service_monitor_bucket_seconds));
     std::shared_ptr<TraceSessionManager> trace_session_manager = std::make_shared<TraceSessionManager>(
         &tpool,
-        buffered_trace_repo.get(),
+        trace_write_sink.get(),
         trace_ai.get(),
         /*capacity*/static_cast<size_t>(effective_trace_capacity),
         /*token_limit*/static_cast<size_t>(effective_trace_token_limit),
@@ -845,7 +864,7 @@ int main(int argc, char* argv[])
         trace_retention_service->TrySchedulePeriodicCleanup(now_ms);
     });
     bool shutdown_stats_logged = false;
-    loop.runEvery(0.1, [&loop, &shutdown_stats_logged, trace_session_manager_raw, buffered_trace_repo]() {
+    loop.runEvery(0.1, [&loop, &shutdown_stats_logged, trace_session_manager_raw, buffered_trace_repo, disable_buffered_trace_repo_cli]() {
         // signal handler 里只能做极少的事情，所以这里只记录退出意图；
         // 真正的 quit 放回 EventLoop 线程执行，这样对象析构和埋点打印才会走完整。
         if (g_shutdown_requested != 0) {
@@ -853,8 +872,12 @@ int main(int argc, char* argv[])
                 shutdown_stats_logged = true;
                 std::clog << "[TraceRuntimeStats] "
                           << trace_session_manager_raw->DescribeRuntimeStats() << std::endl;
-                std::clog << "[BufferedTraceRuntimeStats] "
-                          << buffered_trace_repo->DescribeRuntimeStats() << std::endl;
+                if (buffered_trace_repo) {
+                    std::clog << "[BufferedTraceRuntimeStats] "
+                              << buffered_trace_repo->DescribeRuntimeStats() << std::endl;
+                } else if (disable_buffered_trace_repo_cli) {
+                    std::clog << "[BufferedTraceRuntimeStats] disabled_by_cli=true" << std::endl;
+                }
             }
             loop.quit();
         }
