@@ -97,6 +97,7 @@ add_library(handler_module STATIC
   handlers/ConfigHandler.cpp
   handlers/ServiceMonitorHandler.cpp
   handlers/TraceQueryHandler.cpp
+  handlers/FrontendAssetHandler.cpp
 )
 target_include_directories(http_module PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
@@ -207,6 +208,12 @@ add_executable(test_webhook_notifier
   tests/WebhookNotifier_test.cpp
 )
 
+# 前端静态资源托管是单入口部署的独立语义面：
+# 单独拆一个测试目标，避免后面改 main.cpp 分流时只能靠黑盒脚本回归。
+add_executable(test_frontend_asset_handler
+  tests/FrontendAssetHandler_test.cpp
+)
+
 # 这个目标是给真实 webhook 手工联调用的独立入口，不注册进 CTest，
 # 避免构建机或本地一跑测试就误把真实消息发到外部平台。
 add_executable(manual_webhook_notifier
@@ -264,6 +271,10 @@ target_link_libraries(test_webhook_notifier PRIVATE
 GTest::gtest_main
 notification_module
 )
+target_link_libraries(test_frontend_asset_handler PRIVATE
+GTest::gtest_main
+handler_module
+)
 target_link_libraries(manual_webhook_notifier PRIVATE
 notification_module
 )
@@ -281,6 +292,7 @@ gtest_discover_tests(test_webhook_notifier)
 gtest_discover_tests(test_service_runtime_accumulator)
 gtest_discover_tests(test_system_runtime_accumulator)
 gtest_discover_tests(test_dashboard_handler)
+gtest_discover_tests(test_frontend_asset_handler)
 #-----------主程序---------------
 add_executable(LogSentinel
     src/main.cpp   

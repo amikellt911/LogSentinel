@@ -76,3 +76,53 @@
 ### Pitfalls
 - 如果探针只支持固定响应，不支持顺序队列，那么 `429 -> success` 这种场景就永远写不出来，最后只能退化成单元测试，覆盖不到冷启动配置和真实 HTTP 链路。
 - 顺序队列必须在每次重新设静态行为时清空；否则前一个场景残留的第二枪响应会串到下一个场景，黑盒会出现非常难排查的假阳性或假阴性。
+
+## 追加记录：单入口部署
+
+### Git Commit Message
+`feat(server): 收口前后端单入口部署`
+
+### Modification
+- `server/handlers/FrontendAssetHandler.h`
+- `server/handlers/FrontendAssetHandler.cpp`
+- `server/tests/FrontendAssetHandler_test.cpp`
+- `server/src/main.cpp`
+- `server/tests/smoke_settings_blackbox.py`
+- `server/CMakeLists.txt`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `CurrentTask.md`
+
+### What Changed
+- 新增 `FrontendAssetHandler`，把交付态前端托管语义收口成三层：
+  - 真实静态文件优先直出；
+  - 白名单页面 `/`、`/service`、`/traces`、`/settings` fallback 到 `index.html`；
+  - 非白名单未知路径返回“不处理”，交给上层统一 404。
+- 在 `main.cpp` 增加 `--frontend-dist`，并补默认探测逻辑：
+  - 先按可执行文件目录推导 `client/dist`
+  - 再回退到当前工作目录候选
+- 把入口分流改成：
+  - `/api/*` 先去掉 `/api` 前缀再走现有 Router
+  - 裸 API 继续兼容
+  - 非 API 再交给 `FrontendAssetHandler`
+  - API 未命中和未知页面都保持 404
+- 给黑盒脚本补临时 `frontend-dist` 和 5 条单入口断言，证明同源静态页面、静态资源、`/api/settings/all` 都已经可用。
+
+### Verification
+- `cmake --build server/build --target LogSentinel test_frontend_asset_handler`
+- `./server/build/test_frontend_asset_handler`
+- `python3 server/tests/smoke_settings_blackbox.py`
+- `git diff --check`
+
+### Learning Tips
+#### Newbie Tips
+- SPA 的 “history 路由 fallback” 不是“所有未知路径都回 `index.html`”。如果你不做白名单，`/fdasxz` 这种瞎输路径也会显示成功页面，排障会非常恶心。
+- `/api/*` 前缀剥离一定要在前端 fallback 之前做。否则 `/api/settings/all` 一旦没命中后端路由，就可能被误回前端壳页面，接口调用会变成诡异的 200 HTML。
+- 黑盒里最好自己造一份极小的 `dist`。这样验证的是后端托管逻辑本身，而不是开发机恰好残留了一份可用构建产物。
+
+#### Function Explanation
+- `std::filesystem::weakly_canonical`：把路径里的 `.`、`..` 和可解析部分折叠成规范路径；这里拿它做“请求路径最终是否还在 dist 根目录下”的安全判断。
+- `std::ifstream(..., std::ios::binary)`：按二进制读静态文件，避免不同平台的文本模式偷偷改写换行或字节内容。
+
+#### Pitfalls
+- 把“构建二进制”和“需要多次重启执行同一个二进制”的黑盒并行跑，会撞上链接器重写目标文件，进程二次拉起时就可能报 `Permission denied`。这种验证必须串行。
+- `start_server` 这类测试辅助函数一旦新增位置参数，所有调用点都要优先改成命名参数，否则很容易把 `frontend_dist`、`trace_ai_base_url` 这种字符串参数串位，错误表象会非常怪。

@@ -17,6 +17,7 @@
 #include "handlers/DashboardHandler.h"
 #include "handlers/ServiceMonitorHandler.h"
 #include "handlers/ConfigHandler.h"
+#include "handlers/FrontendAssetHandler.h"
 #include "core/ServiceRuntimeAccumulator.h"
 #include "core/SystemRuntimeAccumulator.h"
 #include "core/TraceRetentionService.h"
@@ -49,6 +50,70 @@ std::optional<std::string> ResolveScriptPath(const std::vector<std::string>& can
         }
     }
     return std::nullopt;
+}
+
+std::optional<std::filesystem::path> ResolveFrontendDistPath(
+    const std::optional<std::string>& cli_dist_path,
+    const std::filesystem::path& executable_path)
+{
+    auto normalize = [](const std::filesystem::path& path) -> std::filesystem::path {
+        std::error_code ec;
+        const std::filesystem::path normalized = std::filesystem::weakly_canonical(path, ec);
+        if (!ec) {
+            return normalized;
+        }
+        return path.lexically_normal();
+    };
+
+    if (cli_dist_path.has_value()) {
+        const std::filesystem::path cli_path(cli_dist_path.value());
+        const std::filesystem::path resolved =
+            cli_path.is_absolute()
+                ? normalize(cli_path)
+                : normalize(std::filesystem::current_path() / cli_path);
+        if (std::filesystem::exists(resolved) && std::filesystem::is_directory(resolved)) {
+            return resolved;
+        }
+        return std::nullopt;
+    }
+
+    // 默认探测先以可执行文件目录为锚点，再补当前工作目录候选：
+    // 这样从项目根直接跑 `./server/build/LogSentinel`，以及先 `cd server/build` 再运行，
+    // 最终都会指向同一份 `client/dist`，不再让“当前 cwd 不同”把静态资源路径搞漂。
+    const std::filesystem::path executable_dir = executable_path.parent_path();
+    const std::vector<std::filesystem::path> candidates = {
+        executable_dir / ".." / ".." / "client" / "dist",
+        std::filesystem::current_path() / "client" / "dist",
+        std::filesystem::current_path() / ".." / "client" / "dist",
+    };
+    for (const auto& candidate : candidates) {
+        const std::filesystem::path resolved = normalize(candidate);
+        if (std::filesystem::exists(resolved) && std::filesystem::is_directory(resolved)) {
+            return resolved;
+        }
+    }
+    return std::nullopt;
+}
+
+bool StartsWith(const std::string& value, const std::string& prefix)
+{
+    return value.rfind(prefix, 0) == 0;
+}
+
+bool IsApiPrefixedPath(const std::string& path)
+{
+    return path == "/api" || StartsWith(path, "/api/");
+}
+
+std::string StripApiPrefix(const std::string& path)
+{
+    if (!IsApiPrefixedPath(path)) {
+        return path;
+    }
+    if (path.size() == 4) {
+        return "/";
+    }
+    return path.substr(4);
 }
 
 std::string ToLowerCopy(std::string value)
@@ -141,6 +206,7 @@ int main(int argc, char* argv[])
     std::string webhook_provider;
     std::string webhook_url;
     std::string webhook_secret;
+    std::optional<std::string> frontend_dist_arg;
     bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
@@ -210,6 +276,10 @@ int main(int argc, char* argv[])
         } else if (arg == "--webhook-secret" && i + 1 < argc) {
             // secret 只在飞书签名校验开启时才需要；为空时继续走无签名 webhook。
             webhook_secret = argv[++i];
+        } else if (arg == "--frontend-dist" && i + 1 < argc) {
+            // 单入口部署优先允许黑盒和演示脚本显式指定 dist 目录，
+            // 这样测试时可以喂一个临时目录，不需要依赖本地已经手工跑过 `npm run build`。
+            frontend_dist_arg = argv[++i];
         }
     }
 
@@ -273,6 +343,15 @@ int main(int argc, char* argv[])
     // 这样“默认路径到底落哪”“用户删的是不是同一份库”这些问题在日志里一眼就能看见。
     db_path = resolved_db_path.string();
     std::cout << "Resolved database path: " << db_path << std::endl;
+    const std::optional<std::filesystem::path> frontend_dist_path =
+        ResolveFrontendDistPath(frontend_dist_arg, executable_path);
+    if (frontend_dist_path.has_value()) {
+        std::cout << "Resolved frontend dist path: "
+                  << frontend_dist_path->string() << std::endl;
+    } else {
+        std::cout << "Resolved frontend dist path: <not found, frontend static hosting disabled>"
+                  << std::endl;
+    }
 
     std::signal(SIGINT, HandleProcessSignal);
     std::signal(SIGTERM, HandleProcessSignal);
@@ -807,9 +886,41 @@ int main(int argc, char* argv[])
     router->add("GET", "/dashboard", [dashboard_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         dashboard_handler->handleGetStats(req, resp, conn);
     });
-    auto onRequest=[router](const HttpRequest& req, HttpResponse* resp,const MiniMuduo::net::TcpConnectionPtr& conn){
-        bool isSuccess=router->dispatch(req,resp,conn);
-        if(!isSuccess)
+
+    std::shared_ptr<FrontendAssetHandler> frontend_asset_handler;
+    if (frontend_dist_path.has_value()) {
+        // 前端页面白名单只保留正式交付入口；
+        // 这里不兼容旧地址，避免“一个未知旧路径居然还能返回 index.html”继续把产品边界搞糊。
+        frontend_asset_handler = std::make_shared<FrontendAssetHandler>(
+            frontend_dist_path->string(),
+            std::unordered_set<std::string>{"/", "/service", "/traces", "/settings"});
+    }
+
+    auto onRequest=[router, frontend_asset_handler](const HttpRequest& req,
+                                                    HttpResponse* resp,
+                                                    const MiniMuduo::net::TcpConnectionPtr& conn){
+        if (IsApiPrefixedPath(req.path_)) {
+            HttpRequest api_request = req;
+            api_request.path_ = StripApiPrefix(req.path_);
+            if (router->dispatch(api_request, resp, conn)) {
+                return;
+            }
+            // `/api/*` 前缀一旦判定成 API，就绝不能再掉回前端静态资源层。
+            // 否则像 `/api/settings` 这种本来就该报接口 404 的路径，会被错误 fallback 成页面，语义直接串味。
+            resp->setStatusCode(HttpResponse::HttpStatusCode::k404NotFound);
+            resp->addCorsHeaders();
+            resp->body_ = "{\"error\": \"404 Not Found\", \"path\": \"" + req.path() + "\"}";
+            return;
+        }
+
+        if (router->dispatch(req, resp, conn)) {
+            return;
+        }
+
+        if (frontend_asset_handler && frontend_asset_handler->Handle(req, resp)) {
+            return;
+        }
+
         {
             resp->setStatusCode(HttpResponse::HttpStatusCode::k404NotFound);
             resp->addCorsHeaders();

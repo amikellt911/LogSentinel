@@ -16,8 +16,10 @@ import importlib.util
 import json
 import os
 import select
+import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -364,6 +366,7 @@ def base_url(port: int) -> str:
 def start_server(server_bin: Path,
                  db_path: Path,
                  port: Optional[int],
+                 frontend_dist: Optional[Path] = None,
                  trace_ai_provider: Optional[str] = None,
                  trace_ai_base_url: Optional[str] = None,
                  trace_ai_timeout_ms: Optional[int] = None) -> subprocess.Popen:
@@ -381,6 +384,10 @@ def start_server(server_bin: Path,
     cmd = [str(server_bin), "--db", str(db_path), "--no-auto-start-proxy"]
     if port is not None:
         cmd.extend(["--port", str(port)])
+    if frontend_dist is not None:
+        # 单入口黑盒始终显式传 frontend_dist：
+        # 这样验证的是“后端静态资源托管逻辑”，不是碰巧复用了开发机本地某份现成的 client/dist。
+        cmd.extend(["--frontend-dist", str(frontend_dist)])
     if trace_ai_provider:
         cmd.extend(["--trace-ai-provider", trace_ai_provider])
     if trace_ai_base_url:
@@ -551,6 +558,13 @@ def fetch_all_settings(url: str) -> dict:
     return resp.json()
 
 
+def fetch_all_settings_via_api_prefix(url: str) -> dict:
+    resp = requests.get(f"{url}/api/settings/all", timeout=3.0)
+    if resp.status_code != 200:
+        raise RuntimeError(f"GET /api/settings/all 失败: status={resp.status_code}, body={resp.text}")
+    return resp.json()
+
+
 def wait_old_port_closed(url: str, timeout_sec: float) -> None:
     """
     等待旧端口彻底失效。
@@ -690,6 +704,7 @@ def send_trace_pair(url: str, trace_key: int, child_name: str, *, trace_end_fiel
 def restart_server_with_fake_proxy(proc: Optional[subprocess.Popen],
                                    server_bin: Path,
                                    db_path: Path,
+                                   frontend_dist: Path,
                                    new_url: str,
                                    ready_timeout: float,
                                    probe_service: LocalProbeService,
@@ -699,6 +714,7 @@ def restart_server_with_fake_proxy(proc: Optional[subprocess.Popen],
     restarted = start_server(server_bin,
                              db_path,
                              None,
+                             frontend_dist=frontend_dist,
                              trace_ai_base_url=probe_service.base_url,
                              trace_ai_timeout_ms=proxy_timeout_ms)
     wait_server_ready(new_url, ready_timeout, restarted)
@@ -805,9 +821,65 @@ def wait_until(predicate: Any, timeout_sec: float, interval_sec: float = 0.2) ->
     raise RuntimeError("等待条件超时")
 
 
+def create_temp_frontend_dist() -> Path:
+    root = Path(tempfile.mkdtemp(prefix="logsentinel-frontend-dist-"))
+    # 这里直接造一个极小的前端壳：
+    # 我们只需要证明后端会按路径去找 index/assets，并不会依赖真实 Vite 构建产物里的复杂文件树。
+    (root / "assets").mkdir(parents=True, exist_ok=True)
+    (root / "index.html").write_text(
+        "<!doctype html><html><body>single-entry-shell</body></html>",
+        encoding="utf-8",
+    )
+    (root / "assets" / "app.js").write_text(
+        "console.log('single-entry-js');",
+        encoding="utf-8",
+    )
+    (root / "assets" / "app.css").write_text(
+        "body{background:#fff;}",
+        encoding="utf-8",
+    )
+    return root
+
+
+def assert_single_entry_frontend_routes(url: str) -> None:
+    # 这 5 条就是这轮单入口部署的最低交付面：
+    # `/` 和 `/settings` 证明页面白名单 fallback；
+    # `/fdasxz` 证明未知路径不会误回 index.html；
+    # `/assets/app.js` 证明真实静态文件能直出且 MIME 正确；
+    # `/api/settings/all` 证明同源入口下 API 前缀剥离已经接通。
+    root_resp = requests.get(f"{url}/", timeout=2.0)
+    if root_resp.status_code != 200 or "single-entry-shell" not in root_resp.text:
+        raise RuntimeError(f"GET / 没有返回前端壳页面: status={root_resp.status_code}, body={root_resp.text}")
+    if "text/html" not in root_resp.headers.get("Content-Type", ""):
+        raise RuntimeError(f"GET / Content-Type 不正确: {root_resp.headers.get('Content-Type')}")
+
+    settings_resp = requests.get(f"{url}/settings", timeout=2.0)
+    if settings_resp.status_code != 200 or "single-entry-shell" not in settings_resp.text:
+        raise RuntimeError(
+            f"GET /settings 没有命中白名单 fallback: status={settings_resp.status_code}, body={settings_resp.text}"
+        )
+    if "text/html" not in settings_resp.headers.get("Content-Type", ""):
+        raise RuntimeError(f"GET /settings Content-Type 不正确: {settings_resp.headers.get('Content-Type')}")
+
+    unknown_resp = requests.get(f"{url}/fdasxz", timeout=2.0)
+    if unknown_resp.status_code != 404:
+        raise RuntimeError(f"GET /fdasxz 应该返回 404，实际 status={unknown_resp.status_code}")
+
+    asset_resp = requests.get(f"{url}/assets/app.js", timeout=2.0)
+    if asset_resp.status_code != 200 or "single-entry-js" not in asset_resp.text:
+        raise RuntimeError(
+            f"GET /assets/app.js 没有返回真实静态文件: status={asset_resp.status_code}, body={asset_resp.text}"
+        )
+    if "application/javascript" not in asset_resp.headers.get("Content-Type", ""):
+        raise RuntimeError(f"GET /assets/app.js Content-Type 不正确: {asset_resp.headers.get('Content-Type')}")
+
+    fetch_all_settings_via_api_prefix(url)
+
+
 def run_flow(args: argparse.Namespace) -> int:
     server_bin = Path(args.server_bin).resolve()
     db_path = Path(args.db).resolve()
+    frontend_dist = create_temp_frontend_dist()
     bootstrap = args.bootstrap_port
     configured = args.configured_port
     proc: Optional[subprocess.Popen] = None
@@ -837,7 +909,7 @@ def run_flow(args: argparse.Namespace) -> int:
     ]
 
     try:
-        proc = start_server(server_bin, db_path, bootstrap)
+        proc = start_server(server_bin, db_path, bootstrap, frontend_dist=frontend_dist)
         wait_server_ready(old_url, args.ready_timeout, proc)
         post_config_patch(old_url, config_items)
         print("[settings-blackbox] 已写入冷启动配置，准备重启后验证真实生效")
@@ -847,9 +919,10 @@ def run_flow(args: argparse.Namespace) -> int:
         wait_old_port_closed(old_url, 3.0)
 
         # 第二次启动故意不传 --port，迫使 main.cpp 从配置快照里取 http_port。
-        proc = start_server(server_bin, db_path, None)
+        proc = start_server(server_bin, db_path, None, frontend_dist=frontend_dist)
         wait_server_ready(new_url, args.ready_timeout, proc)
         startup_logs = wait_process_log_contains(proc, "2 worker threads", timeout_sec=3.0)
+        assert_single_entry_frontend_routes(new_url)
 
         settings = fetch_all_settings(new_url)
         app_config = settings.get("config", {})
@@ -981,6 +1054,7 @@ def run_flow(args: argparse.Namespace) -> int:
         proc = start_server(server_bin,
                             db_path,
                             None,
+                            frontend_dist=frontend_dist,
                             trace_ai_provider="mock",
                             trace_ai_base_url=probe_service.base_url,
                             trace_ai_timeout_ms=args.proxy_timeout_ms)
@@ -1135,7 +1209,7 @@ def run_flow(args: argparse.Namespace) -> int:
 
         # 场景 1：gemini 主路成功，glm 不应该被调用。
         configure_provider_pair("gemini", "glm")
-        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, frontend_dist, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
         probe_service.state.clear_trace_requests()
         probe_service.state.set_provider_behavior("gemini", build_probe_success_payload("gemini", risk_level="warning"))
         probe_service.state.set_provider_behavior("glm", build_probe_success_payload("glm", risk_level="warning"))
@@ -1152,7 +1226,7 @@ def run_flow(args: argparse.Namespace) -> int:
 
         # 场景 2：glm 主路成功，gemini 不应该被调用。
         configure_provider_pair("glm", "gemini")
-        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, frontend_dist, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
         probe_service.state.clear_trace_requests()
         probe_service.state.set_provider_behavior("glm", build_probe_success_payload("glm", risk_level="warning"))
         probe_service.state.set_provider_behavior("gemini", build_probe_success_payload("gemini", risk_level="warning"))
@@ -1169,7 +1243,7 @@ def run_flow(args: argparse.Namespace) -> int:
 
         # 场景 3：gemini 主路失败，glm fallback 成功。
         configure_provider_pair("gemini", "glm")
-        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, frontend_dist, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
         probe_service.state.clear_trace_requests()
         probe_service.state.set_provider_behavior(
             "gemini",
@@ -1189,7 +1263,7 @@ def run_flow(args: argparse.Namespace) -> int:
 
         # 场景 4：glm 主路失败，gemini fallback 成功。
         configure_provider_pair("glm", "gemini")
-        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, frontend_dist, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
         probe_service.state.clear_trace_requests()
         probe_service.state.set_provider_behavior(
             "glm",
@@ -1209,7 +1283,7 @@ def run_flow(args: argparse.Namespace) -> int:
 
         # 场景 5：主备都失败，最终状态必须是 failed_both，且 ai_error 要带上双边失败信息。
         configure_provider_pair("glm", "gemini")
-        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, frontend_dist, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
         probe_service.state.clear_trace_requests()
         probe_service.state.set_provider_behavior(
             "glm",
@@ -1237,7 +1311,7 @@ def run_flow(args: argparse.Namespace) -> int:
 
         # 场景 6：同一个 provider 的第一次 429 失败后，应该先在主路内部重试，再成功完成。
         configure_retry_only_provider("glm", retry_enabled=True, retry_max_attempts=3)
-        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, frontend_dist, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
         probe_service.state.clear_trace_requests()
         probe_service.state.set_provider_behavior_sequence(
             "glm",
@@ -1265,7 +1339,7 @@ def run_flow(args: argparse.Namespace) -> int:
         # 场景 7：401 属于确定性鉴权失败，不允许重试。
         # 这里把第二个响应故意配成 success，就是为了证明“如果真的偷偷重试了，这条用例会被误判成 completed”。
         configure_retry_only_provider("glm", retry_enabled=True, retry_max_attempts=3)
-        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, frontend_dist, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
         probe_service.state.clear_trace_requests()
         probe_service.state.set_provider_behavior_sequence(
             "glm",
@@ -1310,6 +1384,10 @@ def run_flow(args: argparse.Namespace) -> int:
         return 1
     finally:
         cleanup(proc, db_path, args.keep_artifacts)
+        if args.keep_artifacts:
+            print(f"[settings-blackbox] 保留前端临时目录用于排障: {frontend_dist}")
+        else:
+            shutil.rmtree(frontend_dist, ignore_errors=True)
         if probe_service is not None:
             probe_service.stop()
 

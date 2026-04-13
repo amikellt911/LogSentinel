@@ -155,3 +155,10 @@
 - [x] 为 Settings 第三层黑盒补 AI 重试负例：`401` 不得重试，必须直接收成 `failed_primary`
 - [x] 运行第三层黑盒脚本，确认 AI 重试冷启动配置和真实请求链路都通过
 - [x] 追加 2026-04-13 dev-log，记录这轮 AI 重试黑盒收尾与中文注释位置
+- [x] 为单入口部署补设计/执行计划，锁定 API 分流、静态文件直出、SPA 白名单 fallback 和 `--frontend-dist`
+- [x] 为 `FrontendAssetHandler` 补红灯测试：静态文件命中、SPA 白名单命中、未知路径 404、路径穿越拦截
+- [x] 新增 `FrontendAssetHandler`，接通 `client/dist` 文件读取、MIME 映射和前端路由白名单
+- [x] 调整 `main.cpp` 请求分流：兼容 `/api/*`，保留裸 API，未命中 API 时再走前端静态资源与白名单 fallback
+- [x] 为单入口部署补黑盒验证：`/`、`/settings`、`/fdasxz`、`/assets/*.js`、`/api/settings/all`
+- [x] 运行最小构建/测试/黑盒与 `git diff --check`，确认单入口部署链路可用
+- [x] 追加 2026-04-13 dev-log，记录这轮单入口部署实现与中文注释位置

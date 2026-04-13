@@ -10,7 +10,7 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 
 ## 版本目标
 - [x] 完成 `Settings` 真实生效联调验收 (2026-04-12)
-- [ ] 完成前后端单入口部署：后端托管 `client/dist`，让 `http_port` 成为系统唯一入口端口
+- [x] 完成前后端单入口部署：后端托管 `client/dist`，让 `http_port` 成为系统唯一入口端口 (2026-04-13)
 - [x] 接入第 2 个真实 AI provider：`GLM` (2026-04-12)
 - [x] 落地 AI 重试，让 `ai_retry_enabled / ai_retry_max_attempts` 从占位配置变成真实能力 (2026-04-13)
 - [ ] **配置热加载 (Hot-reloading)**: 支持 `ai_provider / ai_model / ai_api_key` 在运行时无感切换，无需重启后端进程，提升演示体验 (待办)
@@ -24,7 +24,7 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 - [ ] 把已经接进主链的 Settings 字段按“保存 -> 重启/生效 -> 前端可见变化”做一轮联调清单
 - [ ] 收口前端正式设置入口与部署入口语义：
   - [x] `/settings` 只保留 `SettingsPrototype`
-  - [ ] 后端托管 `client/dist` 后只暴露单入口，不再要求用户记住前后端双端口
+  - [x] 后端托管 `client/dist` 后只暴露单入口，不再要求用户记住前后端双端口
 - [ ] 在现有 `mock / gemini` 之外接入 `GLM`，让自动降级真正覆盖两家真实 provider
 - [ ] 在 Python proxy 落地 AI 重试：
   - [x] 真实消费 `ai_retry_enabled / ai_retry_max_attempts`
@@ -96,6 +96,7 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 ## 验收标准
 - [ ] 能给出一份明确的 Settings 联调验收清单，并证明关键配置项真实生效
 - [ ] 后端托管 `client/dist` 后，用户只需要访问一个端口，前端不再硬编码旧 API 端口
+- [x] 后端托管 `client/dist` 后，用户只需要访问一个端口，前端不再硬编码旧 API 端口
 - [x] `gemini + glm` 至少两家真实 provider 可用，自动降级链路可演示
 - [x] `ai_retry_enabled / ai_retry_max_attempts` 已被真实消费，且重试结果与熔断 / 降级链路语义一致
 - [ ] benchmark 命令、参数、结果表和截图可以直接复跑、直接放论文
@@ -107,6 +108,11 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 - `MVP5` 已归档到 `docs/archive/current-task/MVP5.md`。
 - 当前论文初稿可以开写；v1.0.0 这轮新增内容主要补实验数据、部署复现能力和正式版本收尾材料。
 - Settings 联调当前已经不是“只验保存回填”，而是已经补到真实黑盒消费验证；继续在 Settings 支线上追加更多黑盒的收益开始下降。
+- 单入口部署已收口：
+  - 后端支持 `--frontend-dist <path>` 显式指定前端静态目录，黑盒可喂临时 dist，不依赖本地先手工构建。
+  - `/api/*` 会先剥前缀再走现有 Router，裸 API 仍兼容。
+  - 非 API 请求会先尝试命中真实静态文件，再对白名单页面 `/ /service /traces /settings` fallback 到 `index.html`。
+  - 未知路径如 `/fdasxz` 仍返回 404，不会误掉回前端壳页面。
 - 这轮的重点不是再发明更多功能，而是把现有特色讲实、做实：
   - 轻量部署
   - 异常闭环
