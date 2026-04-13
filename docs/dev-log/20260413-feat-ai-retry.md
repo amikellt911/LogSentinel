@@ -255,3 +255,68 @@
 #### Pitfalls
 - 黑盒新增场景时，最容易犯的错不是生产代码，而是沿用了上一场景残留的 provider 配置。这次场景 10 一开始就踩了这个坑，表面看像 no-buffer 失败，实际上是测试自己把 `mock` 和 `glm` 搅混了。
 - 如果 shutdown 统计还无脑去解引用 `buffered_trace_repo`，切到 no-buffer 后进程退出时就会直接空指针崩掉，所以这里必须把 shutdown 打印分成 buffered/no-buffer 两条分支。
+
+## 追加记录：ai_model / ai_api_key 热更新第一刀
+
+### Git Commit Message
+`feat(ai): 支持模型与密钥热更新`
+
+### Modification
+- `server/persistence/SqliteConfigRepository.h`
+- `server/persistence/SqliteConfigRepository.cpp`
+- `server/ai/TraceAiFactory.h`
+- `server/ai/TraceAiFactory.cpp`
+- `server/ai/TraceProxyAi.h`
+- `server/ai/TraceProxyAi.cpp`
+- `server/src/main.cpp`
+- `server/tests/smoke_settings_blackbox.py`
+- `docs/todo-list/Todo_Settings_MVP5.md`
+- `CurrentTask.md`
+
+### What Changed
+- 在 `SqliteConfigRepository` 增加专门给 Trace AI 用的运行时版本号，只在 `ai_model / ai_api_key` 更新时递增。
+- 把配置发布顺序改成“先 COMMIT，再发布内存快照/版本号”，避免运行态先看到数据库还没提交成功的值。
+- 在 `TraceAiFactory` 增加运行时版本读取器和凭证读取器，让工厂继续只负责组装，不负责热更新策略本身。
+- 在 `TraceProxyAi` 增加“本地不可变小快照”：
+  - 每次 `AnalyzeTrace` 先看版本号；
+  - 版本没变就继续用本地 `model/api_key`；
+  - 版本变了才重新抓一次凭证并原子换代。
+- 在 `main.cpp` 只给主 provider 挂上这条热更新链，明确收口为“只热更新请求体字段，不热更新 provider 路由”。
+- 在第三层黑盒增加一条“运行中改 `ai_model / ai_api_key`、不重启后端”的场景，直接证明下一条 trace 请求会带新值。
+
+### 中文注释
+- `server/persistence/SqliteConfigRepository.h`
+  - 在 `trace_ai_runtime_version_` 旁补注释，说明这条版本线只服务 `model/api_key` 热更新，不碰 provider。
+- `server/persistence/SqliteConfigRepository.cpp`
+  - 在 `TouchesTraceAiRuntimeHotKeys` 补注释，说明为什么这条版本线只盯主 provider 的请求体字段。
+  - 在 `handleUpdateAppConfig` 的发布顺序处补注释，说明为什么必须“先提交再发布”。
+- `server/ai/TraceAiFactory.h`
+  - 在运行时 reader 字段旁补注释，说明工厂只绑定热更新数据源，不切 provider 路由。
+- `server/ai/TraceProxyAi.h`
+  - 在 `runtime_request_config_` 旁补注释，说明为什么并发场景下不能原地改共享字符串。
+- `server/ai/TraceProxyAi.cpp`
+  - 在 `GetRuntimeRequestConfig` 补注释，说明为什么只在版本变化时刷新，以及并发重复刷新为什么可接受。
+- `server/src/main.cpp`
+  - 在热更新 reader 接线处补注释，说明这里只热更新 `model/api_key`，不把整份 Settings 热路径化。
+- `server/tests/smoke_settings_blackbox.py`
+  - 在新黑盒场景前补注释，说明它锁的是“运行中热更新”而不是原来的冷启动消费。
+  - 在 webhook 清理处补注释，说明为什么要避免场景之间互相污染。
+
+### Verification
+- `cmake --build server/build --target LogSentinel`
+- `/home/llt/Project/llt/venv/bin/python3 server/tests/smoke_settings_blackbox.py`
+
+### Learning Tips
+#### Newbie Tips
+- 热更新不等于“把成员变量改一下”。只要同一个对象会被多个线程并发调用，原地改共享字符串就是数据竞争。
+- 版本号的真正作用不是存历史，而是帮你把“绝大多数没变化的请求”挡在快路径里，只在变更发生时才重抓配置。
+- `provider` 和 `model/api_key` 不是一类东西。前者决定打哪个路由，后者只是这次请求体里带什么参数，所以它们不应该用同一种热更新策略。
+
+#### Function Explanation
+- `std::atomic_load_explicit(&shared_ptr, std::memory_order_acquire)`：原子读出当前发布的小快照，让读线程拿到一份稳定对象，而不是半写状态。
+- `std::atomic_store_explicit(&shared_ptr, ..., std::memory_order_release)`：一次性发布新的不可变快照；旧快照会在最后一个读者放手后自然释放。
+- `fetch_add(1, std::memory_order_acq_rel)`：给版本号做单调递增，既表达“确实发生过更新”，也给读线程一个便宜的变化探针。
+
+#### Pitfalls
+- 如果先发布新快照，再去做 SQLite `COMMIT`，一旦事务提交失败，内存态和持久化态就会分叉，后面排查会非常恶心。
+- 黑盒里新增 trace 场景时，要注意它会不会顺手污染 webhook 或 provider 的探针状态；这次就因为新场景默认被 fake proxy 识别成 `critical`，把后面的阈值断言串脏了一次。

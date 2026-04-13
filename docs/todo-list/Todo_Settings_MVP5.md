@@ -173,3 +173,8 @@
 - [x] 新增直写 SQLite 的 no-buffer 写入口实现，并在 `main.cpp` 接入 `--disable-buffered-trace-repo`
 - [x] 运行最小构建/黑盒验证，确认 no-buffer 对照组真实生效
 - [x] 追加 2026-04-13 dev-log，记录这轮 no-buffer benchmark 开关实现与中文注释位置
+- [x] 为 `ai_model / ai_api_key` 热更新补红灯黑盒：运行中改配置、不重启服务，下一条 trace 必须带新值
+- [x] 在 `SqliteConfigRepository` 发布 AI 运行时版本号，只给 `model/api_key` 热更新使用
+- [x] 在 `TraceProxyAi` 落最小运行时凭证快照，做到“版本没变不刷新，版本变了才重抓快照”
+- [x] 运行最小黑盒/构建验证，确认热更新只影响 `model/api_key`，不碰 provider 路由
+- [x] 追加 2026-04-13 dev-log，记录这轮 `ai_model / ai_api_key` 热更新与中文注释位置

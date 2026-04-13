@@ -1137,6 +1137,33 @@ def run_flow(args: argparse.Namespace) -> int:
         if str(last_trace_request.get("api_key", "")) != "probe-key":
             raise RuntimeError("proxy 实收请求没有带上新的 api_key")
 
+        # 这条黑盒故意不重启后端：
+        # 前一条只证明冷启动时 model/api_key 能进请求体，这一条才证明运行中改设置后，
+        # 下一次真正发 AI 时会重新吃到新值，而不是一直卡在 TraceProxyAi 构造时的旧缓存。
+        probe_service.state.clear_trace_requests()
+        post_config_patch(
+            new_url,
+            [
+                {"key": "ai_model", "value": "hot-reload-model"},
+                {"key": "ai_api_key", "value": "hot-reload-key"},
+            ],
+        )
+        hot_reload_trace_id = send_trace_pair(
+            new_url,
+            int(time.time() * 1000) + 150,
+            "webhook-warning-sentinel-hot-reload-model-api-key",
+        )
+        wait_trace_summary_status(db_path, hot_reload_trace_id, "completed", args.dispatch_timeout)
+        assert_last_provider_request(
+            probe_service.state,
+            ["mock"],
+            expected_model_by_provider={"mock": "hot-reload-model"},
+            expected_api_key_by_provider={"mock": "hot-reload-key"},
+        )
+        # 热更新这条 trace 只负责锁 model/api_key，不负责复用下面的 webhook 阈值断言。
+        # 这里把探针外发状态清干净，避免上一条场景残留把“warning 不该告警”的断言串脏。
+        probe_service.state.clear_webhook_payloads()
+
         # 先打 warning 再看 webhook，是为了证明 channel.threshold 真起作用了。
         # 如果这里直接拿 critical 去测，只能证明“会不会发”，证明不了阈值过滤这层设置真的被消费。
         time.sleep(1.0)
@@ -1469,7 +1496,7 @@ def run_flow(args: argparse.Namespace) -> int:
 
         print(
             "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
-            "ai_analysis_enabled、ai_timeout_ms、prompt/active_prompt_id、webhook channel、"
+            "ai_analysis_enabled、ai_timeout_ms、ai_model/api_key 热更新、prompt/active_prompt_id、webhook channel、"
             "kernel_worker_threads、log_retention_days、双 provider/fallback、AI retry、"
             "benchmark CLI 开关都已验证"
         )

@@ -13,11 +13,13 @@ TraceProxyAi::TraceProxyAi(std::string base_url,
                            std::string model,
                            std::string api_key,
                            bool retry_enabled,
-                           int retry_max_attempts)
+                           int retry_max_attempts,
+                           std::function<uint64_t()> runtime_version_reader,
+                           std::function<TraceAiRuntimeCredentials()> runtime_credentials_reader)
     : timeout_ms_(timeout_ms > 0 ? timeout_ms : 10000),
       prompt_template_(std::move(prompt_template)),
-      model_(std::move(model)),
-      api_key_(std::move(api_key)),
+      runtime_version_reader_(std::move(runtime_version_reader)),
+      runtime_credentials_reader_(std::move(runtime_credentials_reader)),
       retry_enabled_(retry_enabled),
       retry_max_attempts_(retry_max_attempts > 0 ? retry_max_attempts : 1)
 {
@@ -25,12 +27,48 @@ TraceProxyAi::TraceProxyAi(std::string base_url,
         base_url.pop_back();
     }
     analyze_trace_url_ = base_url + "/analyze/trace/" + TraceAiBackendToRouteSegment(backend);
+
+    auto initial_runtime_config = std::make_shared<RuntimeRequestConfig>();
+    initial_runtime_config->version = runtime_version_reader_ ? runtime_version_reader_() : 0;
+    initial_runtime_config->model = std::move(model);
+    initial_runtime_config->api_key = std::move(api_key);
+    std::atomic_store_explicit(
+        &runtime_request_config_,
+        std::shared_ptr<const RuntimeRequestConfig>(std::move(initial_runtime_config)),
+        std::memory_order_release);
 }
 
 TraceProxyAi::~TraceProxyAi() = default;
 
+std::shared_ptr<const TraceProxyAi::RuntimeRequestConfig> TraceProxyAi::GetRuntimeRequestConfig()
+{
+    auto current_config = std::atomic_load_explicit(&runtime_request_config_, std::memory_order_acquire);
+    if (!runtime_version_reader_ || !runtime_credentials_reader_) {
+        return current_config;
+    }
+
+    const uint64_t latest_version = runtime_version_reader_();
+    if (current_config && current_config->version == latest_version) {
+        return current_config;
+    }
+
+    // 版本变了才去读新凭证。
+    // 这里即使有两个 worker 同时刷新，也只是多构造一份等价小对象，不会去原地改共享字符串。
+    TraceAiRuntimeCredentials refreshed_credentials = runtime_credentials_reader_();
+    auto refreshed_config = std::make_shared<RuntimeRequestConfig>();
+    refreshed_config->version = latest_version;
+    refreshed_config->model = std::move(refreshed_credentials.model);
+    refreshed_config->api_key = std::move(refreshed_credentials.api_key);
+    std::atomic_store_explicit(
+        &runtime_request_config_,
+        std::shared_ptr<const RuntimeRequestConfig>(refreshed_config),
+        std::memory_order_release);
+    return refreshed_config;
+}
+
 TraceAiResponse TraceProxyAi::AnalyzeTrace(const std::string& trace_payload)
 {
+    const std::shared_ptr<const RuntimeRequestConfig> runtime_request_config = GetRuntimeRequestConfig();
     cpr::Session session;
     session.SetHeader(cpr::Header{{"Content-Type", "application/json"}});
     session.SetTimeout(cpr::Timeout{timeout_ms_});
@@ -44,11 +82,11 @@ TraceAiResponse TraceProxyAi::AnalyzeTrace(const std::string& trace_payload)
     // 这里不强行要求 model/api_key 一定非空。
     // 既然 provider 本身已经支持“优先吃请求值，没有就回退默认配置”，
     // 那 TraceProxyAi 只负责把冷启动阶段算好的值尽量透传过去。
-    if (!model_.empty()) {
-        request_json["model"] = model_;
+    if (runtime_request_config && !runtime_request_config->model.empty()) {
+        request_json["model"] = runtime_request_config->model;
     }
-    if (!api_key_.empty()) {
-        request_json["api_key"] = api_key_;
+    if (runtime_request_config && !runtime_request_config->api_key.empty()) {
+        request_json["api_key"] = runtime_request_config->api_key;
     }
     // 这里把 C++ 外层等待预算继续下发给 Python proxy。
     // 否则 proxy 调 GLM 时只能用自己的固定 timeout，内外两层很容易卡在同一秒同时超时，

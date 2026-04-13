@@ -72,6 +72,13 @@ static void ReplaceTraceEndAliases(sqlite3* db, const std::vector<std::string>& 
     }
 }
 
+static bool TouchesTraceAiRuntimeHotKeys(const std::map<std::string, std::string>& mp)
+{
+    // 这条版本线当前只管主 provider 请求体里的 model/api_key。
+    // provider 路由、fallback 三元组和 prompt 仍然按冷启动语义处理，不跟这次热更新混在一起。
+    return mp.find("ai_model") != mp.end() || mp.find("ai_api_key") != mp.end();
+}
+
 // 辅助函数：将 DB 字符串值应用到 AppConfig 结构体
 static void ApplyConfigValue(AppConfig &config, const std::string &key, const std::string &val)
 {
@@ -271,8 +278,12 @@ SqliteConfigRepository::~SqliteConfigRepository()
 
 SystemConfigPtr SqliteConfigRepository::getSnapshot()
 {
-    std::lock_guard<std::mutex> lock(snapshot_mutex_);
-    return current_snapshot_;
+    return std::atomic_load_explicit(&current_snapshot_, std::memory_order_acquire);
+}
+
+uint64_t SqliteConfigRepository::getTraceAiRuntimeVersion() const
+{
+    return trace_ai_runtime_version_.load(std::memory_order_acquire);
 }
 
 AppConfig SqliteConfigRepository::getAppConfig()
@@ -301,11 +312,7 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
     std::lock_guard<std::mutex> db_lock(db_write_mutex_);
 
     // 获取旧快照
-    SystemConfigPtr old_snap;
-    {
-        std::lock_guard<std::mutex> lock(snapshot_mutex_);
-        old_snap = current_snapshot_;
-    }
+    SystemConfigPtr old_snap = getSnapshot();
 
     // 基于旧配置准备新配置
     AppConfig configClone = old_snap->app_config;
@@ -380,13 +387,18 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
             old_snap->channels
         );
 
-        {
-            std::lock_guard<std::mutex> lock(snapshot_mutex_);
-            current_snapshot_ = new_snap;
-        }
-
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
         checkSqliteError(db_, rc, "Failed to commit transaction");
+
+        // 先提交，再发布内存快照/版本。
+        // 否则一旦 COMMIT 失败，运行时就可能先看到一份数据库里根本没真正落成的配置。
+        std::atomic_store_explicit(
+            &current_snapshot_,
+            std::shared_ptr<const SystemConfig>(std::move(new_snap)),
+            std::memory_order_release);
+        if (TouchesTraceAiRuntimeHotKeys(mp)) {
+            trace_ai_runtime_version_.fetch_add(1, std::memory_order_acq_rel);
+        }
     }
     catch (...)
     {
@@ -399,11 +411,7 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
 {
     std::lock_guard<std::mutex> db_lock(db_write_mutex_);
 
-    SystemConfigPtr old_snap;
-    {
-        std::lock_guard<std::mutex> lock(snapshot_mutex_);
-        old_snap = current_snapshot_;
-    }
+    SystemConfigPtr old_snap = getSnapshot();
 
     auto new_prompts = prompts_input;
 
@@ -480,13 +488,12 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
             old_snap->channels
         );
 
-        {
-            std::lock_guard<std::mutex> lock(snapshot_mutex_);
-            current_snapshot_ = new_snap;
-        }
-
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
         checkSqliteError(db_, rc, "Failed to commit transaction for prompts");
+        std::atomic_store_explicit(
+            &current_snapshot_,
+            std::shared_ptr<const SystemConfig>(std::move(new_snap)),
+            std::memory_order_release);
     } catch (...) {
         sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
         throw;
@@ -497,11 +504,7 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
 {
     std::lock_guard<std::mutex> db_lock(db_write_mutex_);
 
-    SystemConfigPtr old_snap;
-    {
-        std::lock_guard<std::mutex> lock(snapshot_mutex_);
-        old_snap = current_snapshot_;
-    }
+    SystemConfigPtr old_snap = getSnapshot();
 
     auto new_channels_cache = channels_input;
 
@@ -579,13 +582,12 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
             std::move(new_channels_cache)
         );
 
-        {
-            std::lock_guard<std::mutex> lock(snapshot_mutex_);
-            current_snapshot_ = new_snap;
-        }
-
         rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
         checkSqliteError(db_, rc, "Failed to commit transaction for channels");
+        std::atomic_store_explicit(
+            &current_snapshot_,
+            std::shared_ptr<const SystemConfig>(std::move(new_snap)),
+            std::memory_order_release);
     } catch (...) {
         sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
         throw;
@@ -698,12 +700,13 @@ void SqliteConfigRepository::loadFromDbInternal()
     auto prompts = getAllPromptsInternal();
     auto channels = getAllChannelsInternal();
 
-    std::lock_guard<std::mutex> lock(snapshot_mutex_);
-    current_snapshot_ = std::make_shared<SystemConfig>(
-        std::move(app),
-        std::move(prompts),
-        std::move(channels)
-    );
+    std::atomic_store_explicit(
+        &current_snapshot_,
+        std::shared_ptr<const SystemConfig>(std::make_shared<SystemConfig>(
+            std::move(app),
+            std::move(prompts),
+            std::move(channels))),
+        std::memory_order_release);
 }
 
 // 已弃用 API

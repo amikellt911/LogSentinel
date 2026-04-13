@@ -694,6 +694,19 @@ int main(int argc, char* argv[])
         // 这样 TraceSessionManager 后面只面对“单次 AnalyzeTrace 调用”，不需要自己再关心某家 provider 应不应该重试几次。
         options.retry_enabled = startup_app_config.ai_retry_enabled;
         options.retry_max_attempts = startup_app_config.ai_retry_max_attempts;
+        // provider 路由仍然是冷启动决定，但请求体里的 model/api_key 可以在运行中热更新。
+        // 这里把 repo 的版本读取和凭证读取函数一起交给 provider，
+        // 让它只在版本变化时刷新本地小快照，不把整份 Settings 热路径化。
+        options.runtime_version_reader = [config_repo]() -> uint64_t {
+            return config_repo->getTraceAiRuntimeVersion();
+        };
+        options.runtime_credentials_reader = [config_repo]() -> TraceAiRuntimeCredentials {
+            const auto snapshot = config_repo->getSnapshot();
+            return TraceAiRuntimeCredentials{
+                snapshot ? snapshot->app_config.ai_model : "",
+                snapshot ? snapshot->app_config.ai_api_key : "",
+            };
+        };
         trace_ai = CreateTraceAiProvider(options);
         if (effective_ai_auto_degrade) {
             TraceAiBackend fallback_backend = TraceAiBackend::Mock;

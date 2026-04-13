@@ -1,9 +1,10 @@
 #pragma once
 #include<sqlite3.h>
+#include<atomic>
 #include<string>
 #include<vector>
-#include<mutex>
 #include <memory>
+#include<mutex>
 #include "persistence/SystemConfig.h"
 
 class SqliteConfigRepository
@@ -22,7 +23,9 @@ private:
 private:
     // --- 快照状态 ---
     SystemConfigPtr current_snapshot_;
-    mutable std::mutex snapshot_mutex_; // 保护 current_snapshot_ 的交换
+    // 这条版本线只服务 Trace AI 的 model/api_key 热更新。
+    // provider 仍然属于冷启动配置，所以这里故意不把所有 app_config 写操作都算进来。
+    std::atomic<uint64_t> trace_ai_runtime_version_{1};
 
     // --- 数据库状态 ---
     sqlite3* db_=nullptr;
@@ -34,6 +37,7 @@ public:
 
     // 核心 API: 获取不可变快照
     SystemConfigPtr getSnapshot();
+    uint64_t getTraceAiRuntimeVersion() const;
 
     // 兼容 API (委托给快照)
     AppConfig getAppConfig();

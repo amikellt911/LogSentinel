@@ -14,5 +14,7 @@ std::shared_ptr<TraceAiProvider> CreateTraceAiProvider(const TraceAiFactoryOptio
                                           options.model,
                                           options.api_key,
                                           options.retry_enabled,
-                                          options.retry_max_attempts);
+                                          options.retry_max_attempts,
+                                          options.runtime_version_reader,
+                                          options.runtime_credentials_reader);
 }
