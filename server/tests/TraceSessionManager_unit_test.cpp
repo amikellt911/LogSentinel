@@ -406,6 +406,123 @@ TEST_F(TraceSessionManagerUnitTest, PushSealsWhenTraceEndIsTrueAndDispatchesAfte
     pool.shutdown();
 }
 
+TEST_F(TraceSessionManagerUnitTest, MinimalProfileSkipsSealedGraceAndDispatchesOnNextSweep)
+{
+    // 目的：验证 minimal 档位命中 trace_end 后不会进入 Sealed，
+    // 而是直接切到“ready 等 sweep 摘走”的语义。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/4096,
+                                /*active_session_hard_limit*/1024,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
+                                nullptr,
+                                nullptr,
+                                /*ai_analysis_enabled*/true,
+                                /*ai_circuit_breaker_enabled*/true,
+                                /*ai_failure_threshold*/5,
+                                /*ai_cooldown_ms*/60000,
+                                nullptr,
+                                /*ai_auto_degrade_enabled*/false,
+                                TraceSessionManager::TraceLifecycleProfile::Minimal);
+
+    SpanEvent span = MakeSpan(111, 1001, 1000);
+    span.trace_end = true;
+
+    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+    auto iter = manager.index_by_trace_.find(111);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state,
+              TraceSession::LifecycleState::ReadyToDispatch);
+    EXPECT_EQ(manager.sessions_[iter->second]->sealed_deadline_tick, 0u);
+    EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
+
+    SweepOneTick(manager, /*now_ms*/1000);
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    EXPECT_EQ(manager.size(), 0u);
+    EXPECT_EQ(repo.last_summary.trace_id, "111");
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, MinimalProfileDoesNotKeepCompletedTombstoneAfterDispatch)
+{
+    // 目的：验证 minimal 档位在 dispatch 成功后不会留下 completed tombstone，
+    // 所以后续晚到 span 会重新进入新会话，而不是被幂等吸收掉。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/4096,
+                                /*active_session_hard_limit*/1024,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
+                                nullptr,
+                                nullptr,
+                                /*ai_analysis_enabled*/true,
+                                /*ai_circuit_breaker_enabled*/true,
+                                /*ai_failure_threshold*/5,
+                                /*ai_cooldown_ms*/60000,
+                                nullptr,
+                                /*ai_auto_degrade_enabled*/false,
+                                TraceSessionManager::TraceLifecycleProfile::Minimal);
+
+    SpanEvent first = MakeSpan(222, 2001, 1000);
+    first.trace_end = true;
+    ASSERT_EQ(manager.Push(first), TraceSessionManager::PushResult::Accepted);
+
+    SweepOneTick(manager, /*now_ms*/1000);
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
+    // 这里显式等 inflight 清空，再发晚到 span。
+    // 否则测到的可能只是“dispatch 还没收尾完”，而不是“没有 tombstone”。
+    ASSERT_TRUE(WaitUntil([&manager]() {
+        return manager.size() == 0 && manager.dispatching_inflight_.empty();
+    }));
+    EXPECT_EQ(manager.completed_trace_expire_tick_.count(222), 0u);
+
+    SpanEvent late = MakeSpan(222, 2002, 1200);
+    EXPECT_EQ(manager.Push(late), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.size(), 1u);
+    auto iter = manager.index_by_trace_.find(222);
+    ASSERT_NE(iter, manager.index_by_trace_.end());
+    ASSERT_TRUE(manager.sessions_[iter->second] != nullptr);
+    EXPECT_EQ(manager.sessions_[iter->second]->lifecycle_state,
+              TraceSession::LifecycleState::Collecting);
+
+    pool.shutdown();
+}
+
 TEST_F(TraceSessionManagerUnitTest, RuntimeStatsTrackDispatchWorkerAiEnqueueAndBufferedFlush)
 {
     // 目的：验证埋点现在能把两段时间线分清：

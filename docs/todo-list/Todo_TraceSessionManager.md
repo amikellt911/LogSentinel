@@ -118,3 +118,13 @@
 - [ ] 补单测：dispatch queue 满回滚、worker submit 失败回滚、`primary_enqueued` 重试不重复主写、inflight 拦截 late span
 - [x] 修正异步 dispatch 后的单测断言口径：对 retry/rollback 相关用例先等待 session 回滚完成，再检查 `ReadyRetryLater` / `retry_count` / `next_retry_tick`
 - [ ] 完成构建与 TraceSessionManager 相关回归验证，并根据结果决定后续是否继续做 dispatch queue 水位联动
+
+## 2026-04-14：Trace 生命周期 profile（进行中）
+- [x] 确认本轮范围：只做 `trace_lifecycle_profile=protected|minimal` 冷启动配置与 `TraceSessionManager` 生命周期分支，不碰发送器
+- [x] 先补单测红灯：锁定 `minimal` 命中 `trace_end/capacity/token_limit` 后不进入 `Sealed`
+- [x] 先补单测红灯：锁定 `minimal` dispatch 成功后不写 completed tombstone，晚到 span 会重新进入新会话
+- [x] 在 `AppConfig / SqliteConfigRepository / main.cpp` 接通 `trace_lifecycle_profile` 冷启动配置
+- [x] 在 `TraceSessionManager` 增加 profile 枚举与构造注入，补齐中文注释说明 `protected/minimal` 的状态流区别
+- [x] 改造 `PushLocked / SealSessionLocked / SweepExpiredSessions / AddCompletedTombstoneLocked`，让 `minimal` 仍走 sweep 主路径，但跳过 sealed grace 与 completed tombstone
+- [x] 回归 `test_trace_session_manager_unit` 里与 sealed/tombstone 相关的旧用例，修正只因 profile 默认值受影响的断言
+- [x] 运行最小测试集验证并记录结果

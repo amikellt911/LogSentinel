@@ -237,8 +237,9 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
                                          size_t ai_failure_threshold,
                                          int64_t ai_cooldown_ms,
                                          TraceAiProvider* fallback_trace_ai,
-                                         bool ai_auto_degrade_enabled)
-    : thread_pool_(thread_pool), trace_write_sink_(trace_write_sink), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), ai_analysis_enabled_(ai_analysis_enabled), ai_circuit_breaker_enabled_(ai_circuit_breaker_enabled), fallback_trace_ai_(fallback_trace_ai), ai_auto_degrade_enabled_(ai_auto_degrade_enabled), ai_failure_threshold_(std::max<size_t>(1, ai_failure_threshold)), ai_cooldown_ms_(ai_cooldown_ms > 0 ? ai_cooldown_ms : 60000), capacity_(capacity), token_limit_(token_limit), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
+                                         bool ai_auto_degrade_enabled,
+                                         TraceLifecycleProfile lifecycle_profile)
+    : thread_pool_(thread_pool), trace_write_sink_(trace_write_sink), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), ai_analysis_enabled_(ai_analysis_enabled), ai_circuit_breaker_enabled_(ai_circuit_breaker_enabled), fallback_trace_ai_(fallback_trace_ai), ai_auto_degrade_enabled_(ai_auto_degrade_enabled), ai_failure_threshold_(std::max<size_t>(1, ai_failure_threshold)), ai_cooldown_ms_(ai_cooldown_ms > 0 ? ai_cooldown_ms : 60000), capacity_(capacity), token_limit_(token_limit), lifecycle_profile_(lifecycle_profile), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
     // sealed/retry 这两档时间现在也跟着启动配置走，避免状态机里继续保留 1/2 tick 的硬编码。
@@ -490,9 +491,11 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent 
     }
 
     TraceSession &session = *sessions_[iter->second];
-    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater)
+    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater ||
+        session.lifecycle_state == TraceSession::LifecycleState::ReadyToDispatch)
     {
-        // ready retry 会话已经完成主数据收口；这时再并入新 span，会把内存里的 trace 和已入缓冲的 primary 语义撕裂。
+        // ReadyToDispatch/ReadyRetryLater 都已经完成主数据收口。
+        // 这时再并入新 span，会把内存里的 trace 和已入缓冲的 primary 语义撕裂，所以这里只能延后吸收。
         return PushResult::AcceptedDeferred;
     }
     if (!session.span_ids.insert(span.span_id).second)
@@ -788,6 +791,12 @@ uint64_t TraceSessionManager::ComputeTimeoutTicks() const
 
 void TraceSessionManager::AddCompletedTombstoneLocked(size_t trace_key)
 {
+    // minimal profile 故意不保留 completed tombstone：
+    // 这组实验就是要对照“没有 TIME_WAIT 保护时，晚到 span 会不会重新建会话”。
+    if (lifecycle_profile_ == TraceLifecycleProfile::Minimal)
+    {
+        return;
+    }
     const uint64_t expire_tick = current_tick_ + completed_trace_tombstone_ticks_;
     completed_trace_expire_tick_[trace_key] = expire_tick;
     completed_trace_wheel_[expire_tick % wheel_size_].push_back(trace_key);
@@ -859,6 +868,21 @@ void TraceSessionManager::ScheduleSealedNode(TraceSession &session)
     time_wheel_[slot].push_back(std::move(node));
 }
 
+void TraceSessionManager::ScheduleReadyNode(TraceSession &session)
+{
+    session.timer_version += 1;
+    // minimal 档位虽然不做 sealed grace，但仍然坚持走 sweep -> dispatch queue 主路径。
+    // 所以这里不是立刻 direct dispatch，而是挂到下一 tick，让调度入口继续保持统一。
+    const uint64_t ready_tick = current_tick_ + 1;
+    const size_t slot = static_cast<size_t>(ready_tick % wheel_size_);
+    TimeWheelNode node;
+    node.trace_key = session.trace_key;
+    node.version = session.timer_version;
+    node.epoch = session.session_epoch;
+    node.expire_tick = ready_tick;
+    time_wheel_[slot].push_back(std::move(node));
+}
+
 void TraceSessionManager::ScheduleRetryNode(TraceSession &session)
 {
     session.timer_version += 1;
@@ -880,6 +904,11 @@ void TraceSessionManager::ScheduleSessionNode(TraceSession &session)
         ScheduleSealedNode(session);
         return;
     }
+    if (session.lifecycle_state == TraceSession::LifecycleState::ReadyToDispatch)
+    {
+        ScheduleReadyNode(session);
+        return;
+    }
     if (session.lifecycle_state == TraceSession::LifecycleState::ReadyRetryLater)
     {
         ScheduleRetryNode(session);
@@ -890,6 +919,16 @@ void TraceSessionManager::ScheduleSessionNode(TraceSession &session)
 
 void TraceSessionManager::SealSessionLocked(TraceSession &session, TraceSession::SealReason reason)
 {
+    if (lifecycle_profile_ == TraceLifecycleProfile::Minimal)
+    {
+        // minimal 的语义就是“命中结束条件后不要再给额外乱序窗口”。
+        // 但为了不把 direct dispatch 和正常 sweep 主路径搅在一起，这里仍然挂到下一 tick 统一摘走。
+        session.lifecycle_state = TraceSession::LifecycleState::ReadyToDispatch;
+        session.seal_reason = reason;
+        session.sealed_deadline_tick = 0;
+        ScheduleSessionNode(session);
+        return;
+    }
     session.lifecycle_state = TraceSession::LifecycleState::Sealed;
     session.seal_reason = reason;
     session.sealed_deadline_tick = current_tick_ + ComputeSealDelayTicks(reason);
@@ -908,7 +947,8 @@ void TraceSessionManager::RebuildTimeWheel()
         {
             continue;
         }
-        // collecting / sealed / retry_later 三种时间语义不同，重建时必须按当前生命周期分别重排。
+        // collecting / sealed / ready_to_dispatch / retry_later 四种时间语义不同，
+        // 重建时必须按当前生命周期分别重排，不能偷懒统一当 timeout 节点处理。
         ScheduleSessionNode(*session_ptr);
     }
 }

@@ -84,6 +84,9 @@ struct TraceSession
         Collecting,
         // 已命中 trace_end/capacity/token_limit，接下来只再等一个很短的乱序窗口。
         Sealed,
+        // 已经正常收口，下一次 sweep 就该摘走 dispatch。
+        // 它和 ReadyRetryLater 的区别在于：这里不是“失败回滚后的重投”，只是 minimal 档位下的正常等待态。
+        ReadyToDispatch,
         // 业务上已经 ready，但由于下游拥堵暂未成功投递，后续应走重试投递语义。
         ReadyRetryLater
     };
@@ -110,7 +113,8 @@ struct TraceSession
     uint64_t timer_version = 0;
     // session_epoch 用于防止 trace_key 复用误命中旧节点。
     uint64_t session_epoch = 0;
-    // lifecycle_state 用来区分“仍在收集”和“已 ready 但等待重投”，避免复用同一套超时语义。
+    // lifecycle_state 用来区分 collecting / sealed / ready_to_dispatch / ready_retry_later 四种语义，
+    // 避免把“正常收口等待 sweep”和“下游失败后的重试”继续混成同一种 timeout。
     LifecycleState lifecycle_state = LifecycleState::Collecting;
     // seal_reason 记录本次封口由谁触发，后面时间轮调度要按 reason 决定 grace 长短。
     SealReason seal_reason = SealReason::TraceEnd;
@@ -132,6 +136,14 @@ struct TraceSession
 class TraceSessionManager
 {
 public:
+    enum class TraceLifecycleProfile
+    {
+        // protected 保留现在默认主语义：sealed grace + completed tombstone 都启用。
+        Protected,
+        // minimal 只保留最小收口路径：不做 sealed grace，也不保留 completed tombstone。
+        Minimal
+    };
+
     struct RuntimeStatsSnapshot
     {
         uint64_t dispatch_count = 0;
@@ -207,7 +219,9 @@ public:
                                  // fallback_trace_ai 和 ai_auto_degrade_enabled 共同决定“主路失败后要不要再试一次备路”。
                                  // 这一步先只做固定主/备两路，不把 provider 切换逻辑塞回 TraceProxyAi 动态改请求。
                                  TraceAiProvider* fallback_trace_ai = nullptr,
-                                 bool ai_auto_degrade_enabled = false);
+                                 bool ai_auto_degrade_enabled = false,
+                                 // 生命周期 profile 会直接改状态机分支，所以这一刀明确按冷启动参数传入构造。
+                                 TraceLifecycleProfile lifecycle_profile = TraceLifecycleProfile::Protected);
     ~TraceSessionManager();
 
     size_t size() const;
@@ -256,6 +270,8 @@ private:
     size_t capacity_ = 0;
     size_t token_limit_ = 0;
     TokenEstimator token_estimator_;
+    // 这份 profile 决定 Push/Sweep/Tombstone 的整条生命周期语义，不适合做运行时热切。
+    TraceLifecycleProfile lifecycle_profile_ = TraceLifecycleProfile::Protected;
 
     struct TraceIndex
     {
@@ -350,11 +366,15 @@ private:
     void ScheduleTimeoutNode(TraceSession& session);
     // sealed 会话使用独立的 deadline tick；后续 late span 可以并入，但不能续命。
     void ScheduleSealedNode(TraceSession& session);
+    // minimal profile 的 ready 会话仍然走 sweep 主路径，只是下一 tick 就允许摘走。
+    void ScheduleReadyNode(TraceSession& session);
     // ready trace 投递失败后，安排一个更短的“尽快重试”时点，避免继续沿用收集超时语义。
     void ScheduleRetryNode(TraceSession& session);
-    // 按会话当前生命周期选择调度语义：Collecting 走收集超时，ReadyRetryLater 走快速重投。
+    // 按会话当前生命周期选择调度语义：
+    // Collecting 走收集超时，ReadyToDispatch 走下一 tick 摘走，ReadyRetryLater 走快速重投。
     void ScheduleSessionNode(TraceSession& session);
-    // 将 collecting 会话收口到 sealed，后续只等固定短窗口，不再被新 span 延长。
+    // 将 collecting 会话收口：
+    // protected 进入 sealed，minimal 直接进入 ReadyToDispatch。
     void SealSessionLocked(TraceSession& session, TraceSession::SealReason reason);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
     void RebuildTimeWheel();
@@ -381,7 +401,7 @@ private:
     // 冷启动配置在构造时先换算成 tick，后面状态机只读缓存值，不再每次临时做毫秒到 tick 的折算。
     uint64_t sealed_grace_ticks_ = 2;
     uint64_t retry_base_delay_ticks_ = 1;
-    // completed tombstone 默认保留 25 tick；当前 tick=200ms 时大约是 5s。
+    // completed tombstone 默认保留 25 tick；当前只在 protected profile 下生效。
     uint64_t completed_trace_tombstone_ticks_ = 25;
     uint64_t timeout_ticks_ = 10;
     uint64_t current_tick_ = 0;

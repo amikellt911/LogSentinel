@@ -121,3 +121,64 @@
 ### Newbie Tips
 - `run_in_threadpool()` 不等于“有一个显式可见的 ThreadPoolExecutor 配置项”。在这套栈里，真正限制并发的是 AnyIO 的 `CapacityLimiter` token 数。
 - benchmark 变量最好优先走 CLI。命令能直接写进脚本和论文，别人复现实验时不需要再猜你的 shell 环境里到底塞了什么变量。
+
+## 追加记录：Trace 生命周期 profile 第一刀
+
+### Git Commit Message
+`feat(trace): 增加生命周期 profile 冷启动配置`
+
+### Modification
+- `server/core/TraceSessionManager.h`
+- `server/core/TraceSessionManager.cpp`
+- `server/persistence/ConfigTypes.h`
+- `server/persistence/SqliteConfigRepository.cpp`
+- `server/src/main.cpp`
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `docs/todo-list/Todo_TraceSessionManager.md`
+
+### What Changed
+- 在 `TraceSessionManager` 增加 `TraceLifecycleProfile` 枚举，正式收口两档语义：
+  - `protected`：保留当前主语义，命中结束条件后先进入 `Sealed`，dispatch 成功后写 completed tombstone。
+  - `minimal`：命中结束条件后直接进入 `ReadyToDispatch`，下一次 sweep 就摘走 dispatch，不再保留 sealed grace，也不写 completed tombstone。
+- 在 `TraceSession` 生命周期状态里增加 `ReadyToDispatch`，把“正常收口等待 sweep”跟“失败回滚后的 ReadyRetryLater”拆开，避免继续复用一套 timeout 语义。
+- 在 `PushLocked / ScheduleSessionNode / SealSessionLocked / AddCompletedTombstoneLocked` 接入 profile 分支：
+  - `minimal` 仍然坚持走 `sweep -> dispatch queue -> dispatch worker` 主路径，不做 direct dispatch。
+  - `minimal` 下处于 `ReadyToDispatch` 的 session 不再吸收新 span，只返回 `AcceptedDeferred`。
+- 在 `AppConfig / SqliteConfigRepository / main.cpp` 接通 `trace_lifecycle_profile` 冷启动配置，默认值为 `protected`。
+- 在启动阶段增加 profile 解析和校验，非法值会直接拒绝启动，避免把脏配置静默带进状态机。
+- 在 `TraceSessionManager_unit_test` 新增两条用例并跑绿：
+  - `MinimalProfileSkipsSealedGraceAndDispatchesOnNextSweep`
+  - `MinimalProfileDoesNotKeepCompletedTombstoneAfterDispatch`
+
+### 中文注释
+- `server/core/TraceSessionManager.h`
+  - 给 `ReadyToDispatch`、`TraceLifecycleProfile`、`ScheduleReadyNode`、`SealSessionLocked` 补注释，说明 `protected/minimal` 的状态流差异。
+  - 更新 `lifecycle_state` 和 `completed_trace_tombstone_ticks_` 注释，避免还按旧三态去理解。
+- `server/core/TraceSessionManager.cpp`
+  - 在 `PushLocked` 的 ready 分支补注释，说明为什么 `ReadyToDispatch/ReadyRetryLater` 都不能继续并 span。
+  - 在 `AddCompletedTombstoneLocked` 补注释，说明为什么 `minimal` 要故意跳过 tombstone。
+  - 在 `ScheduleReadyNode / SealSessionLocked / RebuildTimeWheel` 补注释，说明 `minimal` 为什么仍走 sweep 主路径。
+- `server/persistence/ConfigTypes.h`
+  - 在 `trace_lifecycle_profile` 字段上补注释，说明它为什么必须保持冷启动。
+- `server/persistence/SqliteConfigRepository.cpp`
+  - 在 `ApplyConfigValue` 的 `trace_lifecycle_profile` 分支补注释，说明存储层只存值，语义校验留给启动期。
+- `server/src/main.cpp`
+  - 在 profile 解析处补注释，说明这条配置为什么不能做热切。
+
+### Verification
+- `cmake --build server/build --target test_trace_session_manager_unit LogSentinel -j2`
+- `./server/build/test_trace_session_manager_unit`
+- `git diff --check`
+
+### Learning Tips
+#### Newbie Tips
+- `ReadyToDispatch` 和 `ReadyRetryLater` 看起来都像“ready”，但物理含义完全不同。前者是正常收口，后者是下游失败回滚。如果把它们混成一种状态，后面时间轮和 late span 语义一定会脏。
+- 冷启动配置的判断标准不是“它改的是不是字符串”，而是“它会不会改状态机语义”。只要会影响会话生命周期，就不该在运行中半路切。
+
+#### Function Explanation
+- `ScheduleSessionNode(...)`：根据 session 当前生命周期，把会话挂到不同的时间轮语义上。现在它不只是 timeout/retry 两档，还多了一档 `ReadyToDispatch`。
+- `AddCompletedTombstoneLocked(...)`：给刚完成的 trace 留一个短暂 TIME_WAIT，专门拦截晚到 span 复活旧 trace。这次 `minimal` profile 故意把这层保护关掉，用来做对照实验。
+
+#### Pitfalls
+- 如果 `minimal` 命中结束条件后直接同步 dispatch，而不是继续走 sweep 主路径，你测出来的就不只是“去掉 grace/tombstone”的差异，而是把整个调度入口都换了，实验结论会串味。
+- 如果 `ReadyToDispatch` 还允许继续并 span，那么它就不是真正的“minimal 无 grace”，而只是换了个名字的 `Sealed`，测试口径会自相矛盾。

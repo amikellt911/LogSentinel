@@ -123,6 +123,9 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         else if (key == "sealed_grace_window_ms") config.sealed_grace_window_ms = std::stoi(val);
         else if (key == "retry_base_delay_ms") config.retry_base_delay_ms = std::stoi(val);
         else if (key == "sweep_tick_ms") config.sweep_tick_ms = std::stoi(val);
+        // 这条配置不在 Repository 内部做强枚举校验：
+        // 存储层只负责把原始值放进快照，真正决定能不能启动的语义校验放到 main.cpp 冷启动阶段统一处理。
+        else if (key == "trace_lifecycle_profile") config.trace_lifecycle_profile = val;
         else if (key == "wm_active_sessions_overload") config.wm_active_sessions_overload = std::stoi(val);
         else if (key == "wm_active_sessions_critical") config.wm_active_sessions_critical = std::stoi(val);
         else if (key == "wm_buffered_spans_overload") config.wm_buffered_spans_overload = std::stoi(val);
@@ -241,6 +244,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('sealed_grace_window_ms', '1000', '封口后的乱序缓冲窗'),
             ('retry_base_delay_ms', '500', 'dispatch 重试的起始等待时间'),
             ('sweep_tick_ms', '500', '状态机 tick 推进频率'),
+            ('trace_lifecycle_profile', 'protected', 'Trace 生命周期档位 protected|minimal'),
             ('wm_active_sessions_overload', '75', 'active sessions overload 百分比阈值'),
             ('wm_active_sessions_critical', '90', 'active sessions critical 百分比阈值'),
             ('wm_buffered_spans_overload', '75', 'buffered spans overload 百分比阈值'),

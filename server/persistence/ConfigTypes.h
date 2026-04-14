@@ -80,6 +80,10 @@ struct AppConfig {
     int sealed_grace_window_ms = 1000;
     int retry_base_delay_ms = 500;
     int sweep_tick_ms = 500;
+    // 生命周期 profile 会改 TraceSessionManager 的状态机分支。
+    // 既然它决定的是“trace 结束后到底还要不要给 grace / tombstone”，那就必须按冷启动语义收口，
+    // 不能运行中随便热切，否则同一进程前后两批 trace 会吃到两套不同生命周期口径。
+    std::string trace_lifecycle_profile = "protected";
 
     // 三类积压指标各自维护 overload / critical 百分比，避免把不同容量基数硬揉成一个总水位。
     int wm_active_sessions_overload = 75;
@@ -100,6 +104,7 @@ struct AppConfig {
         kernel_io_threads, kernel_worker_threads,
         trace_end_field, trace_end_aliases, token_limit, span_capacity,
         collecting_idle_timeout_ms, sealed_grace_window_ms, retry_base_delay_ms, sweep_tick_ms,
+        trace_lifecycle_profile,
         wm_active_sessions_overload, wm_active_sessions_critical,
         wm_buffered_spans_overload, wm_buffered_spans_critical,
         wm_pending_tasks_overload, wm_pending_tasks_critical

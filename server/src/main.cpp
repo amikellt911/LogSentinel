@@ -136,6 +136,18 @@ std::string NormalizeWebhookThreshold(std::string threshold)
     return ToLowerCopy(std::move(threshold));
 }
 
+std::optional<TraceSessionManager::TraceLifecycleProfile> ParseTraceLifecycleProfile(std::string value)
+{
+    value = ToLowerCopy(std::move(value));
+    if (value.empty() || value == "protected") {
+        return TraceSessionManager::TraceLifecycleProfile::Protected;
+    }
+    if (value == "minimal") {
+        return TraceSessionManager::TraceLifecycleProfile::Minimal;
+    }
+    return std::nullopt;
+}
+
 std::vector<WebhookChannel> BuildWebhookChannelsFromSettings(const std::vector<AlertChannel>& alert_channels)
 {
     std::vector<WebhookChannel> channels;
@@ -433,6 +445,15 @@ int main(int argc, char* argv[])
         startup_app_config.retry_base_delay_ms > 0
             ? startup_app_config.retry_base_delay_ms
             : 500;
+    // 生命周期档位也是冷启动配置：
+    // 它直接决定 trace 命中结束条件后到底走 sealed grace 还是下一 tick 直接 dispatch，
+    // 这种状态机分支一旦运行中切换，就会把进程里同时活着的会话切成两种语义。
+    const std::string effective_trace_lifecycle_profile_name =
+        startup_app_config.trace_lifecycle_profile.empty()
+            ? "protected"
+            : ToLowerCopy(startup_app_config.trace_lifecycle_profile);
+    const auto effective_trace_lifecycle_profile =
+        ParseTraceLifecycleProfile(effective_trace_lifecycle_profile_name);
     // trace_end 主字段和别名现在也归到冷启动配置：
     // 它们决定的是上报 JSON 该怎么解释，不适合在运行中随手切换；否则同一份部署前后两批请求
     // 会因为设置页刚好被改过而使用不同解析口径，排查起来只会更乱。
@@ -523,6 +544,12 @@ int main(int argc, char* argv[])
     }
     if (effective_retry_base_delay_ms <= 0) {
         std::cerr << "Fatal Error: effective retry_base_delay_ms must be > 0" << std::endl;
+        return -1;
+    }
+    if (!effective_trace_lifecycle_profile.has_value()) {
+        std::cerr << "Fatal Error: unsupported trace_lifecycle_profile '"
+                  << startup_app_config.trace_lifecycle_profile
+                  << "', expected protected|minimal" << std::endl;
         return -1;
     }
     if (effective_ai_failure_threshold <= 0) {
@@ -839,13 +866,15 @@ int main(int argc, char* argv[])
         static_cast<size_t>(effective_ai_failure_threshold),
         effective_ai_cooldown_ms,
         fallback_trace_ai.get(),
-        effective_ai_auto_degrade);
+        effective_ai_auto_degrade,
+        effective_trace_lifecycle_profile.value());
     const double trace_sweep_interval_sec =
         static_cast<double>(effective_trace_sweep_interval_ms) / 1000.0;
     std::cout << "Trace session sweep enabled. sweep_interval_ms=" << effective_trace_sweep_interval_ms
               << ", idle_timeout_ms=" << effective_trace_idle_timeout_ms
               << ", sealed_grace_window_ms=" << effective_sealed_grace_window_ms
               << ", retry_base_delay_ms=" << effective_retry_base_delay_ms
+              << ", trace_lifecycle_profile=" << effective_trace_lifecycle_profile_name
               << ", max_dispatch_per_tick=" << trace_max_dispatch_per_tick
               << ", trace_capacity=" << effective_trace_capacity
               << ", trace_token_limit=" << effective_trace_token_limit
