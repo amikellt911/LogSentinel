@@ -184,6 +184,21 @@ Suite A 默认不需要 fake webhook。
 - `protected`
 - `minimal`
 
+### 实验入口
+
+Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
+
+- `run_bench.sh` / `run_flamegraph.sh` 通过环境变量 `TRACE_LIFECYCLE_PROFILE=protected|minimal`
+- 脚本再透传成后端启动参数 `--trace-lifecycle-profile protected|minimal`
+
+这样做的原因很直接：
+
+- 生命周期档位本身是冷启动语义
+- benchmark 需要频繁切换对照组
+- 如果每次都先改 SQLite，再重启服务，实验变量就会和产品配置混在一起
+
+所以这组实验明确按“CLI override > SQLite 冷启动值”执行。
+
 ### 档位语义
 
 `protected`
@@ -197,25 +212,21 @@ Suite A 默认不需要 fake webhook。
 
 `minimal`
 
-当前只定大方向，不定死最终落法。
-它的目标是保留最朴素的“结束即收口 / 超时即收口”语义，但去掉额外防护。
+当前已经定死为：
 
-当前有两个候选实现：
-
-- 候选 A：`trace_end` 或 timeout 一到就直接 dispatch，不再经过额外 sweep 控制
-- 候选 B：仍然统一走 sweep/dispatch 主路径，但不做 sealed grace，也不保留 tombstone
-
-当前倾向先选候选 B。
+- 仍然统一走 `sweep -> dispatch queue -> dispatch worker` 主路径
+- 不做 sealed grace
+- 不保留 completed tombstone
 
 原因很直接：
 
-- 这样 `protected` 和 `minimal` 共享同一套 dispatch 执行路径
-- 变量真正只落在“有没有生命周期防护”，而不是把“执行模型也换了”一起搅进去
+- `protected` 和 `minimal` 继续共享同一套 dispatch 执行路径
+- 实验变量真正只落在“有没有生命周期防护”，不会把“调度模型也换了”一起搅进去
 - 后面如果测出差异，更容易说明是 sealed/tombstone 起了作用，而不是 direct dispatch 换了线程时间线
 
 ### 当前状态流对照
 
-下面这份对照，先按“当前倾向采用候选 B”来理解。
+下面这份对照，已经按当前落地实现来理解。
 也就是说，`protected` 和 `minimal` 都仍然走同一套：
 
 - `Push`

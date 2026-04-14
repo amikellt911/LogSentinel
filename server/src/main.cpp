@@ -224,6 +224,7 @@ int main(int argc, char* argv[])
     bool disable_ai_cli = false;
     bool disable_webhook_cli = false;
     bool disable_buffered_trace_repo_cli = false;
+    std::optional<std::string> trace_lifecycle_profile_cli_override;
     bool trace_ai_provider_explicit = false;
     //简单的命令行参数解析
     // 支持格式: ./LogSentinel --db <path> --port <port> [--auto-start-deps]
@@ -310,6 +311,11 @@ int main(int argc, char* argv[])
             // 这条开关的目标不是“关掉持久化”，而是把写路径从双缓冲 flush 线程切到同步直写 SQLite。
             // benchmark 做对照时，必须保留同样的 trace/AI 功能，只拿掉“缓冲写入器”这一层变量。
             disable_buffered_trace_repo_cli = true;
+        } else if (arg == "--trace-lifecycle-profile" && i + 1 < argc) {
+            // 这条开关只服务 benchmark / 黑盒实验：
+            // 它的职责是让我们在“不改 SQLite 产品配置”的前提下，临时把生命周期语义切到另一档。
+            // 这样实验变量就能继续只放在启动命令里，不会污染正式 Settings 保存值。
+            trace_lifecycle_profile_cli_override = argv[++i];
         }
     }
 
@@ -449,9 +455,11 @@ int main(int argc, char* argv[])
     // 它直接决定 trace 命中结束条件后到底走 sealed grace 还是下一 tick 直接 dispatch，
     // 这种状态机分支一旦运行中切换，就会把进程里同时活着的会话切成两种语义。
     const std::string effective_trace_lifecycle_profile_name =
-        startup_app_config.trace_lifecycle_profile.empty()
-            ? "protected"
-            : ToLowerCopy(startup_app_config.trace_lifecycle_profile);
+        trace_lifecycle_profile_cli_override.has_value()
+            ? ToLowerCopy(trace_lifecycle_profile_cli_override.value())
+            : (startup_app_config.trace_lifecycle_profile.empty()
+                   ? "protected"
+                   : ToLowerCopy(startup_app_config.trace_lifecycle_profile));
     const auto effective_trace_lifecycle_profile =
         ParseTraceLifecycleProfile(effective_trace_lifecycle_profile_name);
     // trace_end 主字段和别名现在也归到冷启动配置：
@@ -548,7 +556,7 @@ int main(int argc, char* argv[])
     }
     if (!effective_trace_lifecycle_profile.has_value()) {
         std::cerr << "Fatal Error: unsupported trace_lifecycle_profile '"
-                  << startup_app_config.trace_lifecycle_profile
+                  << effective_trace_lifecycle_profile_name
                   << "', expected protected|minimal" << std::endl;
         return -1;
     }
@@ -669,6 +677,10 @@ int main(int argc, char* argv[])
     std::cout << "Benchmark switches: disable_ai=" << (disable_ai_cli ? "true" : "false")
               << ", disable_webhook=" << (disable_webhook_cli ? "true" : "false")
               << ", disable_buffered_trace_repo=" << (disable_buffered_trace_repo_cli ? "true" : "false")
+              << ", trace_lifecycle_profile_override="
+              << (trace_lifecycle_profile_cli_override.has_value()
+                      ? ToLowerCopy(trace_lifecycle_profile_cli_override.value())
+                      : "<none>")
               << std::endl;
     std::cout << "Trace persistence mode: "
               << (disable_buffered_trace_repo_cli ? "direct/no-buffer" : "buffered")

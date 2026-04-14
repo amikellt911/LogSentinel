@@ -182,3 +182,58 @@
 #### Pitfalls
 - 如果 `minimal` 命中结束条件后直接同步 dispatch，而不是继续走 sweep 主路径，你测出来的就不只是“去掉 grace/tombstone”的差异，而是把整个调度入口都换了，实验结论会串味。
 - 如果 `ReadyToDispatch` 还允许继续并 span，那么它就不是真正的“minimal 无 grace”，而只是换了个名字的 `Sealed`，测试口径会自相矛盾。
+
+## 追加记录：Trace 生命周期 benchmark CLI 第三刀
+
+### Git Commit Message
+`feat(benchmark): 增加生命周期 profile 实验入口`
+
+### Modification
+- `server/src/main.cpp`
+- `server/tests/smoke_settings_blackbox.py`
+- `server/tests/wrk/run_bench.sh`
+- `server/tests/wrk/run_flamegraph.sh`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `CurrentTask.md`
+
+### What Changed
+- 在 `main.cpp` 增加 `--trace-lifecycle-profile protected|minimal`，并明确优先级是 `CLI override > SQLite 冷启动值`。
+- 在 `smoke_settings_blackbox.py` 新增第三刀黑盒：
+  - 先把 SQLite 里的 `trace_lifecycle_profile` 写成 `protected`
+  - 再用 CLI 强制起 `minimal`
+  - 最后发送“单个带 `trace_end` 的根 span + 一条 sweep 前晚到 span”，通过 `trace_summary.span_count=1` 证明运行时真的走了 `minimal`
+- 在 `run_bench.sh / run_flamegraph.sh` 增加 `TRACE_LIFECYCLE_PROFILE` 环境变量，并统一透传给后端 `--trace-lifecycle-profile`
+- 在 benchmark 文档里把 Suite B 的口径从“还在选候选实现”改成“已经定为 protected/minimal 两档，且统一走 CLI 实验入口”
+- 在 `Todo_Benchmark.md` 和 `CurrentTask.md` 把第三刀相关条目收口
+
+### 中文注释
+- `server/src/main.cpp`
+  - 在 `--trace-lifecycle-profile` 参数解析处补注释，说明这条开关为什么只服务 benchmark/黑盒实验
+  - 在 `effective_trace_lifecycle_profile_name` 决策处补注释，说明为什么它必须压过 SQLite 冷启动值
+- `server/tests/smoke_settings_blackbox.py`
+  - 在 `query_trace_summary_row` 补注释，说明为什么第三刀必须把 `span_count` 一起查出来
+  - 在新加的场景 11 前补注释，按时间线讲清楚 `trace_end + 晚到 span` 为什么能锁定 `protected` 和 `minimal` 的真实差异
+- `server/tests/wrk/run_bench.sh`
+  - 在 `TRACE_LIFECYCLE_PROFILE` 环境变量定义前补注释，说明它为什么不该通过 SQLite Settings 来切
+- `server/tests/wrk/run_flamegraph.sh`
+  - 在 `TRACE_LIFECYCLE_PROFILE` 环境变量定义前补注释，说明火焰图脚本必须和 wrk benchmark 共用同一套对照组入口
+
+### Verification
+- `cmake --build server/build --target LogSentinel -j2`
+- `/home/llt/Project/llt/venv/bin/python3 server/tests/smoke_settings_blackbox.py`
+- `bash -n server/tests/wrk/run_bench.sh`
+- `bash -n server/tests/wrk/run_flamegraph.sh`
+- `git diff --check`
+
+### Newbie Tips
+- “配置里有这个值”不等于“运行时真的按这个值执行”。第三刀黑盒故意让 SQLite 里保持 `protected`，但启动时强制 `minimal`，就是为了把“存储值”和“运行时 override”拆开验证。
+- benchmark 变量最好优先走 CLI 或脚本环境变量。命令行天生就适合复现实验；如果改成先写库再重启，实验变量和产品配置会很快搅成一团。
+
+### Function Explanation
+- `trace_summary.span_count`：不是只给前端列表展示的字段，它本身就是生命周期聚合结果。第三刀正是利用它来判断晚到 span 最终有没有并进这条 trace。
+- `bash -n`：只做 shell 语法检查，不执行脚本主体。这里用它先挡住最常见的 benchmark 脚本拼接错误，避免真正跑实验时才发现脚本语法炸了。
+
+### Pitfalls
+- 如果第三刀黑盒只盯启动日志里的 `trace_lifecycle_profile=minimal`，那只能证明 main.cpp 打印了这串字，证明不了状态机真的按 `minimal` 分支跑了。
+- 如果 benchmark 的生命周期对照组通过 Settings 页面切，而不是通过 CLI 切，后面你根本分不清某次结果到底是脚本参数造成的，还是上一次实验残留的 SQLite 配置造成的。

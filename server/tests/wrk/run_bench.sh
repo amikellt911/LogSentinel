@@ -28,6 +28,9 @@ WAIT_PORT_SLEEP_SEC="${WAIT_PORT_SLEEP_SEC:-0.2}"
 BENCH_FORCE_STOP_OLD_SERVER="${BENCH_FORCE_STOP_OLD_SERVER:-1}"
 STOP_RETRY="${STOP_RETRY:-50}"
 STOP_SLEEP_SEC="${STOP_SLEEP_SEC:-0.2}"
+# Suite B 的生命周期对照实验统一走这一条环境变量入口。
+# 这样 benchmark 脚本只需要改启动命令，不必先去写 SQLite Settings，实验变量才不会和产品配置串味。
+TRACE_LIFECYCLE_PROFILE="${TRACE_LIFECYCLE_PROFILE:-protected}"
 
 SERVER_PID=""
 SERVER_LAUNCH_PID=""
@@ -55,6 +58,7 @@ usage() {
   CONNECTION_SET="100 200 500"
   SERVER_CPUSET="1-2"
   WRK_CPUSET="0"
+  TRACE_LIFECYCLE_PROFILE="protected|minimal"
   STOP_RETRY=50
   STOP_SLEEP_SEC=0.2
 EOF
@@ -271,6 +275,7 @@ start_server() {
             --trace-max-dispatch-per-tick "${TRACE_MAX_DISPATCH_PER_TICK}" \
             --trace-buffered-span-limit "${TRACE_BUFFERED_SPAN_LIMIT}" \
             --trace-active-session-limit "${TRACE_ACTIVE_SESSION_LIMIT}" \
+            --trace-lifecycle-profile "${TRACE_LIFECYCLE_PROFILE}" \
             > "${SERVER_LOG}" 2>&1 &
     else
         "${SERVER_BIN}" \
@@ -288,6 +293,7 @@ start_server() {
             --trace-max-dispatch-per-tick "${TRACE_MAX_DISPATCH_PER_TICK}" \
             --trace-buffered-span-limit "${TRACE_BUFFERED_SPAN_LIMIT}" \
             --trace-active-session-limit "${TRACE_ACTIVE_SESSION_LIMIT}" \
+            --trace-lifecycle-profile "${TRACE_LIFECYCLE_PROFILE}" \
             > "${SERVER_LOG}" 2>&1 &
     fi
 
@@ -339,6 +345,7 @@ run_wrk_once() {
         echo "trace_max_dispatch_per_tick=${TRACE_MAX_DISPATCH_PER_TICK}"
         echo "trace_buffered_span_limit=${TRACE_BUFFERED_SPAN_LIMIT}"
         echo "trace_active_session_limit=${TRACE_ACTIVE_SESSION_LIMIT}"
+        echo "trace_lifecycle_profile=${TRACE_LIFECYCLE_PROFILE}"
         echo "worker_queue_size=${WORKER_QUEUE_SIZE}"
         echo
         export TRACE_WRK_MODE="${MODE}"
@@ -413,6 +420,7 @@ SUMMARY_LOG="${RUN_DIR}/run-summary.log"
     echo "trace_max_dispatch_per_tick=${TRACE_MAX_DISPATCH_PER_TICK}"
     echo "trace_buffered_span_limit=${TRACE_BUFFERED_SPAN_LIMIT}"
     echo "trace_active_session_limit=${TRACE_ACTIVE_SESSION_LIMIT}"
+    echo "trace_lifecycle_profile=${TRACE_LIFECYCLE_PROFILE}"
     echo "worker_queue_size=${WORKER_QUEUE_SIZE}"
     echo "mode=${MODE}"
     echo "spans_per_trace=${SPANS_PER_TRACE}"

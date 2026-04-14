@@ -659,12 +659,20 @@ def query_trace_analysis_count(db_path: Path, trace_id: str) -> int:
 
 
 def query_trace_summary_row(db_path: Path, trace_id: str) -> Optional[dict[str, Any]]:
+    """
+    读取 trace_summary 的关键字段。
+
+    这里把 `span_count` 一起带出来，是因为第三刀黑盒要锁生命周期档位差异：
+    - `protected` 会在 sealed grace 里继续吸收晚到 span；
+    - `minimal` 不会。
+    这种差异最终会直接反映到 summary 的聚合 span 数，而不是只体现在启动日志里。
+    """
     conn = sqlite3.connect(str(db_path))
     try:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT trace_id, ai_status, ai_error, risk_level
+            SELECT trace_id, ai_status, ai_error, risk_level, span_count
             FROM trace_summary
             WHERE trace_id = ?
             ORDER BY rowid DESC
@@ -680,6 +688,7 @@ def query_trace_summary_row(db_path: Path, trace_id: str) -> Optional[dict[str, 
             "ai_status": str(row[1]),
             "ai_error": str(row[2] or ""),
             "risk_level": str(row[3] or ""),
+            "span_count": int(row[4] or 0),
         }
     finally:
         conn.close()
@@ -1535,10 +1544,83 @@ def run_flow(args: argparse.Namespace) -> int:
         if "no-buffer" not in no_buffer_logs.lower() and "direct" not in no_buffer_logs.lower():
             raise RuntimeError("CLI --disable-buffered-trace-repo 场景启动日志没有明确标出 no-buffer 写入口")
 
+        # 场景 11：CLI `--trace-lifecycle-profile minimal` 必须盖过 SQLite 里已经保存好的 `protected`。
+        # 这条黑盒不能只看启动日志，因为第三刀真正要证明的是“状态机分支被改了”，不是 main.cpp 打了个假字符串。
+        # 所以这里专门构造一条最短时间线：
+        # 1. 先发一个自带 trace_end 的根 span，让 session 立刻命中结束条件；
+        # 2. 再在下一次 sweep 前补一条晚到 span；
+        # 3. 如果运行时还是 `protected`，晚到 span 会在 sealed grace 里被吸收，summary.span_count=2；
+        # 4. 如果 CLI 真把它盖成了 `minimal`，session 会直接变成 ready，晚到 span 不再并入，summary.span_count=1。
+        post_config_patch(
+            new_url,
+            [
+                {"key": "trace_lifecycle_profile", "value": "protected"},
+                {"key": "ai_analysis_enabled", "value": "0"},
+                {"key": "collecting_idle_timeout_ms", "value": "30000"},
+                {"key": "sealed_grace_window_ms", "value": "1500"},
+                {"key": "sweep_tick_ms", "value": "1500"},
+            ],
+        )
+        proc = restart_server_with_fake_proxy(
+            proc,
+            server_bin,
+            db_path,
+            frontend_dist,
+            new_url,
+            args.ready_timeout,
+            probe_service,
+            args.proxy_timeout_ms,
+            extra_args=["--trace-lifecycle-profile", "minimal"],
+        )
+        lifecycle_settings = fetch_all_settings(new_url)
+        if lifecycle_settings.get("config", {}).get("trace_lifecycle_profile") != "protected":
+            raise RuntimeError("第三刀黑盒前置条件失败：SQLite 中的 trace_lifecycle_profile 没有保持为 protected")
+        lifecycle_logs = wait_process_log_contains(proc, "trace_lifecycle_profile=", timeout_sec=3.0)
+        if "trace_lifecycle_profile=minimal" not in lifecycle_logs:
+            raise RuntimeError("CLI --trace-lifecycle-profile 场景启动日志没有明确标出 minimal 覆盖")
+
+        lifecycle_trace_key = int(time.time() * 1000) + 1300
+        lifecycle_trace_id = str(lifecycle_trace_key)
+        lifecycle_root = {
+            "trace_key": lifecycle_trace_key,
+            "span_id": lifecycle_trace_key + 1,
+            "start_time_ms": 1700000013000,
+            "end_time_ms": 1700000013100,
+            "name": "cli-lifecycle-root-end",
+            "service_name": "settings-blackbox-service",
+            "status": "OK",
+            "trace_end": True,
+        }
+        lifecycle_late_span = {
+            "trace_key": lifecycle_trace_key,
+            "span_id": lifecycle_trace_key + 2,
+            "parent_span_id": lifecycle_trace_key + 1,
+            "start_time_ms": 1700000013110,
+            "end_time_ms": 1700000013200,
+            "name": "cli-lifecycle-late-span",
+            "service_name": "settings-blackbox-service",
+            "status": "ERROR",
+        }
+        post_span(new_url, lifecycle_root)
+        time.sleep(0.05)
+        post_span(new_url, lifecycle_late_span)
+        wait_trace_summary_status(db_path, lifecycle_trace_id, "skipped_manual", args.dispatch_timeout)
+        lifecycle_summary = query_trace_summary_row(db_path, lifecycle_trace_id)
+        if not lifecycle_summary:
+            raise RuntimeError("CLI --trace-lifecycle-profile 场景没有查到 trace_summary")
+        if lifecycle_summary["span_count"] != 1:
+            raise RuntimeError(
+                "CLI --trace-lifecycle-profile 场景没有跑出 minimal 行为："
+                f"expected span_count=1, actual={lifecycle_summary['span_count']}"
+            )
+        if query_trace_analysis_count(db_path, lifecycle_trace_id) != 0:
+            raise RuntimeError("CLI --trace-lifecycle-profile + ai_analysis_enabled=0 场景不应该产出 trace_analysis")
+
         print(
             "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
             "ai_analysis_enabled、ai_timeout_ms、主路与 fallback 的 model/api_key 热更新、prompt/active_prompt_id、webhook channel、"
             "kernel_io_threads、kernel_worker_threads、log_retention_days、双 provider/fallback、AI retry、"
+            "trace_lifecycle_profile CLI 覆盖、"
             "benchmark CLI 开关都已验证"
         )
         return 0

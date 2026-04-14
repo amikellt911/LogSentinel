@@ -92,7 +92,8 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
   - [x] `--disable-ai` 会压过 SQLite 里的 `ai_analysis_enabled`
   - [x] `--disable-webhook` 会压过 Settings channel 与 CLI webhook override
   - [x] `--disable-buffered-trace-repo` 会把写入口从 BufferedTraceRepository 切到同步直写 SQLite
-  - [x] 三条开关都已补第三层黑盒，验证优先级和真实消费链
+  - [x] `--trace-lifecycle-profile protected|minimal` 会压过 SQLite 里的 `trace_lifecycle_profile`
+  - [x] 这批开关都已补第三层黑盒，验证优先级和真实消费链
 
 ## 核心任务
 - [ ] 先做 Settings 真实生效联调，固化当前主链配置的验收口径

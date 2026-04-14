@@ -31,6 +31,9 @@ CONNECTIONS="${CONNECTIONS:-100}"
 WRK_THREADS="${WRK_THREADS:-1}"
 ACTIVE_POOL_SIZE="${ACTIVE_POOL_SIZE:-4}"
 TRACE_WRK_ROLE_PLAN="${TRACE_WRK_ROLE_PLAN:-}"
+# 生命周期 profile 也统一走实验变量，而不是改正式 Settings。
+# 这样 flamegraph 和 wrk benchmark 能共用同一套对照组入口，不会一个走 CLI、一个走 SQLite。
+TRACE_LIFECYCLE_PROFILE="${TRACE_LIFECYCLE_PROFILE:-protected}"
 LOAD_GENERATOR="${LOAD_GENERATOR:-wrk}"
 PACED_BATCH_TRACES="${PACED_BATCH_TRACES:-5}"
 PACED_BATCH_SLEEP_MS="${PACED_BATCH_SLEEP_MS:-100}"
@@ -81,6 +84,7 @@ usage() {
   WRK_SCRIPT=/path/to/trace_model_active_pool.lua
   ACTIVE_POOL_SIZE=4
   TRACE_WRK_ROLE_PLAN="end,end,end,end,capacity,capacity,timeout,timeout"
+  TRACE_LIFECYCLE_PROFILE="protected|minimal"
   PACED_BATCH_TRACES=5
   PACED_BATCH_SLEEP_MS=100
   PACED_REQUEST_TIMEOUT_MS=1000
@@ -260,6 +264,7 @@ start_server() {
         --trace-max-dispatch-per-tick "${TRACE_MAX_DISPATCH_PER_TICK}" \
         --trace-buffered-span-limit "${TRACE_BUFFERED_SPAN_LIMIT}" \
         --trace-active-session-limit "${TRACE_ACTIVE_SESSION_LIMIT}" \
+        --trace-lifecycle-profile "${TRACE_LIFECYCLE_PROFILE}" \
         > "${SERVER_LOG}" 2>&1 &
     SERVER_LAUNCH_PID=$!
 
@@ -339,6 +344,7 @@ run_perf_and_load() {
             echo "wrk_script=${WRK_SCRIPT}"
             echo "active_pool_size=${ACTIVE_POOL_SIZE}"
             echo "trace_wrk_role_plan=${TRACE_WRK_ROLE_PLAN:-<unset>}"
+            echo "trace_lifecycle_profile=${TRACE_LIFECYCLE_PROFILE}"
             echo "server_cpuset=${SERVER_CPUSET}"
             echo "wrk_cpuset=${WRK_CPUSET}"
             echo "perf_freq=${PERF_FREQ}"
@@ -369,6 +375,7 @@ run_perf_and_load() {
             echo "paced_batch_traces=${PACED_BATCH_TRACES}"
             echo "paced_batch_sleep_ms=${PACED_BATCH_SLEEP_MS}"
             echo "paced_request_timeout_ms=${PACED_REQUEST_TIMEOUT_MS}"
+            echo "trace_lifecycle_profile=${TRACE_LIFECYCLE_PROFILE}"
             echo
             taskset_wrap "${WRK_CPUSET}" \
                 python3 "${PACED_SENDER}" \
@@ -479,6 +486,7 @@ mkdir -p "${RUN_DIR}"
     echo "trace_max_dispatch_per_tick=${TRACE_MAX_DISPATCH_PER_TICK}"
     echo "trace_buffered_span_limit=${TRACE_BUFFERED_SPAN_LIMIT}"
     echo "trace_active_session_limit=${TRACE_ACTIVE_SESSION_LIMIT}"
+    echo "trace_lifecycle_profile=${TRACE_LIFECYCLE_PROFILE}"
     echo "flamegraph_dir=${FLAMEGRAPH_DIR}"
 } > "${RUN_DIR}/run-summary.log"
 

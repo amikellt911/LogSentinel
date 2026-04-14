@@ -31,6 +31,9 @@
 - [x] 运行 Python proxy 最小单测验证，再决定是否把这个变量补进 benchmark 文档口径
 - [x] 将 `ai_proxy_max_workers` 正式收进 benchmark 文档口径，并和 `backend_cpu_cores / server_io_threads / worker_threads / ai_proxy_cpu_cores` 区分开
 - [x] 固定 `Suite D` 下 `ai_proxy_max_workers` 的最小扫描点位（优先 `64 / 128 / 256 / 512`）
+- [x] 固定 `trace_lifecycle_profile=protected|minimal` 的 benchmark 实验入口口径
+- [x] 让 `run_bench.sh / run_flamegraph.sh` 透传 `TRACE_LIFECYCLE_PROFILE`
+- [x] 补黑盒验证：CLI `--trace-lifecycle-profile` 必须盖过 SQLite 冷启动值，并锁定真实生命周期差异
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 增加 `--worker-threads` 命令行参数支持
@@ -38,6 +41,7 @@
 - [x] 增加 `--worker-queue-size` 命令行参数支持
 - [x] 增加 `--trace-capacity` / `--trace-token-limit` / `--trace-max-dispatch-per-tick` 参数支持
 - [x] 验证配置参数能准确透传给 `ThreadPool` 和 `TraceSessionManager`
+- [x] 增加 `--trace-lifecycle-profile protected|minimal` 命令行参数支持
 
 ## 4. 压力测试 (Execution)
 - [ ] **Suite A 主实验**: 固定资源，只跑功能开关成本对比
