@@ -612,8 +612,19 @@ int main(int argc, char* argv[])
     }
 
     const int num_cpu_cores = std::thread::hardware_concurrency();
-    const int num_io_threads = 1; // 明确 I/O 线程数量
-    const int default_worker_threads = num_cpu_cores > 1 ? num_cpu_cores - num_io_threads : 1;
+    // I/O 线程和主 worker 线程现在分别由两个冷启动配置控制。
+    // 这样 Settings 里改线程模型时，用户就能明确知道：
+    // - `kernel_io_threads` 影响的是 MiniMuduo 收包/分发这一层；
+    // - `kernel_worker_threads` 影响的是 Trace 聚合、AI 调用和落库协作这一层。
+    const int configured_io_threads = startup_app_config.kernel_io_threads > 0
+                                          ? startup_app_config.kernel_io_threads
+                                          : 1;
+    const int num_io_threads = configured_io_threads;
+    const int detected_cpu_cores = num_cpu_cores > 0 ? num_cpu_cores : 1;
+    int default_worker_threads = detected_cpu_cores - num_io_threads;
+    if (default_worker_threads <= 0) {
+        default_worker_threads = 1;
+    }
     // worker 线程数和端口一样属于冷启动参数：
     // 既然线程池创建后不会在运行中自动扩缩，那么这里就只在启动时做一次“CLI > Settings > 默认值”的决策。
     const int num_worker_threads =

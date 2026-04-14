@@ -510,7 +510,11 @@
               <div class="bg-[#1a1a1a] border border-gray-700 p-6 rounded">
                 <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">核心控制项</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <el-form-item label="工作线程数">
+                  <el-form-item label="服务器 I/O 线程数">
+                    <el-input-number v-model="kernel.ioThreads" :min="1" :max="32" class="w-full" />
+                  </el-form-item>
+
+                  <el-form-item label="主工作线程数">
                     <el-input-number v-model="kernel.workerThreads" :min="1" :max="32" class="w-full" />
                   </el-form-item>
 
@@ -714,6 +718,7 @@ interface PrototypeSnapshot {
   prompts: PromptDraft[]
   channels: ChannelDraft[]
   kernel: {
+    ioThreads: number
     workerThreads: number
     endFlagField: string
     endFlagAliases: string[]
@@ -826,6 +831,10 @@ const channels = reactive<ChannelDraft[]>([
 ])
 
 const kernel = reactive({
+  // 这里把服务器 I/O 线程和主 worker 线程池拆开显示。
+  // 页面文案刻意不用底层网络库名，因为用户真正关心的是“这个线程在系统里负责什么”，
+  // 不是它背后恰好由哪套网络库承载。
+  ioThreads: 1,
   workerThreads: 4,
   endFlagField: 'trace_end',
   endFlagAliases: ['end'],
@@ -1066,6 +1075,7 @@ const savedSnapshot = ref<PrototypeSnapshot>(snapshotState())
 const isDirty = computed(() => JSON.stringify(snapshotState()) !== JSON.stringify(savedSnapshot.value))
 const restartRequired = computed(() => {
   return general.httpPort !== savedSnapshot.value.general.httpPort
+    || kernel.ioThreads !== savedSnapshot.value.kernel.ioThreads
     || kernel.workerThreads !== savedSnapshot.value.kernel.workerThreads
 })
 
@@ -1169,6 +1179,7 @@ async function loadSettings() {
         threshold: item.alert_threshold
       })),
       kernel: {
+        ioThreads: toNumber(config.kernel_io_threads, 1),
         workerThreads: toNumber(config.kernel_worker_threads, 4),
         endFlagField: typeof config.trace_end_field === 'string' ? config.trace_end_field : 'trace_end',
         endFlagAliases: parseAliasList(config.trace_end_aliases),
@@ -1367,6 +1378,7 @@ async function persistSettings() {
       { key: 'ai_failure_threshold', value: ai.failureThreshold.toString() },
       { key: 'ai_cooldown_seconds', value: ai.cooldownSeconds.toString() },
       { key: 'active_prompt_id', value: ai.activePromptId.toString() },
+      { key: 'kernel_io_threads', value: kernel.ioThreads.toString() },
       { key: 'kernel_worker_threads', value: kernel.workerThreads.toString() },
       { key: 'trace_end_field', value: kernel.endFlagField },
       // 这里暂时继续走字符串，是为了不把 /settings/config 这条标量接口一起推翻重写。

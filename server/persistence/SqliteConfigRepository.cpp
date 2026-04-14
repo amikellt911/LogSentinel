@@ -112,6 +112,9 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         else if (key == "ai_failure_threshold") config.ai_failure_threshold = std::stoi(val);
         else if (key == "ai_cooldown_seconds") config.ai_cooldown_seconds = std::stoi(val);
         else if (key == "active_prompt_id") config.active_prompt_id = std::stoi(val);
+        // I/O 线程数喂给 MiniMuduo，worker 线程数喂给主工作线程池。
+        // 这两个数字都会影响吞吐，但它们卡住的物理位置完全不同，所以必须拆成两个 key。
+        else if (key == "kernel_io_threads") config.kernel_io_threads = std::stoi(val);
         else if (key == "kernel_worker_threads") config.kernel_worker_threads = std::stoi(val);
         else if (key == "trace_end_field") config.trace_end_field = val;
         else if (key == "token_limit") config.token_limit = std::stoi(val);
@@ -229,7 +232,8 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('ai_failure_threshold', '5', '熔断触发阈值'),
             ('ai_cooldown_seconds', '60', '熔断冷却时间s'),
             ('active_prompt_id', '0', '当前激活的PromptID'),
-            ('kernel_worker_threads', '4', '工作线程数'),
+            ('kernel_io_threads', '1', 'MiniMuduo I/O线程数'),
+            ('kernel_worker_threads', '4', '主工作线程池线程数'),
             ('trace_end_field', 'trace_end', '顶层 trace 结束标记字段名'),
             ('token_limit', '0', '单条 trace 的 token 保护阈值'),
             ('span_capacity', '100', '单条 trace 的 span 数量保护阈值'),

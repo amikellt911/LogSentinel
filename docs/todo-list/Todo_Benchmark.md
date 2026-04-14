@@ -9,6 +9,7 @@
 - [x] 编写通用 Trace 压测脚本 `server/tests/wrk/trace_model.lua`（支持 end/capacity/token/timeout/mixed 五种模型，模板按顺序回环）
 - [x] 编写 Trace wrk benchmark 设计文档，收口模型目标、参数选择和第一版实验矩阵
 - [x] 编写 benchmark suite 总览文档，先收口 Suite A/B/C 的比较目标、观测指标以及 CPU/线程这两类条件，不提前写死命令
+- [x] 将 benchmark 结构改写为 `Suite A / Suite B / Suite D / Suite A-Interaction`，并明确 `Suite C` 暂不执行
 - [x] 编写阶段性性能实验模板 `docs/PERFORMANCE_PHASE_TEMPLATE.md`，固定论文可复用的命令、指标与记录格式
 - [x] 编写一键压测编排脚本 `server/tests/wrk/run_bench.sh`（最小版：起服务、等端口、跑 wrk、双写日志、自动 cleanup）
 - [x] 编写火焰图编排脚本 `server/tests/wrk/run_flamegraph.sh`（最小版：起服务、warmup、perf record、正式 wrk、生成 svg、自动 cleanup）
@@ -23,6 +24,8 @@
 - [x] 为 `run_flamegraph.sh` 增加脚本切换与 `TRACE_WRK_ROLE_PLAN / ACTIVE_POOL_SIZE` 透传，支持 active-pool 流量模型
 - [ ] 为升级版脚本补最小可复现参数和运行说明（优先 timeout/late-span 场景）
 - [ ] 跑最小对照实验：旧脚本 vs 升级版脚本，确认请求分布和复现能力差异
+- [ ] 固定 `Suite D` 的最小资源轴口径：`D1 固定 CPU 扫 worker`、`D2 固定 worker 扫 CPU`
+- [ ] 固定 `Suite A-Interaction` 的最小交互矩阵：优先 `buffered vs no-buffer`
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 增加 `--worker-threads` 命令行参数支持
@@ -32,6 +35,11 @@
 - [x] 验证配置参数能准确透传给 `ThreadPool` 和 `TraceSessionManager`
 
 ## 4. 压力测试 (Execution)
+- [ ] **Suite A 主实验**: 固定资源，只跑功能开关成本对比
+- [ ] **Suite B 主实验**: 固定资源，只跑 AI 可靠性故障注入对比
+- [ ] **Suite D1 扩展性实验**: 固定 CPU，只扫 `kernel_worker_threads`
+- [ ] **Suite D2 扩展性实验**: 固定 worker，只扫后端可用 CPU
+- [ ] **Suite A-Interaction 小交互实验**: 少量资源点下比较 `baseline / disable_buffered_trace_repo / no_ai_no_buffer`
 - [ ] **摸底测试 (Baseline)**: `-c 100`, 验证 QPS 指标
 - [ ] **极限测试 (Saturation)**: `-c 500`, 寻找 P99 拐点
 - [ ] **背压验证 (Backpressure)**: `-c 2000`, 验证 503 拦截生效与内存稳定性

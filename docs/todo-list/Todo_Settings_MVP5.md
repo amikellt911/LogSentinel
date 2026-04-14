@@ -183,3 +183,7 @@
 - [x] 给 fallback `TraceProxyAi` 挂同一套版本号 + 小快照 reader，但读取 fallback 字段
 - [x] 运行最小黑盒/构建验证，确认 fallback 热更新只影响 `ai_fallback_model / ai_fallback_api_key`
 - [x] 追加 2026-04-13 dev-log，记录这轮 fallback 热更新与中文注释位置
+- [x] 为线程模型配置补 `kernel_io_threads`：先改第三层黑盒，锁定“保存后重启启动日志出现新的 I/O 线程数”
+- [x] 在 `AppConfig / SqliteConfigRepository / main.cpp` 接通 `kernel_io_threads` 冷启动消费，并补中文注释说明它和 `kernel_worker_threads` 的分工
+- [x] 调整 `SettingsPrototype.vue` 的线程字段文案与保存回填：把 `kernel_worker_threads` 明确成主工作线程数，并新增 MiniMuduo I/O 线程数输入
+- [x] 运行本轮最小黑盒/构建验证，并追加 2026-04-14 dev-log

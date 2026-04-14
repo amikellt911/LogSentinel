@@ -481,9 +481,9 @@ def wait_process_log_contains(proc: subprocess.Popen,
     """
     轮询进程输出，直到出现目标文本。
 
-    `kernel_worker_threads` 这种设置真正生效的位置只在启动期建线程池那一瞬间。
-    它不是运行时指标，单靠 `/settings/all` 只能证明“库里存的是 2”，
-    证明不了后端这次启动到底有没有真的按 2 条 worker 线程建起来。
+    `kernel_worker_threads / kernel_io_threads` 这种线程模型配置真正生效的位置都在启动期。
+    它们不是运行时指标，单靠 `/settings/all` 只能证明“库里存的是 2”，
+    证明不了后端这次启动到底有没有真的按对应线程数把 worker 池和 MiniMuduo I/O 线程建起来。
     所以这里直接盯启动日志，是这条黑盒最短也最硬的证据。
     """
     deadline = time.time() + timeout_sec
@@ -921,6 +921,7 @@ def run_flow(args: argparse.Namespace) -> int:
         {"key": "trace_end_aliases", "value": json.dumps(["end"])},
         {"key": "ai_analysis_enabled", "value": "0"},
         {"key": "ai_timeout_ms", "value": "30000"},
+        {"key": "kernel_io_threads", "value": "2"},
         {"key": "kernel_worker_threads", "value": "2"},
         {"key": "log_retention_days", "value": "1"},
         {"key": "collecting_idle_timeout_ms", "value": "30000"},
@@ -943,7 +944,7 @@ def run_flow(args: argparse.Namespace) -> int:
         # 第二次启动故意不传 --port，迫使 main.cpp 从配置快照里取 http_port。
         proc = start_server(server_bin, db_path, None, frontend_dist=frontend_dist)
         wait_server_ready(new_url, args.ready_timeout, proc)
-        startup_logs = wait_process_log_contains(proc, "2 worker threads", timeout_sec=3.0)
+        startup_logs = wait_process_log_contains(proc, "2 I/O threads, 2 worker threads", timeout_sec=3.0)
         assert_single_entry_frontend_routes(new_url)
 
         settings = fetch_all_settings(new_url)
@@ -956,12 +957,14 @@ def run_flow(args: argparse.Namespace) -> int:
             raise RuntimeError(f"ai_analysis_enabled 回填不正确: {app_config.get('ai_analysis_enabled')}")
         if int(app_config.get("ai_timeout_ms", 0)) != 30000:
             raise RuntimeError(f"ai_timeout_ms 回填不正确: {app_config.get('ai_timeout_ms')}")
+        if int(app_config.get("kernel_io_threads", 0)) != 2:
+            raise RuntimeError(f"kernel_io_threads 回填不正确: {app_config.get('kernel_io_threads')}")
         if int(app_config.get("kernel_worker_threads", 0)) != 2:
             raise RuntimeError(f"kernel_worker_threads 回填不正确: {app_config.get('kernel_worker_threads')}")
         if int(app_config.get("log_retention_days", 0)) != 1:
             raise RuntimeError(f"log_retention_days 回填不正确: {app_config.get('log_retention_days')}")
         if "Thread Model:" not in startup_logs:
-            raise RuntimeError("未读到线程模型启动日志，无法证明 kernel_worker_threads 被消费")
+            raise RuntimeError("未读到线程模型启动日志，无法证明 kernel_io_threads / kernel_worker_threads 被消费")
         # timeout_ms 直接出现在启动日志里，最适合作为冷启动消费的黑盒证据。
         # 这里只看日志，是因为真正值钱的问题是“后端到底有没有把 Settings 的超时拿来构造 TraceProxyAi”，
         # 而不是 SQLite 里有没有这行 key。
@@ -1535,7 +1538,7 @@ def run_flow(args: argparse.Namespace) -> int:
         print(
             "[settings-blackbox] 黑盒联调通过：端口切换、trace_end_aliases、"
             "ai_analysis_enabled、ai_timeout_ms、主路与 fallback 的 model/api_key 热更新、prompt/active_prompt_id、webhook channel、"
-            "kernel_worker_threads、log_retention_days、双 provider/fallback、AI retry、"
+            "kernel_io_threads、kernel_worker_threads、log_retention_days、双 provider/fallback、AI retry、"
             "benchmark CLI 开关都已验证"
         )
         return 0

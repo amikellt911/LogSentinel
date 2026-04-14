@@ -64,6 +64,10 @@ struct AppConfig {
     int active_prompt_id = 0;
 
     // 内核与主链运行时参数
+    // 这里显式把 MiniMuduo I/O 线程和主 worker 线程拆开。
+    // 否则 Settings/benchmark/论文里一说“线程数”，用户根本分不清是在调 Reactor 收包线程，
+    // 还是在调真正承接 Trace 聚合、AI 调用和落库协作的工作线程池。
+    int kernel_io_threads = 1;
     int kernel_worker_threads = 4;
     std::string trace_end_field = "trace_end";
     // 别名在内存快照里直接用数组，而不是继续塞 JSON 字符串。
@@ -93,7 +97,7 @@ struct AppConfig {
         ai_auto_degrade, ai_fallback_provider, ai_fallback_model, ai_fallback_api_key,
         ai_circuit_breaker, ai_failure_threshold, ai_cooldown_seconds,
         active_prompt_id,
-        kernel_worker_threads,
+        kernel_io_threads, kernel_worker_threads,
         trace_end_field, trace_end_aliases, token_limit, span_capacity,
         collecting_idle_timeout_ms, sealed_grace_window_ms, retry_base_delay_ms, sweep_tick_ms,
         wm_active_sessions_overload, wm_active_sessions_critical,
