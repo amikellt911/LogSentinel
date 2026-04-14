@@ -259,6 +259,75 @@
   - `--expect-span-count`：手工测试时直接断言最终聚合结果
   - `--late-span-delay-ms`：调整晚到 span 时间
 
+## 追加记录：dispatch 线程组冷启动接线
+
+### Git Commit Message
+`feat(trace): 增加 dispatch 线程组冷启动配置`
+
+### Modification
+- `server/persistence/ConfigTypes.h`
+- `server/persistence/SqliteConfigRepository.cpp`
+- `server/src/main.cpp`
+- `server/core/TraceSessionManager.h`
+- `server/core/TraceSessionManager.cpp`
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `server/tests/smoke_settings_blackbox.py`
+- `server/tests/wrk/run_bench.sh`
+- `server/tests/wrk/run_flamegraph.sh`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### What Changed
+- 在 `AppConfig` 和 SQLite 配置仓库里新增 `dispatch_worker_threads`，默认值是 `1`，明确它是 trace 第一阶段收口线程，不再继续混在主 worker 线程池语义里。
+- 在 `main.cpp` 接通 `--dispatch-worker-threads` CLI，优先级仍然是 `CLI override > SQLite 冷启动值`，并把启动日志改成同时打印 `I/O / worker / dispatch` 三类线程数。
+- 在 `TraceSessionManager` 里把单 `dispatch_thread_` 改成 `dispatch_threads_` 线程组。每个 consumer 都跑同一个 `DispatchLoop`，共享同一个 `dispatch_queue_`，停机时统一唤醒并逐个 `join`。
+- `RefreshOverloadState()` 这次也把 `dispatch_queue_` 长度算进去了。理由很直接：如果 dispatch 队列已经堆起来了，但水位判断里还看不到它，那背压状态就是假象。
+- benchmark 脚本 `run_bench.sh / run_flamegraph.sh` 都补了 `DISPATCH_WORKER_THREADS`，避免做 Suite D 或后面的组合实验时还得先改库。
+- 单测里新增 `DispatchWorkersCanPreparePrimaryInParallel`，用一个会卡在 `AppendPrimary` 的假 sink 证明两条 dispatch consumer 能同时推进第一阶段主链工作，而不是日志打印成 2 实际还是单线程。
+- 第三层黑盒把 `dispatch_worker_threads=2` 也纳入冷启动验证，要求启动日志明确出现 `2 dispatch threads`，同时 `/settings/all` 回填必须是 `2`。
+
+### 中文注释
+- `server/persistence/ConfigTypes.h`
+  - 在 `dispatch_worker_threads` 字段前补注释，说明它对应的是 trace 第一阶段收口线程，不是主 worker 线程池。
+- `server/persistence/SqliteConfigRepository.cpp`
+  - 在 `dispatch_worker_threads` 的解析和默认 seed 分支补注释，说明为什么它要和 `kernel_worker_threads` 分开存。
+- `server/src/main.cpp`
+  - 在 `dispatch_worker_threads` 的 CLI 解析、冷启动生效值决策、启动日志打印处补注释，说明线程模型的三段职责。
+- `server/core/TraceSessionManager.h`
+  - 在 `dispatch_threads_` 和构造函数参数处补注释，说明这里为什么不用通用 `ThreadPool(std::function<void()>)` 去承载 `DispatchJob`。
+- `server/core/TraceSessionManager.cpp`
+  - 在启动 dispatch consumer、停止线程组、采样 dispatch queue 水位这几段补注释，说明所有权、唤醒顺序和背压口径。
+- `server/tests/TraceSessionManager_unit_test.cpp`
+  - 在 `BlockingTraceWriteSink` 和新单测前补注释，说明这条测试锁定的是 dispatch 第一阶段并发，而不是后面的 AI worker 并发。
+- `server/tests/smoke_settings_blackbox.py`
+  - 在写入 `dispatch_worker_threads` 的配置场景和启动日志断言附近补注释，说明这个黑盒要锁的是“真实消费 + 启动口径”，不是只看 SQLite 存值。
+- `server/tests/wrk/run_bench.sh`
+  - 在 `DISPATCH_WORKER_THREADS` 环境变量定义前补注释，说明它服务 benchmark，不该要求手工改库。
+- `server/tests/wrk/run_flamegraph.sh`
+  - 在 `DISPATCH_WORKER_THREADS` 环境变量定义前补注释，说明火焰图也必须和 benchmark 共用同一套线程模型入口。
+
+### Verification
+- `ctest -R "TraceSessionManager(Unit|Integration)" --output-on-failure`
+- `/home/llt/Project/llt/venv/bin/python3 server/tests/smoke_settings_blackbox.py`
+- `git diff --check`
+
+### Verification Notes
+- 这次 C++ 验证结果是 `60/60` 通过，里面包含新增的 `DispatchWorkersCanPreparePrimaryInParallel`，也包含全部 `TraceSessionManagerIntegrationTest`。
+- `smoke_settings_blackbox.py` 必须用仓库自己的 `venv` 跑。系统 `python3` 缺 `fastapi`，直接跑会在导入 `server/ai/proxy/main.py` 时炸掉。
+
+### Learning Tips
+#### Newbie Tips
+- `dispatch` 和 `worker` 不是一回事。现在的 `dispatch` 线程做的是建索引、序列化、生成 summary/span_records、进入主存储入口；真正丢给 worker 池的是第二阶段 AI/分析后链路。你要是把这两段混成一个“后台线程”，实验结论一定会错。
+- 黑盒里只看配置回填没有意义。`dispatch_worker_threads` 这种线程模型变量，必须同时盯启动日志和真实行为，否则你根本不知道后端是不是还在偷用默认值。
+
+#### Function Explanation
+- `DispatchLoop()`：从 `dispatch_queue_` 里取待收口任务，完成 trace 第一阶段的 CPU/存储准备工作，再决定是否往后面的 worker 池继续投分析任务。
+- `RefreshOverloadState()`：按当前 session 数、completed tombstone 数、worker 队列长度、dispatch 队列长度综合判断系统是否进入高水位/低水位。它不是抽象“健康度”，而是决定入口到底要不要开始拒流。
+
+#### Pitfalls
+- 如果只把线程数改成 `N`，但停机时还按单线程 `join` 思路写，最容易出现一个 consumer 卡住、其余线程直接泄漏或析构悬挂。
+- 如果 benchmark 脚本没有接 `--dispatch-worker-threads`，后面做线程拓扑实验时就只能手工改 SQLite。那样变量不可追溯，实验命令也没法直接复现。
+
 ### 中文注释
 - `server/tests/trace_lifecycle_smoke.py`
   - 在文件头注释里说明它为什么不是 benchmark 脚本

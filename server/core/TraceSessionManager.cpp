@@ -238,7 +238,8 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
                                          int64_t ai_cooldown_ms,
                                          TraceAiProvider* fallback_trace_ai,
                                          bool ai_auto_degrade_enabled,
-                                         TraceLifecycleProfile lifecycle_profile)
+                                         TraceLifecycleProfile lifecycle_profile,
+                                         size_t dispatch_worker_threads)
     : thread_pool_(thread_pool), trace_write_sink_(trace_write_sink), trace_ai_(trace_ai), notifier_(notifier), service_runtime_accumulator_(service_runtime_accumulator), system_runtime_accumulator_(system_runtime_accumulator), ai_analysis_enabled_(ai_analysis_enabled), ai_circuit_breaker_enabled_(ai_circuit_breaker_enabled), fallback_trace_ai_(fallback_trace_ai), ai_auto_degrade_enabled_(ai_auto_degrade_enabled), ai_failure_threshold_(std::max<size_t>(1, ai_failure_threshold)), ai_cooldown_ms_(ai_cooldown_ms > 0 ? ai_cooldown_ms : 60000), capacity_(capacity), token_limit_(token_limit), lifecycle_profile_(lifecycle_profile), wheel_size_(wheel_size > 0 ? wheel_size : 512), idle_timeout_ms_(idle_timeout_ms > 0 ? idle_timeout_ms : 5000), wheel_tick_ms_(wheel_tick_ms > 0 ? wheel_tick_ms : 500), buffered_span_hard_limit_(buffered_span_hard_limit > 0 ? buffered_span_hard_limit : 4096), active_session_hard_limit_(active_session_hard_limit > 0 ? active_session_hard_limit : 1024)
 {
     timeout_ticks_ = ComputeTimeoutTicks();
@@ -267,7 +268,15 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
     dispatch_queue_watermark_ = BuildWatermark(dispatch_queue_hard_limit_,
                                                pending_tasks_overload_percent,
                                                pending_tasks_critical_percent);
-    dispatch_thread_ = std::thread(&TraceSessionManager::DispatchLoop, this);
+    dispatch_worker_thread_count_ = std::max<size_t>(1, dispatch_worker_threads);
+    // dispatch 阶段现在允许多 consumer 并发吃同一条 queue。
+    // 这样能把 BuildTraceIndex / SerializeTrace / AppendPrimary 这段前置重活从单线程瓶颈里解开，
+    // 同时又继续保留当前 move-only DispatchJob 和有界队列语义，不必先重写通用 ThreadPool。
+    dispatch_threads_.reserve(dispatch_worker_thread_count_);
+    for (size_t i = 0; i < dispatch_worker_thread_count_; ++i)
+    {
+        dispatch_threads_.emplace_back(&TraceSessionManager::DispatchLoop, this);
+    }
 }
 
 bool TraceSessionManager::IsAiCircuitOpen(int64_t now_ms) const
@@ -389,9 +398,12 @@ void TraceSessionManager::StopDispatchThread()
         dispatch_stopping_ = true;
     }
     dispatch_queue_cv_.notify_all();
-    if (dispatch_thread_.joinable())
+    for (std::thread& dispatch_thread : dispatch_threads_)
     {
-        dispatch_thread_.join();
+        if (dispatch_thread.joinable())
+        {
+            dispatch_thread.join();
+        }
     }
 }
 
@@ -1563,19 +1575,29 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
 void TraceSessionManager::RefreshOverloadState()
 {
     const size_t pending_tasks = thread_pool_ ? thread_pool_->pendingTasks() : 0;
+    size_t dispatch_queue_pending = 0;
+    {
+        // dispatch queue 本身也是主链积压的一环。
+        // 如果这里只看 worker pending，不看 dispatch queue，那么前半段已经堵死时背压状态仍然会假装正常。
+        std::lock_guard<std::mutex> queue_lock(dispatch_queue_mutex_);
+        dispatch_queue_pending = dispatch_queue_.size();
+    }
 
     const bool hit_critical =
         total_buffered_spans_ >= buffered_span_watermark_.critical ||
         active_sessions_ >= active_session_watermark_.critical ||
-        pending_tasks >= pending_task_watermark_.critical;
+        pending_tasks >= pending_task_watermark_.critical ||
+        dispatch_queue_pending >= dispatch_queue_watermark_.critical;
     const bool hit_high =
         total_buffered_spans_ >= buffered_span_watermark_.high ||
         active_sessions_ >= active_session_watermark_.high ||
-        pending_tasks >= pending_task_watermark_.high;
+        pending_tasks >= pending_task_watermark_.high ||
+        dispatch_queue_pending >= dispatch_queue_watermark_.high;
     const bool back_to_low =
         total_buffered_spans_ <= buffered_span_watermark_.low &&
         active_sessions_ <= active_session_watermark_.low &&
-        pending_tasks <= pending_task_watermark_.low;
+        pending_tasks <= pending_task_watermark_.low &&
+        dispatch_queue_pending <= dispatch_queue_watermark_.low;
 
     if (hit_critical)
     {

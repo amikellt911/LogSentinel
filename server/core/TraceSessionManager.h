@@ -221,7 +221,10 @@ public:
                                  TraceAiProvider* fallback_trace_ai = nullptr,
                                  bool ai_auto_degrade_enabled = false,
                                  // 生命周期 profile 会直接改状态机分支，所以这一刀明确按冷启动参数传入构造。
-                                 TraceLifecycleProfile lifecycle_profile = TraceLifecycleProfile::Protected);
+                                 TraceLifecycleProfile lifecycle_profile = TraceLifecycleProfile::Protected,
+                                 // dispatch_worker_threads 控制的是 dispatch queue 的消费者数量。
+                                 // 这里单独拆参数，是为了把“主数据准备阶段”的并行度和 worker 第二阶段分开控制。
+                                 size_t dispatch_worker_threads = 1);
     ~TraceSessionManager();
 
     size_t size() const;
@@ -378,7 +381,8 @@ private:
     void SealSessionLocked(TraceSession& session, TraceSession::SealReason reason);
     // timeout 参数变化时重建时间轮，避免旧参数下的节点继续误导触发时机。
     void RebuildTimeWheel();
-    // dispatch 线程第一步只做生命周期与队列骨架占位，后面再逐步接业务逻辑。
+    // dispatch queue 的每个 consumer 都跑同一份消费循环：
+    // 从有界队列取 job，然后在锁外执行主数据准备和首段写入。
     void DispatchLoop();
     void StopDispatchThread();
     // 使用 unique_ptr 保证对象地址稳定，后续可安全转移所有权给线程池处理。
@@ -419,6 +423,7 @@ private:
     Watermark pending_task_watermark_;
     Watermark dispatch_queue_watermark_;
     size_t dispatch_queue_hard_limit_ = 1;
+    size_t dispatch_worker_thread_count_ = 1;
     // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
     OverloadState overload_state_ = OverloadState::Normal;
     // 这批统计只服务“后链路是否真的跑了、各阶段墙钟耗时多少”，
@@ -432,12 +437,15 @@ private:
     std::atomic<uint64_t> ai_total_ns_{0};
     std::atomic<uint64_t> analysis_enqueue_calls_{0};
     std::atomic<uint64_t> analysis_enqueue_total_ns_{0};
-    // 独立 dispatch 线程的有界队列：第一步先占好结构，后面再把 sweep/dispatch 逐步接过来。
+    // dispatch queue 继续保持 move-only DispatchJob 语义：
+    // job 里直接持有 unique_ptr<TraceSession>，这样就不用为了并发消费再额外包一层共享所有权。
     std::mutex dispatch_queue_mutex_;
     std::condition_variable dispatch_queue_cv_;
     std::queue<DispatchJob> dispatch_queue_;
     bool dispatch_stopping_ = false;
-    std::thread dispatch_thread_;
+    // 这里不用通用 ThreadPool，是因为当前 ThreadPool 基于 std::function<void()>，
+    // 不能直接承载捕获 unique_ptr<TraceSession> 的 move-only dispatch job。
+    std::vector<std::thread> dispatch_threads_;
     // TraceSessionManager 当前会被 HTTP 处理线程和主 loop 定时器线程同时访问，
     // 这把锁先用最保守的方式把内部状态机串行化，优先保证正确性。
     mutable std::mutex mutex_;

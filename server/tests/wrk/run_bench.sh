@@ -20,6 +20,7 @@ PORT="${PORT:-8080}"
 DURATION="${DURATION:-30s}"
 WRK_THREADS="${WRK_THREADS:-1}"
 WORKER_THREAD_SET="${WORKER_THREAD_SET:-2 3 4}"
+DISPATCH_WORKER_THREADS="${DISPATCH_WORKER_THREADS:-1}"
 CONNECTION_SET="${CONNECTION_SET:-100 200 500}"
 SERVER_CPUSET="${SERVER_CPUSET:-}"
 WRK_CPUSET="${WRK_CPUSET:-}"
@@ -55,6 +56,7 @@ usage() {
   DURATION=30s
   WRK_THREADS=1
   WORKER_THREAD_SET="2 3 4"
+  DISPATCH_WORKER_THREADS=1
   CONNECTION_SET="100 200 500"
   SERVER_CPUSET="1-2"
   WRK_CPUSET="0"
@@ -255,7 +257,7 @@ start_server() {
     local listener_pid=""
 
     SERVER_LOG="${RUN_DIR}/server-w${worker_threads}.log"
-    log "starting LogSentinel profile=${PROFILE} worker_threads=${worker_threads}"
+    log "starting LogSentinel profile=${PROFILE} worker_threads=${worker_threads} dispatch_worker_threads=${DISPATCH_WORKER_THREADS}"
     ensure_port_available "${PORT}"
 
     if [[ -n "${SERVER_CPUSET}" ]]; then
@@ -267,6 +269,7 @@ start_server() {
             --auto-start-webhook-mock \
             --trace-ai-provider mock \
             --worker-threads "${worker_threads}" \
+            --dispatch-worker-threads "${DISPATCH_WORKER_THREADS}" \
             --worker-queue-size "${WORKER_QUEUE_SIZE}" \
             --trace-capacity "${TRACE_CAPACITY}" \
             --trace-token-limit "${TRACE_TOKEN_LIMIT}" \
@@ -285,6 +288,7 @@ start_server() {
             --auto-start-webhook-mock \
             --trace-ai-provider mock \
             --worker-threads "${worker_threads}" \
+            --dispatch-worker-threads "${DISPATCH_WORKER_THREADS}" \
             --worker-queue-size "${WORKER_QUEUE_SIZE}" \
             --trace-capacity "${TRACE_CAPACITY}" \
             --trace-token-limit "${TRACE_TOKEN_LIMIT}" \
@@ -346,6 +350,7 @@ run_wrk_once() {
         echo "trace_buffered_span_limit=${TRACE_BUFFERED_SPAN_LIMIT}"
         echo "trace_active_session_limit=${TRACE_ACTIVE_SESSION_LIMIT}"
         echo "trace_lifecycle_profile=${TRACE_LIFECYCLE_PROFILE}"
+        echo "dispatch_worker_threads=${DISPATCH_WORKER_THREADS}"
         echo "worker_queue_size=${WORKER_QUEUE_SIZE}"
         echo
         export TRACE_WRK_MODE="${MODE}"
@@ -421,6 +426,7 @@ SUMMARY_LOG="${RUN_DIR}/run-summary.log"
     echo "trace_buffered_span_limit=${TRACE_BUFFERED_SPAN_LIMIT}"
     echo "trace_active_session_limit=${TRACE_ACTIVE_SESSION_LIMIT}"
     echo "trace_lifecycle_profile=${TRACE_LIFECYCLE_PROFILE}"
+    echo "dispatch_worker_threads=${DISPATCH_WORKER_THREADS}"
     echo "worker_queue_size=${WORKER_QUEUE_SIZE}"
     echo "mode=${MODE}"
     echo "spans_per_trace=${SPANS_PER_TRACE}"

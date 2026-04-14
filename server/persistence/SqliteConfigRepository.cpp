@@ -116,6 +116,8 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         // 这两个数字都会影响吞吐，但它们卡住的物理位置完全不同，所以必须拆成两个 key。
         else if (key == "kernel_io_threads") config.kernel_io_threads = std::stoi(val);
         else if (key == "kernel_worker_threads") config.kernel_worker_threads = std::stoi(val);
+        // dispatch 线程负责主数据准备阶段，不该继续跟 worker 线程混成一个数。
+        else if (key == "dispatch_worker_threads") config.dispatch_worker_threads = std::stoi(val);
         else if (key == "trace_end_field") config.trace_end_field = val;
         else if (key == "token_limit") config.token_limit = std::stoi(val);
         else if (key == "span_capacity") config.span_capacity = std::stoi(val);
@@ -237,6 +239,7 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('active_prompt_id', '0', '当前激活的PromptID'),
             ('kernel_io_threads', '1', 'MiniMuduo I/O线程数'),
             ('kernel_worker_threads', '4', '主工作线程池线程数'),
+            ('dispatch_worker_threads', '1', 'Trace dispatch 线程数'),
             ('trace_end_field', 'trace_end', '顶层 trace 结束标记字段名'),
             ('token_limit', '0', '单条 trace 的 token 保护阈值'),
             ('span_capacity', '100', '单条 trace 的 span 数量保护阈值'),

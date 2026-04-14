@@ -207,6 +207,7 @@ int main(int argc, char* argv[])
     int trace_idle_timeout_ms = 5000;
     bool trace_idle_timeout_explicit = false;
     int worker_threads_override = -1;
+    int dispatch_worker_threads_override = -1;
     int worker_queue_size = 10000;
     int trace_capacity = 100;
     bool trace_capacity_explicit = false;
@@ -263,6 +264,10 @@ int main(int argc, char* argv[])
             trace_idle_timeout_explicit = true;
         } else if (arg == "--worker-threads" && i + 1 < argc) {
             worker_threads_override = std::stoi(argv[++i]);
+        } else if (arg == "--dispatch-worker-threads" && i + 1 < argc) {
+            // dispatch 线程数只服务“主数据准备阶段”的并行度对照。
+            // 这里和 worker 分开，是为了让 benchmark 能单独观察 dispatch 是否先成为瓶颈。
+            dispatch_worker_threads_override = std::stoi(argv[++i]);
         } else if (arg == "--worker-queue-size" && i + 1 < argc) {
             worker_queue_size = std::stoi(argv[++i]);
         } else if (arg == "--trace-capacity" && i + 1 < argc) {
@@ -329,6 +334,10 @@ int main(int argc, char* argv[])
     }
     if (worker_threads_override == 0 || worker_threads_override < -1) {
         std::cerr << "Fatal Error: --worker-threads must be > 0 or omitted" << std::endl;
+        return -1;
+    }
+    if (dispatch_worker_threads_override == 0 || dispatch_worker_threads_override < -1) {
+        std::cerr << "Fatal Error: --dispatch-worker-threads must be > 0 or omitted" << std::endl;
         return -1;
     }
     if (worker_queue_size <= 0) {
@@ -668,11 +677,20 @@ int main(int argc, char* argv[])
             : (startup_app_config.kernel_worker_threads > 0
                    ? startup_app_config.kernel_worker_threads
                    : default_worker_threads);
+    // dispatch 线程数同样按冷启动参数决策：
+    // 这层线程承担的是 dispatch queue 消费和主数据准备，不会在运行中自动扩缩。
+    const int num_dispatch_threads =
+        dispatch_worker_threads_override > 0
+            ? dispatch_worker_threads_override
+            : (startup_app_config.dispatch_worker_threads > 0
+                   ? startup_app_config.dispatch_worker_threads
+                   : 1);
     const int num_query_threads = 1;
 
     std::cout << "System Info: " << num_cpu_cores << " cores detected." << std::endl;
     std::cout << "Thread Model: " << num_io_threads << " I/O threads, "
               << num_worker_threads << " worker threads, "
+              << num_dispatch_threads << " dispatch threads, "
               << num_query_threads << " query threads." << std::endl;
     std::cout << "Benchmark switches: disable_ai=" << (disable_ai_cli ? "true" : "false")
               << ", disable_webhook=" << (disable_webhook_cli ? "true" : "false")
@@ -879,7 +897,8 @@ int main(int argc, char* argv[])
         effective_ai_cooldown_ms,
         fallback_trace_ai.get(),
         effective_ai_auto_degrade,
-        effective_trace_lifecycle_profile.value());
+        effective_trace_lifecycle_profile.value(),
+        static_cast<size_t>(num_dispatch_threads));
     const double trace_sweep_interval_sec =
         static_cast<double>(effective_trace_sweep_interval_ms) / 1000.0;
     std::cout << "Trace session sweep enabled. sweep_interval_ms=" << effective_trace_sweep_interval_ms

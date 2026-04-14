@@ -69,6 +69,10 @@ struct AppConfig {
     // 还是在调真正承接 Trace 聚合、AI 调用和落库协作的工作线程池。
     int kernel_io_threads = 1;
     int kernel_worker_threads = 4;
+    // dispatch_worker_threads 控制的是 dispatch queue 的消费者数量。
+    // 这一层和 worker_threads 不同：dispatch 线程负责主数据准备与入写入口，
+    // worker 线程才负责 AI / analysis / webhook 的第二阶段收尾。
+    int dispatch_worker_threads = 1;
     std::string trace_end_field = "trace_end";
     // 别名在内存快照里直接用数组，而不是继续塞 JSON 字符串。
     // 既然 /logs/spans 是热路径，那么解析入口就应该直接拿现成的别名数组，
@@ -101,7 +105,7 @@ struct AppConfig {
         ai_auto_degrade, ai_fallback_provider, ai_fallback_model, ai_fallback_api_key,
         ai_circuit_breaker, ai_failure_threshold, ai_cooldown_seconds,
         active_prompt_id,
-        kernel_io_threads, kernel_worker_threads,
+        kernel_io_threads, kernel_worker_threads, dispatch_worker_threads,
         trace_end_field, trace_end_aliases, token_limit, span_capacity,
         collecting_idle_timeout_ms, sealed_grace_window_ms, retry_base_delay_ms, sweep_tick_ms,
         trace_lifecycle_profile,

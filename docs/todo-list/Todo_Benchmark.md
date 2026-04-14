@@ -35,8 +35,15 @@
 - [x] 让 `run_bench.sh / run_flamegraph.sh` 透传 `TRACE_LIFECYCLE_PROFILE`
 - [x] 补黑盒验证：CLI `--trace-lifecycle-profile` 必须盖过 SQLite 冷启动值，并锁定真实生命周期差异
 - [x] 新增最小生命周期测试脚本，只覆盖 `trace_end -> 晚到 span` 单场景，不承担正式 benchmark 压流职责
+- [x] 把 `dispatch / worker / io / flush` 的真实职责写进 benchmark 文档，避免后续再把热路径说反
+- [x] 记录 `dispatch_tpool` 的真实前置条件：当前 `ThreadPool(std::function<void()>)` 不能直接承载 move-only `DispatchJob`
 
 ## 3. 代码改造 (Main Enhancement)
+- [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径
+- [x] 在 `AppConfig / SqliteConfigRepository / main.cpp / TraceSessionManager` 接通 `dispatch_worker_threads`
+- [x] 把单 `dispatch_thread_` 改成可配置多 consumer dispatch 线程组，并补中文注释说明所有权和停机顺序
+- [x] 让 benchmark CLI 支持 `--dispatch-worker-threads`，避免做实验时只能先改 SQLite
+- [x] 运行 Trace 相关单测与黑盒，确认功能没回归
 - [x] 增加 `--worker-threads` 命令行参数支持
 - [x] 增加 `--trace-buffered-span-limit` 命令行参数支持
 - [x] 增加 `--worker-queue-size` 命令行参数支持
@@ -46,7 +53,7 @@
 
 ## 4. 压力测试 (Execution)
 - [ ] **Suite A 主实验**: 固定资源，只跑功能开关成本对比
-- [ ] **Suite B 主实验**: 固定资源，只跑 AI 可靠性故障注入对比
+- [ ] **Suite B 主实验**: 固定资源，只跑 Trace 生命周期鲁棒性对比
 - [ ] **Suite D1 扩展性实验**: 固定 CPU，只扫 `kernel_worker_threads`
 - [ ] **Suite D2 扩展性实验**: 固定 worker，只扫后端可用 CPU
 - [ ] **Suite A-Interaction 小交互实验**: 少量资源点下比较 `baseline / disable_buffered_trace_repo / no_ai_no_buffer`
@@ -59,4 +66,4 @@
 - [ ] 整理 QPS/P99 数据表格
 - [ ] 生成背压介入时的截图或记录
 - [ ] 记录 CPU 核心隔离下的性能表现
-- [ ] 追加 dev-log 完成复盘
+- [x] 追加 dev-log 完成复盘

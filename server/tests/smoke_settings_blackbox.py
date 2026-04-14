@@ -932,6 +932,7 @@ def run_flow(args: argparse.Namespace) -> int:
         {"key": "ai_timeout_ms", "value": "30000"},
         {"key": "kernel_io_threads", "value": "2"},
         {"key": "kernel_worker_threads", "value": "2"},
+        {"key": "dispatch_worker_threads", "value": "2"},
         {"key": "log_retention_days", "value": "1"},
         {"key": "collecting_idle_timeout_ms", "value": "30000"},
         {"key": "sealed_grace_window_ms", "value": "400"},
@@ -953,7 +954,11 @@ def run_flow(args: argparse.Namespace) -> int:
         # 第二次启动故意不传 --port，迫使 main.cpp 从配置快照里取 http_port。
         proc = start_server(server_bin, db_path, None, frontend_dist=frontend_dist)
         wait_server_ready(new_url, args.ready_timeout, proc)
-        startup_logs = wait_process_log_contains(proc, "2 I/O threads, 2 worker threads", timeout_sec=3.0)
+        startup_logs = wait_process_log_contains(
+            proc,
+            "2 I/O threads, 2 worker threads, 2 dispatch threads",
+            timeout_sec=3.0,
+        )
         assert_single_entry_frontend_routes(new_url)
 
         settings = fetch_all_settings(new_url)
@@ -970,10 +975,17 @@ def run_flow(args: argparse.Namespace) -> int:
             raise RuntimeError(f"kernel_io_threads 回填不正确: {app_config.get('kernel_io_threads')}")
         if int(app_config.get("kernel_worker_threads", 0)) != 2:
             raise RuntimeError(f"kernel_worker_threads 回填不正确: {app_config.get('kernel_worker_threads')}")
+        if int(app_config.get("dispatch_worker_threads", 0)) != 2:
+            raise RuntimeError(
+                f"dispatch_worker_threads 回填不正确: {app_config.get('dispatch_worker_threads')}"
+            )
         if int(app_config.get("log_retention_days", 0)) != 1:
             raise RuntimeError(f"log_retention_days 回填不正确: {app_config.get('log_retention_days')}")
         if "Thread Model:" not in startup_logs:
-            raise RuntimeError("未读到线程模型启动日志，无法证明 kernel_io_threads / kernel_worker_threads 被消费")
+            raise RuntimeError(
+                "未读到线程模型启动日志，无法证明 "
+                "kernel_io_threads / kernel_worker_threads / dispatch_worker_threads 被消费"
+            )
         # timeout_ms 直接出现在启动日志里，最适合作为冷启动消费的黑盒证据。
         # 这里只看日志，是因为真正值钱的问题是“后端到底有没有把 Settings 的超时拿来构造 TraceProxyAi”，
         # 而不是 SQLite 里有没有这行 key。

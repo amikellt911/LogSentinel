@@ -356,6 +356,54 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 - `flush_thread` 更偏 SQLite 阻塞写
 - `worker_threads` 才更像“混合阻塞型”，因为会等 AI HTTP / webhook
 
+### 当前代码职责硬约束
+
+为了避免后面再把 `dispatch` 和 `worker` 说反，这里把当前实现直接钉死：
+
+- `server_io_threads`
+  - 负责 HTTP 收包、JSON 解析、字段校验、组装 `SpanEvent`，然后调用 `TraceSessionManager::Push`
+- `dispatch_thread`
+  - 从 `dispatch_queue_` 取 `DispatchJob`
+  - 在 `thread_pool_->submit(...)` 之前完成：
+    - `BuildTraceIndex`
+    - `SerializeTrace`
+    - `BuildTraceSummary`
+    - `BuildSpanRecords`
+    - `AppendPrimary`
+- `worker_threads`
+  - 只负责 `thread_pool_->submit(...)` 进去之后的第二阶段
+  - 开 AI 时主要承担 provider 调用、analysis 写入、webhook 外发
+  - 关 AI 时主要剩余 `UpdateTraceAiState` 这类收尾动作
+
+所以当前真实瓶颈风险不是“worker 一定先满”，而是：
+
+- `server_io_threads` 可能先被入口解析压住
+- `dispatch_thread` 可能先被单线程准备阶段压住
+- `flush_thread` 可能先被 SQLite 写入压住
+
+### 为什么不能直接复用现有 ThreadPool 做 dispatch_tpool
+
+当前项目里的通用 `ThreadPool` 任务类型是 `std::function<void()>`。
+
+而 `DispatchJob` 里直接持有 `std::unique_ptr<TraceSession>`，是 move-only 对象。
+
+这意味着如果后面想写成：
+
+- `dispatch_tpool.submit([job = std::move(job)]() mutable { ... })`
+
+在当前 C++17 实现下会直接卡在 `std::function` 的“目标必须可拷贝”这条限制上。
+
+所以“把 dispatch 改成线程池”不是简单加一个 `dispatch_thread_pool` 变量，而是二选一：
+
+- 路线 A：保留当前 `dispatch_queue_`，把单个 `dispatch_thread_` 扩成多个 consumer 线程
+- 路线 B：先升级通用 `ThreadPool`，让它支持 move-only task，再把 dispatch 正式收口成 `dispatch_tpool`
+
+当前判断：
+
+- 如果目标是最小改动、尽快验证瓶颈，优先走路线 A
+- 如果目标是统一线程模型、减少两套调度实现并存，优先走路线 B
+- 但路线 B 的前置条件不是“新增一个变量”，而是“先重构 ThreadPool 的任务抽象”
+
 所以如果 `dispatch_thread` 继续保持单线程，那么 D 测出来的很可能只是“单线程 dispatch 的上限”。
 
 ### 当前实现倾向
@@ -612,7 +660,6 @@ Suite A-Interaction 更像锦上添花，应该放在主图之后；这样即使
 
 当前还没有写死的内容：
 
-- `minimal` 最终选“候选 A 直接 dispatch”还是“候选 B 仍走 sweep 主路径”
 - `dispatch_thread` 是否先改造成 `dispatch_worker_threads`
 - Suite D 线程拓扑校准时，最终选哪几个 `server_io_threads / worker_threads / dispatch_worker_threads / ai_proxy_max_workers`
 - benchmark 最终要不要继续上调这三项容量硬上限：

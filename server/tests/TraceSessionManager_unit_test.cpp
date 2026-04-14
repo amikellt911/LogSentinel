@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -154,6 +155,71 @@ public:
         }
         return true;
     }
+};
+
+// 这个 sink 专门用来卡住 AppendPrimary，目的是验证 dispatch queue 多 consumer 时，
+// 两条 trace 的“主数据准备阶段”能不能真正并行进入，而不是继续被单线程 dispatch 串死。
+class BlockingTraceWriteSink : public TraceWriteSink
+{
+public:
+    bool AppendPrimary(TracePrimaryWrite) override
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        ++active_primary_calls_;
+        ++entered_primary_calls_;
+        max_active_primary_calls_ = std::max(max_active_primary_calls_, active_primary_calls_);
+        cv_.notify_all();
+        cv_.wait(lock, [this] { return release_primary_calls_; });
+        --active_primary_calls_;
+        cv_.notify_all();
+        return true;
+    }
+
+    bool AppendAnalysis(TraceAnalysisWrite) override
+    {
+        analysis_append_calls_.fetch_add(1, std::memory_order_acq_rel);
+        return true;
+    }
+
+    bool UpdateTraceAiState(const std::string&,
+                            const std::string&,
+                            const std::string&) override
+    {
+        ai_state_update_calls_.fetch_add(1, std::memory_order_acq_rel);
+        return true;
+    }
+
+    bool WaitUntilPrimaryEntered(size_t expected_count, int timeout_ms = 1000)
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this, expected_count] {
+            return entered_primary_calls_ >= expected_count;
+        });
+    }
+
+    void ReleasePrimaryCalls()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        release_primary_calls_ = true;
+        cv_.notify_all();
+    }
+
+    size_t max_active_primary_calls() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return max_active_primary_calls_;
+    }
+
+    std::atomic<int> analysis_append_calls_{0};
+    std::atomic<int> ai_state_update_calls_{0};
+
+private:
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    size_t active_primary_calls_ = 0;
+    size_t entered_primary_calls_ = 0;
+    size_t max_active_primary_calls_ = 0;
+    bool release_primary_calls_ = false;
 };
 
 // 用 StubAi 固定返回值，目的是稳定覆盖 critical/non-critical 分支，避免单测受网络和模型波动影响。
@@ -1604,6 +1670,62 @@ TEST_F(TraceSessionManagerUnitTest, SealedTraceRollsBackToReadyRetryLaterWhenSub
     EXPECT_EQ(stats.worker_done_count, 0u);
     EXPECT_EQ(stats.ai_calls, 0u);
     EXPECT_EQ(stats.analysis_enqueue_calls, 0u);
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, DispatchWorkersCanPreparePrimaryInParallel)
+{
+    // 目的：验证 dispatch queue 的多 consumer 能并发进入主数据准备阶段，
+    // 而不是两条 trace 继续被单个 dispatch 线程串行处理。
+    ThreadPool pool(1);
+    BlockingTraceWriteSink sink;
+    TraceSessionManager manager(&pool,
+                                &sink,
+                                nullptr,
+                                /*capacity*/10,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/512,
+                                /*buffered_span_hard_limit*/4096,
+                                /*active_session_hard_limit*/1024,
+                                /*active_session_overload_percent*/75,
+                                /*active_session_critical_percent*/90,
+                                /*buffered_spans_overload_percent*/75,
+                                /*buffered_spans_critical_percent*/90,
+                                /*pending_tasks_overload_percent*/75,
+                                /*pending_tasks_critical_percent*/90,
+                                nullptr,
+                                nullptr,
+                                /*ai_analysis_enabled*/false,
+                                /*ai_circuit_breaker_enabled*/true,
+                                /*ai_failure_threshold*/5,
+                                /*ai_cooldown_ms*/60000,
+                                nullptr,
+                                /*ai_auto_degrade_enabled*/false,
+                                TraceSessionManager::TraceLifecycleProfile::Protected,
+                                /*dispatch_worker_threads*/2);
+
+    SpanEvent first = MakeSpan(3001, 1, 1000);
+    first.trace_end = true;
+    SpanEvent second = MakeSpan(3002, 2, 1000);
+    second.trace_end = true;
+
+    ASSERT_EQ(manager.Push(first), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.Push(second), TraceSessionManager::PushResult::Accepted);
+
+    SweepTraceEndSealWindow(manager);
+    ASSERT_TRUE(sink.WaitUntilPrimaryEntered(/*expected_count*/2));
+    EXPECT_GE(sink.max_active_primary_calls(), 2u);
+
+    sink.ReleasePrimaryCalls();
+    ASSERT_TRUE(WaitUntil([&manager]() {
+        return manager.SnapshotRuntimeStats().worker_done_count == 2u;
+    }));
 
     pool.shutdown();
 }

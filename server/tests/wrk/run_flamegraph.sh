@@ -23,6 +23,7 @@ PORT="${PORT:-8080}"
 SERVER_CPUSET="${SERVER_CPUSET:-1-2}"
 WRK_CPUSET="${WRK_CPUSET:-0}"
 WORKER_THREADS="${WORKER_THREADS:-3}"
+DISPATCH_WORKER_THREADS="${DISPATCH_WORKER_THREADS:-1}"
 WORKER_QUEUE_SIZE="${WORKER_QUEUE_SIZE:-2048}"
 WARMUP_DURATION="${WARMUP_DURATION:-3s}"
 WARMUP_CONNECTIONS="${WARMUP_CONNECTIONS:-20}"
@@ -75,6 +76,7 @@ usage() {
   SERVER_CPUSET="1-2"
   WRK_CPUSET="0"
   WORKER_THREADS=3
+  DISPATCH_WORKER_THREADS=1
   LOAD_GENERATOR=wrk|paced
   WARMUP_DURATION=3s
   WARMUP_CONNECTIONS=20
@@ -247,7 +249,7 @@ start_server() {
     local listener_pid=""
     ensure_port_available "${PORT}"
 
-    log "starting LogSentinel profile=${PROFILE} worker_threads=${WORKER_THREADS}"
+    log "starting LogSentinel profile=${PROFILE} worker_threads=${WORKER_THREADS} dispatch_worker_threads=${DISPATCH_WORKER_THREADS}"
     taskset_wrap "${SERVER_CPUSET}" \
         "${SERVER_BIN}" \
         --db "${TRACE_DB}" \
@@ -256,6 +258,7 @@ start_server() {
         --auto-start-webhook-mock \
         --trace-ai-provider mock \
         --worker-threads "${WORKER_THREADS}" \
+        --dispatch-worker-threads "${DISPATCH_WORKER_THREADS}" \
         --worker-queue-size "${WORKER_QUEUE_SIZE}" \
         --trace-capacity "${TRACE_CAPACITY}" \
         --trace-token-limit "${TRACE_TOKEN_LIMIT}" \
@@ -338,6 +341,7 @@ run_perf_and_load() {
             echo "===== WRK RUN BEGIN ====="
             echo "profile=${PROFILE}"
             echo "worker_threads=${WORKER_THREADS}"
+            echo "dispatch_worker_threads=${DISPATCH_WORKER_THREADS}"
             echo "connections=${CONNECTIONS}"
             echo "duration=${DURATION}"
             echo "wrk_threads=${WRK_THREADS}"
@@ -365,6 +369,7 @@ run_perf_and_load() {
             echo "===== PACED RUN BEGIN ====="
             echo "profile=${PROFILE}"
             echo "worker_threads=${WORKER_THREADS}"
+            echo "dispatch_worker_threads=${DISPATCH_WORKER_THREADS}"
             echo "duration=${DURATION}"
             echo "server_cpuset=${SERVER_CPUSET}"
             echo "wrk_cpuset=${WRK_CPUSET}"
@@ -458,6 +463,7 @@ mkdir -p "${RUN_DIR}"
     echo "profile=${PROFILE}"
     echo "port=${PORT}"
     echo "worker_threads=${WORKER_THREADS}"
+    echo "dispatch_worker_threads=${DISPATCH_WORKER_THREADS}"
     echo "worker_queue_size=${WORKER_QUEUE_SIZE}"
     echo "warmup_duration=${WARMUP_DURATION}"
     echo "warmup_connections=${WARMUP_CONNECTIONS}"
