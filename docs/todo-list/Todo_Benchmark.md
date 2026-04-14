@@ -34,6 +34,7 @@
 - [x] 固定 `trace_lifecycle_profile=protected|minimal` 的 benchmark 实验入口口径
 - [x] 让 `run_bench.sh / run_flamegraph.sh` 透传 `TRACE_LIFECYCLE_PROFILE`
 - [x] 补黑盒验证：CLI `--trace-lifecycle-profile` 必须盖过 SQLite 冷启动值，并锁定真实生命周期差异
+- [x] 新增最小生命周期测试脚本，只覆盖 `trace_end -> 晚到 span` 单场景，不承担正式 benchmark 压流职责
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 增加 `--worker-threads` 命令行参数支持

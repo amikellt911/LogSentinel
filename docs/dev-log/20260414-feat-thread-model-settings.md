@@ -237,3 +237,50 @@
 ### Pitfalls
 - 如果第三刀黑盒只盯启动日志里的 `trace_lifecycle_profile=minimal`，那只能证明 main.cpp 打印了这串字，证明不了状态机真的按 `minimal` 分支跑了。
 - 如果 benchmark 的生命周期对照组通过 Settings 页面切，而不是通过 CLI 切，后面你根本分不清某次结果到底是脚本参数造成的，还是上一次实验残留的 SQLite 配置造成的。
+
+## 追加记录：最小生命周期测试脚本
+
+### Git Commit Message
+`feat(test): 增加最小生命周期语义探针`
+
+### Modification
+- `server/tests/trace_lifecycle_smoke.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### What Changed
+- 新增 `server/tests/trace_lifecycle_smoke.py`，专门发送一条固定时间线：
+  - 先发一个自带 `trace_end` 的根 span
+  - 再延迟一小段时间
+  - 再补一条晚到 span
+  - 最后轮询 `/traces/{trace_id}` 打印 `span_count`
+- 这个脚本刻意不放进 `wrk/`，因为它不是正式 benchmark 压流器，而是一次性语义探针。
+- 脚本支持：
+  - `--dry-run`：只打印 payload，不发请求
+  - `--expect-span-count`：手工测试时直接断言最终聚合结果
+  - `--late-span-delay-ms`：调整晚到 span 时间
+
+### 中文注释
+- `server/tests/trace_lifecycle_smoke.py`
+  - 在文件头注释里说明它为什么不是 benchmark 脚本
+  - 在 `build_payloads` 里解释为什么故意把 `trace_end` 打在根 span 上
+  - 在 `wait_trace_detail` 里解释为什么轮询 `/traces/{trace_id}`，而不是直接读 SQLite
+
+### Verification
+- `python3 -m py_compile server/tests/trace_lifecycle_smoke.py`
+- `python3 server/tests/trace_lifecycle_smoke.py --dry-run --trace-key 123456789 --late-span-delay-ms 50`
+- 本地真实验证：
+  - `minimal` + `--expect-span-count 1`
+  - `protected` + `--expect-span-count 2`
+- `git diff --check`
+
+### Newbie Tips
+- 这种“小探针脚本”和正式 benchmark 脚本最好分开。前者追求时间线可控、断言明确；后者追求持续压流和参数矩阵。如果混成一个脚本，最后两头都做不好。
+- `trace_end` 打在根 span 上，不是说业务里一定这么上报，而是为了把测试时间线压到最短，避免再额外引入“先发子 span 再发 root”这种别的变量。
+
+### Function Explanation
+- `/traces/{trace_id}`：这是后端已经存在的详情查询接口。用它做验证，看到的是完整黑盒结果，不只是 sender 把 HTTP 发出去了。
+- `--expect-span-count`：让脚本本身能作为最小回归探针，后面切 `minimal/protected` 时不需要人肉看 JSON。
+
+### Pitfalls
+- 如果这个脚本直接去读 SQLite，那它验证到的是“数据库里有没有数据”，不是“查询接口和整条黑盒链是否正常”。
+- 如果把它塞进 `wrk/` 再顺手加循环压流，后面它就会慢慢变成半吊子的 benchmark 工具，职责又会重新混掉。
