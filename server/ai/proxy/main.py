@@ -1,9 +1,11 @@
 # ai/proxy/main.py
+import argparse
 import asyncio
 import inspect
 import os
 from fastapi import FastAPI, Request, HTTPException
 from starlette.concurrency import run_in_threadpool
+import anyio.to_thread
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, ValidationError
@@ -57,6 +59,57 @@ app = FastAPI(
     description="一个用于代理不同 AI 提供商服务的中间层。",
     version="1.0.0",
 )
+DEFAULT_AI_PROXY_MAX_WORKERS = 128
+app.state.ai_proxy_max_workers = DEFAULT_AI_PROXY_MAX_WORKERS
+
+
+def parse_proxy_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """
+    proxy 的并发上限这里故意走 CLI，而不是藏进环境变量。
+    benchmark 和答辩复现实验更需要“命令一眼可见”，
+    这样别人拿到脚本就知道本轮压测到底配了多少代理层并发，而不是再去翻 shell 环境。
+    """
+    parser = argparse.ArgumentParser(description="LogSentinel AI Proxy")
+    parser.add_argument("--host", default="127.0.0.1", help="监听地址")
+    parser.add_argument("--port", type=int, default=8001, help="监听端口")
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=DEFAULT_AI_PROXY_MAX_WORKERS,
+        help="AI 代理层允许同时执行的阻塞 provider 调用上限",
+    )
+    return parser.parse_args(argv)
+
+
+def normalize_proxy_max_workers(raw_value: int) -> int:
+    """
+    这里校验的是本地 AI 代理层并发上限，不是厂商 API 的真实配额。
+    如果值小于等于 0，就会把任何 provider 调用都直接卡死，所以启动期必须提前挡掉。
+    """
+    normalized = int(raw_value)
+    if normalized <= 0:
+        raise ValueError("max-workers must be > 0")
+    return normalized
+
+
+async def configure_default_thread_limiter(max_workers: int) -> None:
+    """
+    Starlette 的 run_in_threadpool 底下实际走的是 AnyIO 默认线程 limiter。
+    所以这里真正要改的不是某个“看得见的 ThreadPoolExecutor”，
+    而是默认 limiter 的 token 数；它才决定 proxy 同时能放多少个阻塞 provider 调用进后台线程。
+    """
+    limiter = anyio.to_thread.current_default_thread_limiter()
+    limiter.total_tokens = normalize_proxy_max_workers(max_workers)
+
+
+@app.on_event("startup")
+async def configure_proxy_runtime_limits() -> None:
+    """
+    AnyIO 默认 limiter 必须在事件循环已经起来之后再改。
+    所以这一步放到 FastAPI startup，而不是模块导入期；否则 current_default_thread_limiter() 拿不到后端上下文。
+    """
+    await configure_default_thread_limiter(app.state.ai_proxy_max_workers)
+    print(f"[AI Proxy] max_workers={app.state.ai_proxy_max_workers}")
 
 
 async def call_provider_in_threadpool(func, *args, **kwargs):
@@ -509,7 +562,13 @@ async def chat_with_logs(provider_name: str, chat_request: ChatRequest):
     
 
 if __name__ == "__main__":
-    # host="0.0.0.0" 允许局域网访问，"127.0.0.1" 仅限本机
-    # workers=1 单进程模式，适合调试
-    print(f"🚀 LogSentinel AI Proxy 正在端口 8001 上启动...")
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    # 启动入口保持单进程。
+    # 这一刀先只把“单进程里允许多少个阻塞 provider 调用并发执行”做成显式旋钮，
+    # 不在这里同时引入 uvicorn 多进程，避免 benchmark 时把实验变量搅在一起。
+    args = parse_proxy_args()
+    app.state.ai_proxy_max_workers = normalize_proxy_max_workers(args.max_workers)
+    print(
+        f"🚀 LogSentinel AI Proxy 正在 {args.host}:{args.port} 上启动..."
+        f" max_workers={app.state.ai_proxy_max_workers}"
+    )
+    uvicorn.run(app, host=args.host, port=args.port)

@@ -81,3 +81,43 @@
 
 ### Newbie Tips
 - 前台配置文案应该描述“这个旋钮控制的系统职责”，不要把底层库名直接甩给用户。库可以换，职责语义不该跟着飘。
+
+## 追加记录：AI Proxy 并发上限 CLI
+
+### Git Commit Message
+`feat(ai): 增加 proxy max-workers 并发上限`
+
+### Modification
+- `server/ai/proxy/main.py`
+- `server/tests/ai_proxy_trace_protocol_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### What Changed
+- 给 Python AI proxy 增加 `--max-workers` CLI 参数，默认值是 `128`。
+- 启动时把 `--max-workers` 写进 `app.state.ai_proxy_max_workers`，并在 startup 阶段改 AnyIO 默认线程 limiter 的 `total_tokens`。
+- 启动日志新增 `max_workers=...`，方便 benchmark 和答辩时直接从命令与日志确认代理层并发配置。
+- 新增两条 Python 单测：
+  - `parse_proxy_args` 能读出 `--max-workers`
+  - `configure_default_thread_limiter` 能真的把 AnyIO 默认 limiter 改成目标值
+
+### 中文注释
+- `server/ai/proxy/main.py`
+  - 在 `parse_proxy_args` 前补注释，说明为什么 proxy 并发上限要走 CLI，而不是优先藏进环境变量。
+  - 在 `normalize_proxy_max_workers / configure_default_thread_limiter` 前补注释，说明这里控制的是本地 AI 代理层并发，不是厂商配额承诺。
+  - 在 `__main__` 启动入口补注释，说明当前先只收单进程 + 线程 limiter 这一个实验变量，不同时引入 uvicorn 多进程。
+- `server/tests/ai_proxy_trace_protocol_test.py`
+  - 在两条新单测里补注释，说明锁定的是 CLI 口径和 AnyIO limiter 真联动，而不是日志假打印。
+
+### Verification
+- `/home/llt/Project/llt/venv/bin/python3 -m unittest server.tests.ai_proxy_trace_protocol_test.AiProxyTraceProtocolTest.test_parse_proxy_args_reads_max_workers_from_cli`
+- `/home/llt/Project/llt/venv/bin/python3 -m unittest server.tests.ai_proxy_trace_protocol_test.AiProxyTraceProtocolTest.test_configure_default_thread_limiter_updates_anyio_capacity`
+- `git diff --check`
+
+### Verification Notes
+- 整份 `server/tests/ai_proxy_trace_protocol_test.py` 目前不能作为这一刀的全量验证口径。
+  复现证据是：在纯 `unittest + asyncio.run` 环境里，直接 `await run_in_threadpool(lambda: {...})` 也会挂住。
+  所以这次只把新增的 `--max-workers` 两条单测作为有效验证，不顺手扩大 scope 去收旧的 `run_in_threadpool` 挂起问题。
+
+### Newbie Tips
+- `run_in_threadpool()` 不等于“有一个显式可见的 ThreadPoolExecutor 配置项”。在这套栈里，真正限制并发的是 AnyIO 的 `CapacityLimiter` token 数。
+- benchmark 变量最好优先走 CLI。命令能直接写进脚本和论文，别人复现实验时不需要再猜你的 shell 环境里到底塞了什么变量。

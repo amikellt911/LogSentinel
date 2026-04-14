@@ -26,6 +26,9 @@
 - [ ] 跑最小对照实验：旧脚本 vs 升级版脚本，确认请求分布和复现能力差异
 - [ ] 固定 `Suite D` 的最小资源轴口径：`D1 固定 CPU 扫 worker`、`D2 固定 worker 扫 CPU`
 - [ ] 固定 `Suite A-Interaction` 的最小交互矩阵：优先 `buffered vs no-buffer`
+- [x] 为 Python AI proxy 补 `--max-workers` 红灯测试，锁定 CLI 参数与 AnyIO 默认线程 limiter 真正联动
+- [x] 在 `server/ai/proxy/main.py` 接通 `--max-workers`，并补中文注释说明这是 AI 代理层并发上限，不是厂商配额承诺
+- [x] 运行 Python proxy 最小单测验证，再决定是否把这个变量补进 benchmark 文档口径
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 增加 `--worker-threads` 命令行参数支持

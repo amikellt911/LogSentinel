@@ -19,6 +19,35 @@ def load_module(module_name: str, relative_path: str):
 
 
 class AiProxyTraceProtocolTest(unittest.TestCase):
+    def test_parse_proxy_args_reads_max_workers_from_cli(self):
+        module = load_module("ai_proxy_main_cli_args", "ai/proxy/main.py")
+
+        args = module.parse_proxy_args(["--host", "0.0.0.0", "--port", "9001", "--max-workers", "256"])
+
+        # 这里锁 CLI 口径，而不是环境变量。
+        # benchmark 命令要能直接写在论文和脚本里，所以 max-workers 必须是显式启动参数。
+        self.assertEqual(args.host, "0.0.0.0")
+        self.assertEqual(args.port, 9001)
+        self.assertEqual(args.max_workers, 256)
+
+    def test_configure_default_thread_limiter_updates_anyio_capacity(self):
+        module = load_module("ai_proxy_main_limiter_config", "ai/proxy/main.py")
+
+        async def run():
+            import anyio.to_thread
+
+            limiter = anyio.to_thread.current_default_thread_limiter()
+            original_tokens = limiter.total_tokens
+            try:
+                # 这里直接锁“启动期配置 helper 真会改 AnyIO 默认 limiter”，
+                # 否则 `--max-workers` 只是打印到了日志里，proxy 实际并发上限还是旧值。
+                await module.configure_default_thread_limiter(96)
+                self.assertEqual(limiter.total_tokens, 96)
+            finally:
+                limiter.total_tokens = original_tokens
+
+        asyncio.run(run())
+
     def test_normalize_trace_success_payload_keeps_analysis_and_usage(self):
         module = load_module("ai_proxy_main", "ai/proxy/main.py")
 
