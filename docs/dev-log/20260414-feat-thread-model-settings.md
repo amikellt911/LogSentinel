@@ -353,3 +353,78 @@
 ### Pitfalls
 - 如果这个脚本直接去读 SQLite，那它验证到的是“数据库里有没有数据”，不是“查询接口和整条黑盒链是否正常”。
 - 如果把它塞进 `wrk/` 再顺手加循环压流，后面它就会慢慢变成半吊子的 benchmark 工具，职责又会重新混掉。
+
+## 追加记录：背压热路径原子化第一刀
+
+### Git Commit Message
+`perf(trace): 收口背压热路径的水位锁读取`
+
+### Modification
+- `server/threadpool/ThreadPool.h`
+- `server/threadpool/ThreadPool.cpp`
+- `server/core/TraceSessionManager.h`
+- `server/core/TraceSessionManager.cpp`
+- `server/tests/threadpool_test.cpp`
+- `server/tests/TraceSessionManager_unit_test.cpp`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### What Changed
+- 给 `ThreadPool` 增加 `pending_task_count_` 原子计数，`pendingTasks()` 不再为了读队列长度去抢 `taskMutex_`。
+- 给 `TraceSessionManager` 增加两类轻量 gauge：
+  - `active_sessions_gauge_ / total_buffered_spans_gauge_`：原子镜像。真实状态仍在 `mutex_` 保护的容器里，这里只是给高频门禁读。
+  - `dispatch_queue_pending_gauge_`：正常原子计数。因为 dispatch queue 本身就是简单长度指标，不需要再搞第二份镜像。
+- `RefreshOverloadState()` 现在只读：
+  - `ThreadPool::pendingTasks()` 的原子计数
+  - `dispatch_queue_pending_gauge_`
+  - `active_sessions_gauge_`
+  - `total_buffered_spans_gauge_`
+  不再每次都为了 `pendingTasks()/dispatch_queue_.size()` 多拿一层锁。
+- `RefreshOverloadState()` 继续保留原来的 `high / critical / low` 迟滞语义，没有改背压判定标准，只改读数路径。
+- 系统运行态的 `UpdateBackpressureStatus(...)` 改成“只有状态变化才发布”，避免每条 span 都重复写一遍同样的 `Normal/Active/Full`。
+- 新增两条回归：
+  - `ThreadPoolTest.PendingTasksTracksQueuedButNotRunningTasks`
+  - `TraceSessionManagerUnitTest.RefreshOverloadStateUsesAtomicMirrorsForWatermarkDecision`
+
+### 中文注释
+- `server/threadpool/ThreadPool.h`
+  - 在 `pendingTasks()` 和 `pending_task_count_` 前补注释，说明“真实队列本体”和“热路径原子计数”不是一回事。
+- `server/threadpool/ThreadPool.cpp`
+  - 在 `submit()` 和 `working()` 里补注释，说明为什么入队时加一、摘队时减一，以及为什么不把正在执行的任务算进 pending。
+- `server/core/TraceSessionManager.h`
+  - 在 `active_sessions_gauge_ / total_buffered_spans_gauge_ / dispatch_queue_pending_gauge_ / published_backpressure_status_` 前补注释，说明哪些是原子镜像，哪些是正常原子。
+- `server/core/TraceSessionManager.cpp`
+  - 在 `DispatchLoop()`、`EnqueueDispatchJobLocked()`、`RefreshOverloadState()` 和各处 session/span 计数增减点补注释，说明 gauge 什么时候同步、为什么现在不再读锁保护的本体队列长度。
+- `server/tests/threadpool_test.cpp`
+  - 在新单测里补注释，说明它锁的是“排队中任务数”，不是“排队+执行中”的总数。
+- `server/tests/TraceSessionManager_unit_test.cpp`
+  - 在新单测前补注释，说明它锁的是水位状态机仍按同一组阈值工作，只是读数来源变成了 gauge。
+
+### Verification
+- `cmake --build server/build --target test_trace_session_manager_unit test_threadpool test_trace_session_manager_integration -j2`
+- `./server/build/test_threadpool --gtest_filter=ThreadPoolTest.PendingTasksTracksQueuedButNotRunningTasks`
+- `./server/build/test_trace_session_manager_unit --gtest_filter=TraceSessionManagerUnitTest.RefreshOverloadStateUsesAtomicMirrorsForWatermarkDecision`
+- `./server/build/test_threadpool`
+- `./server/build/test_trace_session_manager_unit`
+- `./server/build/test_trace_session_manager_integration`
+- `git diff --check`
+
+### Verification Notes
+- 这次先写了红灯测试，再进实现。第一轮构建失败点是：
+  - `TraceSessionManagerUnitTest.RefreshOverloadStateUsesAtomicMirrorsForWatermarkDecision`
+  - 缺少 `active_sessions_gauge_ / total_buffered_spans_gauge_ / dispatch_queue_pending_gauge_`
+- 中间还补修了一次头文件可见性问题：
+  - `TraceSessionManager.h` 里新增了 `SystemBackpressureStatus` 字段，但一开始没 include `SystemRuntimeAccumulator.h`
+  - 修完后重新 build，并跑通全量 `ThreadPool / TraceSessionManager unit / integration`
+
+### Learning Tips
+#### Newbie Tips
+- “原子镜像”不是 `COW`。这里没有复制整份对象，只是给复杂状态外挂几个原子表针，专门服务热路径读取。
+- `pendingTasks()` 这种看起来很小的函数，如果每次都先拿锁，在高频门禁路径里照样能变成热点。小函数不等于小开销，关键看调用频率和锁争用位置。
+
+#### Function Explanation
+- `std::atomic<size_t>::fetch_add/fetch_sub`：这里用它做队列长度和 gauge 计数，不承担复杂对象同步，只承担“一个整数的无锁读写”。
+- `RefreshOverloadState()`：它的核心职责没变，还是把多路积压指标折成 `Normal/Overload/Critical`，这次只是把读数来源改成更轻的 gauge。
+
+#### Pitfalls
+- 如果把 `active_sessions_ / total_buffered_spans_` 直接改成“只剩原子没有真实本体”，状态机会很快脏掉，因为真正的真相还在 `sessions_ / index_by_trace_ / time_wheel_` 这些受锁容器里。
+- 如果只把读数原子化，却忘了在 `Detach/Restore/Dispatch rollback` 这些低频分支同步 gauge，最后门禁看到的就会是旧值，问题会比原来更难查。

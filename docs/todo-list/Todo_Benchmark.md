@@ -37,6 +37,8 @@
 - [x] 新增最小生命周期测试脚本，只覆盖 `trace_end -> 晚到 span` 单场景，不承担正式 benchmark 压流职责
 - [x] 把 `dispatch / worker / io / flush` 的真实职责写进 benchmark 文档，避免后续再把热路径说反
 - [x] 记录 `dispatch_tpool` 的真实前置条件：当前 `ThreadPool(std::function<void()>)` 不能直接承载 move-only `DispatchJob`
+- [x] 收口背压热路径：把 `RefreshOverloadState()` 从 `pendingTasks()/dispatch_queue_.size()` 的额外锁读取改成原子计数/原子镜像
+- [x] 为背压热路径优化补最小回归：锁定 `pendingTasks`、`dispatch queue pending` 与背压状态发布语义不回归
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

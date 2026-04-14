@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "core/SystemRuntimeAccumulator.h"
 #include "core/TokenEstimator.h"
 #include "ai/AiTypes.h"
 #include "persistence/TraceRepository.h"
@@ -23,7 +24,6 @@ class TraceWriteSink;
 class TraceAiProvider;
 class INotifier;
 class ServiceRuntimeAccumulator;
-class SystemRuntimeAccumulator;
 
 struct SpanEvent
 {
@@ -414,6 +414,11 @@ private:
     // active_sessions_ 与 total_buffered_spans_ 直接反映入口聚合态积压，用于实时背压门禁。
     size_t active_sessions_ = 0;
     size_t total_buffered_spans_ = 0;
+    // 这两份 gauge 是“真实状态的原子镜像”，不是新的真相源。
+    // 真正的 session 容器和 span 累计仍然由 mutex_ 保护；这里只是让 RefreshOverloadState()
+    // 在热路径读门禁时，不必为了这两个简单计数再回头碰复杂容器。
+    std::atomic<size_t> active_sessions_gauge_{0};
+    std::atomic<size_t> total_buffered_spans_gauge_{0};
     // 第一版先硬编码接入，后续再迁移到配置层；这里存每个指标自己的硬上限基数。
     size_t buffered_span_hard_limit_ = 4096;
     size_t active_session_hard_limit_ = 1024;
@@ -424,8 +429,13 @@ private:
     Watermark dispatch_queue_watermark_;
     size_t dispatch_queue_hard_limit_ = 1;
     size_t dispatch_worker_thread_count_ = 1;
+    // dispatch queue 的真实本体仍然是下面那份 std::queue + mutex。
+    // 这里额外挂一个原子计数，专门给高频背压判断读，不再每次为了 size() 抢 dispatch_queue_mutex_。
+    std::atomic<size_t> dispatch_queue_pending_gauge_{0};
     // overload_state_ 先作为背压状态机占位，后续由多指标水位共同驱动。
     OverloadState overload_state_ = OverloadState::Normal;
+    // 系统运行态只需要看到“状态有没有变化”，不需要每次 Push 都重复吃同一个字符串更新。
+    SystemBackpressureStatus published_backpressure_status_ = SystemBackpressureStatus::Normal;
     // 这批统计只服务“后链路是否真的跑了、各阶段墙钟耗时多少”，
     // 不参与业务判断，因此第一版直接用全局原子累加，先把账记清楚。
     std::atomic<uint64_t> dispatch_count_{0};

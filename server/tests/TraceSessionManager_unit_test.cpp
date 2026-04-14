@@ -1577,6 +1577,51 @@ TEST_F(TraceSessionManagerUnitTest, RefreshOverloadStatePublishesSystemBackpress
     pool.shutdown();
 }
 
+TEST_F(TraceSessionManagerUnitTest, RefreshOverloadStateUsesAtomicMirrorsForWatermarkDecision)
+{
+    // 目的：锁定背压判断读的是轻量 gauge，而不是每次都回头翻 sessions_/dispatch_queue/thread_pool 队列本体。
+    // 这样后面做热路径优化时，状态机语义还能继续被同一组 high/critical/low 阈值约束住。
+    ThreadPool pool(1, 16);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(&pool,
+                                buffered_repo.get(),
+                                nullptr,
+                                /*capacity*/100,
+                                /*token_limit*/0,
+                                nullptr,
+                                /*idle_timeout_ms*/5000,
+                                /*wheel_tick_ms*/500,
+                                /*sealed_grace_window_ms*/1000,
+                                /*retry_base_delay_ms*/500,
+                                /*wheel_size*/64,
+                                /*buffered_span_hard_limit*/10,
+                                /*active_session_hard_limit*/10);
+
+    manager.total_buffered_spans_gauge_.store(0, std::memory_order_release);
+    manager.active_sessions_gauge_.store(0, std::memory_order_release);
+    manager.dispatch_queue_pending_gauge_.store(0, std::memory_order_release);
+    manager.overload_state_ = TraceSessionManager::OverloadState::Normal;
+    manager.RefreshOverloadState();
+    EXPECT_EQ(manager.overload_state_, TraceSessionManager::OverloadState::Normal);
+
+    // hard_limit=10 时：high=7，critical=9，low=6。
+    manager.total_buffered_spans_gauge_.store(7, std::memory_order_release);
+    manager.RefreshOverloadState();
+    EXPECT_EQ(manager.overload_state_, TraceSessionManager::OverloadState::Overload);
+
+    manager.dispatch_queue_pending_gauge_.store(9, std::memory_order_release);
+    manager.RefreshOverloadState();
+    EXPECT_EQ(manager.overload_state_, TraceSessionManager::OverloadState::Critical);
+
+    manager.total_buffered_spans_gauge_.store(6, std::memory_order_release);
+    manager.dispatch_queue_pending_gauge_.store(0, std::memory_order_release);
+    manager.RefreshOverloadState();
+    EXPECT_EQ(manager.overload_state_, TraceSessionManager::OverloadState::Normal);
+
+    pool.shutdown();
+}
+
 TEST_F(TraceSessionManagerUnitTest, DispatchNotifiesAfterAnalysisEnqueueEvenIfBackgroundPrimaryFlushFails)
 {
     // 目的：锁定当前双缓冲语义：通知是在 analysis 成功 enqueue 后触发，

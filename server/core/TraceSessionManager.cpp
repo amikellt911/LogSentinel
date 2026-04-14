@@ -386,6 +386,7 @@ void TraceSessionManager::DispatchLoop()
             }
             job = std::move(dispatch_queue_.front());
             dispatch_queue_.pop();
+            dispatch_queue_pending_gauge_.fetch_sub(1, std::memory_order_relaxed);
         }
         ProcessDispatchJob(std::move(job));
     }
@@ -499,6 +500,7 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent 
         sessions_.push_back(std::move(session));
         index_by_trace_[span.trace_key] = sessions_.size() - 1;
         active_sessions_ += 1;
+        active_sessions_gauge_.store(active_sessions_, std::memory_order_relaxed);
         iter = index_by_trace_.find(span.trace_key);
     }
 
@@ -533,6 +535,7 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent 
     const bool already_sealed = (session.lifecycle_state == TraceSession::LifecycleState::Sealed);
     session.spans.push_back(span);
     total_buffered_spans_ += 1;
+    total_buffered_spans_gauge_.store(total_buffered_spans_, std::memory_order_relaxed);
     session.token_count += token_estimator_.Estimate(span);
     session.last_update_ms = now_ms;
     if (!already_sealed)
@@ -612,6 +615,7 @@ std::unique_ptr<TraceSession> TraceSessionManager::DetachSessionLocked(size_t tr
     {
         active_sessions_ -= 1;
     }
+    active_sessions_gauge_.store(active_sessions_, std::memory_order_relaxed);
     if (total_buffered_spans_ >= local_span_count)
     {
         total_buffered_spans_ -= local_span_count;
@@ -620,6 +624,7 @@ std::unique_ptr<TraceSession> TraceSessionManager::DetachSessionLocked(size_t tr
     {
         total_buffered_spans_ = 0;
     }
+    total_buffered_spans_gauge_.store(total_buffered_spans_, std::memory_order_relaxed);
     RefreshOverloadState();
 
     if (span_count)
@@ -646,6 +651,8 @@ void TraceSessionManager::RestoreSessionLocked(std::unique_ptr<TraceSession> ses
     index_by_trace_[trace_key] = sessions_.size() - 1;
     active_sessions_ += 1;
     total_buffered_spans_ += span_count;
+    active_sessions_gauge_.store(active_sessions_, std::memory_order_relaxed);
+    total_buffered_spans_gauge_.store(total_buffered_spans_, std::memory_order_relaxed);
     ScheduleSessionNode(*sessions_.back());
     RefreshOverloadState();
 }
@@ -663,6 +670,7 @@ bool TraceSessionManager::EnqueueDispatchJobLocked(DispatchJob *job)
             return false;
         }
         dispatch_queue_.push(std::move(*job));
+        dispatch_queue_pending_gauge_.fetch_add(1, std::memory_order_relaxed);
     }
     dispatch_queue_cv_.notify_one();
     return true;
@@ -1005,6 +1013,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
     {
         active_sessions_ -= 1;
     }
+    active_sessions_gauge_.store(active_sessions_, std::memory_order_relaxed);
     if (total_buffered_spans_ >= span_count)
     {
         total_buffered_spans_ -= span_count;
@@ -1013,6 +1022,7 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
     {
         total_buffered_spans_ = 0;
     }
+    total_buffered_spans_gauge_.store(total_buffered_spans_, std::memory_order_relaxed);
     RefreshOverloadState();
 
     auto rollback_session = [this, trace_key, span_count](std::unique_ptr<TraceSession> restored_session)
@@ -1027,6 +1037,8 @@ bool TraceSessionManager::DispatchLocked(size_t trace_key)
         index_by_trace_[trace_key] = sessions_.size() - 1;
         active_sessions_ += 1;
         total_buffered_spans_ += span_count;
+        active_sessions_gauge_.store(active_sessions_, std::memory_order_relaxed);
+        total_buffered_spans_gauge_.store(total_buffered_spans_, std::memory_order_relaxed);
         ScheduleSessionNode(*sessions_.back());
         RefreshOverloadState();
     };
@@ -1575,27 +1587,28 @@ void TraceSessionManager::ProcessDispatchJob(DispatchJob job)
 void TraceSessionManager::RefreshOverloadState()
 {
     const size_t pending_tasks = thread_pool_ ? thread_pool_->pendingTasks() : 0;
-    size_t dispatch_queue_pending = 0;
-    {
-        // dispatch queue 本身也是主链积压的一环。
-        // 如果这里只看 worker pending，不看 dispatch queue，那么前半段已经堵死时背压状态仍然会假装正常。
-        std::lock_guard<std::mutex> queue_lock(dispatch_queue_mutex_);
-        dispatch_queue_pending = dispatch_queue_.size();
-    }
+    // active_sessions_/total_buffered_spans_ 的真相仍然在 mutex_ 保护的状态机里。
+    // 这里读的是它们的原子镜像，目标只是做高频门禁判断，不是替代真实容器。
+    const size_t active_sessions = active_sessions_gauge_.load(std::memory_order_relaxed);
+    const size_t total_buffered_spans = total_buffered_spans_gauge_.load(std::memory_order_relaxed);
+    // worker pending 和 dispatch queue pending 本身就是简单计数，因此直接走正常原子计数即可。
+    const size_t dispatch_queue_pending =
+        dispatch_queue_pending_gauge_.load(std::memory_order_relaxed);
+    const OverloadState previous_state = overload_state_;
 
     const bool hit_critical =
-        total_buffered_spans_ >= buffered_span_watermark_.critical ||
-        active_sessions_ >= active_session_watermark_.critical ||
+        total_buffered_spans >= buffered_span_watermark_.critical ||
+        active_sessions >= active_session_watermark_.critical ||
         pending_tasks >= pending_task_watermark_.critical ||
         dispatch_queue_pending >= dispatch_queue_watermark_.critical;
     const bool hit_high =
-        total_buffered_spans_ >= buffered_span_watermark_.high ||
-        active_sessions_ >= active_session_watermark_.high ||
+        total_buffered_spans >= buffered_span_watermark_.high ||
+        active_sessions >= active_session_watermark_.high ||
         pending_tasks >= pending_task_watermark_.high ||
         dispatch_queue_pending >= dispatch_queue_watermark_.high;
     const bool back_to_low =
-        total_buffered_spans_ <= buffered_span_watermark_.low &&
-        active_sessions_ <= active_session_watermark_.low &&
+        total_buffered_spans <= buffered_span_watermark_.low &&
+        active_sessions <= active_session_watermark_.low &&
         pending_tasks <= pending_task_watermark_.low &&
         dispatch_queue_pending <= dispatch_queue_watermark_.low;
 
@@ -1618,9 +1631,15 @@ void TraceSessionManager::RefreshOverloadState()
 
     if (system_runtime_accumulator_)
     {
-        // 系统监控只展示“综合背压结论”，不直接暴露 manager 内部的高水位实现细节。
-        // 所以这里统一把内部 overload_state 映射成前端更容易解释的 Normal/Active/Full 三档。
-        system_runtime_accumulator_->UpdateBackpressureStatus(ToSystemBackpressureStatus(overload_state_));
+        // 系统监控只需要“状态切换”这件事，不需要每次 Push 都重复吃一遍同样的字符串。
+        // 所以后面只在状态真的变化时才往 accumulator 发更新，顺手把热路径里的重复原子写也拿掉。
+        const SystemBackpressureStatus next_status =
+            ToSystemBackpressureStatus(overload_state_);
+        if (previous_state != overload_state_ || next_status != published_backpressure_status_)
+        {
+            system_runtime_accumulator_->UpdateBackpressureStatus(next_status);
+            published_backpressure_status_ = next_status;
+        }
     }
 }
 
