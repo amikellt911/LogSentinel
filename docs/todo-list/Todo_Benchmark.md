@@ -6,6 +6,8 @@
 - [ ] 配置 AI Proxy (Python) 开启 Mock 模式并增加 20-50ms 延迟
 
 ## 2. 工具与脚本 (Scripting)
+- [x] 同步 `CurrentTask.md / README.md` 当前 benchmark 进度，避免主线阶段信息和脚本能力脱节
+- [x] 补一份“新服务器跑 benchmark / docker 前的依赖清单”文档，提前收口上云机准备项
 - [x] 编写通用 Trace 压测脚本 `server/tests/wrk/trace_model.lua`（支持 end/capacity/token/timeout/mixed 五种模型，模板按顺序回环）
 - [x] 编写 Trace wrk benchmark 设计文档，收口模型目标、参数选择和第一版实验矩阵
 - [x] 编写 benchmark suite 总览文档，先收口 Suite A/B/C 的比较目标、观测指标以及 CPU/线程这两类条件，不提前写死命令
@@ -68,4 +70,5 @@
 - [ ] 整理 QPS/P99 数据表格
 - [ ] 生成背压介入时的截图或记录
 - [ ] 记录 CPU 核心隔离下的性能表现
+- [ ] 固定“新服务器执行前检查”清单，避免到云机上才临时补工具
 - [x] 追加 dev-log 完成复盘

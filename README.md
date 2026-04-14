@@ -10,19 +10,33 @@ LogSentinel 是一个面向中小规模服务排障场景的 C++17 日志 / Trac
 - 在高水位下做分级背压，向入口返回 `503 + Retry-After`
 - 将 `trace_summary / trace_span / trace_analysis` 异步批量写入 SQLite（WAL）
 - 可选通过 Python FastAPI proxy 调用模型服务，支持主 provider 失败后自动切 fallback provider
+- 已接入 `gemini + glm + mock` 三种 Trace AI provider，其中 `gemini / glm` 为真实 provider
 - 已支持 `pending / completed / skipped_manual / skipped_circuit / failed_primary / failed_both` 等 Trace AI 状态落库与查询
 - 在 critical 风险时触发真实 Webhook（当前已收口飞书）
 - 提供 TraceExplorer / Dashboard / ServiceMonitor / SettingsPrototype 页面与对应后端接口
 - 提供 GTest、smoke 脚本、wrk 压测脚本和 GitHub Actions workflow
+- 已支持单入口部署：后端托管 `client/dist`，浏览器只需要访问后端端口
 
 ## 当前边界
 
 - 当前活代码主线已经收口到 Trace 链路：`/logs/spans` -> `TraceSessionManager` -> `BufferedTraceRepository` -> `SqliteTraceRepository`
 - 旧 `/logs` 批处理分析链已经移出主程序主路由和主构造链，不再作为“功能是否真实生效”的判断依据
-- 前端主演示页面已经基本接到真实后端；当前还没完全收口的是 Settings 最终验收、第二个真实 AI provider、benchmark 页面与材料
+- 前端主演示页面已经接到真实后端；`/settings` 只保留 `SettingsPrototype`，正式交付形态走后端单入口
 - Trace AI 分析不是无条件开启：如果关闭 AI 总开关，或没有可用 provider，Trace 链路仍会聚合并落主数据，只是 AI 状态不会进入 `completed`
-- 当前真实 provider 只有 `gemini`；`mock` 主要用于本地联调和测试，第二个真实 provider 仍在待接入项里
+- 当前剩余主线重点不再是“补新功能”，而是冻结 benchmark 材料、补 `docker-compose` 和一键演示脚本
 - `advanced smoke` 与 integration workflow 仍更适合手动触发，不要把当前 CI 理解成“所有链路全自动门禁”
+
+## v1.0.0 当前进度
+
+- `Settings` 真实生效联调已收口，关键冷启动字段和热更新第一刀都有黑盒覆盖
+- 单入口部署已收口，后端可直接托管 `client/dist`
+- 第 2 个真实 provider `GLM` 已接入，`gemini <-> glm` 自动降级链路已验证
+- AI 重试已落地，`ai_retry_enabled / ai_retry_max_attempts` 不再只是存储字段
+- benchmark CLI 开关第一刀已完成：`--disable-ai`、`--disable-webhook`、`--disable-buffered-trace-repo`、`--trace-lifecycle-profile`
+- 当前未完成项只剩 3 类：
+  - 固定 benchmark 最终结果表、截图和论文口径
+  - 补 `docker-compose`
+  - 补 `run_demo.sh`
 
 ## 核心链路
 
@@ -56,8 +70,9 @@ Trace 主链路通过 `BufferedTraceRepository` 把主数据和分析结果分�
 
 - Python FastAPI proxy 位于 `server/ai/proxy`
 - C++ 侧通过 `TraceProxyAi` 调用 `/analyze/trace/{provider}`
-- provider 当前支持 `mock` 与 `gemini`
+- provider 当前支持 `mock`、`gemini`、`glm`
 - C++ 侧已经支持主 provider + fallback provider 两路冷启动构造；主路失败后可以自动尝试 fallback
+- 已支持主路与 fallback 的 `model/api_key` 运行时热更新；`provider` 仍保持冷启动语义
 - 熔断当前采用最小状态机：连续失败达到阈值后进入冷却时间，冷却窗口内新 trace 会直接记成 `skipped_circuit`
 - critical 风险会通过 `WebhookNotifier` 发送通知；本地开发可以自动拉起 mock webhook 服务
 
@@ -73,6 +88,21 @@ Trace 主链路通过 `BufferedTraceRepository` 把主数据和分析结果分�
 - `ai_circuit_breaker / ai_failure_threshold / ai_cooldown_seconds`
 - `ai_auto_degrade / ai_fallback_provider / ai_fallback_model / ai_fallback_api_key`
 - `log_retention_days`
+
+### 6. benchmark 与实验开关
+
+- benchmark 不走正式 Settings 页面，实验变量统一走 CLI，避免污染产品配置
+- 当前已支持的对照开关：
+  - `--disable-ai`
+  - `--disable-webhook`
+  - `--disable-buffered-trace-repo`
+  - `--trace-lifecycle-profile protected|minimal`
+- 当前主脚本：
+  - `server/tests/wrk/run_bench.sh`
+  - `server/tests/wrk/run_flamegraph.sh`
+  - `server/tests/wrk/trace_model.lua`
+  - `server/tests/wrk/trace_paced_sender.py`
+- benchmark 结果目录固定落到 `server/tests/wrk/results/`
 
 ## 仓库结构
 
@@ -113,6 +143,7 @@ cmake --build build
 常用 Trace 相关参数：
 
 - `--worker-threads`
+- `--dispatch-worker-threads`
 - `--worker-queue-size`
 - `--trace-sweep-interval-ms`
 - `--trace-idle-timeout-ms`
@@ -121,8 +152,12 @@ cmake --build build
 - `--trace-max-dispatch-per-tick`
 - `--trace-buffered-span-limit`
 - `--trace-active-session-limit`
-- `--trace-ai-provider mock|gemini`
+- `--trace-ai-provider mock|gemini|glm`
 - `--trace-ai-base-url http://127.0.0.1:8001`
+- `--disable-ai`
+- `--disable-webhook`
+- `--disable-buffered-trace-repo`
+- `--trace-lifecycle-profile protected|minimal`
 
 ### 3. 单独启动 AI proxy
 
@@ -142,6 +177,19 @@ npm run dev
 ```
 
 Vite 默认通过 `/api` 代理到 `localhost:8080`。
+
+### 5. 构建前端交付态并让后端托管
+
+```bash
+cd client
+npm install
+npm run build
+
+cd ..
+./server/build/LogSentinel --db /tmp/logsentinel.db --port 8080
+```
+
+默认情况下后端会解析仓库内的 `client/dist` 作为静态目录；也可以显式传 `--frontend-dist <path>`。
 
 ## 一个最小 Trace 请求示例
 
@@ -182,9 +230,9 @@ curl -X POST http://127.0.0.1:8080/logs/spans \
 
 ## 当前剩余工作
 
-- 接入第 2 个真实 AI provider，验证自动降级不是只在 `mock/gemini` 组合上成立
-- 对 Settings 做一轮完整“真实生效”联调验收，重点覆盖 AI 开关、熔断、自动降级、Webhook、主链冷启动参数
 - 固定 benchmark 命令、参数、结果模板和截图材料
+- 补一套新服务器 benchmark 执行前检查与依赖清单
+- 补 `docker-compose`
 - 收口最终答辩演示脚本
 
 ## 测试与验证
@@ -218,6 +266,14 @@ server/tests/wrk/run_bench.sh end
 
 - `server/tests/wrk/trace_model.lua`
 - `server/tests/wrk/run_flamegraph.sh`
+
+## 新服务器准备
+
+如果后面换到新的云服务器继续跑 benchmark 或做 docker 验收，先看：
+
+- `docs/BENCHMARK_DEPLOY_PREP.md`
+
+这份文档会把系统包、Python/Node/C++ 依赖、`wrk/perf/taskset/sqlite3` 等工具、以及 Docker / Compose 前置条件一次写清楚，避免到云机上再临时补环境。
 
 ## CI 现状
 

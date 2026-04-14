@@ -14,31 +14,31 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 - [x] 接入第 2 个真实 AI provider：`GLM` (2026-04-12)
 - [x] 落地 AI 重试，让 `ai_retry_enabled / ai_retry_max_attempts` 从占位配置变成真实能力 (2026-04-13)
 - [x] **配置热加载第一刀 (Hot-reloading)**: 支持主路与 fallback 的 `model/api_key` 在运行时无感切换；`ai_provider / ai_fallback_provider` 仍保持冷启动语义 (2026-04-13)
-- [ ] 增加实验/对比开关，用于 benchmark 和论文对比
+- [x] 增加实验/对比开关，用于 benchmark 和论文对比 (2026-04-13)
 - [ ] 固定 benchmark 命令、场景、结果模板和截图
 - [ ] 补 `Docker / docker-compose`，把轻量部署真正做成可复现能力
 - [ ] 补一键演示启动脚本，服务于答辩和最终验收
 
 ## 本轮范围
 要做：
-- [ ] 把已经接进主链的 Settings 字段按“保存 -> 重启/生效 -> 前端可见变化”做一轮联调清单
-- [ ] 收口前端正式设置入口与部署入口语义：
+- [x] 把已经接进主链的 Settings 字段按“保存 -> 重启/生效 -> 前端可见变化”做一轮联调清单
+- [x] 收口前端正式设置入口与部署入口语义：
   - [x] `/settings` 只保留 `SettingsPrototype`
   - [x] 后端托管 `client/dist` 后只暴露单入口，不再要求用户记住前后端双端口
-- [ ] 在现有 `mock / gemini` 之外接入 `GLM`，让自动降级真正覆盖两家真实 provider
-- [ ] 在 Python proxy 落地 AI 重试：
+- [x] 在现有 `mock / gemini` 之外接入 `GLM`，让自动降级真正覆盖两家真实 provider
+- [x] 在 Python proxy 落地 AI 重试：
   - [x] 真实消费 `ai_retry_enabled / ai_retry_max_attempts`
   - [x] 明确可重试错误范围
   - [x] 让重试结果与现有熔断 / 自动降级状态口径打通
-- [ ] 增加最小实验开关：
+- [x] 增加最小实验开关：
   - [x] `disable_ai`
   - [x] `disable_buffered_trace_repo`
   - [x] `disable_webhook`
   - [x] 只服务 benchmark / 对比实验，不进正式产品设置页
 - [ ] 固定 benchmark：
-  - [ ] 压测命令
-  - [ ] 参数矩阵
-  - [ ] 结果模板
+  - [x] 压测命令
+  - [x] 参数矩阵
+  - [x] 结果模板
   - [ ] 论文截图
 - [ ] 补 `docker-compose`，至少覆盖前端、后端、AI proxy
 - [ ] 补一键演示脚本，例如 `run_demo.sh`
@@ -96,18 +96,17 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
   - [x] 这批开关都已补第三层黑盒，验证优先级和真实消费链
 
 ## 核心任务
-- [ ] 先做 Settings 真实生效联调，固化当前主链配置的验收口径
-- [ ] 再做单入口部署，收口 `/settings` 与 `http_port` 的正式产品语义
+- [x] 先做 Settings 真实生效联调，固化当前主链配置的验收口径
+- [x] 再做单入口部署，收口 `/settings` 与 `http_port` 的正式产品语义
 - [x] 再接 `GLM`，补齐双真实 provider 能力
 - [x] 再补 `GLM` 的端到端联调与 fallback 黑盒，真正收口双真实 provider
 - [x] 再补 AI 重试，收口 Trace AI 可靠性链路
-- [ ] 再补实验开关，服务 benchmark 和论文对比
+- [x] 再补实验开关，服务 benchmark 和论文对比
 - [ ] 再固定 benchmark 材料
 - [ ] 最后做 Docker 和一键演示启动，收口发布形态
 
 ## 验收标准
-- [ ] 能给出一份明确的 Settings 联调验收清单，并证明关键配置项真实生效
-- [ ] 后端托管 `client/dist` 后，用户只需要访问一个端口，前端不再硬编码旧 API 端口
+- [x] 能给出一份明确的 Settings 联调验收清单，并证明关键配置项真实生效
 - [x] 后端托管 `client/dist` 后，用户只需要访问一个端口，前端不再硬编码旧 API 端口
 - [x] `gemini + glm` 至少两家真实 provider 可用，自动降级链路可演示
 - [x] `ai_retry_enabled / ai_retry_max_attempts` 已被真实消费，且重试结果与熔断 / 降级链路语义一致
@@ -132,7 +131,16 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
 - 单入口部署的目标不是“后端顺手拉起前端 dev server”，而是把交付态收口成“后端 API + 前端静态资源”同源访问。
 - benchmark 实验开关当前先走 CLI，而不是进 Settings：
   - 目标是把“实验变量”跟“产品配置”拆开，避免为了做对照组去污染 SQLite 冷启动配置。
-  - 当前最小三件套已完成：`--disable-ai`、`--disable-webhook`、`--disable-buffered-trace-repo`。
+  - 当前最小四件套已完成：`--disable-ai`、`--disable-webhook`、`--disable-buffered-trace-repo`、`--trace-lifecycle-profile protected|minimal`。
+- benchmark 材料当前已经不是“从 0 开始”：
+  - 已有 `run_bench.sh / run_flamegraph.sh / trace_model.lua / trace_paced_sender.py` 四个主入口。
+  - 已固定 `Suite A / Suite B / Suite D / Suite A-Interaction` 的实验结构。
+  - 已能把结果自动落到 `server/tests/wrk/results/`，并从 server log 自动摘出运行时统计。
+  - 目前剩下的是把正式论文使用的结果表、截图和最终命令清单冻结，不再继续扩 benchmark 变量面。
+- 接下来主线优先级已经收窄成三件事：
+  - `docker-compose`
+  - `run_demo.sh`
+  - benchmark 结果表 / 截图 / 论文口径收口
 - 配置热更新当前只收了主路与 fallback 的 `model/api_key`：
   - 这是因为它们只是 proxy 请求体字段，适合运行时刷新。
   - `ai_provider / ai_fallback_provider` 会决定 `/analyze/trace/{provider}` 路由，仍然保持冷启动更稳。
