@@ -188,7 +188,7 @@ Suite A 默认不需要 fake webhook。
 
 Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 
-- `run_bench.sh` / `run_flamegraph.sh` 通过环境变量 `TRACE_LIFECYCLE_PROFILE=protected|minimal`
+- `benchmark` runner 通过环境变量 `TRACE_LIFECYCLE_PROFILE=protected|minimal`
 - 脚本再透传成后端启动参数 `--trace-lifecycle-profile protected|minimal`
 
 这样做的原因很直接：
@@ -278,14 +278,469 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 - 一条 trace 刚完成，短时间又来尾巴
 - 多条 trace 相邻到达，容易误混或误拆
 
+### 当前讨论中的场景建模路线
+
+为了避免后面又把 `Suite B` 的场景设计口径说乱，这里把已经讨论过的两条路线先记下来。
+
+路线 A：按 trace 维度做“脏场景注入”
+
+- 思路：
+  - 大多数 trace 保持正常；
+  - 少量 trace 按概率命中 `late_child_before_grace`；
+  - 少量 trace 按概率命中 `late_tail_after_completion`。
+- 优点：
+  - 解释最直接，答辩时容易把每个场景和生命周期机制一一对应；
+  - 归因更稳，不容易把随机噪声和机制差异混在一起；
+  - 更适合做确定性探针或附录里的“机制自证图”。
+- 风险：
+  - 如果所有异常都按“整条 trace 选场景”来造，真实感会弱一点；
+  - 容易被追问“是不是为了打中某个 case 专门喂毒流量”。
+
+路线 B：按 span 维度做“随机延迟注入”
+
+- 思路：
+  - 不是先给整条 trace 指定一个固定场景；
+  - 而是对每个 span 都注入随机延迟；
+  - 大多数 span 不延迟或只带很小抖动；
+  - 少量 span 会进入“短时乱序桶”；
+  - 更少量 span 会进入“迟到污染桶”；
+  - 必要时再给极少量 span 叠加 replay / duplicate。
+- 进一步约束：
+  - 这里不是“每个 span 完全独立无脑乱延迟”；
+  - 更合理的是按 span 角色分桶，例如：
+    - child / parent span 更容易命中短时乱序；
+    - tail / replay span 更容易命中 completed 之后的迟到污染。
+- 优点：
+  - 更像真实微服务系统里的异步回调、跨线程上报、网络抖动和重试重传；
+  - 同一轮实验里可以自然同时出现“短时乱序”和“完成后污染”；
+  - 论文或答辩里更容易说成“以正常流量为主、随机混入少量脏时序”。
+- 风险：
+  - 如果延迟桶设计太散，最后虽然更像真实世界，但机制归因会变差；
+  - 所以后续仍建议保留少量确定性探针，用来证明 `sealed grace` 和 `tombstone/TIME_WAIT` 这两把刀确实被打中了。
+
+当前判断：
+
+- `Suite B` 可以继续优先沿路线 B 收口，也就是“按 span 角色分桶的随机延迟注入”；
+- 路线 A 不删除，保留为机制探针/附录/内部校验思路；
+- 这两条路线当前都只服务 `Suite B`；
+- `Suite A / Suite D` 的目标分别是功能成本和资源扩展性，不适合直接复用这套脏时序建模。
+
+### Sender 建模口径
+
+`Suite B` 的正式发生器不再沿用 `wrk`。
+
+这里统一收口成：
+
+- 用独立的 Python sender / scheduler 负责发包；
+- sender 先生成“理想顺序”的 trace 模板；
+- 然后按 span 角色抽样延迟桶；
+- 最后按目标发送时间调度成真实 HTTP 请求。
+
+这样做的原因很直接：
+
+- `Suite B` 要证明的是生命周期防护收益，不是纯 QPS；
+- 如果还继续让 `wrk` 充当主发生器，就很难精确控制一条 trace 内部的乱序、晚到和 replay；
+- sender 自己必须能把“这条脏样本是怎么造出来的”记录下来，后面才能复现和解释。
+
+### Sender 内部结构
+
+当前 sender 先固定成 3 层：
+
+- `TraceTemplateGenerator`
+- `DelaySampler`
+- `Scheduler`
+
+`TraceTemplateGenerator`
+
+- 负责生成“理想顺序”的一条 trace；
+- 先给每个 span 一个基础发送时间 `base_emit_at_ms`；
+- 同一条 trace 内，span 默认仍按正常拓扑顺序排开。
+
+`DelaySampler`
+
+- 不先按“整条 trace 命中一个场景”造数据；
+- 而是按 span 角色给每个 span 抽一个延迟桶；
+- 大多数 span 保持正常，只带很小抖动；
+- 少量 span 进入短时乱序；
+- 更少量 span 进入完成后晚到；
+- 极少量 span 再叠一层 replay clone。
+
+`Scheduler`
+
+- 只负责按最终的目标发送时间把 span 推出去；
+- 同时记录实际抽样结果，保证复现和归因。
+
+### 调度数据结构
+
+当前明确选 `min-heap`，不选 timing wheel。
+
+原因：
+
+- `Suite B` 需要的是“尽量精确的目标发送时间”，而不是粗粒度 tick 调度；
+- 如果 sender 自己也再做一层时间轮，很多 span 会先被发生器的人造 tick 对齐，反而把后端 `sealed grace / tombstone` 的真实效果冲淡；
+- `min-heap` 更容易表达“某个 span 比另一个 span 晚 120ms 或 780ms”这种细粒度时间关系；
+- sender 的规模不会大到必须靠时间轮省调度开销，这里优先保真，不优先极限性能。
+
+### 调度事件字段
+
+当前 sender 的最小调度单元统一叫 `ScheduledSpanEvent`。
+
+建议至少包含下面这些字段：
+
+- `trace_id`
+- `span_id`
+- `parent_span_id`
+- `role`
+- `base_emit_at_ms`
+- `planned_emit_at_ms`
+- `delay_bucket`
+- `is_replay_clone`
+- `rng_seed_fragment`
+
+字段语义：
+
+- `base_emit_at_ms` 表示理想正常顺序下本来该什么时候发；
+- `planned_emit_at_ms` 表示注入延迟桶之后，最终准备什么时候发；
+- `delay_bucket` 用来复盘这条 span 为什么晚了；
+- `is_replay_clone` 用来区分“原始 span 晚到”和“旧 span 被复制后重放”；
+- `rng_seed_fragment` 用来把随机过程钉死，方便复现实验。
+
+### 时间窗口口径
+
+后续所有延迟桶都绑定后端真实生命周期参数，不再拍脑袋写死绝对毫秒。
+
+统一定义：
+
+- `tick = wheel_tick_ms`
+- `grace = sealed_grace_window_ms`
+- `tombstone_window = completed_trace_tombstone_ticks * wheel_tick_ms`
+
+以当前常见默认口径举例：
+
+- `tick = 500ms`
+- `grace = 1000ms`
+- `tombstone_window = 25 * 500ms = 12.5s`
+
+如果 benchmark profile 覆盖了 `wheel_tick_ms / grace`，sender 的桶范围也跟着一起重新计算。
+
+### 延迟桶定义
+
+当前先固定 4 个桶，够支撑主实验，不再继续发散。
+
+`clean_jitter`
+
+- 范围：`[0, min(0.2 * tick, 40ms)]`
+- 语义：正常网络小抖动，不刻意制造生命周期问题。
+
+`reorder_in_grace`
+
+- 范围：`[max(2 * base_gap, 0.5 * tick), grace - 0.25 * tick]`
+- 语义：span 会比预期更晚，但仍然落在 sealed grace 窗口内；
+- 主要用于证明 `protected` 能补全，而 `minimal` 更容易误拆或缺 span。
+
+`late_after_dispatch`
+
+- 范围：`[grace + 1 * tick, min(grace + 3 * tick, 0.35 * tombstone_window)]`
+- 语义：span 已经明显晚到，目标是打到“dispatch 之后”的完成态防护；
+- 主要用于观察 `tombstone/TIME_WAIT` 是否真的拦住已完成 trace 的尾巴。
+
+`replay_after_dispatch`
+
+- 这不是原始 span 的普通延迟桶，而是“复制一份旧 span，再晚发一次”；
+- 范围：`[grace + 1.5 * tick, min(grace + 4 * tick, 0.5 * tombstone_window)]`
+- 语义：模拟上游重传、补发、重复上报。
+
+### Span 角色与默认抽样
+
+当前角色先固定成 3 类：
+
+- `head/root`
+- `body`
+- `tail/end`
+
+默认抽样口径如下：
+
+- `head/root`：`95% clean_jitter`，`4% reorder_in_grace`，`1% late_after_dispatch`
+- `body`：`84% clean_jitter`，`10% reorder_in_grace`，`5% late_after_dispatch`，`1% replay clone`
+- `tail/end`：`98% clean_jitter`，`2% reorder_in_grace`
+
+这里故意让 `tail/end` 更容易准时。
+
+原因：
+
+- 真实系统里，尾部完成事件往往更接近业务线程的主收尾点；
+- 一旦 `body` 比 `tail/end` 更容易被拖慢，就能更自然地形成“end 先到、body 后到”；
+- 这样打出来的是“像真实系统偶发脏时序”的流量，不是明显的人造毒样本。
+
+### Suite B 收口后的场景矩阵
+
+为了避免后面把场景越拉越多，`Suite B` 现在正式收口成 `3 x 2` 矩阵：
+
+- 发送侧 3 个 profile
+- 生命周期侧 2 个 profile：`protected` / `minimal`
+
+也就是总共 `6` 组运行。
+
+发送侧 profile 固定成下面 3 档：
+
+| Sender Profile | 语义 | 发送侧脏流量口径 | 主要用途 |
+| --- | --- | --- | --- |
+| `clean_baseline` | 近正常流量 | 只保留 `clean_jitter`，关闭 `late_after_dispatch` 和 `replay` | 校验 `protected` 不会在正常流量下带来明显副作用 |
+| `mixed_realistic` | 主实验流量 | 使用“默认抽样口径”，也就是大多数正常、少量短时乱序、更少量晚到和 replay | 主论文主图优先候选，最接近真实微服务偶发脏时序 |
+| `late_replay_stress` | 放大差异流量 | 在默认口径上显著抬高 `late_after_dispatch` 和 `replay` 的占比，但仍保留多数正常 span | 放大 tombstone/TIME_WAIT 防护收益，适合附图或补充图 |
+
+当前推荐的展示优先级：
+
+- 主图优先看 `mixed_realistic`
+- `clean_baseline` 作为 sanity check
+- `late_replay_stress` 作为机制放大图或附录图
+
+也就是说，答辩时真正重点讲的不是“我造了很多极端毒流量”，而是：
+
+- 正常流量下，两套策略都不该明显跑偏；
+- 混合脏流量下，`protected` 开始体现收益；
+- 当晚到和 replay 稍微放大时，这种收益会被更清楚地看见。
+
 ### 主要比较内容
 
-- trace 完整率
-- 误拆分率
-- 重复落库率
-- 晚到 span 误判率
-- 最终可查询正确率
-- 在脏流量下的 ingest 稳定性
+当前不再把 `Suite B` 的指标平铺成一长串。
+
+这里正式收口成 3 层：
+
+- 主指标
+- 辅助正确性指标
+- 辅助护栏指标
+
+原因：
+
+- `Suite B` 的主任务是证明生命周期防护有没有换来“正确性收益”；
+- 但如果完全不看代价，答辩时很容易被追问“那你这个保护是不是很贵”；
+- 所以这里既不能把性能指标抢成主角，也不能完全不留性能护栏。
+
+主指标固定成下面 3 个：
+
+- `trace_completeness_rate`
+- `trace_pollution_rate`
+- `duplicate_persistence_rate`
+
+各自语义如下：
+
+`trace_completeness_rate`
+
+- 一条 trace 最终落库后，是否保住了本该属于它的 span；
+- 这是 `sealed grace` 最该打出的主收益指标；
+- 主图里优先展示这一项。
+
+`trace_pollution_rate`
+
+- 一条已经完成的 trace，后续晚到 span 或 replay 是否把它错误复活，或者污染成新旧混杂的结果；
+- 这是 `tombstone/TIME_WAIT` 最该打出的主收益指标；
+- 如果答辩老师问“为什么不能只靠 trace_end”，这项最有说服力。
+
+`duplicate_persistence_rate`
+
+- 同一语义上的 span 或 trace 结果，是否被重复落库；
+- 这项主要补齐 replay / duplicate 这条线。
+
+辅助正确性指标保留 2 个：
+
+- `final_query_correctness`
+- `misclassification_rate_for_late_spans`
+
+`final_query_correctness`
+
+- 指从最终查询视角看，用户能不能查到正确的 trace 结果；
+- 这项更偏“产品视角”的正确性，不一定进主图，但适合做补充表。
+
+`misclassification_rate_for_late_spans`
+
+- 指晚到 span 被错误吸收、错误丢弃或错误归入新 trace 的比例；
+- 这项更像诊断指标，适合内部分析或附录解释，不一定放到主论文图。
+
+辅助护栏指标固定成下面 2 个：
+
+- `ingest_p95_latency_delta`
+- `backend_cpu_delta`
+
+`ingest_p95_latency_delta`
+
+- 比较同一档 sender profile 下，`protected` 相比 `minimal` 的 `/logs/spans` p95 延迟增量；
+- 这是 `Suite B` 最重要的代价护栏；
+- 如果只能留 1 个护栏指标，优先保这个。
+
+`backend_cpu_delta`
+
+- 比较同一档 sender profile 下，两种生命周期档位的后端 CPU 增量；
+- 这项不抢主图，但可以防止别人追问“是不是靠吃更多 CPU 换来的正确性”。
+
+当前答辩展示口径建议固定成：
+
+- 主图：`trace_completeness_rate`、`trace_pollution_rate`、`duplicate_persistence_rate`
+- 补充图或表：`final_query_correctness`
+- 护栏图或表：`ingest_p95_latency_delta`
+- 需要时再补：`backend_cpu_delta`、`misclassification_rate_for_late_spans`
+
+也就是说：
+
+- `Suite A` 继续负责回答“总体性能成本高不高”；
+- `Suite B` 只保留最少量的性能护栏，用来证明“正确性收益不是白拿，但代价也没失控”。
+
+### 指标计算口径
+
+为了避免后面跑 benchmark 时同一个词各说各话，`Suite B` 的指标统一按：
+
+- sender manifest
+- 最终 SQLite 快照
+- 后端运行日志
+
+这 3 份材料联合计算。
+
+也就是说：
+
+- 不能只看 SQLite 最终表，因为有些错误会体现成持久化冲突或错误尝试；
+- 也不能只看日志，因为最后用户真正查到什么，同样要回到最终查询结果和最终落库状态。
+
+### Sender 必须输出的真值标签
+
+`Suite B` 的 sender 不能只负责发包，还必须给每个事件打真值标签。
+
+每个 `ScheduledSpanEvent` 至少要带下面这些评估字段：
+
+- `logical_trace_id`
+- `span_id`
+- `event_kind = original | replay_clone`
+- `delay_bucket`
+- `expected_final_action = merge_into_final_trace | ignore_after_cutoff`
+
+这里把“到底什么算正确”先钉死：
+
+- `clean_jitter` 下的原始 span：`merge_into_final_trace`
+- `reorder_in_grace` 下的原始 span：`merge_into_final_trace`
+- `late_after_dispatch` 下的原始 span：`ignore_after_cutoff`
+- `replay_after_dispatch` 下的 replay clone：`ignore_after_cutoff`
+
+原因：
+
+- `reorder_in_grace` 代表的是“应该被 sealed grace 吸收的短时乱序”；
+- `late_after_dispatch / replay_after_dispatch` 代表的是“已经超过当前生命周期 cutoff，不该再改变最终 trace 结果”的事件；
+- 不把这条边界先写死，后面 `completeness`、`pollution`、`misclassification` 三个指标一定互相打架。
+
+### 统一观测集合
+
+对每个 `logical_trace_id = t`，统一构造下面几份集合：
+
+`ExpectedMergeSet(t)`
+
+- sender manifest 里，所有 `expected_final_action = merge_into_final_trace` 的原始 `span_id` 去重集合；
+- 它表示“这条 trace 最终本该保住的 span”。
+
+`ExpectedIgnoreEvents(t)`
+
+- sender manifest 里，所有 `expected_final_action = ignore_after_cutoff` 的事件集合；
+- 它表示“这条 trace 上那些本不该再改变最终结果的晚到或 replay 事件”。
+
+`PersistedSpanSet(t)`
+
+- SQLite `trace_span` 表里，`trace_id = t` 的 `span_id` 去重集合。
+
+`PersistedSummarySpanCount(t)`
+
+- SQLite `trace_summary.span_count` 在 `trace_id = t` 上的最终值。
+
+`RuntimeConflictLog(t)`
+
+- 后端运行日志里，和 `trace_id = t` 对应的唯一键冲突、重复持久化尝试、异常落库告警等记录。
+
+### 主指标的计算方式
+
+`trace_completeness_rate`
+
+- 分母：本轮 measurement window 内发出的全部 `logical_trace_id`
+- 分子：满足 `ExpectedMergeSet(t)` 被 `PersistedSpanSet(t)` 完整覆盖的 trace 数
+
+补一层约束：
+
+- 这项只看“该保住的 span 有没有缺”
+- 不因为存在污染或 replay 就直接判 incomplete
+- 也就是说，额外脏数据由 `trace_pollution_rate` 单独负责
+
+`trace_pollution_rate`
+
+- 分母：本轮 measurement window 内发出的全部 `logical_trace_id`
+- 分子：最终结果被“本不该进入最终 trace 的事件”污染过的 trace 数
+
+当前判定 trace 被污染，满足任意一条即可：
+
+- `PersistedSpanSet(t)` 里出现了不属于 `ExpectedMergeSet(t)` 的 span
+- 某个 `ExpectedIgnoreEvents(t)` 对应的晚到或 replay 事件，最终改变了该 trace 的查询结果
+- 或者该 trace 因这类事件触发了异常复活/错误再持久化，并在运行日志中留下对应冲突证据
+
+`duplicate_persistence_rate`
+
+- 分母：sender manifest 里全部 `event_kind = replay_clone` 或语义上属于 duplicate 注入的事件数
+- 分子：这些事件里，最终引发了“重复持久化副作用”的事件数
+
+这里的“重复持久化副作用”满足任意一条即可：
+
+- 让最终结果多出了一条本不该存在的 span
+- 让 `PersistedSummarySpanCount(t)` 与 `|ExpectedMergeSet(t)|` 明显偏离，并且偏离原因来自 replay/duplicate 注入
+- 触发了唯一键冲突、重复写尝试或等价的持久化异常日志
+
+也就是说，这项不只盯“数据库里最后有没有两行完全重复的数据”。
+
+它更关心的是：
+
+- replay / duplicate 到底有没有把系统推向“错误再写一次”的方向。
+
+### 辅助指标的计算方式
+
+`final_query_correctness`
+
+- 分母：本轮 measurement window 内发出的全部 `logical_trace_id`
+- 分子：通过最终查询接口拿到的 trace 详情，和 sender manifest 里的期望结果一致的 trace 数
+
+一致的最小判定口径：
+
+- span 集合与 `ExpectedMergeSet(t)` 一致
+- summary 里的 `span_count` 与 `|ExpectedMergeSet(t)|` 一致
+- parent / child 结构没有被错误污染
+
+这项强调的是“最终用户查到的结果对不对”，所以它优先以查询接口口径为准，而不是只看底层 SQLite。
+
+`misclassification_rate_for_late_spans`
+
+- 分母：全部 `ExpectedIgnoreEvents(t)` 事件数
+- 分子：这些事件里，被错误吸收、错误复活、错误触发再持久化的事件数
+
+这项是诊断指标。
+
+它主要帮助解释：
+
+- 到底是哪类晚到事件最容易把 `minimal` 打穿。
+
+### 护栏指标的计算方式
+
+`ingest_p95_latency_delta`
+
+- 在相同 sender profile、相同发送速率、相同 run duration、相同 CPU 绑核条件下；
+- 分别测 `protected` 和 `minimal` 的 `/logs/spans` HTTP 响应 p95；
+- 结果统一报：
+  - 绝对增量：`p95(protected) - p95(minimal)`
+  - 相对增量：`(p95(protected) - p95(minimal)) / p95(minimal)`
+
+`backend_cpu_delta`
+
+- 在相同 sender profile、相同发送速率和相同绑核条件下；
+- 只统计 sender 正式 measurement window 内的后端进程 CPU；
+- 结果统一报：
+  - 平均 CPU 增量：`avg_cpu(protected) - avg_cpu(minimal)`
+  - 可选补一条峰值 CPU 增量
+
+当前原则：
+
+- `Suite B` 的护栏指标只报增量，不和 `Suite A` 一样去卷极限吞吐；
+- 这样老师问“代价多大”时，你有数字；
+- 但整张图的主叙事，仍然是正确性收益，而不是性能比武。
 
 ### 固定资源口径
 

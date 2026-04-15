@@ -9,10 +9,13 @@ set -euo pipefail
 # 4. 终端打印 + 文件留痕
 # 5. 退出时先抓 shutdown snapshot 埋点，再做有上限的 cleanup，避免残留进程污染下一轮实验
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 SERVER_BIN="${ROOT_DIR}/server/build/LogSentinel"
-WRK_SCRIPT="${ROOT_DIR}/server/tests/wrk/trace_model.lua"
-RESULT_ROOT="${ROOT_DIR}/server/tests/wrk/results"
+# common runner 只关心“怎么跑一轮 wrk case”，不直接绑定某个 suite。
+# 具体结果该落到 suite_a 还是 suite_d，由外层 wrapper 通过 BENCH_SUITE 传进来。
+WRK_SCRIPT="${WRK_SCRIPT:-${ROOT_DIR}/server/tests/benchmark/common/wrk/trace_model.lua}"
+BENCH_SUITE="${BENCH_SUITE:-suite_a}"
+RESULT_ROOT="${RESULT_ROOT:-${ROOT_DIR}/server/tests/benchmark/results/${BENCH_SUITE}}"
 
 PROFILE="${1:-}"
 
@@ -42,7 +45,7 @@ SUMMARY_LOG=""
 usage() {
     cat <<'EOF'
 用法:
-  server/tests/wrk/run_bench.sh <profile>
+  server/tests/benchmark/common/run_wrk_case.sh <profile>
 
 支持的 profile:
   end
@@ -411,6 +414,7 @@ mkdir -p "${RUN_DIR}"
 SUMMARY_LOG="${RUN_DIR}/run-summary.log"
 
 {
+    echo "bench_suite=${BENCH_SUITE}"
     echo "profile=${PROFILE}"
     echo "duration=${DURATION}"
     echo "wrk_threads=${WRK_THREADS}"

@@ -101,7 +101,7 @@ P99 是多少
 cd /home/llt/Project/llt/LogSentinel
 DURATION=10s CONNECTION_SET="100" WORKER_THREAD_SET="3" \
 SERVER_CPUSET="1-2" WRK_CPUSET="0" \
-bash server/tests/wrk/run_bench.sh end
+bash server/tests/benchmark/suite_a/run_suite_a.sh end
 ```
 
 ### 4.2 固定记录指标
@@ -134,7 +134,7 @@ bash server/tests/wrk/run_bench.sh end
 `primary_flushed_span_count`
 `analysis_flushed_analysis_count`
 
-现在 `run_bench.sh` 会把这两行自动摘进结果目录里的 `run-summary.log`。
+现在 `run_suite_a.sh` 会把这两行自动摘进结果目录里的 `run-summary.log`。
 如果 benchmark 结束后服务端在限定时间内还没完全退干净，脚本会先保留 `SIGTERM` 时刻的埋点快照，再强制回收进程；所以这些数字的语义是“benchmark 停止时已完成到哪”，不是“无限等到后台彻底清空后的最终总账”。
 
 ### 4.3 论文里怎么解释
@@ -161,7 +161,7 @@ SERVER_CPUSET="1-2" WRK_CPUSET="0" \
 WORKER_THREADS=3 CONNECTIONS=1 DURATION=6s \
 WARMUP_DURATION=1s WARMUP_CONNECTIONS=1 WARMUP_SETTLE_SEC=1 \
 PERF_FREQ=49 \
-bash server/tests/wrk/run_flamegraph.sh end
+bash server/tests/benchmark/common/run_flamegraph_case.sh end
 ```
 
 ### 5.2 为什么固定成这组

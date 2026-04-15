@@ -9,13 +9,16 @@ set -euo pipefail
 # 4. 在 perf 采样窗口里跑正式 wrk
 # 5. 把 perf.data 转成 flamegraph.svg，并自动 cleanup
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 SERVER_BIN="${ROOT_DIR}/server/build/LogSentinel"
 # 默认仍走老的 trace_model.lua，保证历史 flamegraph 口径不被这次 active-pool 升级直接改脏。
 # 如果要切到新脚本，调用方只需要在环境变量里覆写 WRK_SCRIPT 即可。
-WRK_SCRIPT="${WRK_SCRIPT:-${ROOT_DIR}/server/tests/wrk/trace_model.lua}"
-PACED_SENDER="${ROOT_DIR}/server/tests/wrk/trace_paced_sender.py"
-RESULT_ROOT="${ROOT_DIR}/server/tests/wrk/results"
+WRK_SCRIPT="${WRK_SCRIPT:-${ROOT_DIR}/server/tests/benchmark/common/wrk/trace_model.lua}"
+PACED_SENDER="${ROOT_DIR}/server/tests/benchmark/common/loadgen/trace_paced_sender.py"
+BENCH_SUITE="${BENCH_SUITE:-suite_a}"
+# 火焰图虽然由 common runner 生成，但产物仍然必须按 suite 收口。
+# 否则后面一边跑 Suite A 一边跑 Suite D，结果目录会重新混回老问题。
+RESULT_ROOT="${RESULT_ROOT:-${ROOT_DIR}/server/tests/benchmark/results/${BENCH_SUITE}}"
 FLAMEGRAPH_DIR="${FLAMEGRAPH_DIR:-${HOME}/tools/FlameGraph}"
 PROFILE="${1:-end}"
 
@@ -57,12 +60,12 @@ WRK_LOG=""
 PERF_DATA=""
 PERF_SCRIPT=""
 FLAME_SVG=""
-TRACE_DB="${ROOT_DIR}/server/tests/wrk/results/trace-flame.db"
+TRACE_DB=""
 
 usage() {
     cat <<'EOF'
 用法:
-  server/tests/wrk/run_flamegraph.sh [profile]
+  server/tests/benchmark/common/run_flamegraph_case.sh [profile]
 
 支持的 profile:
   end
@@ -460,6 +463,7 @@ RUN_DIR="${RESULT_ROOT}/$(date '+%Y%m%d-%H%M%S')-flamegraph-${PROFILE}"
 mkdir -p "${RUN_DIR}"
 
 {
+    echo "bench_suite=${BENCH_SUITE}"
     echo "profile=${PROFILE}"
     echo "port=${PORT}"
     echo "worker_threads=${WORKER_THREADS}"

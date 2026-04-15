@@ -98,11 +98,11 @@ Trace 主链路通过 `BufferedTraceRepository` 把主数据和分析结果分�
   - `--disable-buffered-trace-repo`
   - `--trace-lifecycle-profile protected|minimal`
 - 当前主脚本：
-  - `server/tests/wrk/run_bench.sh`
-  - `server/tests/wrk/run_flamegraph.sh`
-  - `server/tests/wrk/trace_model.lua`
-  - `server/tests/wrk/trace_paced_sender.py`
-- benchmark 结果目录固定落到 `server/tests/wrk/results/`
+  - `server/tests/benchmark/suite_a/run_suite_a.sh`
+  - `server/tests/benchmark/suite_d/run_suite_d.sh`
+  - `server/tests/benchmark/common/run_flamegraph_case.sh`
+  - `server/tests/benchmark/common/wrk/trace_model.lua`
+- benchmark 结果目录固定落到 `server/tests/benchmark/results/<suite>/`
 
 ## 仓库结构
 
@@ -113,7 +113,7 @@ Trace 主链路通过 `BufferedTraceRepository` 把主数据和分析结果分�
 - `server/persistence/`：SQLite 仓储与 Trace 双缓冲写入器
 - `server/ai/`：C++ AI 接口与 Python proxy
 - `server/handlers/`：日志、配置、历史、Dashboard 相关 handler
-- `server/tests/`：单元测试、集成测试、smoke、wrk 脚本
+- `server/tests/`：单元测试、集成测试、smoke 与 benchmark 脚本
 - `docs/`：外部资料、todo、开发记录
 
 ## 构建与运行
@@ -259,13 +259,13 @@ python server/tests/smoke_trace_spans.py --mode advanced
 ### wrk 压测
 
 ```bash
-server/tests/wrk/run_bench.sh end
+server/tests/benchmark/suite_a/run_suite_a.sh end
 ```
 
 也可以直接查看：
 
-- `server/tests/wrk/trace_model.lua`
-- `server/tests/wrk/run_flamegraph.sh`
+- `server/tests/benchmark/common/wrk/trace_model.lua`
+- `server/tests/benchmark/common/run_flamegraph_case.sh`
 
 ## 新服务器准备
 

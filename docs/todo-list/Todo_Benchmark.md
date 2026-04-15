@@ -41,6 +41,12 @@
 - [x] 记录 `dispatch_tpool` 的真实前置条件：当前 `ThreadPool(std::function<void()>)` 不能直接承载 move-only `DispatchJob`
 - [x] 收口背压热路径：把 `RefreshOverloadState()` 从 `pendingTasks()/dispatch_queue_.size()` 的额外锁读取改成原子计数/原子镜像
 - [x] 为背压热路径优化补最小回归：锁定 `pendingTasks`、`dispatch queue pending` 与背压状态发布语义不回归
+- [x] 将 benchmark 目录重构为 `server/tests/benchmark/`
+- [x] 把 `wrk` Lua 脚本迁到 `benchmark/common/wrk/`
+- [x] 把通用 load generator / 校验脚本迁到 `benchmark/common/loadgen` 与 `benchmark/common/utils`
+- [x] 把 `run_bench.sh / run_flamegraph.sh` 改成 `common` 真正实现 + `suite_a/suite_d` wrapper
+- [x] 把 benchmark 结果目录统一改到 `server/tests/benchmark/results/<suite>/`
+- [x] 同步更新 README / CurrentTask / AGENTS 等活文档里的 benchmark 路径
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

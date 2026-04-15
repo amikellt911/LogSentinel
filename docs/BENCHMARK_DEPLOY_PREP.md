@@ -44,7 +44,7 @@ sudo apt-get install -y \
 - `util-linux` 提供 `taskset`
 - `iproute2` 提供 `ss`
 - `lsof` 用于 benchmark 脚本探测端口占用
-- `linux-perf` 只在 `run_flamegraph.sh` 或火焰图实验里需要
+- `linux-perf` 只在 `server/tests/benchmark/common/run_flamegraph_case.sh` 或火焰图实验里需要
 - `nodejs/npm` 只在本机需要重新构建前端时需要；如果直接用仓库里已经产出的 `client/dist`，可以不装
 
 ## 3. Python AI proxy 依赖
@@ -82,7 +82,7 @@ npm run build
 
 ## 5. benchmark 额外工具
 
-要跑 `server/tests/wrk/run_bench.sh` 或 `run_flamegraph.sh`，至少确认以下命令存在：
+要跑 `server/tests/benchmark/suite_a/run_suite_a.sh`、`server/tests/benchmark/suite_d/run_suite_d.sh` 或 `server/tests/benchmark/common/run_flamegraph_case.sh`，至少确认以下命令存在：
 
 - `wrk`
 - `taskset`
@@ -164,7 +164,7 @@ sudo usermod -aG docker "$USER"
 - 后端能构建
 - Python AI proxy 能启动
 - 前端能构建或直接由后端托管已有 `client/dist`
-- `run_bench.sh` 能在新机器上直接落结果到 `server/tests/wrk/results/`
+- `suite_a/run_suite_a.sh` 或 `suite_d/run_suite_d.sh` 能在新机器上直接落结果到 `server/tests/benchmark/results/<suite>/`
 - 后续补上 `docker compose up` 后，最小演示环境能一条命令拉起
 
 做到这里，环境就算准备合格了。

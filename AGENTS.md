@@ -18,7 +18,7 @@
 - `client/`: Vue 3 + Vite 前端（视图在 `client/src/views`，组件在 `client/src/components`，路由在 `client/src/router`）。
 - `server/`: C++ 后端（模块位于 `server/http`, `server/core`, `server/persistence`, `server/ai`, `server/threadpool`, `server/handlers`, `server/notification`, `server/util`）。
 - `server/ai/proxy/`: 用于 LLM 调用的 Python AI 代理服务。
-- `server/tests/`: C++ GoogleTest 目标与 Python 集成测试；`server/tests/wrk/` 存放压测脚本。
+- `server/tests/`: C++ GoogleTest 目标与 Python 集成测试；`server/tests/benchmark/` 存放 benchmark 资产与结果目录。
 - `docs/`: 架构说明、计划与开发参考资料。
 
 ## 构建、测试与开发命令

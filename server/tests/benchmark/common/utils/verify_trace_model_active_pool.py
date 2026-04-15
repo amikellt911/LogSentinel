@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Dict, List
 
 
-SCRIPT_PATH = Path(__file__).with_name("trace_model_active_pool.lua")
+# 校验脚本和 Lua 脚本已经不在同一目录。
+# 这里显式回到 common/wrk 下取真实脚本，避免后面目录重构后又悄悄指回旧路径。
+SCRIPT_PATH = Path(__file__).resolve().parent.parent / "wrk" / "trace_model_active_pool.lua"
 
 
 class CaptureState:

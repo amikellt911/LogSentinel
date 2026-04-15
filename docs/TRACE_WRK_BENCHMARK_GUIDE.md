@@ -1,6 +1,6 @@
 # Trace wrk Benchmark Guide
 
-这份文档只管一件事：把 `LogSentinel + wrk trace_model.lua` 这套 Trace 压测的测试目标、参数选择和第一版实验矩阵钉死。
+这份文档只管一件事：把 `LogSentinel + benchmark/common/wrk/trace_model.lua` 这套 Trace 压测的测试目标、参数选择和第一版实验矩阵钉死。
 
 ## 1. 这轮到底在测什么
 
@@ -234,7 +234,7 @@
 
 下一步再写：
 
-- `server/tests/wrk/run_bench.sh`
+- `server/tests/benchmark/suite_a/run_suite_a.sh`
 
 它的职责应该是：
 
