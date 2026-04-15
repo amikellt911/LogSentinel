@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.server
+    depends_on:
+      # 先做最简单的启动顺序约束：先拉起 ai-proxy，再启动 server。
+      # 注意这只保证“启动先后”，不保证 ai-proxy 已经完全 ready；healthcheck 后面再补。
+      - ai-proxy
     ports:
       # 单入口继续只暴露后端 8080；浏览器和 API 都走这一条宿主机映射。
       - "8080:8080"
@@ -11,12 +15,24 @@ services:
       - ./data:/data
     command:
       # compose 场景下后端不能继续打容器内的 127.0.0.1，也不该再尝试自己 fork proxy。
-      # 这里先把地址改成未来 ai-proxy 服务名；下一刀再把 ai-proxy service 本体补进来。
+      # 这里把地址改成 ai-proxy 服务名，并且默认先走 mock provider，
+      # 这样最小部署不需要真实 API key 和外网就能先把双容器主链跑起来。
       - ./LogSentinel
       - --db
       - /data/LogSentinel.db
       - --port
       - "8080"
       - --no-auto-start-proxy
+      - --trace-ai-provider
+      - mock
       - --trace-ai-base-url
       - http://ai-proxy:8001
+
+  ai-proxy:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ai-proxy
+    ports:
+      # 先保留宿主机到 proxy 的调试入口，方便手动 curl 和排障；
+      # 后面如果确认只需要容器间通信，再考虑把这条映射去掉。
+      - "8001:8001"
