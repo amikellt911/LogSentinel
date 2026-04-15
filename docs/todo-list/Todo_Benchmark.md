@@ -67,6 +67,11 @@
   - [x] 实现 run_suite_b.py：只负责编排单次 case，不负责起停后端和矩阵批跑
   - [x] 为 CLI 收口 sender/evaluator 公共参数，避免手工两次敲命令
   - [x] 验证 run_suite_b 单测、Python 语法和最小 fake case
+- [x] Suite B 矩阵 runner 第一刀：把 `3 x 2` case 跑法收成单独入口
+  - [x] 先写矩阵 runner 红灯单测，锁 case 顺序、独立 DB 和汇总 JSON 结构
+  - [x] 实现 run_suite_b_matrix.py：按 case 启停后端，避免不同 case 之间 SQLite 污染
+  - [x] 支持 `server-command` 模板，把 `trace_lifecycle_profile / sqlite_db / port / log_path` 注入到每个 case
+  - [x] 验证矩阵 runner 单测、Python 语法和最小单 case dry-run
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

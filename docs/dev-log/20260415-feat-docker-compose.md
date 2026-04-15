@@ -221,3 +221,37 @@ feat(benchmark): 为 Suite B 增加单次 case runner
 - 单次 runner 和矩阵 runner 不能混写在一起。前者负责一次 case 的输入输出闭环，后者才负责 profile 笛卡尔积、后端起停和结果汇总；一开始就混在一份脚本里，后面只会越改越乱。
 - `run_suite_b.py` 现在会打印 sender 的 stdout，所以正式批跑时如果想拿纯 JSON 输出，后面需要再决定是重定向 sender 日志，还是给 sender 增加 quiet 模式。
 - dry-run + 空 SQLite 的最小验证只证明编排逻辑活着，不代表后端生命周期实验已经真实跑通；正式 benchmark 仍然要用真实后端和真实 DB。
+
+---
+
+# Git Commit Message
+
+feat(benchmark): 增加 Suite B 矩阵 runner 第一刀
+
+# Modification
+
+- `docs/dev-log/20260415-feat-docker-compose.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `server/tests/benchmark/suite_b/README.md`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix.py`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix_unit_test.py`
+
+# Learning Tips
+
+## Newbie Tips
+
+- `run_suite_b.py` 和 `run_suite_b_matrix.py` 不是一回事。前者解决“一次 case 怎么跑”，后者解决“6 个 case 怎么排队跑并汇总结果”。把这两层拆开，后面改 sender/evaluator 或改矩阵维度时都更稳。
+- Suite B 的矩阵 case 不能共用一个 SQLite。因为 evaluator 看的就是最终持久化结果，如果前一组的 trace 留在同一个 DB 里，后一组的 completeness / pollution 会立刻串味。
+- 只起 shell 再 terminate shell，不等于真的把后端停干净。只要 `server-command` 允许 shell 模板，停机时就要考虑“真正的 LogSentinel 其实是 shell 的子进程”。
+
+## Function Explanation
+
+- `str.format(...)`：这里拿来给 `server-command` 注入 `{sqlite_db} / {trace_lifecycle_profile} / {port} / {log_path}`，比手写字符串拼接更稳，也更容易扩新占位符。
+- `socket.connect_ex(...)`：用来做最小端口探测；返回 `0` 代表端口已经可连，不需要再上 curl。
+- `os.killpg(...)`：按进程组发信号；这次专门用它收 shell + 真正后端子进程，避免矩阵 runner 留下孤儿进程。
+
+## Pitfalls
+
+- `shell=True` 虽然让 `server-command` 模板更灵活，但也把“停机要不要管子进程”这个问题带进来了；如果后续有人把这层改回只杀 `process.pid`，很容易重新留下端口残留。
+- 矩阵 runner 现在默认按 case 顺序串行执行，没有并发；这是故意的，因为当前重点是先保证 case 之间完全隔离，而不是抢跑实验总时长。
+- 用 dummy server + `--dry-run` 的最小验证，只能证明矩阵 runner 的编排活着；真正要证明 `protected` 和 `minimal` 差异，还得用真实后端和真实 sender 请求。

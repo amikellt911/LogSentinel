@@ -27,11 +27,17 @@
   - 输出一份可直接留档的 JSON 结果。
 - `run_suite_b_unit_test.py`
   - 覆盖 sender/evaluator 调用顺序和统一 JSON 输出。
+- `run_suite_b_matrix.py`
+  - 负责 `3 x 2` 矩阵的 case 级编排；
+  - 为每个 case 单独起停后端、分配独立 SQLite 和结果目录；
+  - 输出一份矩阵汇总 `summary.json`。
+- `run_suite_b_matrix_unit_test.py`
+  - 覆盖矩阵 case 规划、后端起停顺序和汇总 JSON 结构。
 
 当前还没做：
 
-- 3 x 2 矩阵批跑脚本
-- 后端起停和环境编排
+- 更大的 benchmark 总调度器
+- AI mock server / CPU 绑核 / 资源采样联动
 
 这条线故意不复用 `common/wrk/` 当主入口。
 
@@ -99,3 +105,19 @@ python3 server/tests/benchmark/suite_b/run_suite_b.py \
 - `run_suite_b.py` 第一刀只负责编排单次 case，不负责起停后端；
 - `--trace-lifecycle-profile` 当前只是把实验元数据收进统一结果 JSON，真正切 `protected/minimal` 仍然由你启动后端时的 CLI 决定；
 - 后面如果要跑正式 `3 x 2` 矩阵，再在它外面包一层批量脚本，不要把矩阵控制逻辑反塞回单次 runner。
+
+最小 run_suite_b_matrix 示例：
+
+```bash
+python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
+  --server-command "./server/build/LogSentinel --db {sqlite_db} --port {port} --trace-lifecycle-profile {trace_lifecycle_profile}" \
+  --run-root /tmp/suite_b_matrix \
+  --sender-profiles clean_baseline,mixed_realistic,late_replay_stress \
+  --trace-lifecycle-profiles protected,minimal
+```
+
+注意：
+
+- `run_suite_b_matrix.py` 是 case 级矩阵 runner，每个 case 都会拿独立的 `suite_b.db / manifest / result.json / server.log`；
+- `server-command` 是模板字符串，当前支持注入 `{sqlite_db} / {trace_lifecycle_profile} / {port} / {log_path} / {case_id} / {run_dir}`；
+- 如果只是验证编排逻辑是否活着，可以配 `--dry-run`，再给它一个能监听端口的最小 dummy server。
