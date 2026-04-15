@@ -130,6 +130,8 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
   - 后端可执行文件，默认 `./server/build/LogSentinel`
 - `--server-cpuset`
   - 只给后端进程绑核，例如 `0-1` 或 `2-13`
+- `--server-io-threads`
+  - 后端 Reactor / I/O 线程数，对应后端冷启动里的 `kernel_io_threads`
 - `--worker-threads`
 - `--dispatch-worker-threads`
 - `--worker-queue-size`
@@ -150,6 +152,7 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 - 4 核本机和 16 核云机现在只需要改 CLI 数字；
 - 不需要再手改一长串 `server-command` 模板；
 - 每次实验命令里就能直接看见后端到底吃了多少核、多少线程。
+- 如果旧进程已经占着某个 case 端口，matrix runner 现在会直接 fail fast，不再把“旧进程还活着”误判成“新 case 已启动成功”。
 
 4 核本机最小示例：
 
@@ -157,6 +160,7 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
   --run-root /tmp/suite_b_matrix_local4 \
   --server-cpuset 0-1 \
+  --server-io-threads 2 \
   --worker-threads 3 \
   --dispatch-worker-threads 1 \
   --worker-queue-size 2048 \
@@ -175,6 +179,7 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 说明：
 
 - 这个例子默认把 2 个核给后端，sender 仍然跑在 matrix runner 自己的 Python 进程里；
+- `--server-io-threads 2` 表示 MiniMuduo 的 Reactor/I/O 线程也跟着抬到 2，不再继续吃 fresh DB 的默认值 1；
 - `--send-workers 2` 只是 sender 的并发数，不是绑核；
 - 如果本机就只有 4 核，这一档足够先验证 `protected/minimal` 的语义差异有没有出来。
 
@@ -184,6 +189,7 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
   --run-root /tmp/suite_b_matrix_remote16 \
   --server-cpuset 2-13 \
+  --server-io-threads 6 \
   --worker-threads 16 \
   --dispatch-worker-threads 4 \
   --worker-queue-size 8192 \
@@ -202,5 +208,6 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 说明：
 
 - 这里默认预留前 2 个核给系统和其他实验辅助进程，后端先拿 12 个核起步；
+- `--server-io-threads 6` 和 `worker/dispatch` 分开看：它只负责收包、连接分发和 Reactor 回调，不负责 Trace 聚合收尾；
 - `worker_threads` 和 `dispatch_worker_threads` 都是后端进程参数，跟 sender 的 `--send-workers` 不是一回事；
-- 如果云机不是 16 核，就只改 `--server-cpuset / --worker-threads / --dispatch-worker-threads / --send-workers` 这几项，其他 lifecycle 参数先别乱动。
+- 如果云机不是 16 核，就只改 `--server-cpuset / --server-io-threads / --worker-threads / --dispatch-worker-threads / --send-workers` 这几项，其他 lifecycle 参数先别乱动。

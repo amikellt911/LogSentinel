@@ -26,6 +26,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--server-command", default="")
     parser.add_argument("--server-bin", default="./server/build/LogSentinel")
     parser.add_argument("--server-cpuset", default="")
+    parser.add_argument("--server-io-threads", type=int, default=1)
     parser.add_argument("--no-auto-start-proxy", action="store_true")
     # 这一组资源参数故意直接暴露在矩阵 runner 顶层。
     # 否则 4 核本机和 16 核云机每换一次资源配额，都得手写一整段 shell 模板，
@@ -143,6 +144,8 @@ def build_default_server_command(args: argparse.Namespace, case: Dict[str, objec
             str(case["port"]),
             "--trace-lifecycle-profile",
             str(case["trace_lifecycle_profile"]),
+            "--server-io-threads",
+            str(args.server_io_threads),
             "--worker-threads",
             str(args.worker_threads),
             "--dispatch-worker-threads",
@@ -196,7 +199,45 @@ def launch_server_process(case: Dict[str, object], args: argparse.Namespace) -> 
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
-    return {"process": process, "log_file": log_file}
+    return {"process": process, "log_file": log_file, "log_path": str(log_path)}
+
+
+def assert_port_available(
+    port: int,
+    host: str = "127.0.0.1",
+    probe_connect: Optional[Callable[[str, int], int]] = None,
+) -> None:
+    if probe_connect is None:
+        def default_probe(target_host: str, target_port: int) -> int:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(0.2)
+                return sock.connect_ex((target_host, target_port))
+        probe_connect = default_probe
+    if probe_connect(host, port) == 0:
+        raise RuntimeError(
+            f"port {port} is already occupied before launching suite_b case; "
+            "this would let an old process fake the readiness check"
+        )
+
+
+def _tail_log_excerpt(log_path: str, line_limit: int = 20) -> str:
+    try:
+        lines = Path(log_path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    if not lines:
+        return ""
+    excerpt = "\n".join(lines[-line_limit:])
+    return f"\nRecent server log:\n{excerpt}"
+
+
+def assert_process_alive(process_info: Dict[str, object]) -> None:
+    process = process_info["process"]
+    return_code = process.poll()
+    if return_code is None:
+        return
+    log_excerpt = _tail_log_excerpt(str(process_info.get("log_path", "")))
+    raise RuntimeError(f"server process exited before ready check finished with code {return_code}{log_excerpt}")
 
 
 def wait_for_port_open(port: int, timeout_sec: float) -> None:
@@ -208,6 +249,21 @@ def wait_for_port_open(port: int, timeout_sec: float) -> None:
                 return
         time.sleep(0.1)
     raise RuntimeError(f"port {port} did not become ready before timeout")
+
+
+def wait_for_server_ready(
+    process_info: Dict[str, object],
+    port: int,
+    timeout_sec: float,
+    wait_for_port: Callable[[int, float], None] = wait_for_port_open,
+    check_process_alive: Callable[[Dict[str, object]], None] = assert_process_alive,
+) -> None:
+    # 这里只看“端口有人监听”是不够的。
+    # 如果旧进程本来就占着这个端口，connect_ex 也会返回成功，
+    # 但这次新起的 case 进程可能其实已经因为 bind 失败退出了。
+    check_process_alive(process_info)
+    wait_for_port(port, timeout_sec)
+    check_process_alive(process_info)
 
 
 def stop_server_process(process_info: Dict[str, object], timeout_sec: float) -> None:
@@ -257,8 +313,10 @@ def build_case_args(args: argparse.Namespace, case: Dict[str, object]) -> argpar
 
 def run_suite_b_matrix(
     args: argparse.Namespace,
+    assert_port_available: Callable[[int], None] = assert_port_available,
     launch_server: Callable[[Dict[str, object], argparse.Namespace], Dict[str, object]] = launch_server_process,
     wait_for_port: Callable[[int, float], None] = wait_for_port_open,
+    check_process_alive: Callable[[Dict[str, object]], None] = assert_process_alive,
     run_case: Callable[[argparse.Namespace], Dict[str, object]] = run_suite_b.run_suite_b_case,
     stop_server: Callable[[Dict[str, object], float], None] = stop_server_process,
 ) -> Dict[str, object]:
@@ -269,12 +327,19 @@ def run_suite_b_matrix(
         # 每个 case 都单独起一个后端进程，并使用自己的 SQLite。
         # 原因很直接：Suite B 的主指标看的是“最终结果有没有被脏时序污染”，
         # 如果多个 case 共用一个 DB，前一轮落下来的 trace 会直接把后一轮 evaluator 口径弄脏。
+        assert_port_available(int(case["port"]))
         launch_values = dict(vars(args))
         launch_values["server_command"] = resolve_server_command(args, case)
         launch_args = argparse.Namespace(**launch_values)
         process_info = launch_server(case, launch_args)
         try:
-            wait_for_port(int(case["port"]), args.startup_timeout_sec)
+            wait_for_server_ready(
+                process_info,
+                int(case["port"]),
+                args.startup_timeout_sec,
+                wait_for_port=wait_for_port,
+                check_process_alive=check_process_alive,
+            )
             case_result = run_case(build_case_args(args, case))
             case_result["case_id"] = case["case_id"]
             case_result["server_log"] = case["server_log"]

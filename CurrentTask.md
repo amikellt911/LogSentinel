@@ -136,7 +136,8 @@ v1.0.0：在 MVP5 已完成最小可演示闭环的基础上，继续把“真�
   - 已有 `suite_a/run_suite_a.sh`、`suite_d/run_suite_d.sh`、`common/run_flamegraph_case.sh`、`common/wrk/trace_model.lua` 这批主入口。
   - 已固定 `Suite A / Suite B / Suite D / Suite A-Interaction` 的实验结构。
   - 已能把结果自动落到 `server/tests/benchmark/results/<suite>/`，并从 server log 自动摘出运行时统计。
-  - `Suite B` 的 `run_suite_b_matrix.py` 已支持直接用 CLI 指定后端绑核和线程资源，不再强依赖手写 `server-command` 模板。
+  - `Suite B` 的 `run_suite_b_matrix.py` 已支持直接用 CLI 指定后端绑核、I/O 线程和工作线程资源，不再强依赖手写 `server-command` 模板。
+  - `Suite B` 的矩阵 runner 已补端口占用预检，避免旧进程占着 case 端口时把 readiness 误判成新后端已启动。
   - 目前剩下的是把正式论文使用的结果表、截图和最终命令清单冻结，不再继续扩 benchmark 变量面。
 - 接下来主线优先级已经收窄成三件事：
   - `docker-compose`

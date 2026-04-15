@@ -77,6 +77,12 @@
   - [x] 为矩阵 runner 增加后端资源参数 CLI，避免每次手写整段 `--server-command`
   - [x] 在 README 固定 4 核本机 / 16 核云机示例命令
   - [x] 验证单测、Python 语法和最小 dry-run
+- [x] Suite B 矩阵 runner 第三刀：修端口假阳性，并补 server_io_threads CLI
+  - [x] 先写红灯单测，锁 `--server-io-threads` 会透传到默认命令
+  - [x] 先写红灯单测，锁端口被旧进程占用时矩阵 runner 必须拒绝启动该 case
+  - [x] 在 `main.cpp` 增加 `server_io_threads` 的 CLI override，保持外部 benchmark 语义清晰
+  - [x] 修正 matrix runner 的启动校验，避免“旧进程占着端口”被误判成 ready
+  - [x] 验证单测、Python 语法、最小 dry-run 和真实后端启动日志
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

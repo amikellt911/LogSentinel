@@ -290,3 +290,39 @@ feat(benchmark): 为 Suite B 矩阵 runner 增加资源控制 CLI
 - 如果同时传了 `--server-command` 和新的资源 CLI，当前 runner 会优先信 `--server-command`。因为模板模式本来就是“你自己全权接管启动命令”，不能再偷偷混进默认拼装参数。
 - `server_io_threads` 目前还没有进 `run_suite_b_matrix.py`，不是忘了，而是当前后端 CLI 侧并没有这个稳定入口，不能在 runner 里假装支持。
 - 默认命令现在会把 benchmark 关心的后端参数显式带上；如果后面有人把这些参数删回“依赖 main.cpp 默认值”，历史 benchmark 结果的可比性会立刻变差。
+
+---
+
+# Git Commit Message
+
+fix(benchmark): 修复 Suite B 端口假阳性并补 server_io_threads CLI
+
+# Modification
+
+- `CurrentTask.md`
+- `docs/dev-log/20260415-feat-docker-compose.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `server/src/main.cpp`
+- `server/tests/benchmark/suite_b/README.md`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix.py`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix_unit_test.py`
+
+# Learning Tips
+
+## Newbie Tips
+
+- “端口能连通”不等于“这次新起的后端已经启动成功”。如果旧进程本来就占着这个端口，`connect_ex()` 一样会成功，所以 benchmark runner 必须先判空端口，再看 child 进程有没有提前退出。
+- `server_io_threads` 和 `worker_threads` 不是一回事。前者对应 MiniMuduo 的 Reactor/I/O 线程，后者才是承接 Trace 聚合、AI、落库协作的主工作线程池。
+- benchmark CLI 可以用更贴近论文语义的名字，但内部实现不一定要跟数据库字段同名。这次外部叫 `--server-io-threads`，内部仍然压到现有 `kernel_io_threads` 冷启动语义上。
+
+## Function Explanation
+
+- `socket.connect_ex(...)`：返回 `0` 代表目标地址当前可连。它适合做“端口是否已被占用”的探针，但单独使用并不能证明新进程就是端口拥有者。
+- `process.poll()`：返回 `None` 代表子进程还活着；一旦拿到退出码，就说明 child 已经提前退出，通常应该连同最近的启动日志一起报错。
+- `setThreadNum(num)`：这里作用在 MiniMuduo 的 I/O 线程模型上，不会自动扩到业务 worker 线程池。
+
+## Pitfalls
+
+- 如果只在 launch 之后检查端口，而不在 launch 之前先判空，那么旧进程占端口的场景还是会被误认为“ready 已达成”。
+- `server_io_threads` 这种入口如果只补到 matrix runner，不补到后端 `main.cpp`，最后就会变成“命令行看起来支持，实际上后端根本没消费”的假配置。
+- 这次 matrix runner 的启动校验只解决“旧进程占端口”的假阳性，不等于已经把所有 ready 语义都做成强一致；后续如果还要更严，可以继续把启动日志关键字也纳入 readiness 条件。

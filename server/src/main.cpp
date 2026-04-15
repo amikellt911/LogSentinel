@@ -206,6 +206,7 @@ int main(int argc, char* argv[])
     bool trace_sweep_interval_explicit = false;
     int trace_idle_timeout_ms = 5000;
     bool trace_idle_timeout_explicit = false;
+    int server_io_threads_override = -1;
     int worker_threads_override = -1;
     int dispatch_worker_threads_override = -1;
     int worker_queue_size = 10000;
@@ -262,6 +263,11 @@ int main(int argc, char* argv[])
         } else if (arg == "--trace-idle-timeout-ms" && i + 1 < argc) {
             trace_idle_timeout_ms = std::stoi(argv[++i]);
             trace_idle_timeout_explicit = true;
+        } else if (arg == "--server-io-threads" && i + 1 < argc) {
+            // benchmark / 演示脚本更关心“服务器 I/O 线程”这个外部语义，
+            // 不需要知道内部配置字段叫 kernel_io_threads。
+            // 这里单独给一个 CLI override，只改冷启动线程模型，不碰 SQLite 保存值。
+            server_io_threads_override = std::stoi(argv[++i]);
         } else if (arg == "--worker-threads" && i + 1 < argc) {
             worker_threads_override = std::stoi(argv[++i]);
         } else if (arg == "--dispatch-worker-threads" && i + 1 < argc) {
@@ -330,6 +336,10 @@ int main(int argc, char* argv[])
     }
     if (trace_idle_timeout_ms <= 0) {
         std::cerr << "Fatal Error: --trace-idle-timeout-ms must be > 0" << std::endl;
+        return -1;
+    }
+    if (server_io_threads_override == 0 || server_io_threads_override < -1) {
+        std::cerr << "Fatal Error: --server-io-threads must be > 0 or omitted" << std::endl;
         return -1;
     }
     if (worker_threads_override == 0 || worker_threads_override < -1) {
@@ -660,9 +670,12 @@ int main(int argc, char* argv[])
     // 这样 Settings 里改线程模型时，用户就能明确知道：
     // - `kernel_io_threads` 影响的是 MiniMuduo 收包/分发这一层；
     // - `kernel_worker_threads` 影响的是 Trace 聚合、AI 调用和落库协作这一层。
-    const int configured_io_threads = startup_app_config.kernel_io_threads > 0
-                                          ? startup_app_config.kernel_io_threads
-                                          : 1;
+    const int configured_io_threads =
+        server_io_threads_override > 0
+            ? server_io_threads_override
+            : (startup_app_config.kernel_io_threads > 0
+                   ? startup_app_config.kernel_io_threads
+                   : 1);
     const int num_io_threads = configured_io_threads;
     const int detected_cpu_cores = num_cpu_cores > 0 ? num_cpu_cores : 1;
     int default_worker_threads = detected_cpu_cores - num_io_threads;

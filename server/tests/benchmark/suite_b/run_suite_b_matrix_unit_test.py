@@ -47,6 +47,8 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
                 "./server/build/LogSentinel",
                 "--server-cpuset",
                 "0-2",
+                "--server-io-threads",
+                "3",
                 "--worker-threads",
                 "8",
                 "--dispatch-worker-threads",
@@ -76,6 +78,7 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
 
         self.assertEqual("./server/build/LogSentinel", args.server_bin)
         self.assertEqual("0-2", args.server_cpuset)
+        self.assertEqual(3, args.server_io_threads)
         self.assertEqual(8, args.worker_threads)
         self.assertEqual(4, args.dispatch_worker_threads)
         self.assertEqual(4096, args.worker_queue_size)
@@ -101,6 +104,7 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
             server_command="",
             server_bin="./server/build/LogSentinel",
             server_cpuset="0-3",
+            server_io_threads=5,
             no_auto_start_proxy=True,
             worker_threads=12,
             dispatch_worker_threads=4,
@@ -132,6 +136,7 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
         self.assertIn("--db /tmp/suite_b.db", command)
         self.assertIn("--port 19123", command)
         self.assertIn("--trace-lifecycle-profile protected", command)
+        self.assertIn("--server-io-threads 5", command)
         self.assertIn("--worker-threads 12", command)
         self.assertIn("--dispatch-worker-threads 4", command)
         self.assertIn("--worker-queue-size 4096", command)
@@ -184,14 +189,21 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
                 # 而不是测试里单独调 helper 能过，真正跑矩阵时又掉回空字符串。
                 sequence.append(("launch", case["case_id"]))
                 self.assertIn(case["trace_lifecycle_profile"], args.server_command)
+                self.assertIn("--server-io-threads 3", args.server_command)
                 self.assertIn("--worker-threads 6", args.server_command)
                 self.assertIn("--dispatch-worker-threads 2", args.server_command)
                 self.assertIn("--disable-ai", args.server_command)
                 self.assertIn("taskset -c 0-3", args.server_command)
                 return {"pid": case["case_id"]}
 
+            def fake_assert_port_available(port: int) -> None:
+                sequence.append(("port_check", port))
+
             def fake_wait(_port: int, _timeout_sec: float) -> None:
                 sequence.append(("wait", _port))
+
+            def fake_check_process_alive(_process_info) -> None:
+                return None
 
             def fake_run_case(case_args):
                 sequence.append(("case", case_args.trace_lifecycle_profile, case_args.profile))
@@ -209,6 +221,7 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
                 server_command="",
                 server_bin="python3 fake_server.py",
                 server_cpuset="0-3",
+                server_io_threads=3,
                 no_auto_start_proxy=True,
                 worker_threads=6,
                 dispatch_worker_threads=2,
@@ -251,8 +264,10 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
 
             result = matrix_module.run_suite_b_matrix(
                 args,
+                assert_port_available=fake_assert_port_available,
                 launch_server=fake_launch,
                 wait_for_port=fake_wait,
+                check_process_alive=fake_check_process_alive,
                 run_case=fake_run_case,
                 stop_server=fake_stop,
             )
@@ -262,9 +277,22 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
         self.assertEqual(4, result["total_cases"])
         self.assertEqual(4, len(result["cases"]))
         self.assertEqual(4, saved["total_cases"])
-        self.assertEqual(("launch", "protected__clean_baseline"), sequence[0])
+        self.assertEqual(("port_check", 19080), sequence[0])
+        self.assertEqual(("launch", "protected__clean_baseline"), sequence[1])
         self.assertIn(("case", "minimal", "mixed_realistic"), sequence)
         self.assertEqual(("stop", "minimal__mixed_realistic"), sequence[-1])
+
+    def test_assert_port_available_rejects_occupied_port(self) -> None:
+        # 这条测试锁的是“ready 前先判空端口”，
+        # 避免旧进程占着端口时，被误判成新 case 已经成功启动。
+        if matrix_module is None or not hasattr(matrix_module, "assert_port_available"):
+            self.fail("assert_port_available should exist for Suite B matrix runner")
+
+        def fake_probe(_host: str, _port: int) -> int:
+            return 0
+
+        with self.assertRaises(RuntimeError):
+            matrix_module.assert_port_available(19080, probe_connect=fake_probe)
 
 
 if __name__ == "__main__":
