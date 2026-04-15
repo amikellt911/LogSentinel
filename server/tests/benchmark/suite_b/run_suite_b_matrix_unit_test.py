@@ -35,6 +35,117 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
         self.assertEqual("clean_baseline,mixed_realistic", args.sender_profiles)
         self.assertEqual("protected,minimal", args.trace_lifecycle_profiles)
 
+    def test_parse_args_accepts_server_bin_and_resource_flags(self) -> None:
+        # 这条测试锁的是“新入口能不能替代手写 server-command 模板”。
+        # 只要这些字段能稳定进 argparse，后面 4 核和 16 核的差别就只是换 CLI 数字，不用改脚本代码。
+        if matrix_module is None or not hasattr(matrix_module, "parse_args"):
+            self.fail("parse_args should exist for Suite B matrix runner")
+
+        args = matrix_module.parse_args(
+            [
+                "--server-bin",
+                "./server/build/LogSentinel",
+                "--server-cpuset",
+                "0-2",
+                "--worker-threads",
+                "8",
+                "--dispatch-worker-threads",
+                "4",
+                "--worker-queue-size",
+                "4096",
+                "--trace-capacity",
+                "16",
+                "--trace-token-limit",
+                "0",
+                "--trace-sweep-interval-ms",
+                "200",
+                "--trace-idle-timeout-ms",
+                "800",
+                "--trace-max-dispatch-per-tick",
+                "64",
+                "--trace-buffered-span-limit",
+                "8192",
+                "--trace-active-session-limit",
+                "1024",
+                "--disable-ai",
+                "--disable-webhook",
+                "--disable-buffered-trace-repo",
+                "--no-auto-start-proxy",
+            ]
+        )
+
+        self.assertEqual("./server/build/LogSentinel", args.server_bin)
+        self.assertEqual("0-2", args.server_cpuset)
+        self.assertEqual(8, args.worker_threads)
+        self.assertEqual(4, args.dispatch_worker_threads)
+        self.assertEqual(4096, args.worker_queue_size)
+        self.assertEqual(16, args.trace_capacity)
+        self.assertEqual(0, args.trace_token_limit)
+        self.assertEqual(200, args.trace_sweep_interval_ms)
+        self.assertEqual(800, args.trace_idle_timeout_ms)
+        self.assertEqual(64, args.trace_max_dispatch_per_tick)
+        self.assertEqual(8192, args.trace_buffered_span_limit)
+        self.assertEqual(1024, args.trace_active_session_limit)
+        self.assertTrue(args.disable_ai)
+        self.assertTrue(args.disable_webhook)
+        self.assertTrue(args.disable_buffered_trace_repo)
+        self.assertTrue(args.no_auto_start_proxy)
+
+    def test_build_server_command_uses_default_builder_when_template_missing(self) -> None:
+        # 这里直接锁默认命令拼装结果，避免后面某个参数漏传后，
+        # 矩阵 runner 表面还能跑，实际却悄悄回退到后端默认配置。
+        if matrix_module is None or not hasattr(matrix_module, "resolve_server_command"):
+            self.fail("resolve_server_command should exist for Suite B matrix runner")
+
+        args = SimpleNamespace(
+            server_command="",
+            server_bin="./server/build/LogSentinel",
+            server_cpuset="0-3",
+            no_auto_start_proxy=True,
+            worker_threads=12,
+            dispatch_worker_threads=4,
+            worker_queue_size=4096,
+            trace_capacity=16,
+            trace_token_limit=0,
+            trace_sweep_interval_ms=200,
+            trace_idle_timeout_ms=800,
+            trace_max_dispatch_per_tick=64,
+            trace_buffered_span_limit=8192,
+            trace_active_session_limit=1024,
+            disable_ai=True,
+            disable_webhook=True,
+            disable_buffered_trace_repo=False,
+        )
+        case = {
+            "sqlite_db": "/tmp/suite_b.db",
+            "trace_lifecycle_profile": "protected",
+            "port": 19123,
+            "server_log": "/tmp/server.log",
+            "case_id": "protected__clean_baseline",
+            "run_dir": "/tmp/run_dir",
+        }
+
+        command = matrix_module.resolve_server_command(args, case)
+
+        self.assertIn("taskset -c 0-3", command)
+        self.assertIn("./server/build/LogSentinel", command)
+        self.assertIn("--db /tmp/suite_b.db", command)
+        self.assertIn("--port 19123", command)
+        self.assertIn("--trace-lifecycle-profile protected", command)
+        self.assertIn("--worker-threads 12", command)
+        self.assertIn("--dispatch-worker-threads 4", command)
+        self.assertIn("--worker-queue-size 4096", command)
+        self.assertIn("--trace-capacity 16", command)
+        self.assertIn("--trace-token-limit 0", command)
+        self.assertIn("--trace-sweep-interval-ms 200", command)
+        self.assertIn("--trace-idle-timeout-ms 800", command)
+        self.assertIn("--trace-max-dispatch-per-tick 64", command)
+        self.assertIn("--trace-buffered-span-limit 8192", command)
+        self.assertIn("--trace-active-session-limit 1024", command)
+        self.assertIn("--disable-ai", command)
+        self.assertIn("--disable-webhook", command)
+        self.assertIn("--no-auto-start-proxy", command)
+
     def test_build_case_matrix_creates_isolated_paths(self) -> None:
         if matrix_module is None or not hasattr(matrix_module, "build_case_matrix"):
             self.fail("build_case_matrix should exist for Suite B matrix runner")
@@ -69,8 +180,14 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
             sequence = []
 
             def fake_launch(case, args):
+                # 这条断言保证 run_suite_b_matrix 主流程里确实吃到了新的默认命令构造，
+                # 而不是测试里单独调 helper 能过，真正跑矩阵时又掉回空字符串。
                 sequence.append(("launch", case["case_id"]))
                 self.assertIn(case["trace_lifecycle_profile"], args.server_command)
+                self.assertIn("--worker-threads 6", args.server_command)
+                self.assertIn("--dispatch-worker-threads 2", args.server_command)
+                self.assertIn("--disable-ai", args.server_command)
+                self.assertIn("taskset -c 0-3", args.server_command)
                 return {"pid": case["case_id"]}
 
             def fake_wait(_port: int, _timeout_sec: float) -> None:
@@ -89,7 +206,23 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
                 sequence.append(("stop", process_info["pid"]))
 
             args = SimpleNamespace(
-                server_command="python3 fake_server.py --profile {trace_lifecycle_profile} --db {sqlite_db} --port {port} > {log_path}",
+                server_command="",
+                server_bin="python3 fake_server.py",
+                server_cpuset="0-3",
+                no_auto_start_proxy=True,
+                worker_threads=6,
+                dispatch_worker_threads=2,
+                worker_queue_size=2048,
+                trace_capacity=12,
+                trace_token_limit=0,
+                trace_sweep_interval_ms=200,
+                trace_idle_timeout_ms=800,
+                trace_max_dispatch_per_tick=64,
+                trace_buffered_span_limit=4096,
+                trace_active_session_limit=512,
+                disable_ai=True,
+                disable_webhook=False,
+                disable_buffered_trace_repo=False,
                 run_root=str(run_root),
                 sender_profiles="clean_baseline,mixed_realistic",
                 trace_lifecycle_profiles="protected,minimal",

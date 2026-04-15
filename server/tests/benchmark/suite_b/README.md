@@ -110,14 +110,97 @@ python3 server/tests/benchmark/suite_b/run_suite_b.py \
 
 ```bash
 python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
-  --server-command "./server/build/LogSentinel --db {sqlite_db} --port {port} --trace-lifecycle-profile {trace_lifecycle_profile}" \
   --run-root /tmp/suite_b_matrix \
   --sender-profiles clean_baseline,mixed_realistic,late_replay_stress \
-  --trace-lifecycle-profiles protected,minimal
+  --trace-lifecycle-profiles protected,minimal \
+  --disable-ai \
+  --no-auto-start-proxy
 ```
 
 注意：
 
 - `run_suite_b_matrix.py` 是 case 级矩阵 runner，每个 case 都会拿独立的 `suite_b.db / manifest / result.json / server.log`；
-- `server-command` 是模板字符串，当前支持注入 `{sqlite_db} / {trace_lifecycle_profile} / {port} / {log_path} / {case_id} / {run_dir}`；
+- 现在默认不再要求你手写 `--server-command`，可以直接用顶层 CLI 控制后端资源参数；
+- 如果你已经有外部包装脚本，仍然可以继续传 `--server-command` 模板，当前支持注入 `{sqlite_db} / {trace_lifecycle_profile} / {port} / {log_path} / {case_id} / {run_dir}`；
 - 如果只是验证编排逻辑是否活着，可以配 `--dry-run`，再给它一个能监听端口的最小 dummy server。
+
+新增的资源控制 CLI：
+
+- `--server-bin`
+  - 后端可执行文件，默认 `./server/build/LogSentinel`
+- `--server-cpuset`
+  - 只给后端进程绑核，例如 `0-1` 或 `2-13`
+- `--worker-threads`
+- `--dispatch-worker-threads`
+- `--worker-queue-size`
+- `--trace-capacity`
+- `--trace-token-limit`
+- `--trace-sweep-interval-ms`
+- `--trace-idle-timeout-ms`
+- `--trace-max-dispatch-per-tick`
+- `--trace-buffered-span-limit`
+- `--trace-active-session-limit`
+- `--disable-ai`
+- `--disable-webhook`
+- `--disable-buffered-trace-repo`
+- `--no-auto-start-proxy`
+
+这批参数的目的很直接：
+
+- 4 核本机和 16 核云机现在只需要改 CLI 数字；
+- 不需要再手改一长串 `server-command` 模板；
+- 每次实验命令里就能直接看见后端到底吃了多少核、多少线程。
+
+4 核本机最小示例：
+
+```bash
+python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
+  --run-root /tmp/suite_b_matrix_local4 \
+  --server-cpuset 0-1 \
+  --worker-threads 3 \
+  --dispatch-worker-threads 1 \
+  --worker-queue-size 2048 \
+  --trace-capacity 12 \
+  --trace-token-limit 0 \
+  --trace-sweep-interval-ms 200 \
+  --trace-idle-timeout-ms 800 \
+  --trace-max-dispatch-per-tick 64 \
+  --trace-buffered-span-limit 4096 \
+  --trace-active-session-limit 512 \
+  --send-workers 2 \
+  --disable-ai \
+  --no-auto-start-proxy
+```
+
+说明：
+
+- 这个例子默认把 2 个核给后端，sender 仍然跑在 matrix runner 自己的 Python 进程里；
+- `--send-workers 2` 只是 sender 的并发数，不是绑核；
+- 如果本机就只有 4 核，这一档足够先验证 `protected/minimal` 的语义差异有没有出来。
+
+16 核云机推荐起步示例：
+
+```bash
+python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
+  --run-root /tmp/suite_b_matrix_remote16 \
+  --server-cpuset 2-13 \
+  --worker-threads 16 \
+  --dispatch-worker-threads 4 \
+  --worker-queue-size 8192 \
+  --trace-capacity 12 \
+  --trace-token-limit 0 \
+  --trace-sweep-interval-ms 200 \
+  --trace-idle-timeout-ms 800 \
+  --trace-max-dispatch-per-tick 128 \
+  --trace-buffered-span-limit 8192 \
+  --trace-active-session-limit 2048 \
+  --send-workers 8 \
+  --disable-ai \
+  --no-auto-start-proxy
+```
+
+说明：
+
+- 这里默认预留前 2 个核给系统和其他实验辅助进程，后端先拿 12 个核起步；
+- `worker_threads` 和 `dispatch_worker_threads` 都是后端进程参数，跟 sender 的 `--send-workers` 不是一回事；
+- 如果云机不是 16 核，就只改 `--server-cpuset / --worker-threads / --dispatch-worker-threads / --send-workers` 这几项，其他 lifecycle 参数先别乱动。

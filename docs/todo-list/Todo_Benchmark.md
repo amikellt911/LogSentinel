@@ -72,6 +72,11 @@
   - [x] 实现 run_suite_b_matrix.py：按 case 启停后端，避免不同 case 之间 SQLite 污染
   - [x] 支持 `server-command` 模板，把 `trace_lifecycle_profile / sqlite_db / port / log_path` 注入到每个 case
   - [x] 验证矩阵 runner 单测、Python 语法和最小单 case dry-run
+- [x] Suite B 矩阵 runner 第二刀：补资源控制 CLI，适配 4 核本机和 16 核云机
+  - [x] 先写红灯单测，锁 `--server-bin` 默认命令拼装和 `--server-cpuset` 注入
+  - [x] 为矩阵 runner 增加后端资源参数 CLI，避免每次手写整段 `--server-command`
+  - [x] 在 README 固定 4 核本机 / 16 核云机示例命令
+  - [x] 验证单测、Python 语法和最小 dry-run
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

@@ -255,3 +255,38 @@ feat(benchmark): 增加 Suite B 矩阵 runner 第一刀
 - `shell=True` 虽然让 `server-command` 模板更灵活，但也把“停机要不要管子进程”这个问题带进来了；如果后续有人把这层改回只杀 `process.pid`，很容易重新留下端口残留。
 - 矩阵 runner 现在默认按 case 顺序串行执行，没有并发；这是故意的，因为当前重点是先保证 case 之间完全隔离，而不是抢跑实验总时长。
 - 用 dummy server + `--dry-run` 的最小验证，只能证明矩阵 runner 的编排活着；真正要证明 `protected` 和 `minimal` 差异，还得用真实后端和真实 sender 请求。
+
+---
+
+# Git Commit Message
+
+feat(benchmark): 为 Suite B 矩阵 runner 增加资源控制 CLI
+
+# Modification
+
+- `CurrentTask.md`
+- `docs/dev-log/20260415-feat-docker-compose.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `server/tests/benchmark/suite_b/README.md`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix.py`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix_unit_test.py`
+
+# Learning Tips
+
+## Newbie Tips
+
+- benchmark runner 如果强依赖一长串 `--server-command` 模板，后面机器核数一变，实验命令很快就会变成人脑难以检查的字符串。把资源参数拉成顶层 CLI，复现实验时才看得清。
+- `--send-workers` 只是 sender 的并发，不是后端线程数，更不是绑核。Suite B 里 sender 现在还跑在 matrix runner 自己的 Python 进程里，所以后端绑核和 sender 并发是两条线。
+- 4 核本机和 16 核云机最该改的是“资源参数”，不是 lifecycle 参数。`trace_idle_timeout_ms / grace / tombstone` 这些决定实验语义，不该为了迁就机器核数乱改。
+
+## Function Explanation
+
+- `shlex.split(...)`：把 `--server-bin` 这种命令字符串按 shell 语义切成 token，避免把 `python3 fake_server.py` 错当成单个可执行文件路径。
+- `shlex.quote(...)`：把每个 token 重新转回安全的 shell 字符串，避免路径里带空格时启动命令被 shell 拆坏。
+- `taskset -c <cpuset>`：把整个后端进程绑到指定 CPU 集合上；当前这一刀只绑后端，不会自动把 sender 也拆出去单独绑核。
+
+## Pitfalls
+
+- 如果同时传了 `--server-command` 和新的资源 CLI，当前 runner 会优先信 `--server-command`。因为模板模式本来就是“你自己全权接管启动命令”，不能再偷偷混进默认拼装参数。
+- `server_io_threads` 目前还没有进 `run_suite_b_matrix.py`，不是忘了，而是当前后端 CLI 侧并没有这个稳定入口，不能在 runner 里假装支持。
+- 默认命令现在会把 benchmark 关心的后端参数显式带上；如果后面有人把这些参数删回“依赖 main.cpp 默认值”，历史 benchmark 结果的可比性会立刻变差。

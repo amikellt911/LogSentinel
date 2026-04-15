@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import signal
 import socket
 import subprocess
@@ -22,7 +23,26 @@ def default_run_root() -> str:
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Suite B 3x2 矩阵 runner")
-    parser.add_argument("--server-command", required=True)
+    parser.add_argument("--server-command", default="")
+    parser.add_argument("--server-bin", default="./server/build/LogSentinel")
+    parser.add_argument("--server-cpuset", default="")
+    parser.add_argument("--no-auto-start-proxy", action="store_true")
+    # 这一组资源参数故意直接暴露在矩阵 runner 顶层。
+    # 否则 4 核本机和 16 核云机每换一次资源配额，都得手写一整段 shell 模板，
+    # 最后实验记录里只剩一坨字符串，根本没法稳定复现。
+    parser.add_argument("--worker-threads", type=int, default=3)
+    parser.add_argument("--dispatch-worker-threads", type=int, default=1)
+    parser.add_argument("--worker-queue-size", type=int, default=2048)
+    parser.add_argument("--trace-capacity", type=int, default=12)
+    parser.add_argument("--trace-token-limit", type=int, default=0)
+    parser.add_argument("--trace-sweep-interval-ms", type=int, default=200)
+    parser.add_argument("--trace-idle-timeout-ms", type=int, default=800)
+    parser.add_argument("--trace-max-dispatch-per-tick", type=int, default=64)
+    parser.add_argument("--trace-buffered-span-limit", type=int, default=4096)
+    parser.add_argument("--trace-active-session-limit", type=int, default=512)
+    parser.add_argument("--disable-ai", action="store_true")
+    parser.add_argument("--disable-webhook", action="store_true")
+    parser.add_argument("--disable-buffered-trace-repo", action="store_true")
     parser.add_argument("--run-root", default=default_run_root())
     parser.add_argument("--output-summary", default="")
     parser.add_argument("--sender-profiles", default="clean_baseline,mixed_realistic,late_replay_stress")
@@ -94,6 +114,75 @@ def format_server_command(template: str, case: Dict[str, object]) -> str:
         case_id=case["case_id"],
         run_dir=case["run_dir"],
     )
+
+
+def shell_join(parts: List[str]) -> str:
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def build_default_server_command(args: argparse.Namespace, case: Dict[str, object]) -> str:
+    parts: List[str] = []
+    # 这里先只绑后端进程，不碰 sender 主进程。
+    # 原因不是 sender 不重要，而是 sender 当前就在 matrix runner 这个 Python 进程里执行；
+    # 如果要分别给 sender 绑核，就得把 sender 再拆成独立子进程，这一刀先不扩工程量。
+    if args.server_cpuset:
+        parts.extend(["taskset", "-c", args.server_cpuset])
+
+    server_bin_tokens = shlex.split(args.server_bin)
+    if not server_bin_tokens:
+        raise ValueError("--server-bin must not be empty")
+    parts.extend(server_bin_tokens)
+
+    # 默认命令显式把 benchmark 关心的后端参数全部带上。
+    # 这样实验语义不会偷偷依赖 main.cpp 的默认值，也不会因为别处改了默认配置导致历史命令失真。
+    parts.extend(
+        [
+            "--db",
+            str(case["sqlite_db"]),
+            "--port",
+            str(case["port"]),
+            "--trace-lifecycle-profile",
+            str(case["trace_lifecycle_profile"]),
+            "--worker-threads",
+            str(args.worker_threads),
+            "--dispatch-worker-threads",
+            str(args.dispatch_worker_threads),
+            "--worker-queue-size",
+            str(args.worker_queue_size),
+            "--trace-capacity",
+            str(args.trace_capacity),
+            "--trace-token-limit",
+            str(args.trace_token_limit),
+            "--trace-sweep-interval-ms",
+            str(args.trace_sweep_interval_ms),
+            "--trace-idle-timeout-ms",
+            str(args.trace_idle_timeout_ms),
+            "--trace-max-dispatch-per-tick",
+            str(args.trace_max_dispatch_per_tick),
+            "--trace-buffered-span-limit",
+            str(args.trace_buffered_span_limit),
+            "--trace-active-session-limit",
+            str(args.trace_active_session_limit),
+        ]
+    )
+
+    if args.no_auto_start_proxy:
+        parts.append("--no-auto-start-proxy")
+    if args.disable_ai:
+        parts.append("--disable-ai")
+    if args.disable_webhook:
+        parts.append("--disable-webhook")
+    if args.disable_buffered_trace_repo:
+        parts.append("--disable-buffered-trace-repo")
+    return shell_join(parts)
+
+
+def resolve_server_command(args: argparse.Namespace, case: Dict[str, object]) -> str:
+    # 兼容旧的模板入口，避免已经写好的外部脚本全部失效；
+    # 但如果用户没传模板，就走新的默认命令构造，直接吃 CLI 资源参数。
+    if args.server_command:
+        return format_server_command(args.server_command, case)
+    return build_default_server_command(args, case)
 
 
 def launch_server_process(case: Dict[str, object], args: argparse.Namespace) -> Dict[str, object]:
@@ -181,7 +270,7 @@ def run_suite_b_matrix(
         # 原因很直接：Suite B 的主指标看的是“最终结果有没有被脏时序污染”，
         # 如果多个 case 共用一个 DB，前一轮落下来的 trace 会直接把后一轮 evaluator 口径弄脏。
         launch_values = dict(vars(args))
-        launch_values["server_command"] = format_server_command(args.server_command, case)
+        launch_values["server_command"] = resolve_server_command(args, case)
         launch_args = argparse.Namespace(**launch_values)
         process_info = launch_server(case, launch_args)
         try:
