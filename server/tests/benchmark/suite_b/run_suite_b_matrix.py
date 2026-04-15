@@ -36,7 +36,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--worker-queue-size", type=int, default=2048)
     parser.add_argument("--trace-capacity", type=int, default=12)
     parser.add_argument("--trace-token-limit", type=int, default=0)
-    parser.add_argument("--trace-sweep-interval-ms", type=int, default=200)
+    # 这里把 Suite B 的默认 sweep tick 下调到 100ms。
+    # 目的不是改后端产品语义，而是让 benchmark 场景里的时间轮量化误差更小，
+    # 避免像 795ms/811ms 这种边界样本因为 tick 太粗而提前掉出“理论可吸收”窗口。
+    parser.add_argument("--trace-sweep-interval-ms", type=int, default=100)
     parser.add_argument("--trace-idle-timeout-ms", type=int, default=800)
     parser.add_argument("--trace-max-dispatch-per-tick", type=int, default=64)
     parser.add_argument("--trace-buffered-span-limit", type=int, default=4096)

@@ -166,7 +166,7 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
   --worker-queue-size 2048 \
   --trace-capacity 12 \
   --trace-token-limit 0 \
-  --trace-sweep-interval-ms 200 \
+  --trace-sweep-interval-ms 100 \
   --trace-idle-timeout-ms 800 \
   --trace-max-dispatch-per-tick 64 \
   --trace-buffered-span-limit 4096 \
@@ -195,7 +195,7 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
   --worker-queue-size 8192 \
   --trace-capacity 12 \
   --trace-token-limit 0 \
-  --trace-sweep-interval-ms 200 \
+  --trace-sweep-interval-ms 100 \
   --trace-idle-timeout-ms 800 \
   --trace-max-dispatch-per-tick 128 \
   --trace-buffered-span-limit 8192 \

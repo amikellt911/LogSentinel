@@ -326,3 +326,32 @@ fix(benchmark): 修复 Suite B 端口假阳性并补 server_io_threads CLI
 - 如果只在 launch 之后检查端口，而不在 launch 之前先判空，那么旧进程占端口的场景还是会被误认为“ready 已达成”。
 - `server_io_threads` 这种入口如果只补到 matrix runner，不补到后端 `main.cpp`，最后就会变成“命令行看起来支持，实际上后端根本没消费”的假配置。
 - 这次 matrix runner 的启动校验只解决“旧进程占端口”的假阳性，不等于已经把所有 ready 语义都做成强一致；后续如果还要更严，可以继续把启动日志关键字也纳入 readiness 条件。
+
+---
+
+# Git Commit Message
+
+chore(benchmark): 下调 Suite B 默认 sweep tick 到 100ms
+
+# Modification
+
+- `docs/dev-log/20260415-feat-docker-compose.md`
+- `server/tests/benchmark/suite_b/README.md`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix.py`
+
+# Learning Tips
+
+## Newbie Tips
+
+- `trace_sweep_interval_ms` 变小，不等于后端语义变了。它首先改变的是“时间轮多久推进一次 tick”，也就是 timeout / sealed deadline 的量化精度。
+- 如果 tick 太粗，配置写的是 `800ms idle timeout`，真实效果就可能提前到大约 `600~800ms` 之间触发；因为会话 deadline 是挂在 tick 上，而不是直接挂在精确 wall-clock 上。
+- benchmark 里把默认 tick 从 `200ms` 调到 `100ms`，是在减少边界样本被量化误差误伤的概率，不是在偷偷放宽 protected 的能力边界。
+
+## Function Explanation
+
+- `parser.add_argument("--trace-sweep-interval-ms", ..., default=100)`：这里改的是矩阵 runner 的默认实验参数，不会强行覆盖你手工传入的 CLI 值；只是在你没显式写这个参数时，默认给 Suite B 更细的 tick。
+
+## Pitfalls
+
+- 这次改的是 Suite B benchmark 默认值，不是 `main.cpp` 里的全局后端默认值；如果你手工命令里仍然写 `--trace-sweep-interval-ms 200`，那就还是 200。
+- 只调 sweep tick 并不能彻底消除边界误差，它只是把误差区间缩小一半；如果后面还要做“绝不早于配置值”的语义保证，就得继续改 TraceSessionManager 的 deadline 计算方式。
