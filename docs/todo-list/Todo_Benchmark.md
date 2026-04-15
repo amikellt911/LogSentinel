@@ -56,7 +56,12 @@
   - [x] 实现主线程调度、worker 阻塞发送、主线程统一写 manifest 的队列模型
   - [x] 为 CLI 增加 `--send-workers`，默认保持单 worker 兼容现有用法
   - [x] 验证 sender 单测、Python 语法和多 worker dry-run
-- [ ] Suite B evaluator 第一刀：读取 manifest + SQLite 快照，计算 completeness / pollution / duplicate 三个主指标
+- [x] Suite B evaluator 第一刀：读取 manifest + SQLite 快照，计算 completeness / pollution / duplicate 三个主指标
+  - [x] 先写 evaluator 红灯单测，锁 SQLite 稳定等待、manifest 提炼和三项主指标口径
+  - [x] 实现 evaluator.py：轮询 SQLite 稳定后再读取最终快照
+  - [x] 实现 manifest -> ExpectedMergeSet / ExpectedIgnoreEvents / ReplayEvents 的提炼逻辑
+  - [x] 输出三项主指标和分子分母，方便后续论文表格直接复用
+  - [x] 验证 evaluator 单测、Python 语法和最小假数据跑通
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

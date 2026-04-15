@@ -15,10 +15,15 @@
   - 输出 `manifest.jsonl` 真值账本。
 - `sender_unit_test.py`
   - 覆盖 profile、延迟桶、trace 模板、min-heap 调度和 manifest 字段。
+- `evaluator.py`
+  - 轮询 SQLite，等待 `trace_summary / trace_span` 计数稳定；
+  - 从 manifest 提炼 `ExpectedMergeSet / ExpectedIgnoreEvents / ReplayEvents`；
+  - 计算 `trace_completeness_rate / trace_pollution_rate / duplicate_persistence_rate`。
+- `evaluator_unit_test.py`
+  - 覆盖 SQLite 稳定等待、manifest 提炼和三项主指标口径。
 
 当前还没做：
 
-- `evaluator.py`
 - `run_suite_b.py`
 
 这条线故意不复用 `common/wrk/` 当主入口。
@@ -49,3 +54,24 @@ python3 server/tests/benchmark/suite_b/sender.py \
 - `manifest.jsonl` 仍然是一行一个事件，但多 worker 下默认按“完成顺序”写入，不再强行按 `planned_emit_at_ms` 排序；
 - 后续 evaluator 如果需要稳定排序，再按 `planned_emit_at_ms` 和 `span_id` 做离线重排；
 - sender 这里故意不让 worker 线程直接写 manifest，避免把“网络阻塞并发”和“文件写入串行账本”混成一锅。
+
+最小 evaluator 示例：
+
+```bash
+python3 server/tests/benchmark/suite_b/evaluator.py \
+  --manifest /tmp/suite_b_sender_manifest.jsonl \
+  --sqlite-db /tmp/suite_b.db \
+  --output-json /tmp/suite_b_eval.json
+```
+
+当前 evaluator 第一刀直接输出：
+
+- `sqlite_final_counts`
+- `trace_completeness_rate`
+- `trace_pollution_rate`
+- `duplicate_persistence_rate`
+
+注意：
+
+- 这三个主指标当前先走 `manifest + SQLite`，还没有把 runtime log 冲突证据纳入 duplicate 归因；
+- `duplicate_persistence_rate` 第一刀先按 trace 级副作用归因，只要 replay 所在 trace 因额外 span 或 `summary.span_count` 膨胀而偏离期望，就把这条 replay 事件记成 bad。

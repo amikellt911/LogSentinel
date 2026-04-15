@@ -153,3 +153,37 @@ feat(benchmark): 为 Suite B sender 增加多 worker 发送模型
 - 多 worker 下 `manifest.jsonl` 默认按完成顺序写，不再保证和 `planned_emit_at_ms` 一致；后续 evaluator 如果要稳定重放，必须自己按计划时间离线排序。
 - worker 退出哨兵的数量必须和 worker 数一致。只塞一个 `None`，只会放走一个线程，剩下的线程会永远卡在 `get()`。
 - `run_sender()` 不能把“发了多少条事件”直接当进程退出码返回，否则 shell 会把非零成功运行误判成失败。
+
+---
+
+# Git Commit Message
+
+feat(benchmark): 增加 Suite B evaluator 第一刀
+
+# Modification
+
+- `docs/dev-log/20260415-feat-docker-compose.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `server/tests/benchmark/suite_b/README.md`
+- `server/tests/benchmark/suite_b/evaluator.py`
+- `server/tests/benchmark/suite_b/evaluator_unit_test.py`
+
+# Learning Tips
+
+## Newbie Tips
+
+- `manifest` 记录的是“发送事件”，不是“最终 trace 结果”。所以 evaluator 第一件事不是直接查 SQLite，而是先把事件层折叠成 `ExpectedMergeSet / ExpectedIgnoreEvents / ReplayEvents` 这几种视图。
+- `trace_completeness_rate` 和 `trace_pollution_rate` 不能混着算。前者只回答“该有的 span 有没有丢”，后者单独回答“有没有多出不该有的 span”，不然一个错误会被重复处罚。
+- drain 等待最好看“SQLite 计数稳定”而不是拍脑袋 `sleep 3s`。样本规模、flush 节奏和机器负载一变，固定 sleep 很容易要么太短，要么浪费时间。
+
+## Function Explanation
+
+- `sqlite3.connect(...)`：Python 标准库 SQLite 连接；这次 evaluator 第一刀直接用它读最终快照，不先走 HTTP 详情接口。
+- `time.monotonic()`：单调时钟，不受系统时间回拨影响，适合做“最多等多久”的超时判断。
+- `set.issubset(...)`：集合包含判断；这里刚好拿来表达“ExpectedMergeSet 里的 span 是否都被最终落库保住了”。
+
+## Pitfalls
+
+- `duplicate_persistence_rate` 第一刀先按 trace 级副作用归因，只要 replay 所在 trace 因额外 span 或 `summary.span_count` 膨胀而偏离期望，就把该 replay 事件记成 bad；它还不是最细的单事件因果定位，后续如需更细要再接 runtime log。
+- 如果 sender 存在大量非 2xx 请求，而 evaluator 仍然直接拿 manifest 全量事件算指标，会把“发送端没送达”和“后端处理错误”混在一起；当前第一刀默认实验运行在本地健康链路上，后续如果要上更脏的网络条件，需要再显式过滤这类事件。
+- evaluator 先读 `trace_summary` 再读 `trace_span` 时，如果不先等 SQLite 稳定，就可能读到半成品快照，导致 completeness / pollution 的结果比真实值更差。
