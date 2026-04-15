@@ -4,9 +4,11 @@ import heapq
 import json
 import random
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
+import sender as sender_module
 from profiles import get_sender_profile
 from sender import (
     DelaySampler,
@@ -128,6 +130,53 @@ class SuiteBSenderUnitTest(unittest.TestCase):
         self.assertEqual("reorder_in_grace", rows[0]["delay_bucket"])
         self.assertEqual("merge_into_final_trace", rows[0]["expected_final_action"])
         self.assertEqual(202, rows[0]["http_status"])
+
+    def test_parse_args_accepts_send_workers(self) -> None:
+        try:
+            args = sender_module.parse_args(["--send-workers", "3", "--dry-run"])
+        except TypeError as exc:
+            self.fail(f"parse_args should accept explicit argv for unit tests: {exc}")
+
+        self.assertEqual(3, args.send_workers)
+        self.assertTrue(args.dry_run)
+
+    def test_run_scheduled_events_with_multi_workers_records_all_rows(self) -> None:
+        if not hasattr(sender_module, "run_scheduled_events"):
+            self.fail("run_scheduled_events should exist for Suite B sender multi-worker mode")
+
+        now_ms = int(time.time() * 1000) - 100
+        events = [
+            ScheduledSpanEvent(now_ms + 1, 1001, 1, None, "head", "clean_jitter", "original", "merge_into_final_trace", now_ms + 1, "svc", 0, 0, 0),
+            ScheduledSpanEvent(now_ms + 2, 1001, 2, 1, "body", "reorder_in_grace", "original", "merge_into_final_trace", now_ms + 2, "svc", 0, 0, 0),
+            ScheduledSpanEvent(now_ms + 3, 1002, 1, None, "head", "clean_jitter", "original", "merge_into_final_trace", now_ms + 3, "svc", 0, 0, 0),
+            ScheduledSpanEvent(now_ms + 4, 1002, 2, 1, "tail", "late_after_dispatch", "replay_clone", "ignore_after_cutoff", now_ms + 4, "svc", 0, 0, 0),
+        ]
+
+        # 这里用 fake post 而不是真实 HTTP，是为了只锁“多 worker + manifest”这条行为，
+        # 不让网络波动把 sender 自己的并发回归测试污染掉。
+        def fake_post(_url: str, _event: ScheduledSpanEvent, _timeout_sec: float) -> int:
+            time.sleep(0.01)
+            return 202
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = Path(temp_dir) / "manifest.jsonl"
+            sent = sender_module.run_scheduled_events(
+                events=events,
+                manifest_path=manifest_path,
+                url="http://127.0.0.1:8080/logs/spans",
+                timeout_sec=1.0,
+                dry_run=False,
+                send_workers=3,
+                post_func=fake_post,
+            )
+
+            rows = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(4, sent)
+        self.assertEqual(4, len(rows))
+        self.assertEqual([202, 202, 202, 202], sorted(row["http_status"] for row in rows))
+        self.assertTrue(all(row["actual_send_start_ms"] > 0 for row in rows))
+        self.assertTrue(all(row["actual_send_done_ms"] >= row["actual_send_start_ms"] for row in rows))
 
 
 if __name__ == "__main__":

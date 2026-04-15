@@ -119,3 +119,37 @@ feat(benchmark): 增加 Suite B sender 第一刀
 - `replay_clone` 不能直接替换原始 span。正确做法是“原始 span 正常发 + 复制品晚到”，否则 evaluator 分不清该保住的 span 和本该被 tombstone 拦住的复制品。
 - 只看 `planned_emit_at_ms` 不够，后续还要记录 `actual_send_start_ms / actual_send_done_ms`，否则 sender 自己卡住时会把后端生命周期实验结果污染掉。
 - `late_after_dispatch / replay_after_dispatch` 的真值标签必须是 `ignore_after_cutoff`，不然 completeness 和 pollution 指标会互相打架。
+
+---
+
+# Git Commit Message
+
+feat(benchmark): 为 Suite B sender 增加多 worker 发送模型
+
+# Modification
+
+- `docs/dev-log/20260415-feat-docker-compose.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `server/tests/benchmark/suite_b/README.md`
+- `server/tests/benchmark/suite_b/sender.py`
+- `server/tests/benchmark/suite_b/sender_unit_test.py`
+
+# Learning Tips
+
+## Newbie Tips
+
+- 多 worker sender 里最容易写错的不是并发发送，而是“谁负责写 manifest”。如果让 worker 一边发 HTTP 一边自己写文件，最后拿到的账本顺序和发送观测会被线程调度搅乱，很难解释 benchmark 真值。
+- `queue.Queue` 适合这种“主线程负责调度，worker 负责阻塞 I/O”的模型，因为它天然带锁和条件变量，不需要自己再补一层 wait/notify。
+- CLI 参数如果想做单测，最好让 `parse_args()` 支持显式传 `argv`，不然测试只能硬改全局 `sys.argv`，容易把别的测试一起污染。
+
+## Function Explanation
+
+- `queue.Queue()`：Python 标准库线程安全队列。主线程把到点事件塞进 `send_queue`，worker 发完后再把结果塞回 `result_queue`。
+- `threading.Thread(..., daemon=True)`：这里的 daemon 只是兜底，真正的正常退出还是靠主线程投递 `None` 哨兵并 `join()`。
+- `urllib.error.URLError`：代表连 HTTP 响应头都没拿到的传输层失败，这次 sender 里把它折叠成 `http_status=0`，避免单个网络错误直接把 benchmark sender 线程打死。
+
+## Pitfalls
+
+- 多 worker 下 `manifest.jsonl` 默认按完成顺序写，不再保证和 `planned_emit_at_ms` 一致；后续 evaluator 如果要稳定重放，必须自己按计划时间离线排序。
+- worker 退出哨兵的数量必须和 worker 数一致。只塞一个 `None`，只会放走一个线程，剩下的线程会永远卡在 `get()`。
+- `run_sender()` 不能把“发了多少条事件”直接当进程退出码返回，否则 shell 会把非零成功运行误判成失败。

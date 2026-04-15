@@ -5,13 +5,15 @@ from __future__ import annotations
 import argparse
 import heapq
 import json
+import queue
 import random
+import threading
 import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from profiles import SenderProfile, get_sender_profile
 
@@ -274,6 +276,10 @@ def post_span(url: str, event: ScheduledSpanEvent, timeout_sec: float) -> int:
             return int(response.status)
     except urllib.error.HTTPError as exc:
         return int(exc.code)
+    except urllib.error.URLError:
+        # 这里把“根本没拿到 HTTP 响应”的情况收敛成 0。
+        # 这样 sender 在 benchmark 场景下不会因为单个网络错误直接把整个多 worker 调度线程打死。
+        return 0
 
 
 def generate_scheduled_events(
@@ -310,8 +316,8 @@ def generate_scheduled_events(
     return events
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Suite B 生命周期鲁棒性 sender 第一刀")
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Suite B 生命周期鲁棒性 sender")
     parser.add_argument("--url", default="http://127.0.0.1:8080/logs/spans")
     parser.add_argument("--profile", default="mixed_realistic", choices=["clean_baseline", "mixed_realistic", "late_replay_stress"])
     parser.add_argument("--seed", type=int, default=20260415)
@@ -325,8 +331,121 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--service-name", default="svc-suite-b")
     parser.add_argument("--manifest", default="server/tests/benchmark/results/suite_b/manifest.jsonl")
     parser.add_argument("--timeout-sec", type=float, default=1.0)
+    parser.add_argument("--send-workers", type=int, default=1)
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def send_one_event(
+    event: ScheduledSpanEvent,
+    url: str,
+    timeout_sec: float,
+    dry_run: bool,
+    post_func: Callable[[str, ScheduledSpanEvent, float], int],
+) -> ScheduledSpanEvent:
+    # 发送阶段直接在 event 自身上回填观测值。
+    # 这样主线程最终写 manifest 时，不需要再维护第二份结果对象，字段口径也不会分裂。
+    event.actual_send_start_ms = current_time_ms()
+    event.http_status = 0 if dry_run else post_func(url, event, timeout_sec)
+    event.actual_send_done_ms = current_time_ms()
+    return event
+
+
+def sender_worker_main(
+    send_queue: "queue.Queue[Optional[ScheduledSpanEvent]]",
+    result_queue: "queue.Queue[ScheduledSpanEvent]",
+    url: str,
+    timeout_sec: float,
+    dry_run: bool,
+    post_func: Callable[[str, ScheduledSpanEvent, float], int],
+) -> None:
+    while True:
+        event = send_queue.get()
+        try:
+            if event is None:
+                # None 是退出哨兵。
+                # 主线程在所有事件都提交完后，再按 worker 数量塞同样多的哨兵，保证每个线程都能自然退出。
+                return
+            result_queue.put(send_one_event(event, url, timeout_sec, dry_run, post_func))
+        finally:
+            send_queue.task_done()
+
+
+def run_scheduled_events(
+    events: List[ScheduledSpanEvent],
+    manifest_path: Path,
+    url: str,
+    timeout_sec: float,
+    dry_run: bool,
+    send_workers: int,
+    post_func: Callable[[str, ScheduledSpanEvent, float], int] = post_span,
+) -> int:
+    if send_workers <= 0:
+        raise ValueError("send_workers must be > 0")
+
+    scheduler = Scheduler()
+    for event in events:
+        scheduler.push(event)
+
+    # manifest 只允许主线程写。
+    # 否则多个 worker 一边阻塞 HTTP、一边争抢文件句柄，最后很容易把“发送并发”和“账本写入顺序”搅在一起。
+    writer = ManifestWriter(manifest_path)
+    send_queue: "queue.Queue[Optional[ScheduledSpanEvent]]" = queue.Queue()
+    result_queue: "queue.Queue[ScheduledSpanEvent]" = queue.Queue()
+    workers: List[threading.Thread] = []
+
+    for index in range(send_workers):
+        thread = threading.Thread(
+            target=sender_worker_main,
+            args=(send_queue, result_queue, url, timeout_sec, dry_run, post_func),
+            name=f"suite-b-sender-{index}",
+            daemon=True,
+        )
+        thread.start()
+        workers.append(thread)
+
+    submitted = 0
+    completed = 0
+    total = len(events)
+    try:
+        while completed < total:
+            now_ms = current_time_ms()
+            while True:
+                event = scheduler.pop_ready(now_ms)
+                if event is None:
+                    break
+                send_queue.put(event)
+                submitted += 1
+
+            if completed >= total:
+                break
+
+            wait_seconds = 0.01 if submitted >= total else scheduler.next_wait_seconds(now_ms)
+            try:
+                result = result_queue.get(timeout=wait_seconds)
+            except queue.Empty:
+                continue
+
+            writer.write_event(result)
+            completed += 1
+
+            # 主线程已经被唤醒了，就顺手把结果队列里这批完成事件一次性捞干净，
+            # 避免 manifest 写入被拆成很多次短促唤醒。
+            while True:
+                try:
+                    result = result_queue.get_nowait()
+                except queue.Empty:
+                    break
+                writer.write_event(result)
+                completed += 1
+    finally:
+        for _ in workers:
+            send_queue.put(None)
+        send_queue.join()
+        for thread in workers:
+            thread.join()
+        writer.close()
+    return completed
 
 
 def run_sender(args: argparse.Namespace) -> int:
@@ -344,35 +463,19 @@ def run_sender(args: argparse.Namespace) -> int:
         service_name=args.service_name,
         start_ms=start_ms,
     )
-
-    scheduler = Scheduler()
-    for event in events:
-        scheduler.push(event)
-
-    writer = ManifestWriter(Path(args.manifest))
-    sent = 0
-    try:
-        while True:
-            now_ms = current_time_ms()
-            event = scheduler.pop_ready(now_ms)
-            if event is None:
-                if sent >= len(events):
-                    break
-                time.sleep(scheduler.next_wait_seconds(now_ms))
-                continue
-
-            event.actual_send_start_ms = current_time_ms()
-            event.http_status = 0 if args.dry_run else post_span(args.url, event, args.timeout_sec)
-            event.actual_send_done_ms = current_time_ms()
-            writer.write_event(event)
-            sent += 1
-    finally:
-        writer.close()
+    sent = run_scheduled_events(
+        events=events,
+        manifest_path=Path(args.manifest),
+        url=args.url,
+        timeout_sec=args.timeout_sec,
+        dry_run=args.dry_run,
+        send_workers=args.send_workers,
+    )
 
     print(
         "suite_b_sender done: "
         f"profile={args.profile}, seed={args.seed}, events={len(events)}, sent={sent}, "
-        f"manifest={args.manifest}, dry_run={args.dry_run}"
+        f"manifest={args.manifest}, dry_run={args.dry_run}, send_workers={args.send_workers}"
     )
     return 0
 

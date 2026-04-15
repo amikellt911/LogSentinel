@@ -51,7 +51,11 @@
 - [x] 实现 Suite B `profiles.py`：固定 `clean_baseline / mixed_realistic / late_replay_stress`
 - [x] 实现 Suite B `sender.py`：先做单线程可复现 sender，并预留后续多 worker 发送记录字段
 - [x] 验证 Suite B sender 单测、Python 语法和最小 dry-run
-- [ ] Suite B sender 第二刀：引入多 worker 发送队列，吃满预留 sender CPU，但保持 manifest 真值口径不变
+- [x] Suite B sender 第二刀：引入多 worker 发送队列，吃满预留 sender CPU，但保持 manifest 真值口径不变
+  - [x] 先写多 worker sender 红灯单测，锁定 manifest 行数、发送时间字段和 fake HTTP 状态码
+  - [x] 实现主线程调度、worker 阻塞发送、主线程统一写 manifest 的队列模型
+  - [x] 为 CLI 增加 `--send-workers`，默认保持单 worker 兼容现有用法
+  - [x] 验证 sender 单测、Python 语法和多 worker dry-run
 - [ ] Suite B evaluator 第一刀：读取 manifest + SQLite 快照，计算 completeness / pollution / duplicate 三个主指标
 
 ## 3. 代码改造 (Main Enhancement)
