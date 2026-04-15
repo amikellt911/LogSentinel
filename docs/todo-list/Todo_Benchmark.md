@@ -47,6 +47,12 @@
 - [x] 把 `run_bench.sh / run_flamegraph.sh` 改成 `common` 真正实现 + `suite_a/suite_d` wrapper
 - [x] 把 benchmark 结果目录统一改到 `server/tests/benchmark/results/<suite>/`
 - [x] 同步更新 README / CurrentTask / AGENTS 等活文档里的 benchmark 路径
+- [x] 编写 Suite B sender 第一刀单测：覆盖 profile、延迟桶、trace 模板、min-heap 调度和 manifest 真值标签
+- [x] 实现 Suite B `profiles.py`：固定 `clean_baseline / mixed_realistic / late_replay_stress`
+- [x] 实现 Suite B `sender.py`：先做单线程可复现 sender，并预留后续多 worker 发送记录字段
+- [x] 验证 Suite B sender 单测、Python 语法和最小 dry-run
+- [ ] Suite B sender 第二刀：引入多 worker 发送队列，吃满预留 sender CPU，但保持 manifest 真值口径不变
+- [ ] Suite B evaluator 第一刀：读取 manifest + SQLite 快照，计算 completeness / pollution / duplicate 三个主指标
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

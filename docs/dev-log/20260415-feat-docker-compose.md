@@ -84,3 +84,38 @@ refactor(benchmark): 重构 benchmark 目录并按 suite 收口结果路径
 - `run_bench.sh` 这种脚本如果直接复制成 `suite_a` 和 `suite_d` 两份，后面修一个 bug 大概率只会想起改其中一份。
 - `trace_paced_sender.py` 这种 Python 入口如果还被 common runner 指回旧 `server/tests/wrk/`，目录搬完后火焰图入口会第一时间炸。
 - 旧 `docs/dev-log` 里的历史路径可以保留，但 README、CurrentTask、AGENTS 这类活文档必须跟着新目录一起改，不然团队口径会一直分裂。
+
+---
+
+# Git Commit Message
+
+feat(benchmark): 增加 Suite B sender 第一刀
+
+# Modification
+
+- `docs/todo-list/Todo_Benchmark.md`
+- `server/tests/benchmark/suite_b/README.md`
+- `server/tests/benchmark/suite_b/profiles.py`
+- `server/tests/benchmark/suite_b/sender.py`
+- `server/tests/benchmark/suite_b/sender_unit_test.py`
+
+# Learning Tips
+
+## Newbie Tips
+
+- 这次先做 sender，不做 evaluator。sender 负责制造请求和真值账本，evaluator 后面才负责拿 manifest + SQLite 去算指标。
+- `dry-run` 只写 manifest，不请求后端，适合先检查流量模型和真值标签，不适合拿来当真实性能数据。
+- 单线程 sender 是第一刀 correctness 版本，不是最终 3 核 benchmark 版本；后续要补多 worker，但 manifest 字段不会因此改掉。
+
+## Function Explanation
+
+- `@dataclass`：可以把 Python 类当成接近 C++ `struct` 的数据容器，自动生成初始化函数。
+- `heapq`：Python 标准库小顶堆；这次只按 `planned_emit_at_ms` 排序，等价于 C++ 里给 `priority_queue` 配一个按时间比较的 comparator。
+- `urllib.request`：Python 标准库 HTTP 客户端；这次先不用 `requests/aiohttp`，避免为了 benchmark sender 引入额外依赖。
+- `jsonl`：一行一个 JSON 对象，适合边发送边追加 manifest，也方便后续 evaluator 按行流式读取。
+
+## Pitfalls
+
+- `replay_clone` 不能直接替换原始 span。正确做法是“原始 span 正常发 + 复制品晚到”，否则 evaluator 分不清该保住的 span 和本该被 tombstone 拦住的复制品。
+- 只看 `planned_emit_at_ms` 不够，后续还要记录 `actual_send_start_ms / actual_send_done_ms`，否则 sender 自己卡住时会把后端生命周期实验结果污染掉。
+- `late_after_dispatch / replay_after_dispatch` 的真值标签必须是 `ignore_after_cutoff`，不然 completeness 和 pollution 指标会互相打架。
