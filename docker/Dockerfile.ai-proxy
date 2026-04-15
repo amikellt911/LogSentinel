@@ -1,0 +1,20 @@
+# AI proxy 是 Python 服务，所以这个构建阶段直接从精简版 Python 基础镜像开始。
+FROM python:3.11-slim
+
+# WORKDIR 是容器内的当前工作目录，后续 COPY/RUN/CMD 默认都以它为相对基准。
+WORKDIR /app
+
+# 先单独拷依赖清单，这样后面安装依赖这一层更容易复用缓存，不会因为业务代码改动就整层重装。
+COPY server/ai/requirements.txt ./requirements.txt
+
+# RUN 会在构建镜像时执行，这里把 Python 依赖提前装进镜像，后面容器启动时就不用现装了。
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 依赖装完后再拷业务代码，这样改 Python 文件时不会把前面的装包缓存一起打爆；这里保留 server/ai/proxy 目录结构，避免 main.py 的相对路径推导失效。
+COPY server/ai/proxy ./server/ai/proxy
+
+# EXPOSE 只是声明容器内服务默认使用的端口，方便阅读和编排工具理解；它本身不会自动做宿主机端口映射。
+EXPOSE 8001
+
+# CMD 是容器启动时的默认命令；这里把 host/port 作为传给 proxy 进程的 CLI 参数，而不是 Docker 自己的参数。
+CMD ["python", "server/ai/proxy/main.py", "--host", "0.0.0.0", "--port", "8001"]

@@ -1,0 +1,22 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    ports:
+      # 单入口继续只暴露后端 8080；浏览器和 API 都走这一条宿主机映射。
+      - "8080:8080"
+    volumes:
+      # SQLite 数据挂到宿主机目录，容器重建后数据库文件还能保留下来。
+      - ./data:/data
+    command:
+      # compose 场景下后端不能继续打容器内的 127.0.0.1，也不该再尝试自己 fork proxy。
+      # 这里先把地址改成未来 ai-proxy 服务名；下一刀再把 ai-proxy service 本体补进来。
+      - ./LogSentinel
+      - --db
+      - /data/LogSentinel.db
+      - --port
+      - "8080"
+      - --no-auto-start-proxy
+      - --trace-ai-base-url
+      - http://ai-proxy:8001

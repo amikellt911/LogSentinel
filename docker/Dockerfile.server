@@ -1,0 +1,55 @@
+# builder 是“构建阶段”的别名，后面如果再开运行阶段，就可以通过 COPY --from=builder 只拿编译产物，不把整套编译环境一起塞进最终镜像。
+FROM ubuntu:22.04 AS builder
+
+# builder 阶段的工作目录定在 /app，后续源码拷贝、cmake 构建和产物输出都默认围绕这里展开。
+WORKDIR /app
+
+# 这组包分成两类：前半段是编译工具链，后半段是当前 CMake/链接阶段确定会用到的系统开发库；
+# 先把它们装在 builder 里，后面 cmake 配置、FetchContent 拉依赖和最终链接才有基础环境。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    ca-certificates \
+    pkg-config \
+    libsqlite3-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 当前 CMakeLists.txt 还没有把测试目标通过 BUILD_TESTS 开关裁掉，所以 builder 阶段先整目录拷 server，
+# 让配置和编译路径保持和本地一致；真正的“瘦身”放到后面的 runtime 阶段去做。
+COPY server ./server
+
+# 这一层在 builder 里完成“配置 + 编译”，先把 LogSentinel 主程序产物固定出来；
+# 后面的 runtime 阶段只需要 COPY 编好的结果，不再重复带上编译器和源码树。
+RUN cmake -B /app/server/build -S /app/server \
+    && cmake --build /app/server/build --target LogSentinel -j"$(nproc)"
+
+# runtime 是最终运行阶段：从这里开始不再继承 builder 里的源码树和编译环境，只保留后面手动复制进来的运行时内容。
+FROM ubuntu:22.04 AS runtime
+
+# runtime 只装“运行 LogSentinel 时会动态用到的系统库”，不再装编译器；
+# SQLite 是本地持久化必需项，OpenSSL/证书链用于真实 HTTPS webhook 出站。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libsqlite3-0 \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# runtime 也是一个全新阶段，所以工作目录要重新定一次；后面的二进制、静态资源和默认命令都统一围绕 /app 来放。
+WORKDIR /app
+
+# /data 单独留给 SQLite 这类持久化内容，避免把“程序文件”和“运行时数据”混在同一棵目录树里。
+RUN mkdir -p /data
+
+# 这里不是从宿主机拷文件，而是从 builder 阶段已经编好的文件系统里把主程序成品拿过来；
+# 这样 runtime 只保留最终二进制，不再带上源码、CMake 缓存和编译工具链。
+COPY --from=builder /app/server/build/LogSentinel ./LogSentinel
+
+# 单入口部署需要前端打包产物；这一条直接从宿主机构建上下文拷 client/dist，
+# 所以前提是宿主机在 docker build 之前已经先跑过前端构建。
+COPY client/dist ./client/dist
+
+# 默认启动命令直接显式传入数据库路径和监听端口，避免容器里继续依赖默认路径推导；
+# 同时容器镜像默认不要再尝试 fork 本地 Python sidecar，避免 runtime 阶段根本没有 proxy 脚本时一启动就失败。
+CMD ["./LogSentinel", "--db", "/data/LogSentinel.db", "--port", "8080", "--no-auto-start-proxy"]

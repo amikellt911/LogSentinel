@@ -1,0 +1,17 @@
+# 这些目录只会让根目录 build context 变大、缓存变脏，不应该被打包进 Docker 构建输入。
+.git
+server/build/
+server/build-prof/
+client/node_modules/
+server/tests/wrk/results/
+
+# Python 运行和测试留下的字节码缓存对镜像构建没有价值。
+**/__pycache__/
+**/*.pyc
+
+# 这里暂时不要忽略 server/tests：
+# 因为当前 CMakeLists.txt 还没有 BUILD_TESTS 开关，builder 阶段如果拷整个 server，
+# CMake 配置时仍然会看到这些测试目标。
+
+# 这里也暂时不要忽略 client/dist：
+# 因为当前 server 镜像准备走单入口部署，runtime 阶段还需要托管前端静态资源。
