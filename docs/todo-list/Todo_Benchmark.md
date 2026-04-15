@@ -62,6 +62,11 @@
   - [x] 实现 manifest -> ExpectedMergeSet / ExpectedIgnoreEvents / ReplayEvents 的提炼逻辑
   - [x] 输出三项主指标和分子分母，方便后续论文表格直接复用
   - [x] 验证 evaluator 单测、Python 语法和最小假数据跑通
+- [x] Suite B run_suite_b 第一刀：串起 sender + evaluator，收口单次 case 的最小执行入口
+  - [x] 先写 run_suite_b 红灯单测，锁 sender/evaluator 调用顺序和统一 JSON 输出
+  - [x] 实现 run_suite_b.py：只负责编排单次 case，不负责起停后端和矩阵批跑
+  - [x] 为 CLI 收口 sender/evaluator 公共参数，避免手工两次敲命令
+  - [x] 验证 run_suite_b 单测、Python 语法和最小 fake case
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

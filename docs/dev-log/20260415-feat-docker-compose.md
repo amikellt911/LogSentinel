@@ -187,3 +187,37 @@ feat(benchmark): 增加 Suite B evaluator 第一刀
 - `duplicate_persistence_rate` 第一刀先按 trace 级副作用归因，只要 replay 所在 trace 因额外 span 或 `summary.span_count` 膨胀而偏离期望，就把该 replay 事件记成 bad；它还不是最细的单事件因果定位，后续如需更细要再接 runtime log。
 - 如果 sender 存在大量非 2xx 请求，而 evaluator 仍然直接拿 manifest 全量事件算指标，会把“发送端没送达”和“后端处理错误”混在一起；当前第一刀默认实验运行在本地健康链路上，后续如果要上更脏的网络条件，需要再显式过滤这类事件。
 - evaluator 先读 `trace_summary` 再读 `trace_span` 时，如果不先等 SQLite 稳定，就可能读到半成品快照，导致 completeness / pollution 的结果比真实值更差。
+
+---
+
+# Git Commit Message
+
+feat(benchmark): 为 Suite B 增加单次 case runner
+
+# Modification
+
+- `docs/dev-log/20260415-feat-docker-compose.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `server/tests/benchmark/suite_b/README.md`
+- `server/tests/benchmark/suite_b/run_suite_b.py`
+- `server/tests/benchmark/suite_b/run_suite_b_unit_test.py`
+
+# Learning Tips
+
+## Newbie Tips
+
+- `run_suite_b.py` 第一刀只是单次 case runner，不是正式矩阵实验器。先把“sender -> evaluator -> 统一 JSON”这条最小闭环跑通，后面再在外面包 3 x 2 批跑脚本，职责才不会打架。
+- `trace_lifecycle_profile` 现在被收进结果 JSON，是为了让实验元数据自描述；但第一刀 runner 并不会替你起后端，也不会替你真的切换后端 profile。
+- 编排层最容易失控的点就是顺手做太多。只要还没需要多 case、多进程起停，就别急着把 orchestration 写成大而全框架。
+
+## Function Explanation
+
+- `argparse.Namespace(...)`：这里用它临时重组 sender 参数，比手写一个新 dataclass 更轻，适合这种“把一份统一 CLI 映射给下游模块”的编排层。
+- `Path(...).parent.mkdir(parents=True, exist_ok=True)`：确保 manifest / output_json 的父目录存在，避免 runner 只是因为目录没建好就提前失败。
+- `result.update(evaluation)`：把 evaluator 输出并进统一结果对象，后续做论文表格或批跑汇总时，只需要读一份 JSON。
+
+## Pitfalls
+
+- 单次 runner 和矩阵 runner 不能混写在一起。前者负责一次 case 的输入输出闭环，后者才负责 profile 笛卡尔积、后端起停和结果汇总；一开始就混在一份脚本里，后面只会越改越乱。
+- `run_suite_b.py` 现在会打印 sender 的 stdout，所以正式批跑时如果想拿纯 JSON 输出，后面需要再决定是重定向 sender 日志，还是给 sender 增加 quiet 模式。
+- dry-run + 空 SQLite 的最小验证只证明编排逻辑活着，不代表后端生命周期实验已经真实跑通；正式 benchmark 仍然要用真实后端和真实 DB。
