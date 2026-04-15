@@ -291,11 +291,38 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 
 这组同样不把资源变量一起扫开。
 
-这里沿用单机 `16 核` 锚点：
+当前先把 `Suite B` 正式冻结成下面这套单机拓扑：
 
-- `wrk_cpu_cores = 2`
-- `ai_proxy_cpu_cores = 2`
-- `backend_cpu_cores = 12`
+- 发送端 / 压流脚本：`3` 核
+- 后端：`13` 核
+- `kernel_io_threads = 5`
+- `dispatch_worker_threads = 4`
+- `kernel_worker_threads = 16`
+- `disable_ai = true`
+- `disable_webhook = true`
+
+补一层语义，避免后面再把线程名字看串：
+
+- `kernel_io_threads = 5` 指的是 `5` 个 sub-reactor / I/O loop；
+- 主 reactor 仍然单独存在，所以事件循环线程总数实际是 `1 + 5`；
+- `dispatch_worker_threads = 4` 负责 dispatch queue 消费和主数据准备；
+- `kernel_worker_threads = 16` 这里只承担第二阶段收尾，不再把 AI / webhook 这种外部阻塞一并算进去。
+
+这里故意不再给 `ai_proxy` 预留 CPU。
+
+原因很直接：
+
+- `Suite B` 的目标是证明“生命周期防护有没有收益”，不是证明“带着外部 AI 阻塞时还能不能顶住”
+- 既然这组主实验已经明确关闭 `AI/webhook`，那就不该再让 `ai_proxy` 进来制造额外变量
+- 既然 AI/webhook 关闭后，worker 不再是主要阻塞池，那么这里把 `worker_threads` 收到中等规模即可，不需要走 `64/128` 这种阻塞线程思路
+
+这套固定拓扑只服务 `Suite B`。
+
+也就是说：
+
+- 它不是 `Suite A` 的固定参数
+- 也不是 `Suite D` 的线程拓扑答案
+- 后面如果重新打开 `AI/webhook`，那 `worker_threads / ai_proxy_max_workers` 的权重还要重新评估
 
 原因：
 
