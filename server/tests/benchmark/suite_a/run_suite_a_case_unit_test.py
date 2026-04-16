@@ -68,6 +68,38 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
         self.assertEqual(32, args.worker_threads)
         self.assertEqual(1, args.dispatch_worker_threads)
 
+    def test_parse_args_accepts_benchmark_server_passthrough_flags(self) -> None:
+        if suite_a_module is None or not hasattr(suite_a_module, "parse_args"):
+            self.fail("parse_args should exist for Suite A fixed sender runner")
+
+        args = suite_a_module.parse_args(
+            [
+                "--server-bin",
+                "./server/build/LogSentinel",
+                "--run-root",
+                "/tmp/suite_a_probe",
+                "--trace-count",
+                "320",
+                "--inter-trace-gap-ms",
+                "125",
+                "--disable-ai",
+                "--trace-lifecycle-profile",
+                "minimal",
+                "--trace-sweep-interval-ms",
+                "100",
+                "--trace-primary-flush-span-threshold",
+                "64",
+                "--trace-primary-flush-interval-ms",
+                "5",
+            ]
+        )
+
+        self.assertTrue(args.disable_ai)
+        self.assertEqual("minimal", args.trace_lifecycle_profile)
+        self.assertEqual(100, args.trace_sweep_interval_ms)
+        self.assertEqual(64, args.trace_primary_flush_span_threshold)
+        self.assertEqual(5, args.trace_primary_flush_interval_ms)
+
     def test_parse_args_accepts_fixed_sender_and_sqlite_flags(self) -> None:
         if suite_a_module is None or not hasattr(suite_a_module, "parse_args"):
             self.fail("parse_args should exist for Suite A fixed sender runner")
@@ -137,6 +169,13 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
             server_io_threads=1,
             worker_threads=32,
             dispatch_worker_threads=1,
+            disable_ai=True,
+            disable_webhook=True,
+            disable_buffered_trace_repo=False,
+            trace_lifecycle_profile="minimal",
+            trace_sweep_interval_ms=100,
+            trace_primary_flush_span_threshold=64,
+            trace_primary_flush_interval_ms=5,
             port_base=18180,
         )
         artifacts = {
@@ -159,6 +198,11 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
         self.assertIn("--server-io-threads 1", command)
         self.assertIn("--worker-threads 32", command)
         self.assertIn("--dispatch-worker-threads 1", command)
+        self.assertIn("--disable-ai", command)
+        self.assertIn("--trace-lifecycle-profile minimal", command)
+        self.assertIn("--trace-sweep-interval-ms 100", command)
+        self.assertIn("--trace-primary-flush-span-threshold 64", command)
+        self.assertIn("--trace-primary-flush-interval-ms 5", command)
 
     def test_run_suite_a_case_writes_metrics_from_sender_and_sqlite_counts(self) -> None:
         if suite_a_module is None or not hasattr(suite_a_module, "run_suite_a_case"):

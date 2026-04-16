@@ -625,3 +625,49 @@
 
 - 如果 base case 参数里还手工塞 `--trace-lifecycle-profile`、`--trace-primary-flush-*` 或 `--disable-ai`，搜索脚本必须拒绝；否则你看到的就不是搜索结果，而是“谁最后覆盖了谁”。
 - 这轮编译失败不能误判成代码错误。日志已经说明是磁盘空间耗尽，和这次 CLI 接线本身不是一类问题。
+
+---
+
+# 2026-04-16 fix(benchmark): 修正 Suite A Stage 1 搜索脚本参数透传
+
+## Git Commit Message
+
+`fix(benchmark): 修正 Suite A Stage 1 搜索脚本参数透传`
+
+## Modification
+
+- `server/tests/benchmark/suite_a/run_suite_a_case.py`
+- `server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py`
+- `docs/dev-log/20260416-fix-trace-timeout.md`
+
+## Summary
+
+- `run_suite_a_case.py` 现在显式接收并透传以下 benchmark-only 后端参数：
+  - `--disable-ai`
+  - `--disable-webhook`
+  - `--disable-buffered-trace-repo`
+  - `--trace-lifecycle-profile`
+  - `--trace-sweep-interval-ms`
+  - `--trace-primary-flush-span-threshold`
+  - `--trace-primary-flush-interval-ms`
+- 之前 `run_suite_a_search_stage1.py` 会把这些参数塞给 `run_suite_a_case.py`，但后者不认识，于是还没起后端就在 Python 参数解析阶段先炸了。
+- 现在这些参数在 auto-start 模式下会继续拼进最终后端启动命令；手动 sender/evaluator 逻辑本身不消费它们。
+
+## Verification
+
+- `cd server/tests/benchmark/suite_a && python3 -m unittest run_suite_a_case_unit_test.py run_suite_a_search_stage1_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_a/run_suite_a_case.py server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py server/tests/benchmark/suite_a/run_suite_a_search_stage1.py server/tests/benchmark/suite_a/run_suite_a_search_stage1_unit_test.py`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 外层 benchmark 编排脚本和单 case runner 之间，最容易断的是“参数边界”。外层以为自己在切实验变量，内层其实根本没接，这种错会比纯代码 bug 更隐蔽。
+
+### Function Explanation
+
+- `build_server_passthrough_args()`：把只属于后端启动命令的 benchmark 参数统一收口，避免 `resolve_server_command()` 里到处散着拼接 if。
+
+### Pitfalls
+
+- 这类参数如果只在搜索脚本里认识、单 case runner 不认识，错误会发生在 Python 参数解析阶段，看起来像“命令行有问题”，其实是脚本边界没接上。

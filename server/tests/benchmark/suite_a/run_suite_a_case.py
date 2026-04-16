@@ -46,6 +46,15 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--server-io-threads", type=int, default=1)
     parser.add_argument("--worker-threads", type=int, default=32)
     parser.add_argument("--dispatch-worker-threads", type=int, default=1)
+    # 这几项不是 sender/evaluator 自己消费的逻辑，而是 auto-start 模式下继续往后端透传的 benchmark 开关。
+    # Stage 1 搜索脚本会靠它们批量切 lifecycle/sweep/flush/AI on-off。
+    parser.add_argument("--disable-ai", action="store_true")
+    parser.add_argument("--disable-webhook", action="store_true")
+    parser.add_argument("--disable-buffered-trace-repo", action="store_true")
+    parser.add_argument("--trace-lifecycle-profile", default="")
+    parser.add_argument("--trace-sweep-interval-ms", type=int, default=0)
+    parser.add_argument("--trace-primary-flush-span-threshold", type=int, default=0)
+    parser.add_argument("--trace-primary-flush-interval-ms", type=int, default=0)
     parser.add_argument("--startup-timeout-sec", type=float, default=10.0)
     parser.add_argument("--stop-timeout-sec", type=float, default=5.0)
     # 这三项固定 sender 的流量形状：
@@ -113,12 +122,16 @@ def shell_join(parts: list[str]) -> str:
 
 def resolve_server_command(args: argparse.Namespace, artifacts: JsonDict) -> str:
     if args.server_command:
-        return args.server_command.format(
+        base_command = args.server_command.format(
             sqlite_db=artifacts["sqlite_db"],
             port=artifacts["port"],
             log_path=artifacts["server_log"],
             run_dir=artifacts.get("run_root", ""),
         )
+        extra_parts = build_server_passthrough_args(args)
+        if not extra_parts:
+            return base_command
+        return f"{base_command} {shell_join(extra_parts)}"
 
     parts: list[str] = []
     if args.server_cpuset:
@@ -149,7 +162,37 @@ def resolve_server_command(args: argparse.Namespace, artifacts: JsonDict) -> str
             str(args.dispatch_worker_threads),
         ]
     )
+    parts.extend(build_server_passthrough_args(args))
     return shell_join(parts)
+
+
+def build_server_passthrough_args(args: argparse.Namespace) -> list[str]:
+    parts: list[str] = []
+    if getattr(args, "disable_ai", False):
+        parts.append("--disable-ai")
+    if getattr(args, "disable_webhook", False):
+        parts.append("--disable-webhook")
+    if getattr(args, "disable_buffered_trace_repo", False):
+        parts.append("--disable-buffered-trace-repo")
+    if getattr(args, "trace_lifecycle_profile", ""):
+        parts.extend(["--trace-lifecycle-profile", args.trace_lifecycle_profile])
+    if getattr(args, "trace_sweep_interval_ms", 0) > 0:
+        parts.extend(["--trace-sweep-interval-ms", str(args.trace_sweep_interval_ms)])
+    if getattr(args, "trace_primary_flush_span_threshold", 0) > 0:
+        parts.extend(
+            [
+                "--trace-primary-flush-span-threshold",
+                str(args.trace_primary_flush_span_threshold),
+            ]
+        )
+    if getattr(args, "trace_primary_flush_interval_ms", 0) > 0:
+        parts.extend(
+            [
+                "--trace-primary-flush-interval-ms",
+                str(args.trace_primary_flush_interval_ms),
+            ]
+        )
+    return parts
 
 
 def launch_server_process(command: str, log_path: Path) -> JsonDict:
