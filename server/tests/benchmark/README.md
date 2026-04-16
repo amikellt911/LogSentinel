@@ -7,7 +7,7 @@
 - `common/`
   - 存放所有 suite 共用的 runner、Lua 脚本、load generator 和校验工具。
 - `suite_a/`
-  - 存放 Suite A 的入口脚本和后续只属于功能成本实验的 profile 配置。
+  - 存放 Suite A 的入口脚本和后续只属于主链守护对照实验的 profile 配置。
 - `suite_b/`
   - 预留给 Suite B 的 sender、manifest、evaluator 和 profile。
 - `suite_d/`
@@ -17,9 +17,21 @@
 
 当前用户优先入口：
 
+- `server/tests/benchmark/suite_a/run_suite_a_case.py`
 - `server/tests/benchmark/suite_a/run_suite_a.sh`
 - `server/tests/benchmark/suite_d/run_suite_d.sh`
 - `server/tests/benchmark/common/run_flamegraph_case.sh`
+
+其中：
+
+- `run_suite_a_case.py`
+  - 是 Suite A 第一版 fixed clean sender 入口；
+  - 它自己负责发送 clean trace、记录 `t_stop`、轮询 SQLite 主数据并输出
+    `visible_completion_rate_at_stop / drain_tail_ms`；
+  - 当前优先服务 `4` 核三档探测，不再复用 `wrk` 当主发生器。
+- `run_suite_a.sh`
+  - 仍然保留为旧的 wrk wrapper；
+  - 这条线后续是否继续保留，取决于 Suite A 主图是否还需要附录里的 wrk 压力证据。
 
 这样拆的原因很直接：
 

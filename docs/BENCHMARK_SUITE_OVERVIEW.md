@@ -91,83 +91,229 @@ Suite D 回答：资源数量和线程配置变化后，系统扩展性如何。
 - 不做 `A × CPU × worker` 全矩阵
 - 只保留一个小而可解释的交互实验
 
-## Suite A：性能型开关
+## Suite A：主链守护型对照实验
 
 ### 目标
 
-这组是主性能实验，核心问题是：
+Suite A 不再讲“功能开关成本表”。
 
-在同一套流量、同一套机器、同一套线程参数下，只切功能开关时，系统代价分别来自哪里。
+它真正要回答的问题是：
 
-### 当前开关
+当 trace 聚合、主数据准备、SQLite 落库、AI 这些后段重活都存在时，
+当前架构有没有把“后段重活拖慢主写链”的问题压住。
+
+所以它要证明的不是“谁功能更少”，而是：
+
+- 历史上的更朴素实现，是否更容易被后段重活拖住；
+- 当前版本引入分阶段处理和双缓冲之后，主写链是不是更稳；
+- 而且这个结论是在 AI 仍然开着的前提下得到的，不是把附近功能全关掉后空跑出来的。
+
+### 主图与副图
+
+主图固定成“今 vs 昔”，不再拿当前版本自己和自己比。
+
+主图对照组固定为：
+
+- `compare_target`
+  - 当前候选是 `b617121`
+  - 已经有 `/logs/spans -> TraceSessionManager -> SqliteTraceRepository`
+  - 但还没有 `BufferedTraceRepository`
+  - 更接近“后段重活更直接压主链”的旧实现
+- `baseline`
+  - 当前正式版本
+  - 已接入 `dispatch queue + dispatch worker + BufferedTraceRepository`
+
+主图统一口径固定为：
+
+- AI 开
+- AI provider 固定 `mock`
+- webhook 关
+
+这里不再使用 `historical_soft_target` 这种名字，统一叫 `compare_target`。
+
+副图只保留一组机理解释，不抢主图：
 
 - `baseline`
-- `disable_ai`
 - `disable_buffered_trace_repo`
-- `disable_webhook`
-- `no_ai_no_buffer`
 
-可选保留项，当前先不默认纳入主实验：
+副图同样沿用主图口径：
 
-- `disable_service_runtime_metrics`
+- AI 开
+- AI provider 固定 `mock`
+- webhook 关
 
-原因：
+它只回答一句话：
 
-服务监控埋点本身后面还可能参与 benchmark 观测，如果过早把它关掉，容易把“采样工具”和“实验变量”搅在一起。
+- 当前代码线上，拿掉双缓冲后，主写链是不是更容易被后段持久化重活拖慢。
 
-### 主要比较内容
+当前默认不把 `disable_ai / disable_webhook / no_ai_no_buffer` 这类组塞进 Suite A 图表。
+这些如果后面时间够，可以留作补充拆账，但不再抢主图。
 
-- ingest QPS
-- `/logs/spans` p50 / p95 / p99
-- CPU 占用
-- RSS
-- SQLite flush 压力
-- 背压触发率
+### 主发生器与流量模型
 
-### 解释口径
+Suite A 主图不再使用 `wrk` 当主发生器。
 
-这组实验主要证明：
+原因已经固定：
 
-- AI 是否是主链额外开销的大头
-- `BufferedTraceRepository` 是否真的有性能收益
-- webhook 外发对主链影响是否显著
-- “功能全开”和“裁剪模式”之间的代价差距有多大
+- `wrk` 是闭环压测；
+- 旧版本如果大量快速 `503`，总 offered 请求数都会被测脏；
+- 这样主图会把“快速拒绝”误读成“压得更猛”。
 
-### 资源约束
+所以 Suite A 主图改成 fixed sender，并且采用单脚本方案：
 
-Suite A 不主动展开 CPU/worker 维度。
+- 发送 clean trace
+- sender 自己维护固定 `trace_count`
+- sender 自己维护固定 `spans_per_trace`
+- 发完最后一条 trace 的最后一个 span 时记 `t_stop`
+- 同一个脚本再进入 SQLite 轮询阶段，计算结果指标
 
-当前先固定成单机 `16 核` 锚点：
+流量模型继续收紧成 clean 版本：
 
-- `wrk_cpu_cores = 2`
-- `ai_proxy_cpu_cores = 2`
-- `backend_cpu_cores = 12`
+- 只发正常顺序 trace
+- 不引入乱序
+- 不引入晚到
+- 不引入 replay
+- 每条 trace 的最后一个 span 用 `trace_end=true` 结束
+- 每条 trace 的 `spans_per_trace` 固定
 
-线程拓扑同样固定：
+这样主图真正比较的是：
 
-- `server_io_threads`
-- `worker_threads`
-- `ai_proxy_max_workers`
+- 同样给定的一批 trace，发送停止时谁已经落完更多主数据；
+- 停流后谁还要拖更长的主数据尾巴。
 
-原因：
+### 主指标
 
-Suite A 的任务是回答“功能代价”，不是回答“扩展性”。
+主图只保留两个指标：
 
-如果一开始就把功能开关和 CPU/worker 一起扫，最后就会分不清：
+- `visible_completion_rate_at_stop`
+  - 定义：`t_stop` 时刻 SQLite `trace_summary` 行数 / sender 固定 `trace_count`
+  - 分母只认 sender 自己维护的 offered trace 总数
+  - 分子主判据只认 `trace_summary`
+  - `trace_span` 只做一致性校验
+  - 这里“完成”只认主数据表：
+    - `trace_summary`
+    - `trace_span`
+- `drain_tail_ms`
+  - 定义：从 `t_stop` 开始，到主数据计数稳定不再增长为止的时间
+  - 轮询规则当前固定为：
+    - 每 `200ms` 轮询一次
+    - 连续 `5` 轮不增长视为稳定
+    - 超过 `30s` 记 timeout
 
-- 是开关本身贵
-- 还是资源变化带来的
-- 还是两者交互带来的
+明确排除出主图的指标：
 
-所以 Suite A 里的线程参数不单独扫描，而是直接复用 Suite D 先校准出来的那套代表性拓扑。
+- `reject_rate`
+- `/logs/spans` 的 `ack p95`
+- `Requests/sec`
 
-### Webhook 说明
+这些指标不是永远没用，但它们更适合留在附录或证据图里，不再抢主图。
 
-Suite A 默认不需要 fake webhook。
+### SQLite 观察口径
 
-如果实验目标不是“专门测 webhook 外发成本”，那么直接 `--disable-webhook` 就够了。
+Suite A 的 evaluator 只依赖 SQLite 主数据，不依赖后端埋点。
 
-只有在后续真的要补“开 webhook vs 关 webhook”的外发对比时，才考虑接一个本地最小 sink。这个 sink 只需要稳定接收 HTTP POST，不需要复杂探针能力。
+SQLite 访问规则固定为：
+
+- 只读，不写
+- 只查 `trace_summary` 和 `trace_span`
+- 短查询，不持有跨轮长事务
+- 优先走只读连接
+- 配 `busy_timeout`
+
+这样同一个脚本才能同时跑 `baseline` 和 `compare_target`，不需要为当前版本专门写埋点适配。
+
+### 运行模式口径
+
+当前版本里，即使还有前端静态托管、Dashboard、History、Settings 这些能力，
+Suite A 也不为了它们专门裁代码。
+
+因为主实验脚本只依赖：
+
+- `POST /logs/spans`
+- SQLite `trace_summary`
+- SQLite `trace_span`
+
+所以 Suite A 真正要对齐的是 trace 主链压力，而不是“把当前版本删到只剩最小二进制”。
+
+### 资源与线程拓扑
+
+Suite A 当前不扫描大矩阵，只先冻结两套执行口径。
+
+`4` 核机：
+
+- 资源划分：
+  - `sender = 1 core`
+  - `ai-proxy = 1 core`
+  - `backend = 2 cores`
+- sender：
+  - `send_workers = 1`
+- backend：
+  - `server_io_threads = 1`
+  - `dispatch_worker_threads = 1`
+  - `worker_threads = 32`
+
+`16` 核机：
+
+- 资源划分：
+  - `sender = 2 cores`
+  - `ai-proxy = 2 cores`
+  - `backend = 12 cores`
+- sender：
+  - `send_workers = 2`
+- backend：
+  - `server_io_threads = 4`
+  - `dispatch_worker_threads = 3`
+  - `worker_threads = 96`
+
+这里再把线程语义钉死，避免后面说混：
+
+- `server_io_threads` 不含 main loop
+- `dispatch_worker_threads` 是 dispatch queue 的 consumer 数
+- `worker_threads = 32/96` 说的是阻塞并发槽位，不是 CPU 并行度
+- backend 里仍然还有单独的 `flush_thread` 和 `query_thread`
+
+当前不把 `ai_proxy` 自己的线程数扫成主变量。
+先让 proxy 保持默认行为，后面如果 dry run 证明它先成为假瓶颈，再单独处理。
+
+### 4 核探测起步值
+
+正式值先不拍死成单档，先用 `4` 核做三档探测。
+
+固定项：
+
+- `trace_count = 320`
+- `spans_per_trace = 8`
+- 总发送量 = `2560 spans`
+
+探测档位：
+
+- `inter_trace_gap_ms = 125`
+- `inter_trace_gap_ms = 100`
+- `inter_trace_gap_ms = 80`
+
+也就是说，先在 `4` 核上用 `320 traces / 8 spans` 做三档 clean 探测，
+再看哪一档最能同时满足：
+
+- `compare_target` 的 `drain_tail_ms` 被明显拉长；
+- `baseline` 还没有一起被打穿；
+- `visible_completion_rate_at_stop` 已经能形成稳定差异。
+
+`16` 核正式节奏先不在这一步写死，等 `4` 核探测结果出来后再顺推。
+
+### 当前结论
+
+到目前为止，Suite A 已经冻结的内容是：
+
+- 主图：`compare_target vs baseline`
+- 副图：`baseline vs disable_buffered_trace_repo`
+- AI 开、provider=`mock`、webhook 关
+- 主图不用 `wrk`，改用 fixed clean sender
+- 主图只看：
+  - `visible_completion_rate_at_stop`
+  - `drain_tail_ms`
+- evaluator 只读轮询 SQLite 主数据
+- `4` 核和 `16` 核的资源/线程拓扑已冻结
+- `4` 核三档探测值已冻结，等结果再反推 `16` 核正式节奏
 
 ## Suite B：Trace 生命周期鲁棒性
 

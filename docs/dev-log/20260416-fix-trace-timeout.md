@@ -286,3 +286,117 @@
 
 - campaign 层不能允许用户再手动透传 `--seed / --run-root / --output-summary` 给 matrix，否则一轮复跑里会出现两个控制源，结果目录和 seed 口径会乱。
 - `--port-stride` 要大于单轮 matrix 的 case 数。当前 `3 x 2` 是 6 个端口，默认 `20` 留了余量，避免相邻 seed 的 case 端口撞车。
+
+---
+
+# 2026-04-16 feat(benchmark): 落 Suite A fixed sender 第一版
+
+## Git Commit Message
+
+`feat(benchmark): 落 Suite A fixed sender 第一版`
+
+## Modification
+
+- `server/tests/benchmark/suite_a/run_suite_a_case.py`
+- `server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py`
+- `server/tests/benchmark/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260416-fix-trace-timeout.md`
+
+## Summary
+
+- 新增 `run_suite_a_case.py`，先把 Suite A 主图的 fixed clean sender + SQLite evaluator 收成一个单脚本，不再复用 `wrk` 当主发生器。
+- sender 侧只保留 clean trace 语义：固定 `trace_count / spans_per_trace / inter_trace_gap_ms / send_workers`，每条 trace 最后一个 span 用 `trace_end=true` 收口。
+- evaluator 侧只读查询 `trace_summary / trace_span`，并按 `poll_interval_ms / stable_rounds / confirm_sleep_ms / max_drain_wait_ms` 计算 `drain_tail_ms`。
+- 当前结果 JSON 先固定输出：
+  - `visible_completion_rate_at_stop`
+  - `drain_tail_ms`
+  - `sqlite_counts_at_stop`
+  - `sqlite_counts_final`
+  - `sender_stats`
+- benchmark README 已补 `run_suite_a_case.py` 入口说明，避免后面继续把 Suite A 主图和旧 `run_suite_a.sh` 的 wrk wrapper 混在一起。
+
+## Verification
+
+- `cd server/tests/benchmark/suite_a && python3 -m unittest run_suite_a_case_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_a/run_suite_a_case.py server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py`
+- 最小 dry-run：
+  - 启临时本地 HTTP 202 server
+  - 建只含 `trace_summary / trace_span` 的空 SQLite
+  - 真跑 `run_suite_a_case.py` 一轮 4 trace / 3 spans 的小样本
+
+## Learning Tips
+
+### Newbie Tips
+
+- 如果实验的主问题是“给定一批 trace，谁更快把主数据真正落完”，那 `wrk` 这种闭环压测器很容易把分母测脏。固定 sender 更适合这种题。
+- `visible_completion_rate_at_stop` 和 `drain_tail_ms` 这种指标，不需要先把后端所有埋点都接进来。先用 sender 自己维护的分母，加 SQLite 主数据表做分子，就已经够回答主图问题。
+
+### Function Explanation
+
+- `send_clean_traces()`：按 trace 粒度调度 clean 流量，负责维护 `t_stop` 和发送端统计。
+- `read_sqlite_counts()`：只读查询 `trace_summary / trace_span` 计数，不碰 analysis 等后置表。
+- `wait_until_sqlite_stable()`：轮询 SQLite 主数据计数，直到计数稳定，再给出 `drain_tail_ms`。
+- `run_suite_a_case()`：串起 sender、stop 时刻快照和 drain 等待，统一落 Suite A 结果 JSON。
+
+### Pitfalls
+
+- 不要把 `t_stop` 记成“SQLite 稳定时间”。`t_stop` 只认发送阶段结束；`drain_tail_ms` 才是专门量后链路尾巴的。
+- 不要让 evaluator 长时间持有 SQLite 读事务。WAL 能缓解读写互挡，但长事务仍然会把 checkpoint 拖住，最后把实验自己测脏。
+
+---
+
+# 2026-04-16 feat(benchmark): 补 Suite A 单脚本自起后端与时间后缀产物
+
+## Git Commit Message
+
+`feat(benchmark): 补 Suite A 单脚本自起后端与时间后缀产物`
+
+## Modification
+
+- `server/tests/benchmark/suite_a/run_suite_a_case.py`
+- `server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260416-fix-trace-timeout.md`
+
+## Summary
+
+- `run_suite_a_case.py` 现在支持 auto-start 模式：传 `--server-bin` 或 `--server-command` 后，不再要求手动先起后端。
+- `--run-root` 现在被解释成实验前缀；每次运行都会自动追加时间后缀，并从真实 run 目录自动派生：
+  - `suite_a.db`
+  - `result.json`
+  - `server.log`
+- 当前 baseline 的默认启动口径已经写进脚本：
+  - AI 开
+  - `--trace-ai-provider mock`
+  - `--auto-start-proxy`
+  - `--disable-webhook`
+- 新增 `resolve_run_artifacts()` 和 `resolve_server_command()`，把路径派生和默认命令拼装从主流程里拆出来，方便单测锁口径。
+
+## Verification
+
+- `cd server/tests/benchmark/suite_a && python3 -m unittest run_suite_a_case_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_a/run_suite_a_case.py server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py`
+- 最小自起后端 dry-run：
+  - 通过 `--server-command "python3 fake_backend.py {port} {sqlite_db}"` 起临时 fake backend
+  - 验证 auto-start、时间后缀目录、自动派生 `sqlite-db/result-json/server-log` 全部生效
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 如果实验入口既要负责“发流量”，又要负责“自起后端”，那路径管理一定要先收口，不然最容易发生的就是复用旧 DB/旧 JSON，把实验资产直接测脏。
+- `run-root` 更适合表达“实验前缀”，不是“固定结果目录”。只要有 SQLite 这种状态文件，复跑同一条命令就应该默认新开一轮目录。
+
+### Function Explanation
+
+- `resolve_run_artifacts()`：把 `run-root` 变成带时间后缀的真实目录，并自动派生 DB/JSON/log 路径。
+- `resolve_server_command()`：给 Suite A baseline 自动拼默认后端命令，不再要求外层手工凑参数。
+- `launch_server_process()/wait_for_port_ready()/stop_server_process()`：负责最小起停与 ready 检查，不让 sender 在后端未 ready 时就开始打流量。
+
+### Pitfalls
+
+- auto-start 模式和手动模式是两套入口，不要混着传。传了 `--server-bin/--server-command` 却还手写一套错误的 `--sqlite-db`，很容易把“自动派生路径”和“手工旧路径”掺到一起。
+- 当前脚本只把 backend 的 `cpuset/io/dispatch/worker` 收进来了，sender/ai-proxy 的更细绑核还没继续往下做；这一步先解决“能复跑”，不假装已经把全部核拓扑自动化了。

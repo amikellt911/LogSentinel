@@ -117,6 +117,20 @@
   - [x] 汇总 correctness 指标的均值/min/max，以及入口 p95 护栏的 run-level median/min/max
   - [x] 更新 Suite B README / 总览文档，明确正式论文结果用 5 个固定 seed 聚合
   - [x] 验证 Suite B Python 单测和语法检查
+- [ ] Suite A 第一刀：实现 fixed clean sender 单脚本，只支持 4 核三档探测
+  - [x] 先写红灯单测，锁 CLI 参数、`t_stop`、SQLite 稳定轮询和结果 JSON 结构
+  - [x] 复用 `trace_paced_sender.py` 的 clean trace 发送骨架，不引入 Suite B manifest / 脏时序语义
+  - [x] 复用 Suite B evaluator 的稳定计数等待思路，只读查询 `trace_summary / trace_span`
+  - [x] 输出 `visible_completion_rate_at_stop / drain_tail_ms / sqlite_counts_at_stop / sqlite_counts_final / sender_stats`
+  - [ ] 固定 4 核三档探测入口：`trace_count=320`、`spans_per_trace=8`、`gap=125/100/80ms`
+  - [x] 更新 Suite A README/总览文档里的命令口径
+  - [x] 验证单测、Python 语法和最小 dry-run
+- [ ] Suite A 第二刀：把 baseline 当前线收成“单脚本自起后端”的可复跑入口
+  - [x] 先写红灯单测，锁 `--server-bin / --run-root / --port-base` 与自动派生的 `sqlite-db / output-json / server-log`
+  - [x] 让 `run-root` 自动追加时间后缀，避免复用旧 JSON/DB/log
+  - [x] 把当前 baseline 的后端启动命令收进脚本：AI 开、provider=`mock`、webhook 关
+  - [x] 支持透传 `server-cpuset / server-io-threads / worker-threads / dispatch-worker-threads`
+  - [x] 验证单测、Python 语法和最小自起后端 dry-run
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径
