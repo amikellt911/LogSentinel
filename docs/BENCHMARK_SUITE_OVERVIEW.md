@@ -568,6 +568,8 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 `ingest_p95_latency_delta`
 
 - 比较同一档 sender profile 下，`protected` 相比 `minimal` 的 `/logs/spans` p95 延迟增量；
+- 当前由 Suite B sender manifest 里的 `actual_send_done_ms - actual_send_start_ms` 计算；
+- 这个口径只统计 HTTP ingest 请求本身，不包含 evaluator 等待 SQLite 稳定、结果查询或后端进程起停时间；
 - 这是 `Suite B` 最重要的代价护栏；
 - 如果只能留 1 个护栏指标，优先保这个。
 
@@ -727,6 +729,8 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 
 - 在相同 sender profile、相同发送速率、相同 run duration、相同 CPU 绑核条件下；
 - 分别测 `protected` 和 `minimal` 的 `/logs/spans` HTTP 响应 p95；
+- 单 case 先输出 `ingest_latency_ms.p95`；
+- matrix summary 再输出 `ingest_p95_latency_delta_by_profile`；
 - 结果统一报：
   - 绝对增量：`p95(protected) - p95(minimal)`
   - 相对增量：`(p95(protected) - p95(minimal)) / p95(minimal)`

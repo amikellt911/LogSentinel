@@ -23,6 +23,7 @@
   - 覆盖 SQLite 稳定等待、manifest 提炼和三项主指标口径。
 - `run_suite_b.py`
   - 串起 sender + evaluator；
+  - 从 `manifest.jsonl` 的 HTTP 发送起止时间计算 `ingest_latency_ms`；
   - 收口单次 case 的统一 CLI；
   - 输出一份可直接留档的 JSON 结果。
 - `run_suite_b_unit_test.py`
@@ -30,6 +31,7 @@
 - `run_suite_b_matrix.py`
   - 负责 `3 x 2` 矩阵的 case 级编排；
   - 为每个 case 单独起停后端、分配独立 SQLite 和结果目录；
+  - 按 sender profile 汇总 `protected - minimal` 的 `ingest_p95_latency_delta`；
   - 输出一份矩阵汇总 `summary.json`。
 - `run_suite_b_matrix_unit_test.py`
   - 覆盖矩阵 case 规划、后端起停顺序和汇总 JSON 结构。
@@ -99,6 +101,18 @@ python3 server/tests/benchmark/suite_b/evaluator.py \
 - 这三个主指标当前先走 `manifest + SQLite`，还没有把 runtime log 冲突证据纳入最终论文表；
 - manifest 的 `expected_final_action` 不是单纯按 `delay_bucket` 静态推导。sender 会先找到同一 trace 里有效的 tail/trace_end 计划到达时间，再按 protected 的 sealed grace 窗口判断 late span 到底应不应该并入最终 trace。
 - `duplicate_persistence_rate` 现在按 replay clone 自身的 `span_id` 持久化次数判断。也就是说，同一 trace 里其它 late span 造成的 extra 不再连坐 replay，避免把 pollution 误算成 duplicate。
+
+`run_suite_b.py` 会额外从 manifest 计算 `ingest_latency_ms`：
+
+- `count`
+- `min / max / avg`
+- `p50 / p95 / p99`
+
+这里的耗时口径是 sender 视角的 `/logs/spans` HTTP 请求耗时，也就是 `actual_send_done_ms - actual_send_start_ms`。
+
+它不包含后面的 evaluator 等待、SQLite drain 稳定等待，也不包含 matrix runner 起停后端的时间。
+
+原因很简单：`Suite B` 的性能护栏要回答的是“protected 生命周期防护会不会让入口请求明显变慢”，不能把后台 flush 或结果查询时间混进来。
 
 最小 run_suite_b 示例：
 

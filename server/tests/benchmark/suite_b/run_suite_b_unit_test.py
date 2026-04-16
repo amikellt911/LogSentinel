@@ -52,7 +52,12 @@ class SuiteBRunSuiteBUnitTest(unittest.TestCase):
                 order.append("sender")
                 self.assertEqual(str(manifest_path), sender_args.manifest)
                 self.assertEqual(4, sender_args.trace_count)
-                manifest_path.write_text('{"logical_trace_id":1001,"span_id":1,"event_kind":"original","expected_final_action":"merge_into_final_trace"}\n', encoding="utf-8")
+                manifest_path.write_text(
+                    '{"logical_trace_id":1001,"span_id":1,"event_kind":"original",'
+                    '"expected_final_action":"merge_into_final_trace",'
+                    '"actual_send_start_ms":100,"actual_send_done_ms":107}\n',
+                    encoding="utf-8",
+                )
                 return 0
 
             def fake_evaluator(**kwargs):
@@ -105,6 +110,39 @@ class SuiteBRunSuiteBUnitTest(unittest.TestCase):
         self.assertEqual(str(sqlite_db), result["sqlite_db"])
         self.assertEqual(1.0, saved["trace_completeness_rate"]["value"])
         self.assertEqual(0.0, saved["trace_pollution_rate"]["value"])
+        self.assertEqual(1, saved["ingest_latency_ms"]["count"])
+        self.assertEqual(7, saved["ingest_latency_ms"]["p95"])
+
+    def test_load_ingest_latency_stats_uses_manifest_send_window(self) -> None:
+        if run_suite_b_module is None or not hasattr(run_suite_b_module, "load_ingest_latency_stats"):
+            self.fail("load_ingest_latency_stats should exist for Suite B latency guardrail")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_path = Path(temp_dir) / "manifest.jsonl"
+            # manifest 里记录的是 sender 视角的 HTTP 请求起止时间。
+            # 这里故意放一条缺失时间的旧格式行，锁住 helper 要能兼容历史 manifest。
+            manifest_path.write_text(
+                "\n".join(
+                    [
+                        '{"actual_send_start_ms":100,"actual_send_done_ms":103}',
+                        '{"actual_send_start_ms":200,"actual_send_done_ms":210}',
+                        '{"actual_send_start_ms":300,"actual_send_done_ms":307}',
+                        '{"logical_trace_id":999}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stats = run_suite_b_module.load_ingest_latency_stats(manifest_path)
+
+        self.assertEqual(3, stats["count"])
+        self.assertEqual(3, stats["min"])
+        self.assertEqual(10, stats["max"])
+        self.assertEqual(7, stats["p50"])
+        self.assertEqual(10, stats["p95"])
+        self.assertEqual(10, stats["p99"])
+        self.assertAlmostEqual(20 / 3, stats["avg"], places=4)
 
 
 if __name__ == "__main__":

@@ -208,10 +208,12 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
             def fake_run_case(case_args):
                 sequence.append(("case", case_args.trace_lifecycle_profile, case_args.profile))
                 Path(case_args.manifest).write_text("{}", encoding="utf-8")
+                p95 = 9 if case_args.trace_lifecycle_profile == "protected" else 6
                 return {
                     "profile": case_args.profile,
                     "trace_lifecycle_profile": case_args.trace_lifecycle_profile,
                     "trace_completeness_rate": {"matched_traces": 1, "total_traces": 1, "value": 1.0},
+                    "ingest_latency_ms": {"count": 1, "p95": p95},
                 }
 
             def fake_stop(process_info, _timeout_sec: float) -> None:
@@ -281,6 +283,29 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
         self.assertEqual(("launch", "protected__clean_baseline"), sequence[1])
         self.assertIn(("case", "minimal", "mixed_realistic"), sequence)
         self.assertEqual(("stop", "minimal__mixed_realistic"), sequence[-1])
+        self.assertIn("ingest_p95_latency_delta_by_profile", result)
+        self.assertEqual(3, result["ingest_p95_latency_delta_by_profile"]["clean_baseline"]["absolute_ms"])
+        self.assertAlmostEqual(0.5, result["ingest_p95_latency_delta_by_profile"]["clean_baseline"]["relative"])
+
+    def test_build_ingest_p95_latency_delta_by_profile_pairs_lifecycle_cases(self) -> None:
+        if matrix_module is None or not hasattr(matrix_module, "build_ingest_p95_latency_delta_by_profile"):
+            self.fail("build_ingest_p95_latency_delta_by_profile should exist for Suite B p95 guardrail")
+
+        # 这里直接构造 matrix case 输出，不起后端。
+        # 目标是锁住 delta 口径：同一个 sender profile 下，只比较 protected 和 minimal 两个生命周期档位。
+        cases = [
+            {"profile": "clean_baseline", "trace_lifecycle_profile": "protected", "ingest_latency_ms": {"p95": 9}},
+            {"profile": "clean_baseline", "trace_lifecycle_profile": "minimal", "ingest_latency_ms": {"p95": 6}},
+            {"profile": "mixed_realistic", "trace_lifecycle_profile": "protected", "ingest_latency_ms": {"p95": 12}},
+            {"profile": "mixed_realistic", "trace_lifecycle_profile": "minimal", "ingest_latency_ms": {"p95": 0}},
+        ]
+
+        delta = matrix_module.build_ingest_p95_latency_delta_by_profile(cases)
+
+        self.assertEqual(3, delta["clean_baseline"]["absolute_ms"])
+        self.assertAlmostEqual(0.5, delta["clean_baseline"]["relative"])
+        self.assertEqual(12, delta["mixed_realistic"]["absolute_ms"])
+        self.assertIsNone(delta["mixed_realistic"]["relative"])
 
     def test_assert_port_available_rejects_occupied_port(self) -> None:
         # 这条测试锁的是“ready 前先判空端口”，

@@ -94,3 +94,51 @@
 
 - `late_after_dispatch` 只是抽样桶名，不等于真实生命周期已经 dispatch；如果 trace_end 自己晚到，这个 span 仍可能处于 sealed grace 内。
 - replay clone 复制的是已有 span_id，单纯看 `set(span_id)` 看不出重复持久化，必须保留计数。
+
+---
+
+# 2026-04-16 feat(benchmark): 补 Suite B p95 性能护栏
+
+## Git Commit Message
+
+`feat(benchmark): 补 Suite B p95 性能护栏`
+
+## Modification
+
+- `server/tests/benchmark/suite_b/run_suite_b.py`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix.py`
+- `server/tests/benchmark/suite_b/run_suite_b_unit_test.py`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix_unit_test.py`
+- `server/tests/benchmark/suite_b/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- 单次 Suite B case 现在会从 `manifest.jsonl` 的 `actual_send_start_ms / actual_send_done_ms` 计算 `ingest_latency_ms`。
+- `ingest_latency_ms` 输出 `count / min / max / avg / p50 / p95 / p99`，口径只覆盖 `/logs/spans` HTTP 请求本身。
+- Suite B matrix summary 新增 `ingest_p95_latency_delta_by_profile`，按 sender profile 汇总 `protected - minimal` 的 p95 绝对增量和相对增量。
+- 文档补充说明：p95 护栏不包含 evaluator 等待 SQLite 稳定、结果查询或后端进程起停时间，避免把后台 drain 成本混进入口延迟。
+
+## Verification
+
+- `python3 -m unittest run_suite_b_unit_test.py run_suite_b_matrix_unit_test.py`
+- `python3 -m unittest discover -s . -p '*_unit_test.py'`
+- `python3 -m py_compile run_suite_b_matrix.py sender.py evaluator.py run_suite_b.py profiles.py sender_unit_test.py evaluator_unit_test.py run_suite_b_unit_test.py run_suite_b_matrix_unit_test.py`
+
+## Learning Tips
+
+### Newbie Tips
+
+- benchmark 指标要先定义“时间窗口”。入口 HTTP p95、SQLite flush 耗时、evaluator drain 等待是三种不同时间，混在一起会让结论不可解释。
+- percentile 计算要固定口径。本次使用 nearest-rank，样本少时 p95 往往等于最大值，这是正常现象，不是算法坏了。
+
+### Function Explanation
+
+- `load_ingest_latency_stats()`：读取 sender manifest，把每条事件的 `actual_send_done_ms - actual_send_start_ms` 折叠成延迟统计。
+- `build_ingest_p95_latency_delta_by_profile()`：按 sender profile 配对 `protected/minimal` case，计算 p95 的绝对和相对增量。
+
+### Pitfalls
+
+- `--send-workers` 是 sender 内部并发数，不是 CPU 绑核；如果不配合外层 `taskset`，p95 结果仍可能被 sender 和后端抢核污染。
+- dry-run 或 fake case 可能出现 `minimal_p95 = 0`，这时相对增量不能硬除，结果里保留为 `null`。

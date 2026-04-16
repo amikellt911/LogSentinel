@@ -314,6 +314,45 @@ def build_case_args(args: argparse.Namespace, case: Dict[str, object]) -> argpar
     )
 
 
+def extract_case_p95_ms(case: Dict[str, object]) -> Optional[float]:
+    latency_stats = case.get("ingest_latency_ms")
+    if not isinstance(latency_stats, dict):
+        return None
+    p95 = latency_stats.get("p95")
+    if not isinstance(p95, (int, float)):
+        return None
+    return float(p95)
+
+
+def build_ingest_p95_latency_delta_by_profile(cases: List[Dict[str, object]]) -> Dict[str, Dict[str, object]]:
+    grouped: Dict[str, Dict[str, float]] = {}
+    for case in cases:
+        profile = str(case.get("profile", ""))
+        lifecycle = str(case.get("trace_lifecycle_profile", ""))
+        p95 = extract_case_p95_ms(case)
+        if not profile or lifecycle not in {"protected", "minimal"} or p95 is None:
+            continue
+        grouped.setdefault(profile, {})[lifecycle] = p95
+
+    deltas: Dict[str, Dict[str, object]] = {}
+    for profile, values in grouped.items():
+        if "protected" not in values or "minimal" not in values:
+            continue
+        protected_p95 = values["protected"]
+        minimal_p95 = values["minimal"]
+        absolute_ms = protected_p95 - minimal_p95
+        # 这里的相对增量只在 minimal p95 非 0 时计算。
+        # dry-run 或极小 fake case 可能出现 0ms，强行除会把护栏指标变成无意义的无穷大。
+        relative = None if minimal_p95 == 0 else absolute_ms / minimal_p95
+        deltas[profile] = {
+            "protected_p95_ms": protected_p95,
+            "minimal_p95_ms": minimal_p95,
+            "absolute_ms": absolute_ms,
+            "relative": relative,
+        }
+    return deltas
+
+
 def run_suite_b_matrix(
     args: argparse.Namespace,
     assert_port_available: Callable[[int], None] = assert_port_available,
@@ -354,6 +393,7 @@ def run_suite_b_matrix(
         "total_cases": len(results),
         "sender_profiles": parse_csv_list(args.sender_profiles),
         "trace_lifecycle_profiles": parse_csv_list(args.trace_lifecycle_profiles),
+        "ingest_p95_latency_delta_by_profile": build_ingest_p95_latency_delta_by_profile(results),
         "cases": results,
     }
 

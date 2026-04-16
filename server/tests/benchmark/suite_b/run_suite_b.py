@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import evaluator
 import sender
@@ -58,6 +59,51 @@ def build_sender_args(args: argparse.Namespace) -> argparse.Namespace:
     )
 
 
+def percentile_nearest_rank(values: List[int], percentile: float) -> int:
+    if not values:
+        return 0
+    sorted_values = sorted(values)
+    index = max(0, min(len(sorted_values) - 1, math.ceil((percentile / 100.0) * len(sorted_values)) - 1))
+    return sorted_values[index]
+
+
+def load_ingest_latency_stats(manifest_path: Path) -> Dict[str, Any]:
+    latencies_ms: List[int] = []
+    for line in manifest_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        start_ms = int(row.get("actual_send_start_ms") or 0)
+        done_ms = int(row.get("actual_send_done_ms") or 0)
+        if start_ms <= 0 or done_ms < start_ms:
+            continue
+        latencies_ms.append(done_ms - start_ms)
+
+    # Suite B 的性能护栏只看 sender 视角的 HTTP 请求耗时。
+    # 这些时间来自 manifest 的 actual_send_start/done 字段，和 SQLite drain/evaluator 等后处理隔离，
+    # 否则 p95 会被后台 flush 等待污染，回答不了“/logs/spans 入口本身慢了多少”。
+    if not latencies_ms:
+        return {
+            "count": 0,
+            "min": 0,
+            "max": 0,
+            "avg": 0.0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+        }
+
+    return {
+        "count": len(latencies_ms),
+        "min": min(latencies_ms),
+        "max": max(latencies_ms),
+        "avg": sum(latencies_ms) / len(latencies_ms),
+        "p50": percentile_nearest_rank(latencies_ms, 50),
+        "p95": percentile_nearest_rank(latencies_ms, 95),
+        "p99": percentile_nearest_rank(latencies_ms, 99),
+    }
+
+
 def run_suite_b_case(
     args: argparse.Namespace,
     sender_runner: Callable[[argparse.Namespace], int] = sender.run_sender,
@@ -72,6 +118,7 @@ def run_suite_b_case(
     # 2) 再用 evaluator 读取 SQLite 给出指标；
     # 它故意不负责起停后端，也不负责 3x2 矩阵批跑，避免 orchestration 和实验矩阵耦死。
     sender_runner(build_sender_args(args))
+    ingest_latency_ms = load_ingest_latency_stats(manifest_path)
 
     evaluation = evaluator_runner(
         manifest_path=manifest_path,
@@ -110,6 +157,7 @@ def run_suite_b_case(
             "confirm_sleep_sec": args.confirm_sleep_sec,
             "max_wait_sec": args.max_wait_sec,
         },
+        "ingest_latency_ms": ingest_latency_ms,
     }
     result.update(evaluation)
 

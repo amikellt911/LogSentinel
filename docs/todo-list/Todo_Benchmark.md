@@ -94,6 +94,12 @@
   - [x] evaluator 的 duplicate 指标改成按 replay span 自身持久化次数判断，不再被同 trace 其它 extra span 连坐
   - [x] 更新 Suite B README，说明 manifest 真值是按 protected 语义窗口推导，而不是按 delay bucket 静态推导
   - [x] 验证 sender/evaluator 单测、Python 语法和本机 Suite B 小矩阵
+- [x] Suite B 性能护栏收尾：补 `ingest_p95_latency_delta`，让正确性收益和延迟代价一起落进结果 JSON
+  - [x] 先写红灯单测，锁单 case 从 manifest 计算 p50/p95/p99 HTTP ingest 延迟
+  - [x] 先写红灯单测，锁 matrix summary 按 sender profile 计算 `protected - minimal` 的 p95 增量
+  - [x] 实现单 case latency stats 和 matrix latency delta 汇总
+  - [x] 更新 Suite B README / 总览文档，明确 p95 护栏来自 sender manifest 的 HTTP 响应耗时
+  - [x] 验证 Suite B Python 单测和语法检查
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径
