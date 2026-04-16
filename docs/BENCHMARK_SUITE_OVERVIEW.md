@@ -194,11 +194,11 @@ Suite A 主图不再使用 `wrk` 当主发生器。
     - `trace_summary`
     - `trace_span`
 - `drain_tail_ms`
-  - 定义：从 `t_stop` 开始，到主数据计数稳定不再增长为止的时间
+  - 定义：从 `t_stop` 开始，到 SQLite `trace_summary` 追到 sender 固定 `trace_count` 为止的时间
   - 轮询规则当前固定为：
     - 每 `50ms` 轮询一次
-    - 连续 `3` 轮不增长视为稳定
-    - 超过 `30s` 记 timeout
+    - clean 流量优先按 `trace_summary == trace_count` 收口
+    - 超过 `30s` 仍未补齐则记 timeout，并输出超时时刻的最新计数
 
 当前主图扫描脚本默认走 `AI-off`。
 

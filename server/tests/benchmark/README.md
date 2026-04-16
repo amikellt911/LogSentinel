@@ -31,6 +31,8 @@
   - 是 Suite A 第一版 fixed clean sender 入口；
   - 它自己负责发送 clean trace、记录 `t_stop`、轮询 SQLite 主数据并输出
     `visible_completion_rate_at_stop / drain_tail_ms`；
+  - 当前 clean 流量默认按 `trace_summary == trace_count` 判定 drain 完成；
+    只有在超时前追不到目标 trace 数时，才会把当时的 SQLite 计数记成最终结果；
   - 当前优先服务 `4` 核三档探测，不再复用 `wrk` 当主发生器。
 - `run_suite_a.sh`
   - 仍然保留为旧的 wrk wrapper；

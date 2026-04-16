@@ -200,6 +200,9 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
 
             def fake_wait(sqlite_path: Path, **kwargs):
                 events.append(("wait", sqlite_path.name, kwargs["stable_rounds"], kwargs["poll_interval_ms"]))
+                # 这里只认“主数据最终补齐到目标 trace 数”才算完成。
+                # 如果 run_suite_a_case 没把 trace_count 往下传，这条测试就应该红灯。
+                self.assertEqual(320, kwargs["expected_trace_count"])
                 return {
                     "final_counts": {"trace_summary": 280, "trace_span": 2240},
                     "drain_tail_ms": 800,
@@ -353,6 +356,42 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
         )
 
         self.assertEqual({"trace_summary": 12, "trace_span": 96}, stable["final_counts"])
+        self.assertEqual(10800, stable["t_stable_ms"])
+        self.assertEqual(9800, stable["drain_tail_ms"])
+        self.assertFalse(stable["drain_timeout"])
+        self.assertEqual([0.2, 0.2, 0.2], sleep_calls)
+
+    def test_wait_until_sqlite_stable_waits_for_expected_trace_count_before_returning(self) -> None:
+        if suite_a_module is None or not hasattr(suite_a_module, "wait_until_sqlite_stable"):
+            self.fail("wait_until_sqlite_stable should exist for Suite A SQLite polling")
+
+        monotonic_points = iter([10.0, 10.2, 10.4, 10.6, 10.8, 11.0, 11.2, 11.2])
+        sleep_calls = []
+        count_sequence = iter(
+            [
+                {"trace_summary": 12, "trace_span": 96},
+                {"trace_summary": 12, "trace_span": 96},
+                {"trace_summary": 12, "trace_span": 96},
+                {"trace_summary": 15, "trace_span": 120},
+            ]
+        )
+
+        # 这条红灯锁的是 Suite A 的真实完成语义：
+        # 只要还没达到预期 trace 数，就算 SQLite 计数暂时稳定，也不能提前当成 final。
+        stable = suite_a_module.wait_until_sqlite_stable(
+            sqlite_path=Path("/tmp/suite_a.db"),
+            sqlite_counter=lambda _path: next(count_sequence),
+            poll_interval_ms=200,
+            stable_rounds=2,
+            confirm_sleep_ms=0,
+            max_wait_ms=2000,
+            sleep_func=lambda seconds: sleep_calls.append(seconds),
+            monotonic_func=lambda: next(monotonic_points),
+            start_ms=1000,
+            expected_trace_count=15,
+        )
+
+        self.assertEqual({"trace_summary": 15, "trace_span": 120}, stable["final_counts"])
         self.assertEqual(10800, stable["t_stable_ms"])
         self.assertEqual(9800, stable["drain_tail_ms"])
         self.assertFalse(stable["drain_timeout"])

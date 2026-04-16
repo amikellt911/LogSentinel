@@ -258,6 +258,54 @@
 
 - 新增 `run_suite_b_campaign.py`，把正式 Suite B 结果从“单次 matrix”提升为“5 个固定 seed 的 campaign”。
 - 默认 seed 固定为 `20260415,20260416,20260417,20260418,20260419`，每个 seed 跑一轮完整 `3 x 2` matrix。
+
+---
+
+# 2026-04-16 fix(benchmark): 修正 Suite A drain 完成判定
+
+## Git Commit Message
+
+`fix(benchmark): 修正 Suite A drain 完成判定`
+
+## Modification
+
+- `server/tests/benchmark/suite_a/run_suite_a_case.py`
+- `server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py`
+- `server/tests/benchmark/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- `wait_until_sqlite_stable()` 新增 `expected_trace_count` 参数。现在只要 Suite A sender 已知固定 `trace_count`，drain 完成语义就不再是“SQLite 计数稳定几轮”，而是“`trace_summary` 追到目标 trace 数或超时”。
+- `run_suite_a_case()` 现在会把 sender 的 `trace_count` 传给 drain 轮询逻辑，避免 clean 流量场景下把中间态误记成 `sqlite_counts_final`。
+- `run_suite_a_case_unit_test.py` 补两条回归：
+  - 锁 `run_suite_a_case()` 必须把 `expected_trace_count` 透传给等待逻辑；
+  - 锁 `wait_until_sqlite_stable()` 在目标 trace 数未达成前，即使 SQLite 计数暂时稳定，也不能提前返回。
+- benchmark README 和总览文档同步改口径，明确 Suite A 现在的 `drain_tail_ms` 是“补齐到目标 trace 数的尾巴”，不是“稳定轮询尾巴”。
+
+## Verification
+
+- `cd server/tests/benchmark/suite_a && python3 -m unittest run_suite_a_case_unit_test.py`
+- `python3 server/tests/benchmark/suite_a/run_suite_a_case.py --server-command 'taskset -c 2-3 ./server/build-main/LogSentinel --db {sqlite_db} --port {port} --disable-ai --disable-webhook --server-io-threads 1 --worker-threads 32 --dispatch-worker-threads 1' --run-root /tmp/suite_a_main_ai_off_gap10_verify --port-base 18216 --trace-count 800 --spans-per-trace 8 --inter-trace-gap-ms 10 --send-workers 1 --request-timeout-ms 1000 --poll-interval-ms 50 --stable-rounds 3 --confirm-sleep-ms 100 --max-drain-wait-ms 30000`
+- 实测结果从旧脚本会提前停在 `sqlite_counts_final=742` 一类中间态，修正后同场景已经能追到 `sqlite_counts_final=800`
+
+## Learning Tips
+
+### Newbie Tips
+
+- “稳定”不等于“完成”。只要实验本身已经知道固定分母，最稳的收口条件永远是“追到目标值或超时”，不是看到计数暂时不动就收工。
+- benchmark 脚本本身也会引入测量误差。看到结果反直觉时，先别急着怪后端，有时候是 runner 自己把中间态误标成 final。
+
+### Function Explanation
+
+- `wait_until_sqlite_stable(..., expected_trace_count=...)`：当调用方知道目标 trace 数时，函数会持续轮询到 `trace_summary` 达标；只有没传目标值时，才回退到旧的“稳定若干轮”模式。
+- `run_suite_a_case()`：先记 `t_stop` 和 stop 时刻快照，再把 sender 的目标 trace 数带进 drain 等待，保证 `sqlite_counts_final` 真的是“补齐后的最终主数据状态”。
+
+### Pitfalls
+
+- 不能把 `sqlite_counts_final` 这个字段名字当成天然正确。字段名只有在收口条件对的时候才有意义；条件错了，字段名再像 final 也只是中间态。
+- clean 流量场景里，如果 sender 分母固定，`stable_rounds / confirm_sleep_ms` 这类参数就不再是主收口逻辑，只是 legacy fallback。继续按它们解释主图，会把结论讲歪。
 - campaign runner 只控制 `seed / run-root / port-base`，其它后端资源参数原样透传给 `run_suite_b_matrix.py`，避免维护两套资源 CLI。
 - campaign summary 新增 `aggregate.correctness_by_case`、`aggregate.ingest_p95_latency_delta_by_profile` 和 `aggregate.sqlite_unique_constraint_fail_count_by_case`。
 - 正确性指标聚合 `mean / median / min / max`；入口 p95 护栏按 run-level delta 聚合，不把所有请求混成一个大样本重算 p95。

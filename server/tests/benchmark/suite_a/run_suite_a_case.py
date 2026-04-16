@@ -353,6 +353,7 @@ def wait_until_sqlite_stable(
     sleep_func: Callable[[float], None] = time.sleep,
     monotonic_func: Callable[[], float] = time.monotonic,
     start_ms: Optional[int] = None,
+    expected_trace_count: Optional[int] = None,
 ) -> JsonDict:
     if stable_rounds <= 0:
         raise ValueError("stable_rounds must be > 0")
@@ -366,34 +367,50 @@ def wait_until_sqlite_stable(
 
     while True:
         counts = sqlite_counter(sqlite_path)
-        if counts == last_counts:
-            same_rounds += 1
-        else:
-            last_counts = counts
-            same_rounds = 0
 
-        if same_rounds >= stable_rounds:
-            if confirm_sleep_ms > 0:
-                sleep_func(confirm_sleep_ms / 1000.0)
-                confirm_counts = sqlite_counter(sqlite_path)
-                if confirm_counts == counts:
+        # Suite A 的 clean sender 已经知道“理论上应该补齐多少条 trace”。
+        # 既然目标值是确定的，那么 drain 完成语义就该是“主数据追到目标 trace 数”；
+        # 不能再因为 SQLite 计数暂时稳定了几轮，就误判成 final。
+        # 否则后台 flush 只是刚好在两个轮询点之间停了一下，脚本就会提前收工，
+        # 最后得到一个看起来像 final、实际上只是中间态的 sqlite_counts_final。
+        if expected_trace_count is not None and int(counts["trace_summary"]) >= expected_trace_count:
+            t_stable_ms = int(monotonic_func() * 1000)
+            return {
+                "final_counts": counts,
+                "t_stable_ms": t_stable_ms,
+                "drain_tail_ms": max(0, t_stable_ms - base_ms),
+                "drain_timeout": False,
+            }
+
+        if expected_trace_count is None:
+            if counts == last_counts:
+                same_rounds += 1
+            else:
+                last_counts = counts
+                same_rounds = 0
+
+            if same_rounds >= stable_rounds:
+                if confirm_sleep_ms > 0:
+                    sleep_func(confirm_sleep_ms / 1000.0)
+                    confirm_counts = sqlite_counter(sqlite_path)
+                    if confirm_counts == counts:
+                        t_stable_ms = int(monotonic_func() * 1000)
+                        return {
+                            "final_counts": confirm_counts,
+                            "t_stable_ms": t_stable_ms,
+                            "drain_tail_ms": max(0, t_stable_ms - base_ms),
+                            "drain_timeout": False,
+                        }
+                    last_counts = confirm_counts
+                    same_rounds = 0
+                else:
                     t_stable_ms = int(monotonic_func() * 1000)
                     return {
-                        "final_counts": confirm_counts,
+                        "final_counts": counts,
                         "t_stable_ms": t_stable_ms,
                         "drain_tail_ms": max(0, t_stable_ms - base_ms),
                         "drain_timeout": False,
                     }
-                last_counts = confirm_counts
-                same_rounds = 0
-            else:
-                t_stable_ms = int(monotonic_func() * 1000)
-                return {
-                    "final_counts": counts,
-                    "t_stable_ms": t_stable_ms,
-                    "drain_tail_ms": max(0, t_stable_ms - base_ms),
-                    "drain_timeout": False,
-                }
 
         if monotonic_func() >= deadline:
             timeout_counts = sqlite_counter(sqlite_path)
@@ -459,6 +476,10 @@ def run_suite_a_case(
             confirm_sleep_ms=runtime_args.confirm_sleep_ms,
             max_wait_ms=runtime_args.max_drain_wait_ms,
             start_ms=int(time.monotonic() * 1000),
+            # 这组实验发送的是确定总量的 clean trace，所以 drain 完成口径也必须锁成确定值：
+            # 只要 trace_summary 还没追到 sender 发出的 trace_count，就不能把“计数暂时稳定”当成最终完成。
+            # 真正的结束条件只有两种：达到目标 trace 数，或者超时。
+            expected_trace_count=int(sender_result["trace_count"]),
         )
 
         result = {
