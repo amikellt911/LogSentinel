@@ -22,3 +22,5 @@ tests/build
 *.script
 *.folded
 .codex
+/build-cmp
+/build-main

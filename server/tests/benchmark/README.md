@@ -18,6 +18,9 @@
 当前用户优先入口：
 
 - `server/tests/benchmark/suite_a/run_suite_a_case.py`
+- `server/tests/benchmark/suite_a/run_suite_a_scan.py`
+- `server/tests/benchmark/suite_a/run_suite_a_main_scan.sh`
+- `server/tests/benchmark/suite_a/run_suite_a_cmp_scan.sh`
 - `server/tests/benchmark/suite_a/run_suite_a.sh`
 - `server/tests/benchmark/suite_d/run_suite_d.sh`
 - `server/tests/benchmark/common/run_flamegraph_case.sh`
@@ -32,6 +35,14 @@
 - `run_suite_a.sh`
   - 仍然保留为旧的 wrk wrapper；
   - 这条线后续是否继续保留，取决于 Suite A 主图是否还需要附录里的 wrk 压力证据。
+- `run_suite_a_scan.py`
+  - 是 Suite A 当前的 gap 扫描编排器；
+  - 负责批量跑 `gap x repeat`，并把单轮 `result.json` 聚合成一个 `summary.json`；
+  - 当前默认服务 `25/20/15ms` 这类小范围压力扫描，不承担脏时序职责。
+- `run_suite_a_main_scan.sh / run_suite_a_cmp_scan.sh`
+  - 是当前论文主图口径的固定 wrapper；
+  - 两者都默认走 `AI-off`，因为如果把 mock AI 一起开着，`600ms` 量级的推理等待会把 `2~4ms` 量级的存储差异压得很扁；
+  - 这两个脚本的目标是把“主线 buffered 路径”和“旧版 direct SQLite 路径”放到更干净的主数据可见性对比里。
 
 这样拆的原因很直接：
 

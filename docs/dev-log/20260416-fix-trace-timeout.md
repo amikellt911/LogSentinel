@@ -445,3 +445,72 @@
 
 - 不要把 `server_command` 模板本身当成实验证据。真正该看的，是占位符替换后的 `resolved_server_command`。
 - 这个字段只是帮助复盘和排脏，不会反过来保证旧版二进制一定支持你传进去的所有 CLI；CLI 是否生效，最终还是要和 `server.log`、SQLite 真值一起交叉看。
+
+---
+
+# 2026-04-16 feat(benchmark): 补 Suite A AI-off gap 扫描脚本
+
+## Git Commit Message
+
+`feat(benchmark): 补 Suite A AI-off gap 扫描脚本`
+
+## Modification
+
+- `server/tests/benchmark/suite_a/run_suite_a_scan.py`
+- `server/tests/benchmark/suite_a/run_suite_a_scan_unit_test.py`
+- `server/tests/benchmark/suite_a/run_suite_a_main_scan.sh`
+- `server/tests/benchmark/suite_a/run_suite_a_cmp_scan.sh`
+- `server/tests/benchmark/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260416-fix-trace-timeout.md`
+
+## Summary
+
+- 新增 `run_suite_a_scan.py`，负责把 `gap x repeat` 的多轮 Suite A 单 case 批跑收成统一入口，并输出 `summary.json`。
+- 新增 `run_suite_a_main_scan.sh` 和 `run_suite_a_cmp_scan.sh` 两个固定 wrapper，分别锁主线 `build-main` 和旧版 `build-cmp` 的 AI-off 口径，避免再手工复制命令把 `--auto-start-proxy` 一类参数拆坏。
+- 当前这两个 wrapper 默认固定：
+  - `gap=25/20/15ms`
+  - `repeat=5`
+  - `trace_count=800`
+  - `spans_per_trace=8`
+  - `send_workers=1`
+- Suite A 当前主图口径默认改成 `AI-off`，因为 mock AI 已经在 `600ms` 量级，而主数据 SQLite flush 只有 `2~4ms`，继续 AI-on 会把“buffered vs direct write”的存储差异压得很扁。
+- scan runner 还补了一层目录创建兜底，避免显式指定嵌套 `output-json` 时，单轮 case 在写 `result.json` 直接 `FileNotFoundError`。
+
+## Verification
+
+- `cd server/tests/benchmark/suite_a && python3 -m unittest run_suite_a_scan_unit_test.py`
+- `python3 -m unittest discover -s server/tests/benchmark/suite_a -p '*_unit_test.py'`
+- `python3 -m py_compile server/tests/benchmark/suite_a/run_suite_a_case.py server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py server/tests/benchmark/suite_a/run_suite_a_scan.py server/tests/benchmark/suite_a/run_suite_a_scan_unit_test.py`
+- `bash -n server/tests/benchmark/suite_a/run_suite_a_main_scan.sh`
+- `bash -n server/tests/benchmark/suite_a/run_suite_a_cmp_scan.sh`
+- `git diff --check`
+- 最小 smoke：
+  - `run_suite_a_main_scan.sh --gaps-ms 25 --repeats 1 --trace-count 2 --spans-per-trace 2`
+  - `run_suite_a_cmp_scan.sh --gaps-ms 25 --repeats 1 --trace-count 2 --spans-per-trace 2`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 如果你发现自己总是在同一条超长 benchmark 命令里手滑，把某个关键参数拆断，那说明这条命令已经不适合继续手敲了，应该尽快收成 wrapper。
+- 对比实验里“参数本身是否正确传进去了”属于实验资产的一部分，不比结果 JSON 次要。参数一旦传脏，整轮结果都不该拿来解释。
+- 当 AI 延迟远大于主数据存储延迟时，AI-on 图更适合回答“完整功能是否稳定”，不适合回答“存储路径谁更快”。
+
+### Function Explanation
+
+- `run_suite_a_scan.py`
+  - 负责展开 `gap x repeat`
+  - 负责为每一轮派生独立 `run-root / output-json / port`
+  - 负责把单轮 `run_suite_a_case.py` 结果聚合成按 gap 分组的 summary
+- `run_suite_a_main_scan.sh`
+  - 固定主线 `build-main` 的 AI-off 参数组
+- `run_suite_a_cmp_scan.sh`
+  - 固定旧版 `build-cmp` 的 AI-off 参数组
+
+### Pitfalls
+
+- `run_suite_a_case.py` 会自动创建“加时间后缀后的真实 run-root”，但如果外层 scan runner 显式塞了嵌套 `output-json`，父目录还是要先手工建好。
+- 旧版 `build-cmp` 没有 `--disable-ai`。要关 AI，只能不传 `--auto-start-proxy` 和 `--trace-ai-provider`，不能想当然套用主线 CLI。
+- wrapper 支持你在命令尾部继续覆盖参数，但 summary 里会同时保留“默认值”和“覆盖值”的参数序列；最终实际生效值还是按命令行“后者覆盖前者”的规则解释。
