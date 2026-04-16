@@ -562,3 +562,66 @@
 - `run_suite_a_case.py` 会自动创建“加时间后缀后的真实 run-root”，但如果外层 scan runner 显式塞了嵌套 `output-json`，父目录还是要先手工建好。
 - 旧版 `build-cmp` 没有 `--disable-ai`。要关 AI，只能不传 `--auto-start-proxy` 和 `--trace-ai-provider`，不能想当然套用主线 CLI。
 - wrapper 支持你在命令尾部继续覆盖参数，但 summary 里会同时保留“默认值”和“覆盖值”的参数序列；最终实际生效值还是按命令行“后者覆盖前者”的规则解释。
+
+---
+
+# 2026-04-16 feat(benchmark): 落 Suite A Stage 1 粗搜入口
+
+## Git Commit Message
+
+`feat(benchmark): 落 Suite A Stage 1 粗搜入口`
+
+## Modification
+
+- `server/tests/benchmark/suite_a/run_suite_a_search_stage1.py`
+- `server/tests/benchmark/suite_a/run_suite_a_search_stage1_unit_test.py`
+- `server/src/main.cpp`
+- `server/persistence/BufferedTraceRepository.h`
+- `server/tests/benchmark/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260416-fix-trace-timeout.md`
+
+## Summary
+
+- 新增 `run_suite_a_search_stage1.py`，把 Suite A 的 4 核粗搜固定成 `Phase A(lifecycle+sweep) -> Phase B(buffer) -> Phase C(AI-on smoke)` 三段编排。
+- 搜索脚本默认只打一个 clean gap 点位，不做全排列；stdout 只保留“每组一行摘要 + 最终 top-k”，完整明细统一落 `summary.json` 和各 case 的 `result.json`。
+- 后端新增 benchmark-only CLI：
+  - `--trace-primary-flush-span-threshold`
+  - `--trace-primary-flush-interval-ms`
+- 这两个 CLI 只在启动时临时覆盖 `BufferedTraceRepository` 主数据桶的 flush 水位和 flush 间隔，不写回 SQLite，不进入正式 Settings。
+- benchmark README 和总览文档同步补 Stage 1 口径，明确为什么当前先做两阶段剪枝，而不是直接把 lifecycle/sweep/buffer/gap/AI 一起做笛卡尔积。
+
+## Verification
+
+- `cd server/tests/benchmark/suite_a && python3 -m unittest run_suite_a_case_unit_test.py run_suite_a_scan_unit_test.py run_suite_a_search_stage1_unit_test.py`
+- `python3 -m unittest server/tests/benchmark/suite_a/run_suite_a_search_stage1_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_a/run_suite_a_case.py server/tests/benchmark/suite_a/run_suite_a_scan.py server/tests/benchmark/suite_a/run_suite_a_search_stage1.py server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py server/tests/benchmark/suite_a/run_suite_a_scan_unit_test.py server/tests/benchmark/suite_a/run_suite_a_search_stage1_unit_test.py`
+- `git diff --check`
+- `cmake --build server/build --target LogSentinel -j2`
+  - 这一步没有拿到完整成功结果，失败原因不是代码报错，而是机器磁盘写满：
+    - `/usr/bin/ranlib: ... No space left on device`
+    - `/tmp/...s: No space left on device`
+  - 但本次改动对应的对象文件已经编过去：
+    - `server/build/CMakeFiles/LogSentinel.dir/src/main.cpp.o`
+    - `server/build/CMakeFiles/persistence_module.dir/persistence/BufferedTraceRepository.cpp.o`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 参数搜索不要一上来就做全排列。变量一多，最先炸掉的通常不是算法，而是你的时间预算和复盘能力。
+- “buffer 参数可调”不等于“产品语义要跟着开放”。如果这个参数只是为了 benchmark 排查，就应该停留在 CLI override，不要急着塞进 Settings。
+
+### Function Explanation
+
+- `run_stage1_search()`：负责串起 Phase A/B/C，并把每个候选的 repeat 结果折成统一 summary。
+- `replace_or_append_option()`：在保留现有 Suite A case CLI 的前提下，局部替换 `trace-count` 这类需要按 phase 改写的参数。
+- `BufferedTraceRepository::Config`
+  - `primary_span_reserve` 控制主数据桶按量 flush 的触发点；
+  - `primary_flush_interval_ms` 控制主数据桶按时 flush 的最长等待。
+
+### Pitfalls
+
+- 如果 base case 参数里还手工塞 `--trace-lifecycle-profile`、`--trace-primary-flush-*` 或 `--disable-ai`，搜索脚本必须拒绝；否则你看到的就不是搜索结果，而是“谁最后覆盖了谁”。
+- 这轮编译失败不能误判成代码错误。日志已经说明是磁盘空间耗尽，和这次 CLI 接线本身不是一类问题。

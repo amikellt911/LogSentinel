@@ -30,9 +30,13 @@ public:
     struct Config
     {
         size_t primary_summary_reserve = 64;
+        // 主数据桶真正的“按量 flush”水位先看 span 数。
+        // benchmark 会通过 CLI 临时覆盖它，用来观察“更早切桶”和“更晚切桶”的影响。
         size_t primary_span_reserve = 512;
         size_t analysis_reserve = 64;
         size_t initial_buffer_count = 4;
+        // 主数据桶即使一直没攒满，也最多只等这么久就会被时间条件刷出去。
+        // 这项同样只允许 benchmark 在启动命令里临时覆盖，不进入正式 Settings 语义。
         int64_t primary_flush_interval_ms = 200;
         int64_t analysis_flush_interval_ms = 500;
     };

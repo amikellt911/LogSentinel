@@ -217,6 +217,8 @@ int main(int argc, char* argv[])
     int trace_max_dispatch_per_tick = 64;
     int trace_buffered_span_limit = 4096;
     int trace_active_session_limit = 1024;
+    int trace_primary_flush_span_threshold = -1;
+    int trace_primary_flush_interval_ms = -1;
     int service_monitor_window_minutes = 30;
     int service_monitor_bucket_seconds = 3;
     std::string webhook_provider;
@@ -288,6 +290,13 @@ int main(int argc, char* argv[])
             trace_buffered_span_limit = std::stoi(argv[++i]);
         } else if (arg == "--trace-active-session-limit" && i + 1 < argc) {
             trace_active_session_limit = std::stoi(argv[++i]);
+        } else if (arg == "--trace-primary-flush-span-threshold" && i + 1 < argc) {
+            // 这两个参数只服务 benchmark：
+            // 它们临时改变的是 BufferedTraceRepository 主数据桶的 flush 时机，
+            // 不是正式产品配置，不写回 SQLite，也不进入 Settings 页面。
+            trace_primary_flush_span_threshold = std::stoi(argv[++i]);
+        } else if (arg == "--trace-primary-flush-interval-ms" && i + 1 < argc) {
+            trace_primary_flush_interval_ms = std::stoi(argv[++i]);
         } else if (arg == "--service-monitor-window-minutes" && i + 1 < argc) {
             // 服务监控默认还是按 30 分钟窗口跑，但联调时可以临时压到 1~2 分钟，
             // 这样不用真等半小时，就能看到榜单进窗和退窗的完整过程。
@@ -372,6 +381,16 @@ int main(int argc, char* argv[])
     }
     if (trace_active_session_limit <= 0) {
         std::cerr << "Fatal Error: --trace-active-session-limit must be > 0" << std::endl;
+        return -1;
+    }
+    if (trace_primary_flush_span_threshold == 0 || trace_primary_flush_span_threshold < -1) {
+        std::cerr << "Fatal Error: --trace-primary-flush-span-threshold must be > 0 or omitted"
+                  << std::endl;
+        return -1;
+    }
+    if (trace_primary_flush_interval_ms == 0 || trace_primary_flush_interval_ms < -1) {
+        std::cerr << "Fatal Error: --trace-primary-flush-interval-ms must be > 0 or omitted"
+                  << std::endl;
         return -1;
     }
     if (service_monitor_window_minutes <= 0) {
@@ -654,8 +673,20 @@ int main(int argc, char* argv[])
             // 这样改掉的是“写入口实现”，不是 trace 表结构或查询口径。
             trace_write_sink = std::make_shared<DirectTraceWriteSink>(trace_repo);
         } else {
-            // 默认主链继续走双缓冲写入器，再由后台 flush 线程批量落到 SQLite。
-            buffered_trace_repo = std::make_shared<BufferedTraceRepository>(trace_repo);
+            // 这里仍然只构建产品里的 BufferedTraceRepository。
+            // benchmark-only CLI 做的事情只是临时覆盖“主数据桶多大/多久 flush 一次”，
+            // 不会把这些实验参数写进 SQLite 配置仓库，也不会改变其它环境的默认行为。
+            BufferedTraceRepository::Config buffered_trace_config;
+            if (trace_primary_flush_span_threshold > 0) {
+                buffered_trace_config.primary_span_reserve =
+                    static_cast<size_t>(trace_primary_flush_span_threshold);
+            }
+            if (trace_primary_flush_interval_ms > 0) {
+                buffered_trace_config.primary_flush_interval_ms =
+                    static_cast<int64_t>(trace_primary_flush_interval_ms);
+            }
+            buffered_trace_repo =
+                std::make_shared<BufferedTraceRepository>(trace_repo, buffered_trace_config);
             trace_write_sink = buffered_trace_repo;
         }
     }
@@ -699,6 +730,15 @@ int main(int argc, char* argv[])
                    ? startup_app_config.dispatch_worker_threads
                    : 1);
     const int num_query_threads = 1;
+    const BufferedTraceRepository::Config default_buffer_config;
+    const size_t effective_trace_primary_flush_span_threshold =
+        trace_primary_flush_span_threshold > 0
+            ? static_cast<size_t>(trace_primary_flush_span_threshold)
+            : default_buffer_config.primary_span_reserve;
+    const int64_t effective_trace_primary_flush_interval_ms =
+        trace_primary_flush_interval_ms > 0
+            ? static_cast<int64_t>(trace_primary_flush_interval_ms)
+            : default_buffer_config.primary_flush_interval_ms;
 
     std::cout << "System Info: " << num_cpu_cores << " cores detected." << std::endl;
     std::cout << "Thread Model: " << num_io_threads << " I/O threads, "
@@ -716,6 +756,12 @@ int main(int argc, char* argv[])
     std::cout << "Trace persistence mode: "
               << (disable_buffered_trace_repo_cli ? "direct/no-buffer" : "buffered")
               << std::endl;
+    if (!disable_buffered_trace_repo_cli) {
+        std::cout << "Buffered trace primary flush: span_threshold="
+                  << effective_trace_primary_flush_span_threshold
+                  << ", interval_ms=" << effective_trace_primary_flush_interval_ms
+                  << std::endl;
+    }
     MiniMuduo::net::EventLoop loop;
     MiniMuduo::net::InetAddress addr(effective_port);
     testServer server(&loop, addr, num_io_threads);

@@ -134,6 +134,12 @@
   - [x] 把最终实际执行的 `server_command` 写进结果 JSON，避免 compare_target 结果脏掉时只能靠肉眼翻 `server.log`
 - [x] 补 `run_suite_a_main_scan.sh / run_suite_a_cmp_scan.sh` 两个批量脚本，固定 `gap=25/20/15ms` 与 `repeat=5`，避免手工复制命令把 compare_target 模板拆坏
 - [x] 修正 Suite A drain 完成口径：必须等 `trace_summary == trace_count` 或超时，不能再只看“稳定若干轮”
+- [ ] 设计并落地 Suite A Stage 1 粗搜入口：4 核、30 分钟预算、两阶段剪枝，不做全排列暴力搜索
+  - [x] 细化 Stage 1 搜索 Todo，并补红灯单测基座
+  - [x] 暴露 benchmark-only CLI：`trace-primary-flush-span-threshold / trace-primary-flush-interval-ms`
+  - [x] 实现 Stage 1 搜索脚本，只输出单行摘要和最终 top-k
+  - [x] 更新 benchmark 文档和当日 dev-log
+  - [ ] 跑最小单测、语法检查和后端编译验证
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

@@ -19,6 +19,7 @@
 
 - `server/tests/benchmark/suite_a/run_suite_a_case.py`
 - `server/tests/benchmark/suite_a/run_suite_a_scan.py`
+- `server/tests/benchmark/suite_a/run_suite_a_search_stage1.py`
 - `server/tests/benchmark/suite_a/run_suite_a_main_scan.sh`
 - `server/tests/benchmark/suite_a/run_suite_a_cmp_scan.sh`
 - `server/tests/benchmark/suite_a/run_suite_a.sh`
@@ -41,6 +42,14 @@
   - 是 Suite A 当前的 gap 扫描编排器；
   - 负责批量跑 `gap x repeat`，并把单轮 `result.json` 聚合成一个 `summary.json`；
   - 当前默认服务 `25/20/15ms` 这类小范围压力扫描，不承担脏时序职责。
+- `run_suite_a_search_stage1.py`
+  - 是 Suite A 当前的 4 核 Stage 1 粗搜入口；
+  - 它先固定一个 clean gap 点位，再按 `Phase A(lifecycle+sweep) -> Phase B(buffer) -> Phase C(AI-on smoke)` 做两阶段剪枝；
+  - stdout 只输出“每组一行摘要 + 最终 top-k”，完整明细统一写进 `summary.json` 和每个 case 的 `result.json`；
+  - 当前 benchmark-only CLI 已额外支持：
+    - `--trace-primary-flush-span-threshold`
+    - `--trace-primary-flush-interval-ms`
+  - 这两个参数只用于实验，不会写回正式 Settings。
 - `run_suite_a_main_scan.sh / run_suite_a_cmp_scan.sh`
   - 是当前论文主图口径的固定 wrapper；
   - 两者都默认走 `AI-off`，因为如果把 mock AI 一起开着，`600ms` 量级的推理等待会把 `2~4ms` 量级的存储差异压得很扁；

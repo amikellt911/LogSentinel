@@ -210,6 +210,47 @@ Suite A 主图不再使用 `wrk` 当主发生器。
 - 主图：`AI-off`，回答主数据可见性/存储路径差异
 - 副图或补充图：`AI-on`，回答完整功能打开后是否出现灾难性退化
 
+### Stage 1 粗搜口径
+
+在正式主图继续扩命令之前，Suite A 先补一层 `Stage 1` 粗搜。
+
+这一步只做一件事：
+
+- 在 `4` 核、固定 clean sender、单一 gap 点位下，
+  找出 buffered 主链当前最值得继续细看的 lifecycle/sweep/buffer 参数区间。
+
+这里明确不做全排列暴力搜索。
+
+原因很直接：
+
+- `lifecycle profile`
+- `sweep tick`
+- `primary flush span threshold`
+- `primary flush interval`
+
+这四组变量如果直接和 gap、repeat、AI-on/off 一起做笛卡尔积，30 分钟预算根本兜不住。
+
+所以当前改成两阶段剪枝：
+
+- `Phase A`
+  - 只扫 `protected|minimal` 和 `500/200/100ms` sweep；
+  - buffer 固定在默认值 `512 spans / 200ms`；
+  - 目标是先找出更合适的生命周期底座。
+- `Phase B`
+  - 只在 `Phase A` 的最佳底座上扫 buffer；
+  - 当前扫描 `512/256/128/64` 的 span threshold 和 `200/50/5ms` 的 flush interval；
+  - 目标是判断 buffer 是“参数太保守”，还是在当前主数据可见性目标下本身就不适合继续放在 primary path。
+- `Phase C`
+  - 只拿 `Phase B` 前几名做小样本 `AI-on` smoke；
+  - 目标不是 AI-on 找最优，而是排掉“只在 AI-off 好看、AI-on 立刻失真”的伪最优。
+
+`run_suite_a_search_stage1.py` 的 stdout 只保留：
+
+- 每个 case 一行摘要
+- 最终 top-k
+
+完整结果统一落到 `summary.json` 和各 case 的 `result.json`，避免终端输出把上下文打爆。
+
 明确排除出主图的指标：
 
 - `reject_rate`
