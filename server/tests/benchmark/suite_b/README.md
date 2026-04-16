@@ -168,13 +168,15 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 4 核本机最小示例：
 
 ```bash
-python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
+taskset -c 0 python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
+  --server-bin ./server/build/LogSentinel \
   --run-root /tmp/suite_b_matrix_local4 \
-  --server-cpuset 0-1 \
+  --port-base 19380 \
+  --server-cpuset 1-3 \
   --server-io-threads 2 \
-  --worker-threads 3 \
-  --dispatch-worker-threads 1 \
-  --worker-queue-size 2048 \
+  --worker-threads 8 \
+  --dispatch-worker-threads 2 \
+  --worker-queue-size 4096 \
   --trace-capacity 12 \
   --trace-token-limit 0 \
   --trace-sweep-interval-ms 100 \
@@ -182,25 +184,32 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
   --trace-max-dispatch-per-tick 64 \
   --trace-buffered-span-limit 4096 \
   --trace-active-session-limit 512 \
+  --trace-count 10 \
+  --spans-per-trace 8 \
   --send-workers 2 \
   --disable-ai \
-  --no-auto-start-proxy
+  --disable-webhook \
+  --no-auto-start-proxy \
+  --sender-profiles clean_baseline,mixed_realistic,late_replay_stress \
+  --trace-lifecycle-profiles protected,minimal
 ```
 
 说明：
 
-- 这个例子默认把 2 个核给后端，sender 仍然跑在 matrix runner 自己的 Python 进程里；
+- 这个例子用外层 `taskset -c 0` 把 matrix runner / sender 压在 1 个核上，再用 `--server-cpuset 1-3` 把后端绑到剩余 3 个核；
 - `--server-io-threads 2` 表示 MiniMuduo 的 Reactor/I/O 线程也跟着抬到 2，不再继续吃 fresh DB 的默认值 1；
-- `--send-workers 2` 只是 sender 的并发数，不是绑核；
+- `--send-workers 2` 只是 sender 的发送 worker 数，不是绑核；真正绑核靠外层 `taskset`；
 - 如果本机就只有 4 核，这一档足够先验证 `protected/minimal` 的语义差异有没有出来。
 
 16 核云机推荐起步示例：
 
 ```bash
-python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
+taskset -c 0-2 python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
+  --server-bin ./server/build/LogSentinel \
   --run-root /tmp/suite_b_matrix_remote16 \
-  --server-cpuset 2-13 \
-  --server-io-threads 6 \
+  --port-base 19580 \
+  --server-cpuset 3-15 \
+  --server-io-threads 5 \
   --worker-threads 16 \
   --dispatch-worker-threads 4 \
   --worker-queue-size 8192 \
@@ -211,14 +220,19 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
   --trace-max-dispatch-per-tick 128 \
   --trace-buffered-span-limit 8192 \
   --trace-active-session-limit 2048 \
+  --trace-count 10 \
+  --spans-per-trace 8 \
   --send-workers 8 \
   --disable-ai \
-  --no-auto-start-proxy
+  --disable-webhook \
+  --no-auto-start-proxy \
+  --sender-profiles clean_baseline,mixed_realistic,late_replay_stress \
+  --trace-lifecycle-profiles protected,minimal
 ```
 
 说明：
 
-- 这里默认预留前 2 个核给系统和其他实验辅助进程，后端先拿 12 个核起步；
-- `--server-io-threads 6` 和 `worker/dispatch` 分开看：它只负责收包、连接分发和 Reactor 回调，不负责 Trace 聚合收尾；
+- 这里用外层 `taskset -c 0-2` 把 matrix runner / sender 限在 3 个核上，再用 `--server-cpuset 3-15` 给后端 13 个核；
+- `--server-io-threads 5` 和 `worker/dispatch` 分开看：它只负责收包、连接分发和 Reactor 回调，不负责 Trace 聚合收尾；
 - `worker_threads` 和 `dispatch_worker_threads` 都是后端进程参数，跟 sender 的 `--send-workers` 不是一回事；
 - 如果云机不是 16 核，就只改 `--server-cpuset / --server-io-threads / --worker-threads / --dispatch-worker-threads / --send-workers` 这几项，其他 lifecycle 参数先别乱动。

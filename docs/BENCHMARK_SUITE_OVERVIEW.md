@@ -759,6 +759,14 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 - `disable_ai = true`
 - `disable_webhook = true`
 
+实际命令口径按 `taskset -c 0-2 python3 ... --server-cpuset 3-15` 记录。
+
+也就是说：
+
+- 外层 `taskset -c 0-2` 约束 matrix runner 和 sender 进程，避免发送端抢后端核心；
+- `--server-cpuset 3-15` 只约束 LogSentinel 后端进程，对应 13 个后端核心；
+- `--send-workers = 8` 是 sender 内部发送 worker 数，不是 CPU 核数。
+
 补一层语义，避免后面再把线程名字看串：
 
 - `kernel_io_threads = 5` 指的是 `5` 个 sub-reactor / I/O loop；
