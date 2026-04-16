@@ -17,8 +17,38 @@ import run_suite_b
 
 
 def default_run_root() -> str:
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    return f"server/tests/benchmark/results/suite_b/{timestamp}-matrix"
+    return "server/tests/benchmark/results/suite_b/matrix"
+
+
+def format_run_timestamp(now_func: Callable[[], float] = time.time) -> str:
+    now = now_func()
+    seconds = int(now)
+    millis = int(round((now - seconds) * 1000))
+    if millis >= 1000:
+        seconds += 1
+        millis = 0
+    return f"{time.strftime('%Y%m%d-%H%M%S', time.localtime(seconds))}-{millis:03d}ms"
+
+
+def resolve_run_root(run_root_prefix: str, now_func: Callable[[], float] = time.time) -> tuple[str, str]:
+    requested_run_root = str(Path(run_root_prefix))
+    actual_run_root = f"{requested_run_root}-{format_run_timestamp(now_func)}"
+    return requested_run_root, actual_run_root
+
+
+def ensure_run_root_resolved(args: argparse.Namespace) -> None:
+    if hasattr(args, "actual_run_root"):
+        args.requested_run_root = getattr(args, "requested_run_root", args.run_root)
+        args.run_root = args.actual_run_root
+        return
+
+    # Suite B 的每个 case 都有独立 SQLite 和 manifest。
+    # 因此 --run-root 不能表示“固定写入这个目录”，否则复跑同一条命令会复用旧 DB，
+    # 直接把正确性指标污染掉；这里把它解释成实验前缀，每次运行都追加时间后缀生成真实目录。
+    requested_run_root, actual_run_root = resolve_run_root(args.run_root)
+    args.requested_run_root = requested_run_root
+    args.actual_run_root = actual_run_root
+    args.run_root = actual_run_root
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -362,6 +392,7 @@ def run_suite_b_matrix(
     run_case: Callable[[argparse.Namespace], Dict[str, object]] = run_suite_b.run_suite_b_case,
     stop_server: Callable[[Dict[str, object], float], None] = stop_server_process,
 ) -> Dict[str, object]:
+    ensure_run_root_resolved(args)
     cases = build_case_matrix(args)
     results: List[Dict[str, object]] = []
 
@@ -391,6 +422,10 @@ def run_suite_b_matrix(
 
     summary = {
         "total_cases": len(results),
+        # requested/actual 分开记录，是为了让论文或 README 引用实验资产时能追溯：
+        # 用户命令里的 run-root 是实验前缀，actual_run_root 才是真正包含本轮 SQLite/manifest 的目录。
+        "requested_run_root": args.requested_run_root,
+        "actual_run_root": args.actual_run_root,
         "sender_profiles": parse_csv_list(args.sender_profiles),
         "trace_lifecycle_profiles": parse_csv_list(args.trace_lifecycle_profiles),
         "ingest_p95_latency_delta_by_profile": build_ingest_p95_latency_delta_by_profile(results),

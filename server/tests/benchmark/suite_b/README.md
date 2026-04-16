@@ -145,6 +145,8 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 注意：
 
 - `run_suite_b_matrix.py` 是 case 级矩阵 runner，每个 case 都会拿独立的 `suite_b.db / manifest / result.json / server.log`；
+- `--run-root` 现在表示实验目录前缀，不是最终落盘目录。脚本每次运行都会自动追加本地时间后缀，例如 `/tmp/suite_b_matrix-20260416-094158-237ms`；
+- `summary.json` 会同时记录 `requested_run_root` 和 `actual_run_root`，前者是命令里写的前缀，后者才是真正保存本轮 SQLite / manifest / result 的目录；
 - 现在默认不再要求你手写 `--server-command`，可以直接用顶层 CLI 控制后端资源参数；
 - 如果你已经有外部包装脚本，仍然可以继续传 `--server-command` 模板，当前支持注入 `{sqlite_db} / {trace_lifecycle_profile} / {port} / {log_path} / {case_id} / {run_dir}`；
 - 如果只是验证编排逻辑是否活着，可以配 `--dry-run`，再给它一个能监听端口的最小 dummy server。
@@ -178,6 +180,7 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 - 不需要再手改一长串 `server-command` 模板；
 - 每次实验命令里就能直接看见后端到底吃了多少核、多少线程。
 - 如果旧进程已经占着某个 case 端口，matrix runner 现在会直接 fail fast，不再把“旧进程还活着”误判成“新 case 已启动成功”。
+- 复跑同一条命令不会覆盖旧结果，也不会复用旧 SQLite；目录靠时间后缀区分，不再靠手写 `v1/v2`。
 
 4 核本机最小示例：
 

@@ -142,3 +142,51 @@
 
 - `--send-workers` 是 sender 内部并发数，不是 CPU 绑核；如果不配合外层 `taskset`，p95 结果仍可能被 sender 和后端抢核污染。
 - dry-run 或 fake case 可能出现 `minimal_p95 = 0`，这时相对增量不能硬除，结果里保留为 `null`。
+
+---
+
+# 2026-04-16 fix(benchmark): 让 Suite B run-root 自动带时间后缀
+
+## Git Commit Message
+
+`fix(benchmark): 让 Suite B run-root 自动带时间后缀`
+
+## Modification
+
+- `server/tests/benchmark/suite_b/run_suite_b_matrix.py`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix_unit_test.py`
+- `server/tests/benchmark/suite_b/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- `run_suite_b_matrix.py` 的 `--run-root` 现在表示实验目录前缀，而不是最终写入目录。
+- 每次运行都会自动把前缀解析成 `prefix-YYYYMMDD-HHMMSS-mmmms` 形式的真实目录，避免复跑同一条命令时复用旧 SQLite、manifest 和 result 资产。
+- matrix summary 新增 `requested_run_root / actual_run_root`，方便回溯“命令里写的是什么前缀”和“本轮结果真正落到哪里”。
+- README 和 benchmark 总览文档同步说明：目录区分统一靠时间后缀，不再建议手写 `v1/v2`。
+
+## Verification
+
+- `python3 -m unittest run_suite_b_matrix_unit_test.py`
+- `python3 -m unittest discover -s . -p '*_unit_test.py'`
+- `python3 -m py_compile run_suite_b_matrix.py sender.py evaluator.py run_suite_b.py profiles.py sender_unit_test.py evaluator_unit_test.py run_suite_b_unit_test.py run_suite_b_matrix_unit_test.py`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- benchmark 资产目录如果允许复用旧 SQLite，最先被污染的往往不是脚本本身，而是你后面看到的“指标很怪”。所以 run-root 最好从一开始就设计成“一次运行一个实际目录”。
+- “用户输入前缀”和“真实落盘路径”是两个概念。把它们分开记录，比靠人工在 shell 里手写 `v1/v2` 更稳，也更方便论文复现实验。
+
+### Function Explanation
+
+- `format_run_timestamp()`：把本地时间格式化成 `YYYYMMDD-HHMMSS-mmmms` 形式，用作 benchmark 目录的时间后缀。
+- `resolve_run_root()`：接收实验前缀，返回 `requested_run_root / actual_run_root`。
+- `ensure_run_root_resolved()`：在 matrix runner 真正建目录前完成 prefix -> actual 解析，并把结果写回 `args`。
+
+### Pitfalls
+
+- 不能直接拿用户传进来的 `--run-root` 当真实目录用。只要这条命令被重复执行一次，旧 SQLite 就会和新 case 混在一起。
+- 如果 summary 只记 actual 目录，不记 requested 前缀，后面回看命令和资产时很容易对不上。

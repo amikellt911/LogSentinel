@@ -175,6 +175,19 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
         self.assertEqual(19080, cases[0]["port"])
         self.assertEqual(19083, cases[-1]["port"])
 
+    def test_resolve_run_root_adds_timestamp_suffix_and_preserves_requested_prefix(self) -> None:
+        if matrix_module is None or not hasattr(matrix_module, "resolve_run_root"):
+            self.fail("resolve_run_root should exist for timestamped Suite B artifacts")
+
+        # 固定 now_func 是为了让目录时间后缀可断言，避免单测依赖真实时钟导致偶发失败。
+        requested, actual = matrix_module.resolve_run_root(
+            "/tmp/suite_b_matrix_collect_deadline",
+            now_func=lambda: 1776303718.237,
+        )
+
+        self.assertEqual("/tmp/suite_b_matrix_collect_deadline", requested)
+        self.assertEqual("/tmp/suite_b_matrix_collect_deadline-20260416-094158-237ms", actual)
+
     def test_run_suite_b_matrix_launches_server_per_case_and_writes_summary(self) -> None:
         if matrix_module is None or not hasattr(matrix_module, "run_suite_b_matrix"):
             self.fail("run_suite_b_matrix should exist for Suite B matrix runner")
@@ -239,6 +252,7 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
                 disable_webhook=False,
                 disable_buffered_trace_repo=False,
                 run_root=str(run_root),
+                actual_run_root=str(run_root),
                 sender_profiles="clean_baseline,mixed_realistic",
                 trace_lifecycle_profiles="protected,minimal",
                 port_base=19080,
@@ -279,6 +293,8 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
         self.assertEqual(4, result["total_cases"])
         self.assertEqual(4, len(result["cases"]))
         self.assertEqual(4, saved["total_cases"])
+        self.assertEqual(str(run_root), result["requested_run_root"])
+        self.assertEqual(str(run_root), result["actual_run_root"])
         self.assertEqual(("port_check", 19080), sequence[0])
         self.assertEqual(("launch", "protected__clean_baseline"), sequence[1])
         self.assertIn(("case", "minimal", "mixed_realistic"), sequence)

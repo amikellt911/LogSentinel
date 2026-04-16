@@ -100,6 +100,11 @@
   - [x] 实现单 case latency stats 和 matrix latency delta 汇总
   - [x] 更新 Suite B README / 总览文档，明确 p95 护栏来自 sender manifest 的 HTTP 响应耗时
   - [x] 验证 Suite B Python 单测和语法检查
+- [x] Suite B 结果目录收尾：把 `--run-root` 改成实验前缀，每次自动追加时间后缀，避免复用旧 SQLite
+  - [x] 先写红灯单测，锁 `--run-root /tmp/foo` 实际落盘到 `/tmp/foo-YYYYMMDD-HHMMSS-mmmms`
+  - [x] 在 summary 记录 `requested_run_root / actual_run_root`
+  - [x] 更新 Suite B README 的命令说明，避免继续写 `v1/v2` 人工后缀
+  - [x] 验证 Suite B Python 单测和语法检查
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径
