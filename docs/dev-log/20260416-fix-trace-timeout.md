@@ -671,3 +671,62 @@
 ### Pitfalls
 
 - 这类参数如果只在搜索脚本里认识、单 case runner 不认识，错误会发生在 Python 参数解析阶段，看起来像“命令行有问题”，其实是脚本边界没接上。
+
+---
+
+# 2026-04-16 fix(benchmark): 把 Suite A Stage 1 收成 protected-only 搜索
+
+## Git Commit Message
+
+`fix(benchmark): 把 Suite A Stage 1 收成 protected-only 搜索`
+
+## Modification
+
+- `server/tests/benchmark/suite_a/run_suite_a_search_stage1.py`
+- `server/tests/benchmark/suite_a/run_suite_a_search_stage1_unit_test.py`
+- `server/tests/benchmark/suite_a/run_suite_a_case.py`
+- `server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py`
+- `server/src/main.cpp`
+- `server/tests/benchmark/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260416-fix-trace-timeout.md`
+
+## Summary
+
+- Suite A Stage 1 不再默认把 `minimal` 拉进候选池，而是固定 `protected`，先扫：
+  - `sealed_grace_window_ms`
+  - `sweep_tick_ms`
+- 然后再在最佳 protected 底座上扫 buffer：
+  - `trace_primary_flush_span_threshold`
+  - `trace_primary_flush_interval_ms`
+- 后端新增 benchmark-only CLI：`--trace-sealed-grace-window-ms`，只用于实验，不写回 SQLite Settings。
+- `run_suite_a_case.py` 现在会把 `trace-sealed-grace-window-ms` 和现有 lifecycle/sweep/flush 开关一起透传给 auto-start 的后端命令。
+- README 和 benchmark 总览同步改口径，明确 Stage 1 的目标已经从“谁数值最好”收紧成“能不能把 protected+buffered 这套架构调得更像样”。
+
+## Verification
+
+- `cd server/tests/benchmark/suite_a && python3 -m unittest run_suite_a_case_unit_test.py run_suite_a_search_stage1_unit_test.py`
+- `python3 -m unittest server/tests/benchmark/suite_a/run_suite_a_search_stage1_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_a/run_suite_a_case.py server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py server/tests/benchmark/suite_a/run_suite_a_search_stage1.py server/tests/benchmark/suite_a/run_suite_a_search_stage1_unit_test.py`
+- `cmake --build server/build --target LogSentinel -j1`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 搜索脚本的目标要和论文叙事一致。你如果想证明 protected 架构能调优，就不能先让 minimal 把冠军抢走，再拿这个冠军回头讲 protected。
+
+### Function Explanation
+
+- `trace-sealed-grace-window-ms`
+  - 这是 protected 生命周期里 sealed grace 的 CLI override；
+  - 它控制的是 trace 明确封口后，还愿意额外等多久来吸收晚到 span。
+- `run_stage1_search()`
+  - 现在的 Phase A 先把“生命周期固定成本”单独扫出来；
+  - Phase B 才去看 buffer 是不是还能继续抠掉尾巴。
+
+### Pitfalls
+
+- 如果只调 buffer，不调 sealed grace，那么 protected 的固定等待会把结果平台化，最后你会误以为“buffer 怎么调都没用”。

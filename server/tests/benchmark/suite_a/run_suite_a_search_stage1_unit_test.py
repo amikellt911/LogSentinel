@@ -59,8 +59,9 @@ class SuiteARunSuiteASearchStage1UnitTest(unittest.TestCase):
         self.assertEqual("/tmp/suite_a_stage1", args.search_root)
         self.assertEqual(20, args.gap_ms)
         self.assertEqual(1, args.repeats)
-        self.assertEqual(["protected", "minimal"], args.phase_a_lifecycle_profiles)
-        self.assertEqual([500, 200, 100], args.phase_a_sweep_ms_values)
+        self.assertEqual("protected", args.trace_lifecycle_profile)
+        self.assertEqual([1000, 500, 200, 100], args.phase_a_sealed_grace_ms_values)
+        self.assertEqual([500, 200, 100, 50], args.phase_a_sweep_ms_values)
         self.assertEqual([512, 256, 128, 64], args.phase_b_span_thresholds)
         self.assertEqual([200, 50, 5], args.phase_b_flush_interval_ms_values)
         self.assertEqual(3, args.phase_c_top_k)
@@ -106,6 +107,7 @@ class SuiteARunSuiteASearchStage1UnitTest(unittest.TestCase):
 
                 phase = run_root.parts[-2]
                 lifecycle = extract_cli_value(case_argv, "--trace-lifecycle-profile")
+                sealed_grace_ms = int(extract_cli_value(case_argv, "--trace-sealed-grace-window-ms"))
                 sweep_ms = int(extract_cli_value(case_argv, "--trace-sweep-interval-ms"))
                 span_threshold = int(extract_cli_value(case_argv, "--trace-primary-flush-span-threshold"))
                 flush_interval_ms = int(extract_cli_value(case_argv, "--trace-primary-flush-interval-ms"))
@@ -117,6 +119,7 @@ class SuiteARunSuiteASearchStage1UnitTest(unittest.TestCase):
                     (
                         phase,
                         lifecycle,
+                        sealed_grace_ms,
                         sweep_ms,
                         span_threshold,
                         flush_interval_ms,
@@ -128,14 +131,24 @@ class SuiteARunSuiteASearchStage1UnitTest(unittest.TestCase):
 
                 if phase == "phase_a":
                     phase_a_scores = {
-                        ("protected", 500): (0.94625, 1213),
-                        ("protected", 200): (0.95250, 1030),
-                        ("protected", 100): (0.96125, 910),
-                        ("minimal", 500): (0.96875, 830),
-                        ("minimal", 200): (0.97750, 710),
-                        ("minimal", 100): (0.98375, 620),
+                        (1000, 500): (0.93375, 1163),
+                        (1000, 200): (0.93375, 1012),
+                        (1000, 100): (0.92750, 1011),
+                        (1000, 50): (0.92750, 960),
+                        (500, 500): (0.94000, 758),
+                        (500, 200): (0.94625, 556),
+                        (500, 100): (0.95875, 505),
+                        (500, 50): (0.95875, 454),
+                        (200, 500): (0.95250, 405),
+                        (200, 200): (0.97500, 253),
+                        (200, 100): (0.98875, 203),
+                        (200, 50): (0.98875, 152),
+                        (100, 500): (0.95875, 354),
+                        (100, 200): (0.98125, 253),
+                        (100, 100): (0.99625, 102),
+                        (100, 50): (0.99625, 51),
                     }
-                    visible, drain = phase_a_scores[(lifecycle, sweep_ms)]
+                    visible, drain = phase_a_scores[(sealed_grace_ms, sweep_ms)]
                 elif phase == "phase_b":
                     phase_b_scores = {
                         (512, 200): (0.98375, 620),
@@ -180,35 +193,36 @@ class SuiteARunSuiteASearchStage1UnitTest(unittest.TestCase):
             )
             saved = json.loads(output_summary.read_text(encoding="utf-8"))
 
-        self.assertEqual(20, len(case_calls))
+        self.assertEqual(30, len(case_calls))
         self.assertEqual(
             [
-                ("phase_a", "protected", 500, 512, 200, 800, "off", 18180),
-                ("phase_a", "protected", 200, 512, 200, 800, "off", 18181),
-                ("phase_a", "protected", 100, 512, 200, 800, "off", 18182),
-                ("phase_a", "minimal", 500, 512, 200, 800, "off", 18183),
-                ("phase_a", "minimal", 200, 512, 200, 800, "off", 18184),
-                ("phase_a", "minimal", 100, 512, 200, 800, "off", 18185),
+                ("phase_a", "protected", 1000, 500, 512, 200, 800, "off", 18180),
+                ("phase_a", "protected", 1000, 200, 512, 200, 800, "off", 18181),
+                ("phase_a", "protected", 1000, 100, 512, 200, 800, "off", 18182),
+                ("phase_a", "protected", 1000, 50, 512, 200, 800, "off", 18183),
+                ("phase_a", "protected", 500, 500, 512, 200, 800, "off", 18184),
+                ("phase_a", "protected", 500, 200, 512, 200, 800, "off", 18185),
             ],
             case_calls[:6],
         )
-        self.assertTrue(all(call[6] == "off" for call in case_calls[:18]))
+        self.assertTrue(all(call[7] == "off" for call in case_calls[:28]))
         self.assertEqual(
             [
-                ("phase_c", "minimal", 100, 64, 5, 160, "on", 18198),
-                ("phase_c", "minimal", 100, 128, 5, 160, "on", 18199),
+                ("phase_c", "protected", 100, 50, 64, 5, 160, "on", 18208),
+                ("phase_c", "protected", 100, 50, 128, 5, 160, "on", 18209),
             ],
-            case_calls[18:],
+            case_calls[28:],
         )
-        self.assertEqual("minimal", summary["phase_a"]["best_candidate"]["trace_lifecycle_profile"])
-        self.assertEqual(100, summary["phase_a"]["best_candidate"]["trace_sweep_interval_ms"])
+        self.assertEqual("protected", summary["phase_a"]["best_candidate"]["trace_lifecycle_profile"])
+        self.assertEqual(100, summary["phase_a"]["best_candidate"]["trace_sealed_grace_window_ms"])
+        self.assertEqual(50, summary["phase_a"]["best_candidate"]["trace_sweep_interval_ms"])
         self.assertEqual(64, summary["phase_b"]["top_candidates"][0]["trace_primary_flush_span_threshold"])
         self.assertEqual(5, summary["phase_b"]["top_candidates"][0]["trace_primary_flush_interval_ms"])
         self.assertEqual(160, summary["phase_c"]["smoke_candidates"][0]["trace_count"])
         self.assertEqual("on", summary["phase_c"]["smoke_candidates"][0]["ai_mode"])
         self.assertEqual(summary["actual_search_root"], saved["actual_search_root"])
-        self.assertEqual(22, len(lines))
-        self.assertTrue(lines[0].startswith("[phase_a 1/6]"))
+        self.assertEqual(32, len(lines))
+        self.assertTrue(lines[0].startswith("[phase_a 1/16]"))
         self.assertTrue(lines[-2].startswith("[top1]"))
         self.assertTrue(lines[-1].startswith("[top2]"))
         self.assertTrue(all(not line.lstrip().startswith("{") for line in lines))

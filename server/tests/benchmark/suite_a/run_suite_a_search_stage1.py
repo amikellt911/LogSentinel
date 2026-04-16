@@ -12,14 +12,16 @@ import run_suite_a_case
 
 JsonDict = Dict[str, object]
 DEFAULT_SEARCH_ROOT = "server/tests/benchmark/results/suite_a/stage1_search"
-DEFAULT_PHASE_A_LIFECYCLE_PROFILES = "protected,minimal"
-DEFAULT_PHASE_A_SWEEP_MS = "500,200,100"
+DEFAULT_TRACE_LIFECYCLE_PROFILE = "protected"
+DEFAULT_PHASE_A_SEALED_GRACE_MS = "1000,500,200,100"
+DEFAULT_PHASE_A_SWEEP_MS = "500,200,100,50"
 DEFAULT_PHASE_B_SPAN_THRESHOLDS = "512,256,128,64"
 DEFAULT_PHASE_B_FLUSH_INTERVAL_MS = "200,50,5"
 DEFAULT_PHASE_A_SPAN_THRESHOLD = 512
 DEFAULT_PHASE_A_FLUSH_INTERVAL_MS = 200
 CONTROLLED_CASE_ARGS = {
     "--disable-ai",
+    "--disable-buffered-trace-repo",
     "--inter-trace-gap-ms",
     "--output-json",
     "--port-base",
@@ -27,6 +29,7 @@ CONTROLLED_CASE_ARGS = {
     "--server-log",
     "--sqlite-db",
     "--trace-lifecycle-profile",
+    "--trace-sealed-grace-window-ms",
     "--trace-primary-flush-interval-ms",
     "--trace-primary-flush-span-threshold",
     "--trace-sweep-interval-ms",
@@ -71,7 +74,7 @@ def ensure_required_case_args(case_args: List[str]) -> None:
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Suite A Stage 1 粗搜 runner；两阶段剪枝搜索 lifecycle/sweep/buffer 参数"
+        description="Suite A Stage 1 粗搜 runner；默认只搜索 protected 生命周期下的 grace/sweep/buffer 参数"
     )
     parser.add_argument("--search-root", default=DEFAULT_SEARCH_ROOT)
     parser.add_argument("--output-summary", default="")
@@ -79,7 +82,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--port-base", type=int, default=18180)
     parser.add_argument("--port-stride", type=int, default=1)
-    parser.add_argument("--phase-a-lifecycle-profiles", default=DEFAULT_PHASE_A_LIFECYCLE_PROFILES)
+    # 这一版 Stage 1 默认只救 protected，不再让 minimal 抢主候选。
+    # 如果后面真要做诊断型对照，可以单独起另一条搜索命令，不和主叙事混在一起。
+    parser.add_argument("--trace-lifecycle-profile", default=DEFAULT_TRACE_LIFECYCLE_PROFILE)
+    parser.add_argument("--phase-a-sealed-grace-ms", default=DEFAULT_PHASE_A_SEALED_GRACE_MS)
     parser.add_argument("--phase-a-sweep-ms", default=DEFAULT_PHASE_A_SWEEP_MS)
     parser.add_argument("--phase-b-span-thresholds", default=DEFAULT_PHASE_B_SPAN_THRESHOLDS)
     parser.add_argument("--phase-b-flush-interval-ms", default=DEFAULT_PHASE_B_FLUSH_INTERVAL_MS)
@@ -92,9 +98,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     reject_controlled_case_args(case_args)
     ensure_required_case_args(case_args)
 
-    args.phase_a_lifecycle_profiles = parse_csv_strings(
-        args.phase_a_lifecycle_profiles,
-        "--phase-a-lifecycle-profiles",
+    args.trace_lifecycle_profile = args.trace_lifecycle_profile.strip().lower()
+    if not args.trace_lifecycle_profile:
+        raise ValueError("--trace-lifecycle-profile must not be empty")
+    args.phase_a_sealed_grace_ms_values = parse_csv_ints(
+        args.phase_a_sealed_grace_ms,
+        "--phase-a-sealed-grace-ms",
     )
     args.phase_a_sweep_ms_values = parse_csv_ints(args.phase_a_sweep_ms, "--phase-a-sweep-ms")
     args.phase_b_span_thresholds = parse_csv_ints(
@@ -166,12 +175,13 @@ def remove_flag(argv: List[str], flag: str) -> List[str]:
 
 def build_phase_a_candidates(args: argparse.Namespace) -> List[JsonDict]:
     candidates: List[JsonDict] = []
-    for lifecycle_profile in args.phase_a_lifecycle_profiles:
+    for sealed_grace_ms in args.phase_a_sealed_grace_ms_values:
         for sweep_ms in args.phase_a_sweep_ms_values:
             candidates.append(
                 {
                     "phase": "phase_a",
-                    "trace_lifecycle_profile": lifecycle_profile,
+                    "trace_lifecycle_profile": args.trace_lifecycle_profile,
+                    "trace_sealed_grace_window_ms": sealed_grace_ms,
                     "trace_sweep_interval_ms": sweep_ms,
                     "trace_primary_flush_span_threshold": DEFAULT_PHASE_A_SPAN_THRESHOLD,
                     "trace_primary_flush_interval_ms": DEFAULT_PHASE_A_FLUSH_INTERVAL_MS,
@@ -190,6 +200,7 @@ def build_phase_b_candidates(args: argparse.Namespace, base_candidate: JsonDict)
                 {
                     "phase": "phase_b",
                     "trace_lifecycle_profile": base_candidate["trace_lifecycle_profile"],
+                    "trace_sealed_grace_window_ms": base_candidate["trace_sealed_grace_window_ms"],
                     "trace_sweep_interval_ms": base_candidate["trace_sweep_interval_ms"],
                     "trace_primary_flush_span_threshold": span_threshold,
                     "trace_primary_flush_interval_ms": flush_interval_ms,
@@ -234,6 +245,8 @@ def build_case_argv(
             str(args.gap_ms),
             "--trace-lifecycle-profile",
             str(candidate["trace_lifecycle_profile"]),
+            "--trace-sealed-grace-window-ms",
+            str(candidate["trace_sealed_grace_window_ms"]),
             "--trace-sweep-interval-ms",
             str(candidate["trace_sweep_interval_ms"]),
             "--trace-primary-flush-span-threshold",
@@ -308,6 +321,7 @@ def summarize_bool_values(values: List[bool]) -> JsonDict:
 def conservative_tiebreak(candidate: JsonDict) -> tuple[object, ...]:
     return (
         0 if candidate["trace_lifecycle_profile"] == "protected" else 1,
+        abs(int(candidate["trace_sealed_grace_window_ms"]) - 1000),
         abs(int(candidate["trace_sweep_interval_ms"]) - 500),
         abs(int(candidate["trace_primary_flush_span_threshold"]) - 512),
         abs(int(candidate["trace_primary_flush_interval_ms"]) - 200),
@@ -360,6 +374,7 @@ def format_case_line(phase_index: int, total: int, candidate: JsonDict) -> str:
     return (
         f"[{candidate['phase']} {phase_index}/{total}] "
         f"lifecycle={candidate['trace_lifecycle_profile']} "
+        f"grace={candidate['trace_sealed_grace_window_ms']} "
         f"sweep={candidate['trace_sweep_interval_ms']} "
         f"flush={candidate['trace_primary_flush_span_threshold']}/{candidate['trace_primary_flush_interval_ms']} "
         f"ai={candidate['ai_mode']} "
@@ -374,6 +389,7 @@ def format_topk_line(rank: int, candidate: JsonDict) -> str:
         f"[top{rank}] "
         f"phase={candidate['phase']} "
         f"lifecycle={candidate['trace_lifecycle_profile']} "
+        f"grace={candidate['trace_sealed_grace_window_ms']} "
         f"sweep={candidate['trace_sweep_interval_ms']} "
         f"flush={candidate['trace_primary_flush_span_threshold']}/{candidate['trace_primary_flush_interval_ms']} "
         f"visible={float(candidate['visible_completion_rate_at_stop']):.6f} "
@@ -461,6 +477,7 @@ def run_stage1_search(
         "repeats": args.repeats,
         "port_base": args.port_base,
         "port_stride": args.port_stride,
+        "trace_lifecycle_profile": args.trace_lifecycle_profile,
         "case_args": args.case_args,
         "phase_a": {
             "candidates": phase_a_results,

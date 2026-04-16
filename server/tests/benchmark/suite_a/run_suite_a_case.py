@@ -52,6 +52,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--disable-webhook", action="store_true")
     parser.add_argument("--disable-buffered-trace-repo", action="store_true")
     parser.add_argument("--trace-lifecycle-profile", default="")
+    parser.add_argument("--trace-sealed-grace-window-ms", type=int, default=0)
     parser.add_argument("--trace-sweep-interval-ms", type=int, default=0)
     parser.add_argument("--trace-primary-flush-span-threshold", type=int, default=0)
     parser.add_argument("--trace-primary-flush-interval-ms", type=int, default=0)
@@ -176,6 +177,13 @@ def build_server_passthrough_args(args: argparse.Namespace) -> list[str]:
         parts.append("--disable-buffered-trace-repo")
     if getattr(args, "trace_lifecycle_profile", ""):
         parts.extend(["--trace-lifecycle-profile", args.trace_lifecycle_profile])
+    if getattr(args, "trace_sealed_grace_window_ms", 0) > 0:
+        parts.extend(
+            [
+                "--trace-sealed-grace-window-ms",
+                str(args.trace_sealed_grace_window_ms),
+            ]
+        )
     if getattr(args, "trace_sweep_interval_ms", 0) > 0:
         parts.extend(["--trace-sweep-interval-ms", str(args.trace_sweep_interval_ms)])
     if getattr(args, "trace_primary_flush_span_threshold", 0) > 0:

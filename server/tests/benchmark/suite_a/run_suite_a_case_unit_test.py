@@ -85,6 +85,8 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
                 "--disable-ai",
                 "--trace-lifecycle-profile",
                 "minimal",
+                "--trace-sealed-grace-window-ms",
+                "200",
                 "--trace-sweep-interval-ms",
                 "100",
                 "--trace-primary-flush-span-threshold",
@@ -96,6 +98,7 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
 
         self.assertTrue(args.disable_ai)
         self.assertEqual("minimal", args.trace_lifecycle_profile)
+        self.assertEqual(200, args.trace_sealed_grace_window_ms)
         self.assertEqual(100, args.trace_sweep_interval_ms)
         self.assertEqual(64, args.trace_primary_flush_span_threshold)
         self.assertEqual(5, args.trace_primary_flush_interval_ms)
@@ -173,6 +176,7 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
             disable_webhook=True,
             disable_buffered_trace_repo=False,
             trace_lifecycle_profile="minimal",
+            trace_sealed_grace_window_ms=200,
             trace_sweep_interval_ms=100,
             trace_primary_flush_span_threshold=64,
             trace_primary_flush_interval_ms=5,
@@ -200,6 +204,7 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
         self.assertIn("--dispatch-worker-threads 1", command)
         self.assertIn("--disable-ai", command)
         self.assertIn("--trace-lifecycle-profile minimal", command)
+        self.assertIn("--trace-sealed-grace-window-ms 200", command)
         self.assertIn("--trace-sweep-interval-ms 100", command)
         self.assertIn("--trace-primary-flush-span-threshold 64", command)
         self.assertIn("--trace-primary-flush-interval-ms 5", command)

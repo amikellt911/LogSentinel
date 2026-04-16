@@ -139,7 +139,7 @@
   - [x] 暴露 benchmark-only CLI：`trace-primary-flush-span-threshold / trace-primary-flush-interval-ms`
   - [x] 实现 Stage 1 搜索脚本，只输出单行摘要和最终 top-k
   - [x] 更新 benchmark 文档和当日 dev-log
-  - [ ] 跑最小单测、语法检查和后端编译验证
+  - [x] 跑最小单测、语法检查和后端编译验证
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

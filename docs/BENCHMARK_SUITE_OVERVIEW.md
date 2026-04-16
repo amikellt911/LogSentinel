@@ -230,16 +230,17 @@ Suite A 主图不再使用 `wrk` 当主发生器。
 
 这四组变量如果直接和 gap、repeat、AI-on/off 一起做笛卡尔积，30 分钟预算根本兜不住。
 
-所以当前改成两阶段剪枝：
+所以当前改成两阶段剪枝，而且默认只救 `protected`：
 
 - `Phase A`
-  - 只扫 `protected|minimal` 和 `500/200/100ms` sweep；
+  - 生命周期固定 `protected`；
+  - 先扫 `sealed_grace_window_ms` 和 `sweep_tick_ms`；
   - buffer 固定在默认值 `512 spans / 200ms`；
-  - 目标是先找出更合适的生命周期底座。
+  - 目标是先找出更合适的 protected 底座，而不是直接让 minimal 把主叙事偷走。
 - `Phase B`
-  - 只在 `Phase A` 的最佳底座上扫 buffer；
+  - 只在 `Phase A` 的最佳 protected 底座上扫 buffer；
   - 当前扫描 `512/256/128/64` 的 span threshold 和 `200/50/5ms` 的 flush interval；
-  - 目标是判断 buffer 是“参数太保守”，还是在当前主数据可见性目标下本身就不适合继续放在 primary path。
+  - 目标是判断 protected+buffered 这套架构到底是“参数太保守”，还是在当前主数据可见性目标下本身就不适合继续放在 primary path。
 - `Phase C`
   - 只拿 `Phase B` 前几名做小样本 `AI-on` smoke；
   - 目标不是 AI-on 找最优，而是排掉“只在 AI-off 好看、AI-on 立刻失真”的伪最优。

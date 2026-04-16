@@ -217,6 +217,7 @@ int main(int argc, char* argv[])
     int trace_max_dispatch_per_tick = 64;
     int trace_buffered_span_limit = 4096;
     int trace_active_session_limit = 1024;
+    int trace_sealed_grace_window_ms_override = -1;
     int trace_primary_flush_span_threshold = -1;
     int trace_primary_flush_interval_ms = -1;
     int service_monitor_window_minutes = 30;
@@ -290,6 +291,11 @@ int main(int argc, char* argv[])
             trace_buffered_span_limit = std::stoi(argv[++i]);
         } else if (arg == "--trace-active-session-limit" && i + 1 < argc) {
             trace_active_session_limit = std::stoi(argv[++i]);
+        } else if (arg == "--trace-sealed-grace-window-ms" && i + 1 < argc) {
+            // 这个 override 只服务 benchmark：
+            // 它临时改的是 protected 生命周期里 sealed grace 的长度，
+            // 目标是评估“为了吸收晚到 span 付出的固定等待”到底有多大。
+            trace_sealed_grace_window_ms_override = std::stoi(argv[++i]);
         } else if (arg == "--trace-primary-flush-span-threshold" && i + 1 < argc) {
             // 这两个参数只服务 benchmark：
             // 它们临时改变的是 BufferedTraceRepository 主数据桶的 flush 时机，
@@ -381,6 +387,11 @@ int main(int argc, char* argv[])
     }
     if (trace_active_session_limit <= 0) {
         std::cerr << "Fatal Error: --trace-active-session-limit must be > 0" << std::endl;
+        return -1;
+    }
+    if (trace_sealed_grace_window_ms_override == 0 || trace_sealed_grace_window_ms_override < -1) {
+        std::cerr << "Fatal Error: --trace-sealed-grace-window-ms must be > 0 or omitted"
+                  << std::endl;
         return -1;
     }
     if (trace_primary_flush_span_threshold == 0 || trace_primary_flush_span_threshold < -1) {
@@ -478,13 +489,16 @@ int main(int argc, char* argv[])
     // 既然后台清理线程不会在运行时自动重建，那 Settings 里的保留天数至少要在启动时真实吃到。
     // 这一步先只接 days，批大小和周期继续由后端保守默认值控制，不把更多调参面提前暴露出来。
     const int effective_log_retention_days = startup_app_config.log_retention_days;
-    // 这两个时间窗当前没有保留 CLI override，先统一走 Settings 冷启动配置。
-    // 原因很简单：这一刀的目标就是把“已经设计成 Settings 字段的主链参数”真正接回状态机，
-    // 避免继续出现库里能存、页面能改、但 TraceSessionManager 实际上仍然硬编码的假生效。
+    // sealed grace 这里额外保留一个 benchmark-only override。
+    // 原因不是要把产品配置重新改回 CLI 驱动，而是 Suite A 现在要回答：
+    // 为了 protected 生命周期吸收晚到 span，这段固定等待到底值不值。
+    // 所以实验可以临时在启动命令里扫 grace，但正式 Settings 语义不变。
     const int effective_sealed_grace_window_ms =
-        startup_app_config.sealed_grace_window_ms > 0
-            ? startup_app_config.sealed_grace_window_ms
-            : 1000;
+        trace_sealed_grace_window_ms_override > 0
+            ? trace_sealed_grace_window_ms_override
+            : (startup_app_config.sealed_grace_window_ms > 0
+                   ? startup_app_config.sealed_grace_window_ms
+                   : 1000);
     const int effective_retry_base_delay_ms =
         startup_app_config.retry_base_delay_ms > 0
             ? startup_app_config.retry_base_delay_ms
@@ -751,6 +765,10 @@ int main(int argc, char* argv[])
               << ", trace_lifecycle_profile_override="
               << (trace_lifecycle_profile_cli_override.has_value()
                       ? ToLowerCopy(trace_lifecycle_profile_cli_override.value())
+                      : "<none>")
+              << ", sealed_grace_window_ms_override="
+              << (trace_sealed_grace_window_ms_override > 0
+                      ? std::to_string(trace_sealed_grace_window_ms_override)
                       : "<none>")
               << std::endl;
     std::cout << "Trace persistence mode: "
