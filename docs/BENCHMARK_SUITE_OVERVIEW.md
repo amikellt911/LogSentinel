@@ -484,6 +484,15 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 
 也就是总共 `6` 组运行。
 
+正式论文结果不只跑一次。
+
+当前固定为：
+
+- `5` 个固定 seed：`20260415 / 20260416 / 20260417 / 20260418 / 20260419`
+- 每个 seed 跑一轮完整 `3 x 2` matrix；
+- 总计 `30` 个 case；
+- 由 `run_suite_b_campaign.py` 负责生成 campaign summary。
+
 发送侧 profile 固定成下面 3 档：
 
 | Sender Profile | 语义 | 发送侧脏流量口径 | 主要用途 |
@@ -559,6 +568,22 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 
 - 指晚到 span 被错误吸收、错误丢弃或错误归入新 trace 的比例；
 - 这项更像诊断指标，适合内部分析或附录解释，不一定放到主论文图。
+
+如果后端日志里已经出现：
+
+- `UNIQUE constraint failed: trace_summary.trace_id`
+
+那么可以再保留一条日志诊断指标：
+
+- `sqlite_unique_constraint_fail_count`
+
+它的语义不是“最终重复落库成功了多少条”，而是：
+
+- 当前生命周期策略下，后端已经发生了多少次重复 summary 写尝试 / 重复持久化尝试。
+
+这条指标特别适合解释：
+
+- 为什么有些 minimal case 的 `duplicate_persistence_rate` 仍然是 `0`，但系统已经在日志层面暴露出重复写风险。
 
 辅助护栏指标固定成下面 2 个：
 
@@ -735,6 +760,20 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
   - 绝对增量：`p95(protected) - p95(minimal)`
   - 相对增量：`(p95(protected) - p95(minimal)) / p95(minimal)`
 
+正式 campaign 聚合时，不把 5 轮里的所有请求揉成一个大样本重新算 p95。
+
+固定口径是：
+
+- 单次 case 先算自己的 `ingest_latency_ms.p95`；
+- 单轮 matrix 先算 `protected - minimal` 的 p95 delta；
+- campaign 层再对 5 个 run-level delta 取 `median / min / max`，必要时再看 `mean`。
+
+这样做的原因是：
+
+- p95 是尾延迟指标，直接平均所有请求会掩盖 run 间抖动；
+- run-level median 更适合表达“正式复跑后的典型表现”；
+- `min/max` 可以直接暴露实验稳定性，避免只报一个漂亮数字。
+
 `backend_cpu_delta`
 
 - 在相同 sender profile、相同发送速率和相同绑核条件下；
@@ -742,6 +781,12 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 - 结果统一报：
   - 平均 CPU 增量：`avg_cpu(protected) - avg_cpu(minimal)`
   - 可选补一条峰值 CPU 增量
+
+`sqlite_unique_constraint_fail_count`
+
+- 单 case 从 `server.log` 里统计 `UNIQUE constraint failed: trace_summary.trace_id` 的出现次数；
+- matrix summary 再输出 `sqlite_unique_constraint_fail_count_by_case`；
+- 这条指标只做诊断，不和主图正确性指标混用。
 
 当前原则：
 
@@ -770,7 +815,38 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 - 外层 `taskset -c 0-2` 约束 matrix runner 和 sender 进程，避免发送端抢后端核心；
 - `--server-cpuset 3-15` 只约束 LogSentinel 后端进程，对应 13 个后端核心；
 - `--send-workers = 8` 是 sender 内部发送 worker 数，不是 CPU 核数。
-- `--run-root` 只写实验前缀，matrix runner 每次自动追加时间后缀，避免复用旧 SQLite 污染正确性指标。
+- 正式结果使用 `--campaign-root` 只写实验前缀，campaign runner 每次自动追加时间后缀；单次 matrix 内部仍然继续用时间后缀隔离每轮 SQLite 和 manifest。
+
+正式 16 核命令固定为：
+
+```bash
+taskset -c 0-2 python3 server/tests/benchmark/suite_b/run_suite_b_campaign.py \
+  --campaign-root /tmp/suite_b_campaign_remote16 \
+  --seeds 20260415,20260416,20260417,20260418,20260419 \
+  --port-base 19580 \
+  --port-stride 20 \
+  --server-bin ./server/build/LogSentinel \
+  --server-cpuset 3-15 \
+  --server-io-threads 5 \
+  --worker-threads 16 \
+  --dispatch-worker-threads 4 \
+  --worker-queue-size 8192 \
+  --trace-capacity 12 \
+  --trace-token-limit 0 \
+  --trace-sweep-interval-ms 100 \
+  --trace-idle-timeout-ms 800 \
+  --trace-max-dispatch-per-tick 128 \
+  --trace-buffered-span-limit 8192 \
+  --trace-active-session-limit 2048 \
+  --trace-count 10 \
+  --spans-per-trace 8 \
+  --send-workers 8 \
+  --disable-ai \
+  --disable-webhook \
+  --no-auto-start-proxy \
+  --sender-profiles clean_baseline,mixed_realistic,late_replay_stress \
+  --trace-lifecycle-profiles protected,minimal
+```
 
 补一层语义，避免后面再把线程名字看串：
 

@@ -105,6 +105,18 @@
   - [x] 在 summary 记录 `requested_run_root / actual_run_root`
   - [x] 更新 Suite B README 的命令说明，避免继续写 `v1/v2` 人工后缀
   - [x] 验证 Suite B Python 单测和语法检查
+- [x] Suite B 诊断指标收尾：从 server log 提取 SQLite UNIQUE 冲突次数，避免只靠肉眼翻日志
+  - [x] 先写红灯单测，锁 server log 里的 `UNIQUE constraint failed: trace_summary.trace_id` 计数
+  - [x] 让每个 case 结果带上 `sqlite_unique_constraint_fail_count`
+  - [x] 让 summary 带上 `sqlite_unique_constraint_fail_count_by_case`
+  - [x] 更新 Suite B 文档，明确这是诊断指标，不等于最终重复持久化条数
+  - [x] 验证 Suite B Python 单测和语法检查
+- [x] Suite B 正式复跑口径收尾：固定 5 个 seed 的 campaign runner 和聚合摘要
+  - [x] 先写红灯单测，锁 seed 列表、端口偏移、matrix 子运行调用和 campaign summary 结构
+  - [x] 实现 `run_suite_b_campaign.py`，只负责多轮矩阵编排和 run-level 聚合，不改单次 matrix runner 语义
+  - [x] 汇总 correctness 指标的均值/min/max，以及入口 p95 护栏的 run-level median/min/max
+  - [x] 更新 Suite B README / 总览文档，明确正式论文结果用 5 个固定 seed 聚合
+  - [x] 验证 Suite B Python 单测和语法检查
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

@@ -32,13 +32,19 @@
   - 负责 `3 x 2` 矩阵的 case 级编排；
   - 为每个 case 单独起停后端、分配独立 SQLite 和结果目录；
   - 按 sender profile 汇总 `protected - minimal` 的 `ingest_p95_latency_delta`；
+  - 从 `server.log` 提取 `sqlite_unique_constraint_fail_count` 诊断指标；
   - 输出一份矩阵汇总 `summary.json`。
 - `run_suite_b_matrix_unit_test.py`
   - 覆盖矩阵 case 规划、后端起停顺序和汇总 JSON 结构。
+- `run_suite_b_campaign.py`
+  - 负责正式论文口径的多 seed 复跑；
+  - 默认固定 `20260415,20260416,20260417,20260418,20260419` 五个 seed；
+  - 每个 seed 单独跑一轮 `3 x 2` matrix，并按 run-level 结果聚合正确性、p95 护栏和 SQLite UNIQUE 冲突诊断指标。
+- `run_suite_b_campaign_unit_test.py`
+  - 覆盖 seed 列表、端口偏移、matrix 参数透传和 campaign summary 聚合结构。
 
 当前还没做：
 
-- 更大的 benchmark 总调度器
 - AI mock server / CPU 绑核 / 资源采样联动
 
 这条线故意不复用 `common/wrk/` 当主入口。
@@ -114,6 +120,21 @@ python3 server/tests/benchmark/suite_b/evaluator.py \
 
 原因很简单：`Suite B` 的性能护栏要回答的是“protected 生命周期防护会不会让入口请求明显变慢”，不能把后台 flush 或结果查询时间混进来。
 
+`run_suite_b_matrix.py` 还会从每个 case 的 `server.log` 里提取：
+
+- `sqlite_unique_constraint_fail_count`
+
+它统计的是：
+
+- `UNIQUE constraint failed: trace_summary.trace_id`
+
+这类 SQLite 唯一键冲突在当前 case 日志里出现了多少次。
+
+注意：
+
+- 这是一项诊断指标，不等于最终真的重复持久化成功了多少条；
+- 它表达的是“后端已经发生了重复写尝试或重复 summary 提交尝试”，很适合辅助解释为什么 `minimal` 在脏时序下危险。
+
 最小 run_suite_b 示例：
 
 ```bash
@@ -151,6 +172,26 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 - 如果你已经有外部包装脚本，仍然可以继续传 `--server-command` 模板，当前支持注入 `{sqlite_db} / {trace_lifecycle_profile} / {port} / {log_path} / {case_id} / {run_dir}`；
 - 如果只是验证编排逻辑是否活着，可以配 `--dry-run`，再给它一个能监听端口的最小 dummy server。
 
+正式论文/答辩口径不要直接拿单次 matrix 当最终结果。
+
+正式入口使用 `run_suite_b_campaign.py`：
+
+- 默认跑 5 个固定 seed；
+- 每个 seed 跑一轮完整 `3 x 2` matrix；
+- `--campaign-root` 表示 campaign 目录前缀，每次运行同样会自动追加时间后缀；
+- campaign summary 会输出 `aggregate.correctness_by_case`、`aggregate.ingest_p95_latency_delta_by_profile` 和 `aggregate.sqlite_unique_constraint_fail_count_by_case`；
+- 正确性指标报 `mean / min / max`，入口 p95 护栏优先看 run-level `median / min / max`。
+
+最小 campaign 示例：
+
+```bash
+python3 server/tests/benchmark/suite_b/run_suite_b_campaign.py \
+  --campaign-root /tmp/suite_b_campaign \
+  --disable-ai \
+  --disable-webhook \
+  --no-auto-start-proxy
+```
+
 新增的资源控制 CLI：
 
 - `--server-bin`
@@ -182,7 +223,7 @@ python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 - 如果旧进程已经占着某个 case 端口，matrix runner 现在会直接 fail fast，不再把“旧进程还活着”误判成“新 case 已启动成功”。
 - 复跑同一条命令不会覆盖旧结果，也不会复用旧 SQLite；目录靠时间后缀区分，不再靠手写 `v1/v2`。
 
-4 核本机最小示例：
+4 核本机最小 matrix 示例：
 
 ```bash
 taskset -c 0 python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
@@ -218,7 +259,7 @@ taskset -c 0 python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 - `--send-workers 2` 只是 sender 的发送 worker 数，不是绑核；真正绑核靠外层 `taskset`；
 - 如果本机就只有 4 核，这一档足够先验证 `protected/minimal` 的语义差异有没有出来。
 
-16 核云机推荐起步示例：
+16 核云机推荐 matrix 示例：
 
 ```bash
 taskset -c 0-2 python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
@@ -253,3 +294,37 @@ taskset -c 0-2 python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 - `--server-io-threads 5` 和 `worker/dispatch` 分开看：它只负责收包、连接分发和 Reactor 回调，不负责 Trace 聚合收尾；
 - `worker_threads` 和 `dispatch_worker_threads` 都是后端进程参数，跟 sender 的 `--send-workers` 不是一回事；
 - 如果云机不是 16 核，就只改 `--server-cpuset / --server-io-threads / --worker-threads / --dispatch-worker-threads / --send-workers` 这几项，其他 lifecycle 参数先别乱动。
+
+正式 16 核云机 campaign 命令：
+
+```bash
+taskset -c 0-2 python3 server/tests/benchmark/suite_b/run_suite_b_campaign.py \
+  --campaign-root /tmp/suite_b_campaign_remote16 \
+  --seeds 20260415,20260416,20260417,20260418,20260419 \
+  --port-base 19580 \
+  --port-stride 20 \
+  --server-bin ./server/build/LogSentinel \
+  --server-cpuset 3-15 \
+  --server-io-threads 5 \
+  --worker-threads 16 \
+  --dispatch-worker-threads 4 \
+  --worker-queue-size 8192 \
+  --trace-capacity 12 \
+  --trace-token-limit 0 \
+  --trace-sweep-interval-ms 100 \
+  --trace-idle-timeout-ms 800 \
+  --trace-max-dispatch-per-tick 128 \
+  --trace-buffered-span-limit 8192 \
+  --trace-active-session-limit 2048 \
+  --trace-count 10 \
+  --spans-per-trace 8 \
+  --send-workers 8 \
+  --disable-ai \
+  --disable-webhook \
+  --no-auto-start-proxy \
+  --sender-profiles clean_baseline,mixed_realistic,late_replay_stress \
+  --trace-lifecycle-profiles protected,minimal
+```
+
+这条命令会实际启动 `5 x 6 = 30` 个 case。
+如果只是本机 smoke，不要用它硬跑；用前面的单次 matrix 命令即可。

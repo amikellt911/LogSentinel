@@ -264,6 +264,14 @@ def _tail_log_excerpt(log_path: str, line_limit: int = 20) -> str:
     return f"\nRecent server log:\n{excerpt}"
 
 
+def count_sqlite_unique_constraint_failures(log_path: str) -> int:
+    try:
+        lines = Path(log_path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0
+    return sum(1 for line in lines if "UNIQUE constraint failed: trace_summary.trace_id" in line)
+
+
 def assert_process_alive(process_info: Dict[str, object]) -> None:
     process = process_info["process"]
     return_code = process.poll()
@@ -383,6 +391,13 @@ def build_ingest_p95_latency_delta_by_profile(cases: List[Dict[str, object]]) ->
     return deltas
 
 
+def build_sqlite_unique_constraint_fail_count_by_case(cases: List[Dict[str, object]]) -> Dict[str, int]:
+    return {
+        str(case["case_id"]): int(case.get("sqlite_unique_constraint_fail_count", 0))
+        for case in cases
+    }
+
+
 def run_suite_b_matrix(
     args: argparse.Namespace,
     assert_port_available: Callable[[int], None] = assert_port_available,
@@ -405,6 +420,7 @@ def run_suite_b_matrix(
         launch_values["server_command"] = resolve_server_command(args, case)
         launch_args = argparse.Namespace(**launch_values)
         process_info = launch_server(case, launch_args)
+        case_result: Optional[Dict[str, object]] = None
         try:
             wait_for_server_ready(
                 process_info,
@@ -414,11 +430,15 @@ def run_suite_b_matrix(
                 check_process_alive=check_process_alive,
             )
             case_result = run_case(build_case_args(args, case))
+        finally:
+            stop_server(process_info, args.stop_timeout_sec)
+        if case_result is not None:
+            # 这个计数是“重复写尝试”的诊断证据，不是最终真的重复持久化了多少条。
+            # 必须等 stop 之后再读 server.log，避免后端还没把最后几条 flush 错误刷进文件就开始统计。
+            case_result["sqlite_unique_constraint_fail_count"] = count_sqlite_unique_constraint_failures(str(case["server_log"]))
             case_result["case_id"] = case["case_id"]
             case_result["server_log"] = case["server_log"]
             results.append(case_result)
-        finally:
-            stop_server(process_info, args.stop_timeout_sec)
 
     summary = {
         "total_cases": len(results),
@@ -429,6 +449,7 @@ def run_suite_b_matrix(
         "sender_profiles": parse_csv_list(args.sender_profiles),
         "trace_lifecycle_profiles": parse_csv_list(args.trace_lifecycle_profiles),
         "ingest_p95_latency_delta_by_profile": build_ingest_p95_latency_delta_by_profile(results),
+        "sqlite_unique_constraint_fail_count_by_case": build_sqlite_unique_constraint_fail_count_by_case(results),
         "cases": results,
     }
 

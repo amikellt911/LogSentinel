@@ -207,6 +207,16 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
                 self.assertIn("--dispatch-worker-threads 2", args.server_command)
                 self.assertIn("--disable-ai", args.server_command)
                 self.assertIn("taskset -c 0-3", args.server_command)
+                log_path = Path(case["server_log"])
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                if case["trace_lifecycle_profile"] == "minimal":
+                    log_path.write_text(
+                        "[SqliteTraceRepository] SavePrimaryBatch failed error=Insert trace_summary batch item: "
+                        "UNIQUE constraint failed: trace_summary.trace_id\n",
+                        encoding="utf-8",
+                    )
+                else:
+                    log_path.write_text("", encoding="utf-8")
                 return {"pid": case["case_id"]}
 
             def fake_assert_port_available(port: int) -> None:
@@ -302,6 +312,9 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
         self.assertIn("ingest_p95_latency_delta_by_profile", result)
         self.assertEqual(3, result["ingest_p95_latency_delta_by_profile"]["clean_baseline"]["absolute_ms"])
         self.assertAlmostEqual(0.5, result["ingest_p95_latency_delta_by_profile"]["clean_baseline"]["relative"])
+        self.assertEqual(0, result["sqlite_unique_constraint_fail_count_by_case"]["protected__clean_baseline"])
+        self.assertEqual(1, result["sqlite_unique_constraint_fail_count_by_case"]["minimal__clean_baseline"])
+        self.assertEqual(1, result["cases"][2]["sqlite_unique_constraint_fail_count"])
 
     def test_build_ingest_p95_latency_delta_by_profile_pairs_lifecycle_cases(self) -> None:
         if matrix_module is None or not hasattr(matrix_module, "build_ingest_p95_latency_delta_by_profile"):
@@ -322,6 +335,28 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
         self.assertAlmostEqual(0.5, delta["clean_baseline"]["relative"])
         self.assertEqual(12, delta["mixed_realistic"]["absolute_ms"])
         self.assertIsNone(delta["mixed_realistic"]["relative"])
+
+    def test_count_sqlite_unique_constraint_failures_reads_server_log(self) -> None:
+        if matrix_module is None or not hasattr(matrix_module, "count_sqlite_unique_constraint_failures"):
+            self.fail("count_sqlite_unique_constraint_failures should exist for Suite B diagnostics")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "server.log"
+            log_path.write_text(
+                "\n".join(
+                    [
+                        "[SqliteTraceRepository] SavePrimaryBatch failed error=Insert trace_summary batch item: UNIQUE constraint failed: trace_summary.trace_id",
+                        "noise line",
+                        "[SqliteTraceRepository] SavePrimaryBatch failed error=Insert trace_summary batch item: UNIQUE constraint failed: trace_summary.trace_id",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            fail_count = matrix_module.count_sqlite_unique_constraint_failures(str(log_path))
+
+        self.assertEqual(2, fail_count)
 
     def test_assert_port_available_rejects_occupied_port(self) -> None:
         # 这条测试锁的是“ready 前先判空端口”，

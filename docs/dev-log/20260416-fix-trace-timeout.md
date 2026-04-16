@@ -190,3 +190,99 @@
 
 - 不能直接拿用户传进来的 `--run-root` 当真实目录用。只要这条命令被重复执行一次，旧 SQLite 就会和新 case 混在一起。
 - 如果 summary 只记 actual 目录，不记 requested 前缀，后面回看命令和资产时很容易对不上。
+
+---
+
+# 2026-04-16 feat(benchmark): 补 Suite B SQLite UNIQUE 冲突诊断指标
+
+## Git Commit Message
+
+`feat(benchmark): 补 Suite B SQLite UNIQUE 冲突诊断指标`
+
+## Modification
+
+- `server/tests/benchmark/suite_b/run_suite_b_matrix.py`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix_unit_test.py`
+- `server/tests/benchmark/suite_b/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- `run_suite_b_matrix.py` 现在会在每个 case 停机后读取对应 `server.log`，统计 `UNIQUE constraint failed: trace_summary.trace_id` 的出现次数，并写入 `sqlite_unique_constraint_fail_count`。
+- matrix summary 会额外输出 `sqlite_unique_constraint_fail_count_by_case`，方便一眼看出哪些 case 已经出现重复 summary 写尝试。
+- 这个指标是日志诊断证据，不等于最终真的重复持久化成功了多少条。也就是说，即使 `duplicate_persistence_rate = 0`，后端仍可能已经撞过 UNIQUE 约束，只是 SQLite 把脏写挡住了。
+- 本地 4 核验证里，这条指标正好能补足 `minimal` 脏时序 case 的解释：主指标只看最终结果，日志指标则揭示“后端内部已经发生过重复提交风险”。
+
+## Verification
+
+- `cd server/tests/benchmark/suite_b && python3 -m unittest discover -s . -p '*_unit_test.py'`
+- `cd server/tests/benchmark/suite_b && python3 -m py_compile run_suite_b_matrix.py sender.py evaluator.py run_suite_b.py profiles.py sender_unit_test.py evaluator_unit_test.py run_suite_b_unit_test.py run_suite_b_matrix_unit_test.py`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- benchmark 结果最好分成“主指标”和“诊断指标”两层。主指标回答论文结论，诊断指标负责解释为什么会这样，别把两种口径混成一个数字。
+- 数据库 UNIQUE 冲突不等于系统没问题，它只说明“最终脏数据没落进去”。如果日志里持续撞约束，说明上游生命周期或去重语义已经开始打架了。
+
+### Function Explanation
+
+- `count_sqlite_unique_constraint_failures()`：读取 case 对应的 `server.log`，只统计 `trace_summary.trace_id` 的 UNIQUE 冲突次数。
+- `build_sqlite_unique_constraint_fail_count_by_case()`：把各 case 的冲突次数整理成 summary 级映射，方便做矩阵对比。
+
+### Pitfalls
+
+- 不能在停机前就去读 `server.log`。因为最后一波 flush 或错误日志可能还没刷完，太早统计会少算。
+- 不能把 `sqlite_unique_constraint_fail_count` 当成 `duplicate_persistence_rate` 的替代品。一个是“尝试过脏写几次”，一个是“最终真的重复持久化了多少次”，语义不是一回事。
+
+---
+
+# 2026-04-16 feat(benchmark): 固定 Suite B 正式 5 seed 复跑口径
+
+## Git Commit Message
+
+`feat(benchmark): 固定 Suite B 正式 5 seed 复跑口径`
+
+## Modification
+
+- `server/tests/benchmark/suite_b/run_suite_b_campaign.py`
+- `server/tests/benchmark/suite_b/run_suite_b_campaign_unit_test.py`
+- `server/tests/benchmark/suite_b/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260416-fix-trace-timeout.md`
+
+## Summary
+
+- 新增 `run_suite_b_campaign.py`，把正式 Suite B 结果从“单次 matrix”提升为“5 个固定 seed 的 campaign”。
+- 默认 seed 固定为 `20260415,20260416,20260417,20260418,20260419`，每个 seed 跑一轮完整 `3 x 2` matrix。
+- campaign runner 只控制 `seed / run-root / port-base`，其它后端资源参数原样透传给 `run_suite_b_matrix.py`，避免维护两套资源 CLI。
+- campaign summary 新增 `aggregate.correctness_by_case`、`aggregate.ingest_p95_latency_delta_by_profile` 和 `aggregate.sqlite_unique_constraint_fail_count_by_case`。
+- 正确性指标聚合 `mean / median / min / max`；入口 p95 护栏按 run-level delta 聚合，不把所有请求混成一个大样本重算 p95。
+
+## Verification
+
+- `python3 -m unittest run_suite_b_campaign_unit_test.py`
+- `python3 -m unittest discover -s . -p '*_unit_test.py'`
+- `python3 -m py_compile run_suite_b_matrix.py run_suite_b_campaign.py sender.py evaluator.py run_suite_b.py profiles.py sender_unit_test.py evaluator_unit_test.py run_suite_b_unit_test.py run_suite_b_matrix_unit_test.py run_suite_b_campaign_unit_test.py`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 正式 benchmark 不应该只跑一次。单次结果适合开发调参，但论文图表最好用固定 seed 复跑，避免被偶发调度抖动质疑。
+- p95 这类尾延迟指标不要简单“所有请求一起平均”。更稳的做法是每轮先算 p95，再对 run-level p95 做 median/min/max。
+
+### Function Explanation
+
+- `run_suite_b_campaign.py`：多 seed 外层编排器，不直接理解后端资源参数，只把它们透传给 matrix runner。
+- `build_matrix_argv()`：给每轮 matrix 注入独立 seed、端口基准和 run-root 前缀。
+- `build_campaign_aggregate()`：把多轮 matrix summary 聚合成论文可用的 campaign summary。
+
+### Pitfalls
+
+- campaign 层不能允许用户再手动透传 `--seed / --run-root / --output-summary` 给 matrix，否则一轮复跑里会出现两个控制源，结果目录和 seed 口径会乱。
+- `--port-stride` 要大于单轮 matrix 的 case 数。当前 `3 x 2` 是 6 个端口，默认 `20` 留了余量，避免相邻 seed 的 case 端口撞车。
