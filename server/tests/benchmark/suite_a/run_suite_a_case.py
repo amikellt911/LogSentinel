@@ -215,9 +215,13 @@ def build_span_payload(
     spans_per_trace: int,
     service_name: str,
 ) -> JsonDict:
+    logical_now_ms = int(time.time() * 1000)
     payload: JsonDict = {
         "trace_key": trace_key,
         "span_id": span_id,
+        # /logs/spans 入口会在 HTTP Handler 层校验 start_time_ms。
+        # 这里如果漏掉，请求会在进 TraceSessionManager 之前就被 400 拒掉，看起来像“后端完全没处理”。
+        "start_time_ms": logical_now_ms,
         "name": f"suite-a-span-{span_id}",
         "service_name": service_name,
         # Suite A 只做 clean 流量，所以最后一个 span 直接作为 trace_end。

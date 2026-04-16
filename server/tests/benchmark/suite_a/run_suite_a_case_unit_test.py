@@ -13,6 +13,25 @@ except ModuleNotFoundError:
 
 
 class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
+    def test_build_span_payload_includes_required_http_fields(self) -> None:
+        if suite_a_module is None or not hasattr(suite_a_module, "build_span_payload"):
+            self.fail("build_span_payload should exist for Suite A sender payload")
+
+        # 这里锁的是 /logs/spans Handler 的必填字段，不让 sender 再因为漏字段被 HTTP 400 全拒。
+        payload = suite_a_module.build_span_payload(
+            trace_key=1001,
+            span_id=2,
+            spans_per_trace=8,
+            service_name="svc-suite-a",
+        )
+
+        self.assertEqual(1001, payload["trace_key"])
+        self.assertEqual(2, payload["span_id"])
+        self.assertIn("start_time_ms", payload)
+        self.assertEqual("svc-suite-a", payload["service_name"])
+        self.assertIn("name", payload)
+        self.assertFalse(payload["trace_end"])
+
     def test_parse_args_accepts_server_autostart_flags(self) -> None:
         if suite_a_module is None or not hasattr(suite_a_module, "parse_args"):
             self.fail("parse_args should exist for Suite A fixed sender runner")
