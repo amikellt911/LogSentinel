@@ -400,3 +400,48 @@
 
 - auto-start 模式和手动模式是两套入口，不要混着传。传了 `--server-bin/--server-command` 却还手写一套错误的 `--sqlite-db`，很容易把“自动派生路径”和“手工旧路径”掺到一起。
 - 当前脚本只把 backend 的 `cpuset/io/dispatch/worker` 收进来了，sender/ai-proxy 的更细绑核还没继续往下做；这一步先解决“能复跑”，不假装已经把全部核拓扑自动化了。
+
+---
+
+# 2026-04-16 fix(benchmark): 补 Suite A 结果里的实际启动命令
+
+## Git Commit Message
+
+`fix(benchmark): 补 Suite A 结果里的实际启动命令`
+
+## Modification
+
+- `server/tests/benchmark/suite_a/run_suite_a_case.py`
+- `server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260416-fix-trace-timeout.md`
+
+## Summary
+
+- `run_suite_a_case.py` 在 auto-start 模式下，除了继续真正执行后端命令，现在还会把解析占位符后的最终命令落到结果 JSON，字段名是 `resolved_server_command`。
+- 这个字段只在 auto-start 模式输出，手动模式不会伪造。
+- 这样后面再看 compare_target 结果时，不需要只靠肉眼翻 `server.log` 猜命令到底有没有把 `sqlite_db / port / CLI` 真正带进去。
+
+## Verification
+
+- `cd server/tests/benchmark/suite_a && python3 -m unittest run_suite_a_case_unit_test.py`
+- `python3 -m unittest discover -s server/tests/benchmark/suite_a -p '*_unit_test.py'`
+- `python3 -m py_compile server/tests/benchmark/suite_a/run_suite_a_case.py server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- benchmark 脚本里最容易把结果测脏的，不只是流量形状，还有“这轮实验到底启动了什么命令”这种元信息。如果不落盘，复盘时就会退化成猜。
+- 模板命令和实际命令不是一回事。带 `{sqlite_db}`、`{port}` 这种占位符的字符串，只能说明“你本来想这么跑”，不能证明“进程真是这么起的”。
+
+### Function Explanation
+
+- `resolve_server_command()`：负责把模板命令或 baseline 默认命令展开成最终 shell 命令。
+- `run_suite_a_case()`：现在会把这条最终命令保存到 `runtime_args.resolved_server_command`，并继续带到结果 JSON。
+
+### Pitfalls
+
+- 不要把 `server_command` 模板本身当成实验证据。真正该看的，是占位符替换后的 `resolved_server_command`。
+- 这个字段只是帮助复盘和排脏，不会反过来保证旧版二进制一定支持你传进去的所有 CLI；CLI 是否生效，最终还是要和 `server.log`、SQLite 真值一起交叉看。

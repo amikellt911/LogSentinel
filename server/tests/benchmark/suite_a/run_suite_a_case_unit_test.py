@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 try:
     import run_suite_a_case as suite_a_module
@@ -240,6 +241,87 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
         self.assertEqual(280, result["sqlite_counts_final"]["trace_summary"])
         self.assertEqual(2240, result["sqlite_counts_final"]["trace_span"])
         self.assertEqual(2560, saved["sender_stats"]["total_requests"])
+
+    def test_run_suite_a_case_records_resolved_server_command_in_result_json(self) -> None:
+        if suite_a_module is None or not hasattr(suite_a_module, "run_suite_a_case"):
+            self.fail("run_suite_a_case should exist for Suite A fixed sender runner")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            requested_root = str(Path(temp_dir) / "suite_a_compare_probe")
+            launched_commands = []
+
+            def fake_launch(command: str, _log_path: Path):
+                # 这里只记录 run_suite_a_case 真正拿去起进程的命令，不碰真实子进程。
+                # 这样可以精确锁住“结果 JSON 里的命令”和“实际 launch 的命令”必须是同一条。
+                launched_commands.append(command)
+                return {"process": object(), "log_file": object()}
+
+            def fake_sender(sender_args):
+                return {
+                    "trace_count": sender_args.trace_count,
+                    "spans_per_trace": sender_args.spans_per_trace,
+                    "inter_trace_gap_ms": sender_args.inter_trace_gap_ms,
+                    "t_stop_ms": 2200,
+                    "sender_stats": {
+                        "total_requests": 6400,
+                        "success_requests": 6400,
+                        "non_2xx_requests": 0,
+                        "transport_errors": 0,
+                    },
+                }
+
+            args = SimpleNamespace(
+                url="",
+                sqlite_db="",
+                server_command="fake-server --db {sqlite_db} --port {port} --log {log_path}",
+                server_bin="",
+                run_root=requested_root,
+                port_base=18186,
+                server_log="",
+                server_cpuset="",
+                server_io_threads=1,
+                worker_threads=32,
+                dispatch_worker_threads=1,
+                startup_timeout_sec=10.0,
+                stop_timeout_sec=5.0,
+                trace_count=800,
+                spans_per_trace=8,
+                inter_trace_gap_ms=25,
+                send_workers=1,
+                request_timeout_ms=1000,
+                service_name="svc-suite-a",
+                poll_interval_ms=200,
+                stable_rounds=5,
+                confirm_sleep_ms=300,
+                max_drain_wait_ms=30000,
+                output_json="",
+            )
+
+            with mock.patch.object(suite_a_module, "assert_port_available"), \
+                mock.patch.object(suite_a_module, "launch_server_process", side_effect=fake_launch), \
+                mock.patch.object(suite_a_module, "wait_for_port_ready"), \
+                mock.patch.object(suite_a_module, "stop_server_process"):
+                # 这里走 auto-start 分支，但把起停后端和 SQLite 稳定等待全部替换成假实现。
+                # 测试目标只剩一个：最终结果文件里必须能看到解析占位符后的真实启动命令。
+                result = suite_a_module.run_suite_a_case(
+                    args,
+                    sender_runner=fake_sender,
+                    sqlite_counter=lambda _path: {"trace_summary": 800, "trace_span": 6400},
+                    wait_for_stable_runner=lambda **_kwargs: {
+                        "final_counts": {"trace_summary": 800, "trace_span": 6400},
+                        "drain_tail_ms": 1305,
+                        "drain_timeout": False,
+                    },
+                )
+
+            output_json = Path(result["actual_run_root"]) / "result.json"
+            saved = json.loads(output_json.read_text(encoding="utf-8"))
+
+        self.assertEqual(1, len(launched_commands))
+        self.assertEqual(launched_commands[0], result["resolved_server_command"])
+        self.assertEqual(launched_commands[0], saved["resolved_server_command"])
+        self.assertIn(result["sqlite_db"], result["resolved_server_command"])
+        self.assertIn("--port 18186", result["resolved_server_command"])
 
     def test_wait_until_sqlite_stable_returns_final_counts_and_tail(self) -> None:
         if suite_a_module is None or not hasattr(suite_a_module, "wait_until_sqlite_stable"):

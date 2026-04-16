@@ -437,6 +437,9 @@ def run_suite_a_case(
             artifacts["run_root"] = actual_run_root
             command = resolve_server_command(args, artifacts)
             runtime_args.server_command = command
+            # 这里额外落一份“最终实际执行命令”，专门服务 benchmark 复盘。
+            # compare_target 一旦跑脏，单看模板字符串不够，必须知道 sqlite/port/CLI 是否真的替换进去了。
+            runtime_args.resolved_server_command = command
 
             assert_port_available(args.port_base)
             process_info = launch_server_process(command, Path(runtime_args.server_log))
@@ -481,6 +484,8 @@ def run_suite_a_case(
             result["sqlite_db"] = runtime_args.sqlite_db
             result["server_log"] = runtime_args.server_log
             result["url"] = runtime_args.url
+            # 只在 auto-start 模式输出这个字段，避免手动模式伪造一条并不存在的命令。
+            result["resolved_server_command"] = runtime_args.resolved_server_command
 
         if runtime_args.output_json:
             Path(runtime_args.output_json).write_text(

@@ -131,6 +131,7 @@
   - [x] 把当前 baseline 的后端启动命令收进脚本：AI 开、provider=`mock`、webhook 关
   - [x] 支持透传 `server-cpuset / server-io-threads / worker-threads / dispatch-worker-threads`
   - [x] 验证单测、Python 语法和最小自起后端 dry-run
+  - [x] 把最终实际执行的 `server_command` 写进结果 JSON，避免 compare_target 结果脏掉时只能靠肉眼翻 `server.log`
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径
