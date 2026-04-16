@@ -540,6 +540,9 @@ TraceSessionManager::PushResult TraceSessionManager::PushLocked(const SpanEvent 
     session.last_update_ms = now_ms;
     if (!already_sealed)
     {
+        // collecting 阶段每收到一个新 span 都要刷新精确 deadline。
+        // 时间轮节点只是粗粒度唤醒点，真正能不能因 idle timeout 收口，后面 sweep 还要拿 now_ms 和这里比较。
+        session.collect_deadline_ms = now_ms + idle_timeout_ms_;
         session.lifecycle_state = TraceSession::LifecycleState::Collecting;
         session.retry_count = 0;
         session.next_retry_tick = 0;
@@ -761,6 +764,18 @@ void TraceSessionManager::SweepExpiredSessions(int64_t now_ms,
                 time_wheel_[session.sealed_deadline_tick % wheel_size_].push_back(node);
                 continue;
             }
+            if (session.lifecycle_state == TraceSession::LifecycleState::Collecting &&
+                session.collect_deadline_ms > 0 &&
+                now_ms < session.collect_deadline_ms)
+            {
+                // collecting timeout 不能只看 tick 槽位。
+                // 时间轮可能因为第一次 sweep 的 tick 基准、调度抖动或向上取整提前命中槽位；
+                // 真正摘走 session 前必须再确认精确毫秒 deadline 已到，否则就按剩余时间挂回去。
+                const int64_t remaining_ms = session.collect_deadline_ms - now_ms;
+                node.expire_tick = current_tick_ + ComputeDelayTicks(remaining_ms);
+                time_wheel_[node.expire_tick % wheel_size_].push_back(node);
+                continue;
+            }
             if (max_dispatch_per_tick > 0 && expired_trace_keys.size() >= max_dispatch_per_tick)
             {
                 // 本轮达到上限时，将当前有效节点顺延一 tick，避免被直接丢失。
@@ -864,6 +879,8 @@ void TraceSessionManager::SweepCompletedTombstonesLocked(size_t slot)
 void TraceSessionManager::ScheduleTimeoutNode(TraceSession &session)
 {
     session.timer_version += 1;
+    // timeout 节点只负责“到附近时间点叫醒 sweep”。
+    // collecting 的精确截止点存在 session.collect_deadline_ms 里，避免 tick 量化把 session 提前摘走。
     const uint64_t expire_tick = current_tick_ + timeout_ticks_;
     const size_t slot = static_cast<size_t>(expire_tick % wheel_size_);
     TimeWheelNode node;
@@ -966,6 +983,12 @@ void TraceSessionManager::RebuildTimeWheel()
         if (!session_ptr)
         {
             continue;
+        }
+        if (session_ptr->lifecycle_state == TraceSession::LifecycleState::Collecting)
+        {
+            // idle_timeout_ms 运行中变更时，collecting 会话的真实截止时间也要跟着新配置重算。
+            // 否则时间轮虽然重建了，但精确 deadline 还停在旧配置上，Settings 生效语义会出现半新半旧。
+            session_ptr->collect_deadline_ms = session_ptr->last_update_ms + idle_timeout_ms_;
         }
         // collecting / sealed / ready_to_dispatch / retry_later 四种时间语义不同，
         // 重建时必须按当前生命周期分别重排，不能偷懒统一当 timeout 节点处理。

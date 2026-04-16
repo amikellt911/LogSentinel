@@ -83,6 +83,12 @@
   - [x] 在 `main.cpp` 增加 `server_io_threads` 的 CLI override，保持外部 benchmark 语义清晰
   - [x] 修正 matrix runner 的启动校验，避免“旧进程占着端口”被误判成 ready
   - [x] 验证单测、Python 语法、最小 dry-run 和真实后端启动日志
+- [x] Suite B 生命周期口径收尾：修正 collecting timeout 提前触发，并把文档说明写透
+  - [x] 先写红灯单测，锁 `Collecting` 会话不会早于 `idle_timeout_ms` 被 dispatch
+  - [x] 在 `TraceSession` 增加精确 `collect_deadline_ms`，并补中文注释说明它和 `sealed_deadline_tick` 的区别
+  - [x] 改造 `PushLocked / ScheduleTimeoutNode / SweepExpiredSessions`，让时间轮只负责粗唤醒，真正 dispatch 前再比对精确 deadline
+  - [x] 更新 `README / BENCHMARK_SUITE_OVERVIEW / dev-log`，明确 `Collecting timeout` 不会先进 `Sealed`
+  - [x] 验证 TraceSessionManager 相关单测和 Suite B Python 脚本语法检查
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

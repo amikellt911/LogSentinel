@@ -2113,7 +2113,9 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DispatchesSessionWithoutTraceEn
         /*wheel_tick_ms*/500);
 
     SpanEvent span = MakeSpan(133, 1301, 1000);
-    ASSERT_EQ(manager.Push(span), TraceSessionManager::PushResult::Accepted);
+    // timeout 相关单测必须显式注入 arrival time。
+    // 这样 PushLocked 写入的 last_update_ms 和下面手动 sweep 的 now_ms 才属于同一条时间线。
+    ASSERT_EQ(manager.PushLocked(span, /*now_ms*/1000), TraceSessionManager::PushResult::Accepted);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
     EXPECT_EQ(manager.size(), 1u);
 
@@ -2150,14 +2152,14 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_ReschedulePreventsEarlyDispatch
         /*wheel_tick_ms*/500);
 
     SpanEvent span1 = MakeSpan(201, 2001, 1000);
-    ASSERT_EQ(manager.Push(span1), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.PushLocked(span1, /*now_ms*/1000), TraceSessionManager::PushResult::Accepted);
 
     manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
 
     // 续命：同 trace 新 span 进入后会重排超时计划。
     SpanEvent span2 = MakeSpan(201, 2002, 1100);
-    ASSERT_EQ(manager.Push(span2), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.PushLocked(span2, /*now_ms*/1100), TraceSessionManager::PushResult::Accepted);
 
     // 推到旧计划到期点：不应该触发（旧节点应被 version 校验淘汰）。
     manager.SweepExpiredSessions(/*now_ms*/5500, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
@@ -2165,7 +2167,7 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_ReschedulePreventsEarlyDispatch
     EXPECT_EQ(manager.size(), 1u);
 
     // 推到新计划到期点：此时才应该触发分发。
-    manager.SweepExpiredSessions(/*now_ms*/6000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    manager.SweepExpiredSessions(/*now_ms*/6100, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 1);
     EXPECT_EQ(repo.last_summary.trace_id, "201");
@@ -2190,7 +2192,7 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_TraceKeyReuseDoesNotTriggerNewS
         /*wheel_tick_ms*/500);
 
     SpanEvent old_span = MakeSpan(301, 3001, 1000);
-    ASSERT_EQ(manager.Push(old_span), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.PushLocked(old_span, /*now_ms*/1000), TraceSessionManager::PushResult::Accepted);
 
     // 先推进一个 tick，让后续新会话和旧会话落在不同到期 tick。
     manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
@@ -2201,7 +2203,7 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_TraceKeyReuseDoesNotTriggerNewS
     manager.index_by_trace_.clear();
 
     SpanEvent new_span = MakeSpan(301, 3002, 1200);
-    ASSERT_EQ(manager.Push(new_span), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.PushLocked(new_span, /*now_ms*/1200), TraceSessionManager::PushResult::Accepted);
     EXPECT_EQ(manager.size(), 1u);
 
     // 扫到老节点的到期 tick：不应误分发新会话。
@@ -2209,8 +2211,8 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_TraceKeyReuseDoesNotTriggerNewS
     EXPECT_FALSE(repo.save_atomic_called.load(std::memory_order_acquire));
     EXPECT_EQ(manager.size(), 1u);
 
-    // 扫到新会话的到期 tick：才应该触发分发。
-    manager.SweepExpiredSessions(/*now_ms*/6000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
+    // 扫到新会话的精确 deadline：才应该触发分发。
+    manager.SweepExpiredSessions(/*now_ms*/6200, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_called.load(std::memory_order_acquire); }));
     EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 1);
     EXPECT_EQ(repo.last_summary.trace_id, "301");
@@ -2234,8 +2236,8 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_MaxDispatchPerTickDefersRemaini
         /*idle_timeout_ms*/5000,
         /*wheel_tick_ms*/500);
 
-    ASSERT_EQ(manager.Push(MakeSpan(401, 4001, 1000)), TraceSessionManager::PushResult::Accepted);
-    ASSERT_EQ(manager.Push(MakeSpan(402, 4002, 1000)), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.PushLocked(MakeSpan(401, 4001, 1000), /*now_ms*/1000), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.PushLocked(MakeSpan(402, 4002, 1000), /*now_ms*/1000), TraceSessionManager::PushResult::Accepted);
 
     manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
     EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 0);
@@ -2277,7 +2279,7 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DeduplicatesSameTraceInSingleSw
         /*idle_timeout_ms*/5000,
         /*wheel_tick_ms*/500);
 
-    ASSERT_EQ(manager.Push(MakeSpan(501, 5001, 1000)), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.PushLocked(MakeSpan(501, 5001, 1000), /*now_ms*/1000), TraceSessionManager::PushResult::Accepted);
     ASSERT_EQ(manager.size(), 1u);
     auto idx_iter = manager.index_by_trace_.find(501);
     ASSERT_NE(idx_iter, manager.index_by_trace_.end());
@@ -2320,7 +2322,7 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_RebuildOnIdleTimeoutChangeUsesN
         /*idle_timeout_ms*/5000,
         /*wheel_tick_ms*/500);
 
-    ASSERT_EQ(manager.Push(MakeSpan(601, 6001, 1000)), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.PushLocked(MakeSpan(601, 6001, 1000), /*now_ms*/1000), TraceSessionManager::PushResult::Accepted);
 
     manager.SweepExpiredSessions(/*now_ms*/1000, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/1);
     EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 0);
@@ -2335,6 +2337,46 @@ TEST_F(TraceSessionManagerUnitTest, SweepTimeout_RebuildOnIdleTimeoutChangeUsesN
     ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_count.load(std::memory_order_acquire) >= 1; }));
     EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 1);
     EXPECT_EQ(repo.last_summary.trace_id, "601");
+
+    pool.shutdown();
+}
+
+TEST_F(TraceSessionManagerUnitTest, SweepTimeout_DoesNotDispatchBeforeExactCollectDeadline)
+{
+    // 目的：锁住 collecting timeout 的真实语义必须“至少等满 idle_timeout_ms”，
+    // 不能仅仅因为时间轮 tick 已经走到目标槽位，就把 session 提前摘走。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(
+        &pool,
+        buffered_repo.get(),
+        nullptr,
+        /*capacity*/10,
+        /*token_limit*/0,
+        /*notifier*/nullptr,
+        /*idle_timeout_ms*/500,
+        /*wheel_tick_ms*/200);
+
+    SpanEvent span = MakeSpan(701, 7001, 1000);
+    ASSERT_EQ(manager.PushLocked(span, /*now_ms*/1000), TraceSessionManager::PushResult::Accepted);
+    ASSERT_EQ(manager.size(), 1u);
+
+    // 当前实现里 timeout_ticks=3。由于第一个 sweep 会无条件推进 1 tick，
+    // 如果只按 tick 槽位判断，第三次 sweep 到 1400ms 时就会被提前摘走，
+    // 但离真实 deadline=1500ms 其实还差 100ms。
+    manager.SweepExpiredSessions(/*now_ms*/1001, /*idle_timeout_ms*/500, /*max_dispatch_per_tick*/8);
+    EXPECT_EQ(manager.size(), 1u);
+    manager.SweepExpiredSessions(/*now_ms*/1200, /*idle_timeout_ms*/500, /*max_dispatch_per_tick*/8);
+    EXPECT_EQ(manager.size(), 1u);
+    manager.SweepExpiredSessions(/*now_ms*/1400, /*idle_timeout_ms*/500, /*max_dispatch_per_tick*/8);
+    EXPECT_EQ(manager.size(), 1u) << "不应在精确 deadline 之前因为 tick 对齐而提前 dispatch";
+    EXPECT_EQ(repo.save_atomic_count.load(std::memory_order_acquire), 0);
+
+    manager.SweepExpiredSessions(/*now_ms*/1500, /*idle_timeout_ms*/500, /*max_dispatch_per_tick*/8);
+    ASSERT_TRUE(WaitUntil([&repo]() { return repo.save_atomic_count.load(std::memory_order_acquire) >= 1; }));
+    EXPECT_EQ(manager.size(), 0u);
+    EXPECT_EQ(repo.last_summary.trace_id, "701");
 
     pool.shutdown();
 }

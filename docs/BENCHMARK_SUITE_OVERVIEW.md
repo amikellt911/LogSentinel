@@ -207,6 +207,8 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 
 - `trace_end / capacity / token_limit` 命中后，不立刻最终关单，而是先进入 sealed
 - sealed grace window 继续吸收短暂乱序 span
+- idle timeout 是 `Collecting` 阶段的收集等待截止，不会自动转进 sealed；它只表示“没有显式结束信号时，等满配置时间后允许准备分发”
+- collecting 的时间轮节点只是粗唤醒，真正摘走 session 前还会比对精确毫秒 deadline，避免因为 tick 量化早于 `collecting_idle_timeout_ms` 收口
 - dispatch 完成后继续保留 tombstone / TIME_WAIT 防护
 - 用来拦截已完成 trace 的晚到尾巴和重复写
 
@@ -242,6 +244,7 @@ Suite B 不走正式 Settings 页面，统一走 benchmark CLI：
 - 命中 `trace_end / capacity / token_limit` 时，不直接进入 ready，而是先进入 sealed
 - sealed 期间继续吸收短暂晚到 span
 - sweep 看到 sealed grace 到期，才真正摘走 session，送进 dispatch queue
+- 如果没有显式结束信号，collecting idle timeout 命中后会直接准备摘走 session，不会先进 sealed；这条路径只做“等满配置时间再分发”，不再额外给 sealed grace
 - dispatch 完成后，继续保留 completed tombstone
 - 如果这时又来了晚到 span，会先被 tombstone 拦住，不让它错误复活成一条新 trace
 

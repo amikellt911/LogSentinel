@@ -109,6 +109,10 @@ struct TraceSession
     // 时间戳用于“超时分发”判定：trace 长时间未补齐时也能被强制刷盘。
     int64_t created_at_ms = 0;
     int64_t last_update_ms = 0;
+    // collecting 阶段的精确截止时间，单位同样是 steady 毫秒。
+    // 时间轮只负责把 session 大致唤醒，真正能不能因 idle timeout 分发，必须再看这个 deadline；
+    // 它和 sealed_deadline_tick 不同：collect_deadline_ms 会随每个新 span 续命，sealed_deadline_tick 封口后固定不续命。
+    int64_t collect_deadline_ms = 0;
     // timer_version 用于时间轮懒删除：每次“续命重排”就递增，旧槽节点会自然失效。
     uint64_t timer_version = 0;
     // session_epoch 用于防止 trace_key 复用误命中旧节点。

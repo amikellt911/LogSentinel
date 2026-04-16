@@ -46,6 +46,16 @@
 - Suite B 关注的是乱序、晚到、replay 的真实语义；
 - 它需要 sender manifest 和 evaluator，不只是高吞吐 wrk 压流。
 
+## 生命周期口径
+
+Suite B 里最容易说混的是 `Collecting`、`Sealed` 和真正进入 dispatch 之后这三段。
+
+- `Collecting`：普通 span 正在累计。每来一个新 span，都会刷新精确 `collect_deadline_ms`；时间轮只负责粗唤醒，真正 dispatch 前还会比较 `now_ms >= collect_deadline_ms`，避免 tick 量化导致早于 `--trace-idle-timeout-ms` 收口。
+- `Sealed`：只由 `trace_end / capacity / token_limit / duplicate_span` 这类明确封口条件触发。`protected` 在这段窗口内还能继续吸收 late span，但 deadline 固定，不会因为 late span 继续续命。
+- `Dispatching / Tombstone`：session 已经离开 manager 或已经完成 dispatch。此时 late span 不再并回原 trace；`protected` 依赖 inflight 标记和 tombstone/TIME_WAIT 防止旧 trace 被复活，`minimal` 不保留 completed tombstone。
+
+所以 `idle timeout` 不等于“先进入 sealed grace”。它只是 `Collecting` 阶段没有继续收到 span 后的收集截止，等满配置时间后直接准备走统一的 `sweep -> dispatch queue -> dispatch worker` 主路径。
+
 最小 dry-run 示例：
 
 ```bash

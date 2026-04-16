@@ -52,6 +52,7 @@ LogSentinel 是一个面向中小规模服务排障场景的 C++17 日志 / Trac
 - 按 `trace_end`、Span 容量阈值、Token 阈值、idle timeout 触发分发
 - 用时间轮维护 collecting / sealed / retry 会话
 - `trace_end`、容量阈值、Token 阈值命中后不会立刻 dispatch，而是先进入短暂 `sealed grace window`
+- idle timeout 属于 `Collecting` 阶段的“收集等待截止”，不会自动进入 `sealed grace window`；时间轮只负责粗唤醒，真正 dispatch 前会再比对精确毫秒 deadline，避免早于配置值收口
 - dispatch 成功后把已完成 `trace_key` 放入短暂 `TIME_WAIT tombstone`，拦截晚到 Span，避免旧 Trace 被复活成新会话
 - 用 `buffered spans / active sessions / pending tasks` 三类指标判断水位
 - 高水位优先拒绝新 Trace，critical 水位才拒绝存量 Trace 的后续 Span
