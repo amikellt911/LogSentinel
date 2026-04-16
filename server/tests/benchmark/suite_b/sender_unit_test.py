@@ -17,6 +17,7 @@ from sender import (
     ScheduledSpanEvent,
     TraceTemplateGenerator,
     compute_delay_range_ms,
+    finalize_expected_actions_for_trace,
     weighted_pick,
 )
 
@@ -84,6 +85,25 @@ class SuiteBSenderUnitTest(unittest.TestCase):
         self.assertEqual("replay_after_dispatch", replay.delay_bucket)
         self.assertEqual("ignore_after_cutoff", replay.expected_final_action)
         self.assertGreater(replay.planned_emit_at_ms, original.planned_emit_at_ms)
+
+    def test_finalize_expected_actions_uses_tail_grace_window_not_static_bucket(self) -> None:
+        # 这条测试锁住一个容易误判的场景：
+        # bucket 名叫 late_after_dispatch，但如果 tail/trace_end 本身也晚到，它仍可能落在 protected sealed grace 里。
+        events = [
+            ScheduledSpanEvent(1000, 1001, 1, None, "head", "clean_jitter", "original", "merge_into_final_trace", 1000, "svc", 0, 0, 0),
+            ScheduledSpanEvent(1800, 1001, 2, 1, "body", "late_after_dispatch", "original", "ignore_after_cutoff", 1020, "svc", 0, 0, 0),
+            ScheduledSpanEvent(1600, 1001, 3, 2, "tail", "reorder_in_grace", "original", "merge_into_final_trace", 1040, "svc", 0, 0, 0),
+            ScheduledSpanEvent(2800, 1001, 4, 3, "body", "late_after_dispatch", "original", "ignore_after_cutoff", 1060, "svc", 0, 0, 0),
+            ScheduledSpanEvent(1900, 1001, 2, 1, "body", "replay_after_dispatch", "replay_clone", "ignore_after_cutoff", 1020, "svc", 0, 0, 0),
+        ]
+
+        finalized = finalize_expected_actions_for_trace(events, grace_ms=1000)
+        actions = {event.span_id: event.expected_final_action for event in finalized if event.event_kind == "original"}
+        replay = [event for event in finalized if event.event_kind == "replay_clone"][0]
+
+        self.assertEqual("merge_into_final_trace", actions[2])
+        self.assertEqual("ignore_after_cutoff", actions[4])
+        self.assertEqual("ignore_after_cutoff", replay.expected_final_action)
 
     def test_scheduler_uses_min_heap_order(self) -> None:
         events = [

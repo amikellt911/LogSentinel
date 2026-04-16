@@ -46,3 +46,51 @@
 - 不能把 `Collecting timeout` 理解成 `Collecting -> Sealed -> Dispatch`。当前产品语义是：没有明确封口信号时，collecting 等满 idle timeout 后直接准备走统一 dispatch 主路径。
 - `Sealed` 只由 `trace_end / capacity / token_limit / duplicate_span` 等明确封口条件触发；sealed deadline 不会因为 late span 续命。
 - 改测试后必须重新编译测试二进制。直接跑旧的 `server/build/test_*` 会得到旧源码行为，容易误判修复没生效。
+
+---
+
+# 2026-04-16 fix(benchmark): 修正 Suite B 真值与 duplicate 归因口径
+
+## Git Commit Message
+
+`fix(benchmark): 修正 Suite B 真值与 duplicate 归因口径`
+
+## Modification
+
+- `server/tests/benchmark/suite_b/sender.py`
+- `server/tests/benchmark/suite_b/evaluator.py`
+- `server/tests/benchmark/suite_b/sender_unit_test.py`
+- `server/tests/benchmark/suite_b/evaluator_unit_test.py`
+- `server/tests/benchmark/suite_b/README.md`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- sender 新增 per-trace 真值收口：先找到有效 tail/trace_end 的计划到达时间，再按 protected sealed grace 窗口重写 `late_after_dispatch` 的 `expected_final_action`。
+- evaluator 新增逐 span 持久化计数，`duplicate_persistence_rate` 改成按 replay clone 自身 `span_id` 的持久化次数判断，不再被同 trace 其它 extra span 连坐。
+- Suite B README 更新指标说明，明确 manifest 真值不是静态 delay bucket 标签。
+
+## Verification
+
+- `python3 -m unittest sender_unit_test.py`
+- `python3 -m unittest evaluator_unit_test.py`
+- `python3 -m unittest discover -s . -p '*_unit_test.py'`
+- `python3 -m py_compile run_suite_b_matrix.py sender.py evaluator.py run_suite_b.py profiles.py`
+- `python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py --server-bin ./server/build/LogSentinel --run-root /tmp/suite_b_matrix_truth_fix_v1 --port-base 19580 --server-cpuset 1-3 --server-io-threads 2 --worker-threads 8 --dispatch-worker-threads 2 --worker-queue-size 4096 --disable-ai --disable-webhook --trace-count 10 --spans-per-trace 8 --send-workers 2 --trace-idle-timeout-ms 800 --trace-sweep-interval-ms 100 --trace-max-dispatch-per-tick 64 --trace-buffered-span-limit 4096 --trace-active-session-limit 512 --sender-profiles clean_baseline,mixed_realistic,late_replay_stress --trace-lifecycle-profiles protected,minimal`
+
+## Learning Tips
+
+### Newbie Tips
+
+- benchmark 的 manifest 是“真值账本”，不能只记录发送动作，还要记录这个动作在目标生命周期语义下应该产生什么结果。
+- 指标归因要避免连坐。pollution 是 extra span 问题，duplicate 是 replay clone 自己是否重复持久化的问题，两个指标不能混在一起。
+
+### Function Explanation
+
+- `finalize_expected_actions_for_trace()`：按同一 trace 的有效 tail 到达时间和 grace 窗口，统一修正事件级 expected action。
+- `persisted_span_counts`：SQLite 快照中的逐 trace/逐 span 行数计数，用来判断同一 span_id 是否重复落库。
+
+### Pitfalls
+
+- `late_after_dispatch` 只是抽样桶名，不等于真实生命周期已经 dispatch；如果 trace_end 自己晚到，这个 span 仍可能处于 sealed grace 内。
+- replay clone 复制的是已有 span_id，单纯看 `set(span_id)` 看不出重复持久化，必须保留计数。

@@ -105,6 +105,8 @@ class SuiteBEvaluatorUnitTest(unittest.TestCase):
                 INSERT INTO trace_span(trace_id, span_id) VALUES
                   ('1001', '1'),
                   ('1001', '2'),
+                  -- 这里故意让 replay 对应的 span_id 重复出现一行，用来锁定 duplicate 指标的正例。
+                  ('1001', '2'),
                   ('1002', '1'),
                   ('1002', '2'),
                   ('1002', '3'),
@@ -131,6 +133,28 @@ class SuiteBEvaluatorUnitTest(unittest.TestCase):
         self.assertEqual(1, result["duplicate_persistence_rate"]["matched_events"])
         self.assertEqual(1, result["duplicate_persistence_rate"]["total_events"])
         self.assertAlmostEqual(1.0, result["duplicate_persistence_rate"]["value"])
+
+    def test_duplicate_metric_does_not_blame_replay_for_other_extra_span(self) -> None:
+        if evaluator_module is None or not hasattr(evaluator_module, "calc_duplicate_persistence_rate"):
+            self.fail("calc_duplicate_persistence_rate should exist for Suite B evaluator")
+
+        # 这条测试锁住“不要连坐”的语义：
+        # trace 里有其它 extra span 时，不能把 replay_clone 自己算成重复持久化。
+        duplicate = evaluator_module.calc_duplicate_persistence_rate(
+            expected_merge_sets={"1001": {"1", "2"}},
+            expected_replay_events={
+                "1001": [
+                    {"logical_trace_id": "1001", "span_id": "2", "event_kind": "replay_clone"},
+                ],
+            },
+            persisted_span_sets={"1001": {"1", "2", "3"}},
+            persisted_summary_span_count={"1001": 3},
+            persisted_span_counts={"1001": {"1": 1, "2": 1, "3": 1}},
+        )
+
+        self.assertEqual(0, duplicate["matched_events"])
+        self.assertEqual(1, duplicate["total_events"])
+        self.assertAlmostEqual(0.0, duplicate["value"])
 
 
 if __name__ == "__main__":

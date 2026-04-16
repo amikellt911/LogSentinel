@@ -89,6 +89,11 @@
   - [x] 改造 `PushLocked / ScheduleTimeoutNode / SweepExpiredSessions`，让时间轮只负责粗唤醒，真正 dispatch 前再比对精确 deadline
   - [x] 更新 `README / BENCHMARK_SUITE_OVERVIEW / dev-log`，明确 `Collecting timeout` 不会先进 `Sealed`
   - [x] 验证 TraceSessionManager 相关单测和 Suite B Python 脚本语法检查
+- [x] Suite B 真值口径收尾：修正 sealed grace 内 late span 被误判污染、replay 被 trace 级连坐的问题
+  - [x] sender 按同 trace 的有效 tail/trace_end 计划时间 + grace 重新判定 `late_after_dispatch` 是否应 merge
+  - [x] evaluator 的 duplicate 指标改成按 replay span 自身持久化次数判断，不再被同 trace 其它 extra span 连坐
+  - [x] 更新 Suite B README，说明 manifest 真值是按 protected 语义窗口推导，而不是按 delay bucket 静态推导
+  - [x] 验证 sender/evaluator 单测、Python 语法和本机 Suite B 小矩阵
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径

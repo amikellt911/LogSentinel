@@ -96,8 +96,9 @@ python3 server/tests/benchmark/suite_b/evaluator.py \
 
 注意：
 
-- 这三个主指标当前先走 `manifest + SQLite`，还没有把 runtime log 冲突证据纳入 duplicate 归因；
-- `duplicate_persistence_rate` 第一刀先按 trace 级副作用归因，只要 replay 所在 trace 因额外 span 或 `summary.span_count` 膨胀而偏离期望，就把这条 replay 事件记成 bad。
+- 这三个主指标当前先走 `manifest + SQLite`，还没有把 runtime log 冲突证据纳入最终论文表；
+- manifest 的 `expected_final_action` 不是单纯按 `delay_bucket` 静态推导。sender 会先找到同一 trace 里有效的 tail/trace_end 计划到达时间，再按 protected 的 sealed grace 窗口判断 late span 到底应不应该并入最终 trace。
+- `duplicate_persistence_rate` 现在按 replay clone 自身的 `span_id` 持久化次数判断。也就是说，同一 trace 里其它 late span 造成的 extra 不再连坐 replay，避免把 pollution 误算成 duplicate。
 
 最小 run_suite_b 示例：
 

@@ -204,6 +204,38 @@ class DelaySampler:
         return [self.build_event(span, bucket)]
 
 
+def finalize_expected_actions_for_trace(events: List[ScheduledSpanEvent], grace_ms: int) -> List[ScheduledSpanEvent]:
+    seal_event_time_ms: Optional[int] = None
+    for event in events:
+        if (
+            event.event_kind == "original"
+            and event.role == "tail"
+            and event.delay_bucket != "late_after_dispatch"
+        ):
+            # Suite B 的 protected 真值要以“有效 trace_end 到达后还能吸收多久”为基准。
+            # 如果 tail 自己已经被刻意打成 late_after_dispatch，就不能反过来拿它给其它 late span 开 grace 窗口；
+            # 因为真实系统在 tail 到达前根本没有 trace_end seal，只会走 collecting idle timeout。
+            seal_event_time_ms = event.planned_emit_at_ms
+            break
+
+    protected_merge_cutoff_ms = None if seal_event_time_ms is None else seal_event_time_ms + max(0, grace_ms)
+    for event in events:
+        if event.event_kind == "replay_clone":
+            # replay clone 表达的是“同一个 span 被重复晚发一份”，不管它落在哪个时间桶，期望都应该被去重/拦截。
+            event.expected_final_action = "ignore_after_cutoff"
+            continue
+        if event.delay_bucket != "late_after_dispatch":
+            event.expected_final_action = "merge_into_final_trace"
+            continue
+        if protected_merge_cutoff_ms is not None and event.planned_emit_at_ms <= protected_merge_cutoff_ms:
+            # 这类事件虽然抽样桶名叫 late_after_dispatch，但如果 tail/trace_end 本身也晚到，
+            # 它在真实生命周期里仍可能落进 sealed grace，所以 manifest 不能静态把它判成污染。
+            event.expected_final_action = "merge_into_final_trace"
+        else:
+            event.expected_final_action = "ignore_after_cutoff"
+    return events
+
+
 class Scheduler:
     def __init__(self) -> None:
         self._heap: List[ScheduledSpanEvent] = []
@@ -311,8 +343,10 @@ def generate_scheduled_events(
     for offset in range(trace_count):
         trace_id = 1000000000 + offset
         trace_start_ms = start_ms + offset * trace_gap_ms
+        trace_events: List[ScheduledSpanEvent] = []
         for span in generator.build_trace(logical_trace_id=trace_id, start_ms=trace_start_ms):
-            events.extend(sampler.build_events_for_span(span))
+            trace_events.extend(sampler.build_events_for_span(span))
+        events.extend(finalize_expected_actions_for_trace(trace_events, grace_ms=grace_ms))
     return events
 
 

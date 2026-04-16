@@ -154,17 +154,22 @@ def wait_until_sqlite_stable(
 def load_sqlite_snapshot(conn: sqlite3.Connection) -> JsonDict:
     persisted_summary_span_count: Dict[str, int] = {}
     persisted_span_sets: Dict[str, Set[str]] = {}
+    persisted_span_counts: Dict[str, Dict[str, int]] = {}
 
     for trace_id, span_count in conn.execute("SELECT trace_id, span_count FROM trace_summary"):
         persisted_summary_span_count[normalize_trace_id(trace_id)] = int(span_count)
 
     for trace_id, span_id in conn.execute("SELECT trace_id, span_id FROM trace_span ORDER BY trace_id ASC, span_id ASC"):
         trace_key = normalize_trace_id(trace_id)
-        persisted_span_sets.setdefault(trace_key, set()).add(normalize_span_id(span_id))
+        span_key = normalize_span_id(span_id)
+        persisted_span_sets.setdefault(trace_key, set()).add(span_key)
+        persisted_span_counts.setdefault(trace_key, {})
+        persisted_span_counts[trace_key][span_key] = persisted_span_counts[trace_key].get(span_key, 0) + 1
 
     return {
         "persisted_summary_span_count": persisted_summary_span_count,
         "persisted_span_sets": persisted_span_sets,
+        "persisted_span_counts": persisted_span_counts,
     }
 
 
@@ -205,6 +210,7 @@ def calc_duplicate_persistence_rate(
     expected_replay_events: Dict[str, List[JsonDict]],
     persisted_span_sets: Dict[str, Set[str]],
     persisted_summary_span_count: Dict[str, int],
+    persisted_span_counts: Optional[Dict[str, Dict[str, int]]] = None,
 ) -> JsonDict:
     total_events = 0
     matched_events = 0
@@ -212,15 +218,28 @@ def calc_duplicate_persistence_rate(
     for trace_id, replay_rows in expected_replay_events.items():
         expected_set = expected_merge_sets.get(trace_id, set())
         actual_set = persisted_span_sets.get(trace_id, set())
-        summary_count = persisted_summary_span_count.get(trace_id, 0)
+        span_count_map = (persisted_span_counts or {}).get(trace_id, {})
 
-        # duplicate 第一刀先走“trace 级副作用”归因：
-        # 只要 replay 所在 trace 因额外 span 或 summary_count 膨胀而明显偏离期望，就把这条 replay 事件记成 bad。
-        # 它还不是最细粒度的单事件因果判定，但已经足够支撑第一版论文主指标打通。
-        bad_side_effect = bool(actual_set - expected_set) or summary_count > len(expected_set)
-        for _ in replay_rows:
+        for replay_row in replay_rows:
             total_events += 1
-            if bad_side_effect:
+            replay_span_id = normalize_span_id(replay_row.get("span_id"))
+            if persisted_span_counts is None:
+                # 兼容旧测试或外部调用方没传逐 span 计数的情况。
+                # 没有计数时只能退回 trace 级粗归因；正式 evaluator 会传 persisted_span_counts 走精确路径。
+                bad_side_effect = bool(actual_set - expected_set) or persisted_summary_span_count.get(trace_id, 0) > len(expected_set)
+                if bad_side_effect:
+                    matched_events += 1
+                continue
+
+            persisted_count = span_count_map.get(replay_span_id, 0)
+            if replay_span_id in expected_set:
+                # replay clone 的原始 span 本来就应该存在一份。
+                # 因此只有同一个 span_id 持久化超过 1 行，才能说这条 replay 自己造成了重复落库。
+                if persisted_count > 1:
+                    matched_events += 1
+            elif replay_span_id in actual_set:
+                # 理论上 replay_clone 通常复制一条应 merge 的原始 span；这里保留防御分支：
+                # 如果未来生成器允许“只应忽略的 span 被 replay”，那么它出现一次也算 replay 污染。
                 matched_events += 1
 
     return build_rate_result(matched_events, total_events, "matched_events", "total_events")
@@ -268,6 +287,7 @@ def evaluate_suite_b(
             expected_views["expected_replay_events"],
             snapshot["persisted_span_sets"],
             snapshot["persisted_summary_span_count"],
+            snapshot["persisted_span_counts"],
         ),
         "expected_trace_count": len(expected_views["expected_merge_sets"]),
         "expected_ignore_event_count": sum(len(rows) for rows in expected_views["expected_ignore_events"].values()),
