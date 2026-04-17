@@ -40,6 +40,16 @@ class SuiteDFrozenWrappersUnitTest(unittest.TestCase):
                 "--trace-lifecycle-profile protected",
                 "--trace-primary-flush-span-threshold 512",
             ],
+            "run_suite_d_connection_search_24c.sh": [
+                "run_suite_d_case.py",
+                'CONNECTION_SET="${SUITE_D_CONNECTION_SET:-90,108,120}"',
+                'REPEATS="${SUITE_D_REPEATS:-3}"',
+                'CORE_BASE_OFFSET="${SUITE_D_CORE_BASE_OFFSET:-0}"',
+                'TRACE_MAX_DISPATCH_PER_TICK="${SUITE_D_TRACE_MAX_DISPATCH_PER_TICK:-256}"',
+                'TRACE_SWEEP_INTERVAL_MS="${SUITE_D_TRACE_SWEEP_INTERVAL_MS:-20}"',
+                '--trace-max-dispatch-per-tick "${TRACE_MAX_DISPATCH_PER_TICK}"',
+                '--trace-sweep-interval-ms "${TRACE_SWEEP_INTERVAL_MS}"',
+            ],
         }
 
         for filename, expected_fragments in wrapper_expectations.items():

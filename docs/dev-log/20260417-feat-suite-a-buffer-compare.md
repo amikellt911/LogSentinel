@@ -584,3 +584,60 @@
 - 如果 metadata helper 不做缓存，像 Stage 1 搜索这种几十轮 case 的脚本会重复跑很多次 `lscpu`，虽然不是大问题，但完全没必要。
 - 如果 flamegraph 只留 `run-summary.log` 不留 JSON，后面一旦要批量整理云机产物，就会又回到人工 grep 日志的老路。
 - 如果 summary 级 JSON 不记录 `artifacts`，下载回本地后最容易发生的事就是“看到了聚合指标，却找不到对应的 SQLite / server.log / svg 在哪里”。
+
+---
+
+# 2026-04-17 feat(benchmark): 增加云机一键 benchmark campaign 入口
+
+## Git Commit Message
+
+`feat(benchmark): 增加云机一键 benchmark campaign 入口`
+
+## Modification
+
+- `server/tests/benchmark/run_paper_benchmark_cloud.sh`
+- `server/tests/benchmark/run_paper_benchmark_cloud_unit_test.py`
+- `server/tests/benchmark/suite_d/run_suite_d_connection_search_24c.sh`
+- `server/tests/benchmark/suite_d/suite_d_frozen_wrappers_unit_test.py`
+- `server/tests/benchmark/README.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260417-feat-suite-a-buffer-compare.md`
+
+## Summary
+
+- 新增总入口 `run_paper_benchmark_cloud.sh`，把当前已经冻结的 Suite A/B/D 云机实验串成一条命令：
+  - Suite A `16` 核主叙事：`main tuned protected buffered` vs `cmp`
+  - Suite A `16` 核 buffer 辅助归因：`buffered` vs `disable_buffered`
+  - Suite B `16` 核正式 campaign：`5` seed、`3 x 2` 生命周期鲁棒性矩阵
+  - Suite D `24` 核连接数确认搜索：默认 `90/108/120` 交错复跑
+  - Suite D `24` 核主扩展曲线：默认用当前 gate tuned 点 `sweep=20 / max_dispatch=256`
+- 总入口会自动读取 cgroup cpuset 起始核；如果云机只暴露 `160-191`，会自动把 Suite A/B/D 的 sender/backend cpuset 整体平移，不再手工改 `160-183`。
+- 总入口支持 `--main-server-bin / --cmp-server-bin`，适配云机上主版本和历史版本来自两个不同 checkout 的情况。
+- Suite B campaign stdout 默认落日志，终端只打印压缩摘要，避免云机结果复制时被大 JSON 刷屏。
+- Suite D 新增 `run_suite_d_connection_search_24c.sh`，固定 `3/21` 拆分和当前 gate 参数，用中位数确认连接数冻结点。
+- README 已补一键云机入口说明，Todo 已把连接数确认 wrapper 和总 campaign wrapper 标记完成。
+
+## Verification
+
+- `bash -n server/tests/benchmark/run_paper_benchmark_cloud.sh server/tests/benchmark/suite_d/run_suite_d_connection_search_24c.sh`
+- `python3 -m unittest server.tests.benchmark.run_paper_benchmark_cloud_unit_test server.tests.benchmark.suite_d.suite_d_frozen_wrappers_unit_test`
+- `python3 -m py_compile server/tests/benchmark/run_paper_benchmark_cloud_unit_test.py server/tests/benchmark/suite_d/suite_d_frozen_wrappers_unit_test.py`
+- `bash server/tests/benchmark/run_paper_benchmark_cloud.sh --dry-run --main-server-bin /tmp/main --cmp-server-bin /tmp/cmp --core-base-offset 160 --suite-b-seeds 1 --suite-d-repeats 1`
+
+## Learning Tips
+
+### Newbie Tips
+
+- “一键脚本”不能重新定义实验参数。它只应该串联 frozen wrapper；否则过几天你会分不清论文结果到底来自单项脚本还是总脚本里的另一套参数。
+- 云机容器的 `nproc=32` 不代表 cpuset 从 `0` 开始。真正能绑的核要看 cgroup，例如 `160-191`。
+
+### Function Explanation
+
+- `detect_core_base_offset()`：读取 `/sys/fs/cgroup/cpuset.cpus.effective` 或 v1 cpuset 文件，取第一个可用 CPU 作为整体平移基址。
+- `build_cpuset()`：根据基址和核数生成 `160-163` 这种 `taskset` 可用的连续区间。
+- `run_quiet_json()`：用于 Suite B 这种会打印大 JSON 的入口，把完整 stdout 写进 log，再从 summary JSON 摘几行关键摘要。
+
+### Pitfalls
+
+- 不要把 `Suite D flamegraph` 放进默认总入口。当前云机缺 `perf`，而 flamegraph 是解释图，不是主实验必跑项；默认塞进去只会增加失败点。
+- 不要把 `Suite D topology search` 默认一起跑。它是前置校准项，不是每次主 campaign 都必须复跑；总入口保留 `--include-d-topology-search` 即可。

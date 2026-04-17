@@ -17,6 +17,7 @@
 
 当前用户优先入口：
 
+- `server/tests/benchmark/run_paper_benchmark_cloud.sh`
 - `server/tests/benchmark/suite_a/run_suite_a_case.py`
 - `server/tests/benchmark/suite_a/run_suite_a_scan.py`
 - `server/tests/benchmark/suite_a/run_suite_a_search_stage1.py`
@@ -30,6 +31,7 @@
 - `server/tests/benchmark/suite_a/run_suite_a.sh`
 - `server/tests/benchmark/suite_d/run_suite_d_local4_ai_on.sh`
 - `server/tests/benchmark/suite_d/run_suite_d_topology_search_24c.sh`
+- `server/tests/benchmark/suite_d/run_suite_d_connection_search_24c.sh`
 - `server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh`
 - `server/tests/benchmark/suite_d/run_suite_d_flamegraph_24c.sh`
 - `server/tests/benchmark/suite_d/run_suite_d.sh`
@@ -54,6 +56,21 @@
 - 如果 `lscpu` 不可用，会自动回退到 `nproc --all` 和 `/proc/cpuinfo`，至少把总逻辑核数和 CPU 型号补齐。
 - flamegraph 入口除了原来的 `run-summary.log`，现在还会额外生成 `run-summary.json`。
 - 这样后面从云机拷贝单个 JSON 文件回来时，不需要再额外找“这份结果到底是哪台机器、多少核、什么线程配置”。
+
+一键云机入口：
+
+```bash
+bash server/tests/benchmark/run_paper_benchmark_cloud.sh \
+  --main-server-bin /root/work/LogSentinel/server/build-main/LogSentinel \
+  --cmp-server-bin /root/work/LogSentinel-old/server/build-cmp/LogSentinel
+```
+
+- 这条总入口会自动读取 cgroup cpuset 起始核，例如 `160-191` 会自动把基址设成 `160`。
+- 它默认串行执行 Suite A `16` 核主叙事、Suite A `16` 核 buffer 归因、Suite B `16` 核 campaign、Suite D `24` 核连接确认搜索和 Suite D `24` 核主扩展曲线。
+- 如果只想先看命令，不真正压测，加 `--dry-run`。
+- 如果暂时不跑 Suite B 这种较长 campaign，加 `--skip-suite-b`。
+- 如果要顺手补跑 Suite D 拓扑搜索，加 `--include-d-topology-search`。
+- 总入口只负责串联 frozen wrapper，不重新定义实验参数；单项实验的正式口径仍然以各 suite wrapper 为准。
 
 其中：
 
@@ -106,6 +123,10 @@
   - 是 Suite D 的 `24` 核小拓扑搜索入口；
   - 它固定 `sender=4 / backend=20` 和 `AI-off`；
   - 只比较 `T1/T2/T3` 三组 `io/dispatch/worker` 候选，不再扩成大矩阵。
+- `run_suite_d_connection_search_24c.sh`
+  - 是 Suite D 的 `24` 核连接数确认搜索入口；
+  - 它固定 `3/21` sender/backend 拆分和当前 gate 参数；
+  - 默认交错复跑 `90/108/120` 三档连接数，按中位数确认最终冻结点。
 - `run_suite_d_scaling_24c.sh`
   - 是 Suite D 的 `24` 核主扩展曲线入口；
   - 它固定总核数点位 `4/8/12/16/20/24`；
