@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 try:
     import run_suite_a_case as suite_a_module
@@ -374,78 +377,6 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
         self.assertEqual(launched_commands[0], saved["resolved_server_command"])
         self.assertIn(result["sqlite_db"], result["resolved_server_command"])
         self.assertIn("--port 18186", result["resolved_server_command"])
-
-    def test_wait_until_sqlite_stable_returns_final_counts_and_tail(self) -> None:
-        if suite_a_module is None or not hasattr(suite_a_module, "wait_until_sqlite_stable"):
-            self.fail("wait_until_sqlite_stable should exist for Suite A SQLite polling")
-
-        monotonic_points = iter([10.0, 10.2, 10.4, 10.6, 10.8, 11.0, 11.0])
-        sleep_calls = []
-        count_sequence = iter(
-            [
-                {"trace_summary": 10, "trace_span": 80},
-                {"trace_summary": 12, "trace_span": 96},
-                {"trace_summary": 12, "trace_span": 96},
-                {"trace_summary": 12, "trace_span": 96},
-            ]
-        )
-
-        # 这条测试锁的是“连续稳定若干轮才算 drain 完毕”，
-        # 避免实现退化回拍脑袋固定 sleep。
-        stable = suite_a_module.wait_until_sqlite_stable(
-            sqlite_path=Path("/tmp/suite_a.db"),
-            sqlite_counter=lambda _path: next(count_sequence),
-            poll_interval_ms=200,
-            stable_rounds=2,
-            confirm_sleep_ms=0,
-            max_wait_ms=2000,
-            sleep_func=lambda seconds: sleep_calls.append(seconds),
-            monotonic_func=lambda: next(monotonic_points),
-            start_ms=1000,
-        )
-
-        self.assertEqual({"trace_summary": 12, "trace_span": 96}, stable["final_counts"])
-        self.assertEqual(10800, stable["t_stable_ms"])
-        self.assertEqual(9800, stable["drain_tail_ms"])
-        self.assertFalse(stable["drain_timeout"])
-        self.assertEqual([0.2, 0.2, 0.2], sleep_calls)
-
-    def test_wait_until_sqlite_stable_waits_for_expected_trace_count_before_returning(self) -> None:
-        if suite_a_module is None or not hasattr(suite_a_module, "wait_until_sqlite_stable"):
-            self.fail("wait_until_sqlite_stable should exist for Suite A SQLite polling")
-
-        monotonic_points = iter([10.0, 10.2, 10.4, 10.6, 10.8, 11.0, 11.2, 11.2])
-        sleep_calls = []
-        count_sequence = iter(
-            [
-                {"trace_summary": 12, "trace_span": 96},
-                {"trace_summary": 12, "trace_span": 96},
-                {"trace_summary": 12, "trace_span": 96},
-                {"trace_summary": 15, "trace_span": 120},
-            ]
-        )
-
-        # 这条红灯锁的是 Suite A 的真实完成语义：
-        # 只要还没达到预期 trace 数，就算 SQLite 计数暂时稳定，也不能提前当成 final。
-        stable = suite_a_module.wait_until_sqlite_stable(
-            sqlite_path=Path("/tmp/suite_a.db"),
-            sqlite_counter=lambda _path: next(count_sequence),
-            poll_interval_ms=200,
-            stable_rounds=2,
-            confirm_sleep_ms=0,
-            max_wait_ms=2000,
-            sleep_func=lambda seconds: sleep_calls.append(seconds),
-            monotonic_func=lambda: next(monotonic_points),
-            start_ms=1000,
-            expected_trace_count=15,
-        )
-
-        self.assertEqual({"trace_summary": 15, "trace_span": 120}, stable["final_counts"])
-        self.assertEqual(10800, stable["t_stable_ms"])
-        self.assertEqual(9800, stable["drain_tail_ms"])
-        self.assertFalse(stable["drain_timeout"])
-        self.assertEqual([0.2, 0.2, 0.2], sleep_calls)
-
 
 if __name__ == "__main__":
     unittest.main()

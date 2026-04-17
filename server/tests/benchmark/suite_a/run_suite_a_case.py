@@ -7,9 +7,9 @@ import json
 import os
 import shlex
 import signal
-import sqlite3
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -18,6 +18,15 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
+
+COMMON_UTILS_DIR = Path(__file__).resolve().parents[1] / "common" / "utils"
+if str(COMMON_UTILS_DIR) not in sys.path:
+    # 这个脚本平时就是按 `python3 server/tests/benchmark/suite_a/run_suite_a_case.py` 直接执行。
+    # 直接跑脚本时，Python 默认只把当前脚本目录塞进 sys.path，不会自动看到兄弟目录里的共享 helper。
+    # 这里手动补路径，是为了让 Suite A 先稳定复用 common helper，而不是被导入路径问题卡死。
+    sys.path.insert(0, str(COMMON_UTILS_DIR))
+
+from trace_sqlite_polling import read_sqlite_counts, wait_until_sqlite_stable
 
 
 JsonDict = Dict[str, Any]
@@ -376,104 +385,6 @@ def send_clean_traces(args: argparse.Namespace) -> JsonDict:
             "transport_errors": stats.transport_errors,
         },
     }
-
-
-def read_sqlite_counts(sqlite_path: Path) -> JsonDict:
-    sqlite_uri = f"file:{sqlite_path}?mode=ro"
-    # 这里只做短只读查询，避免 Python 侧长事务把 WAL checkpoint 拖住。
-    conn = sqlite3.connect(sqlite_uri, uri=True, timeout=5.0)
-    try:
-        conn.execute("PRAGMA busy_timeout = 5000")
-        trace_summary = int(conn.execute("SELECT COUNT(*) FROM trace_summary").fetchone()[0])
-        trace_span = int(conn.execute("SELECT COUNT(*) FROM trace_span").fetchone()[0])
-        return {
-            "trace_summary": trace_summary,
-            "trace_span": trace_span,
-        }
-    finally:
-        conn.close()
-
-
-def wait_until_sqlite_stable(
-    sqlite_path: Path,
-    sqlite_counter: Callable[[Path], JsonDict] = read_sqlite_counts,
-    poll_interval_ms: int = 200,
-    stable_rounds: int = 5,
-    confirm_sleep_ms: int = 300,
-    max_wait_ms: int = 30000,
-    sleep_func: Callable[[float], None] = time.sleep,
-    monotonic_func: Callable[[], float] = time.monotonic,
-    start_ms: Optional[int] = None,
-    expected_trace_count: Optional[int] = None,
-) -> JsonDict:
-    if stable_rounds <= 0:
-        raise ValueError("stable_rounds must be > 0")
-    if max_wait_ms <= 0:
-        raise ValueError("max_wait_ms must be > 0")
-
-    base_ms = start_ms if start_ms is not None else int(monotonic_func() * 1000)
-    deadline = monotonic_func() + (max_wait_ms / 1000.0)
-    last_counts: Optional[JsonDict] = None
-    same_rounds = 0
-
-    while True:
-        counts = sqlite_counter(sqlite_path)
-
-        # Suite A 的 clean sender 已经知道“理论上应该补齐多少条 trace”。
-        # 既然目标值是确定的，那么 drain 完成语义就该是“主数据追到目标 trace 数”；
-        # 不能再因为 SQLite 计数暂时稳定了几轮，就误判成 final。
-        # 否则后台 flush 只是刚好在两个轮询点之间停了一下，脚本就会提前收工，
-        # 最后得到一个看起来像 final、实际上只是中间态的 sqlite_counts_final。
-        if expected_trace_count is not None and int(counts["trace_summary"]) >= expected_trace_count:
-            t_stable_ms = int(monotonic_func() * 1000)
-            return {
-                "final_counts": counts,
-                "t_stable_ms": t_stable_ms,
-                "drain_tail_ms": max(0, t_stable_ms - base_ms),
-                "drain_timeout": False,
-            }
-
-        if expected_trace_count is None:
-            if counts == last_counts:
-                same_rounds += 1
-            else:
-                last_counts = counts
-                same_rounds = 0
-
-            if same_rounds >= stable_rounds:
-                if confirm_sleep_ms > 0:
-                    sleep_func(confirm_sleep_ms / 1000.0)
-                    confirm_counts = sqlite_counter(sqlite_path)
-                    if confirm_counts == counts:
-                        t_stable_ms = int(monotonic_func() * 1000)
-                        return {
-                            "final_counts": confirm_counts,
-                            "t_stable_ms": t_stable_ms,
-                            "drain_tail_ms": max(0, t_stable_ms - base_ms),
-                            "drain_timeout": False,
-                        }
-                    last_counts = confirm_counts
-                    same_rounds = 0
-                else:
-                    t_stable_ms = int(monotonic_func() * 1000)
-                    return {
-                        "final_counts": counts,
-                        "t_stable_ms": t_stable_ms,
-                        "drain_tail_ms": max(0, t_stable_ms - base_ms),
-                        "drain_timeout": False,
-                    }
-
-        if monotonic_func() >= deadline:
-            timeout_counts = sqlite_counter(sqlite_path)
-            t_stable_ms = int(monotonic_func() * 1000)
-            return {
-                "final_counts": timeout_counts,
-                "t_stable_ms": t_stable_ms,
-                "drain_tail_ms": max(0, t_stable_ms - base_ms),
-                "drain_timeout": True,
-            }
-
-        sleep_func(poll_interval_ms / 1000.0)
 
 
 def run_suite_a_case(
