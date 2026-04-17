@@ -376,6 +376,41 @@ Suite A 当前不扫描大矩阵，只先冻结两套执行口径。
   - `run_suite_a_buffer_compare_16c.sh`
   - `run_suite_a_search_stage1_4c.sh`
 
+### 本地 4 核已复跑结果索引（2026-04-17）
+
+这段不是新实验设计，而是把已经复跑过的本地 `4` 核结果固定下来。
+后面如果只是查论文口径、图注数字或 `/tmp` 路径，先看这里，不要再因为“忘了哪次跑过”去重跑。
+
+`Suite A / buffered vs disable_buffered`
+
+- 正式 wrapper：`server/tests/benchmark/suite_a/run_suite_a_buffer_compare_4c.sh`
+- 结果文件：`/tmp/suite_a_buffer_compare_4c-20260417-104153-806ms/summary.json`
+- 关键结果：`disable_buffered` 的 `visible_completion_rate_at_stop = 0.995625`，`drain_tail_ms = 152`
+- 关键结果：`buffered(512/5)` 的 `visible_completion_rate_at_stop = 0.995500`，`drain_tail_ms = 152`
+- 当前判断：两者在 `4` 核本机口径下基本打平，差异已经落到噪声级；这组结果主要用来说明“`tuned buffered` 至少没有把固定尾部成本继续拉坏”。
+
+`Suite A / main tuned protected buffered vs cmp baseline`
+
+- 正式 wrapper：`server/tests/benchmark/suite_a/run_suite_a_main_vs_cmp_4c.sh`
+- 结果文件：`/tmp/suite_a_main_vs_cmp_4c-20260417-104715-772ms/summary.json`
+- `light(800/20/1)`：`cmp_visible = 1.000000`，`cmp_drain = 0`，`main_visible = 0.995833`，`main_drain = 152`
+- `mid(1600/10/2)`：`cmp_visible = 1.000000`，`cmp_drain = 0`，`main_visible = 0.995625`，`main_drain = 152`
+- `heavy(3200/5/2)`：`cmp_visible = 1.000000`，`cmp_drain = 1`，`main_visible = 0.995313`，`main_drain = 153`
+- 当前判断：新生命周期语义的代价在本地 `4` 核口径下表现成近似常数级的 `~152ms` drain tail，而不是随着负载档位继续恶化的崩塌。
+
+`Suite B / 生命周期鲁棒性本地 4 核矩阵`
+
+- 当前优先引用的结果文件：`/tmp/suite_b_matrix_local4_v2/summary.json`
+- 旧结果文件：`/tmp/suite_b_matrix_local4/summary.json`
+- 旧文件保留原因：它是第一次本地 `4` 核复跑的原始 artifact；但是其中 `protected__clean_baseline` 的完整率异常为 `0.0`，所以当前口径统一以 `local4_v2` 为准。
+- `local4_v2 / protected__clean_baseline`：`trace_completeness_rate = 1.0`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- `local4_v2 / protected__mixed_realistic`：`trace_completeness_rate = 1.0`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- `local4_v2 / protected__late_replay_stress`：`trace_completeness_rate = 0.8`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- `local4_v2 / minimal__clean_baseline`：`trace_completeness_rate = 0.6`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- `local4_v2 / minimal__mixed_realistic`：`trace_completeness_rate = 0.1`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- `local4_v2 / minimal__late_replay_stress`：`trace_completeness_rate = 0.2`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- 当前判断：本地 `4` 核矩阵已经足够支持“`protected` 在 clean/mixed 档位明显更稳，到了晚到重放压力下也仍然显著优于 `minimal`”这条叙事。
+
 ## Suite B：Trace 生命周期鲁棒性
 
 ### 目标

@@ -259,6 +259,19 @@ taskset -c 0 python3 server/tests/benchmark/suite_b/run_suite_b_matrix.py \
 - `--send-workers 2` 只是 sender 的发送 worker 数，不是绑核；真正绑核靠外层 `taskset`；
 - 如果本机就只有 4 核，这一档足够先验证 `protected/minimal` 的语义差异有没有出来。
 
+### 本地 4 核已跑结果索引
+
+- 当前优先引用：`/tmp/suite_b_matrix_local4_v2/summary.json`
+- 旧版初跑 artifact：`/tmp/suite_b_matrix_local4/summary.json`
+- 为什么优先看 `local4_v2`：第一次本地 `4` 核结果里，`protected__clean_baseline` 的 `trace_completeness_rate` 异常掉到 `0.0`，所以后续复跑了一版修正结果；当前文档和论文口径统一引用 `local4_v2`。
+- `protected__clean_baseline`：`trace_completeness_rate = 1.0`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- `protected__mixed_realistic`：`trace_completeness_rate = 1.0`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- `protected__late_replay_stress`：`trace_completeness_rate = 0.8`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- `minimal__clean_baseline`：`trace_completeness_rate = 0.6`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- `minimal__mixed_realistic`：`trace_completeness_rate = 0.1`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- `minimal__late_replay_stress`：`trace_completeness_rate = 0.2`，`trace_pollution_rate = 0.0`，`duplicate_persistence_rate = 0.0`
+- 后面如果只是要查“本地 `4` 核已经跑出什么结果”，先看这段，不要因为忘了 `/tmp` 路径再重新打一遍 matrix。
+
 16 核云机推荐 matrix 示例：
 
 ```bash
