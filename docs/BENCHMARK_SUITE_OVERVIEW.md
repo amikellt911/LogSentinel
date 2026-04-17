@@ -1147,161 +1147,199 @@ taskset -c 0-2 python3 server/tests/benchmark/suite_b/run_suite_b_campaign.py \
 
 ### 目标
 
-这组不比较功能开关，也不比较可靠性策略。
+这组不比较功能开关，也不比较生命周期鲁棒性。
 
 它只回答一个问题：
 
-在资源变化时，当前系统能不能稳定扩上去，以及拐点在哪。
+当单机总资源预算增加时，当前系统整体处理能力还能不能继续上升，而不是很早饱和。
 
-### 当前关键判断
+### 两层叙事
 
-当前 D 还没有完全定死，主要卡在“后端线程拓扑要不要先补能力”。
+Suite D 当前已经冻结成两层：
 
-现在后端进程里至少有这些长期线程角色：
+- 第一层：`4` 核本机 `AI-on` 证明图
+  - 只证明“轻量环境下完整链路真实可运行”
+  - 不和主扩展曲线混成同一张图
+- 第二层：同一台 `24` 核云机上的主扩展曲线
+  - 统一 `AI-off`
+  - 统一 clean end-trace
+  - 统一按总核数预算看单机纵向扩展能力
+
+这里必须明确：
+
+- 本机 `4` 核图和 `24` 核云机上的 `4` 核档位不是一回事
+- 前者是最低部署门槛证明
+- 后者是高配机器上的受控总资源点
+
+### 当前正式入口
+
+Suite D 的正式命令已经收成 frozen wrapper：
+
+- `server/tests/benchmark/suite_d/run_suite_d_local4_ai_on.sh`
+  - 本机 `4` 核 `AI-on` 证明图
+- `server/tests/benchmark/suite_d/run_suite_d_topology_search_24c.sh`
+  - `24` 核小拓扑搜索
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh`
+  - `24` 核主扩展曲线
+- `server/tests/benchmark/suite_d/run_suite_d_flamegraph_24c.sh`
+  - `24` 核 `AI-off` flamegraph 解释图
+
+`server/tests/benchmark/suite_d/run_suite_d.sh` 现在只是 generic wrapper，不再作为论文正式入口。
+
+### 主发生器与主指标
+
+Suite D 主图继续保留 `wrk` 作为主发生器，但不再只看请求级 `QPS`。
+
+当前主指标固定为：
+
+- `online_completed_traces_per_sec`
+  - 定义：`t_stop` 时刻 SQLite 已完成 trace 数 / measurement window 秒数
+
+辅助指标固定为：
+
+- `online_completion_ratio`
+  - 定义：`t_stop` 时刻 SQLite 已完成 trace 数 / measurement window 内 offered trace 数
+- `drain_tail_ms`
+  - 定义：从 `t_stop` 到 SQLite `trace_summary` 追平 offered traces 的时间
+- 请求级 `QPS`
+- 请求级 `p95 / p99 latency`
+
+这里 `wrk` 仍然是主发生器，但 Suite D Lua 已经额外补了 `offered_traces` 计数。
+也就是说，主图现在看的是 trace 级窗口内完成量，而不是单纯请求数。
+
+### 单 case runner 口径
+
+Suite D 当前已经有统一的单 case 编排入口：
+
+- `run_suite_d_case.py`
+
+它固定干这几件事：
+
+- 自动起停后端
+- 先 warmup，再跑正式 measurement
+- measurement 停止时记录 `t_stop`
+- 读取 SQLite stop snapshot
+- 再继续轮询 SQLite，直到追平 `offered_traces` 或 timeout
+- 输出 `result.json`
+
+所以后面的拓扑搜索、主曲线和 flamegraph wrapper 都不再各自发明一套“在线完成量”和“drain 尾巴”口径。
+
+### `24` 核拓扑搜索口径
+
+拓扑搜索现在已经冻结，不再继续扩矩阵：
+
+- 总核数固定：`24`
+- sender 固定：`4` 核
+- backend 固定：`20` 核
+- 模式固定：`AI-off`
+- 只比较 `T1 / T2 / T3`
+
+候选拓扑固定如下：
+
+- `T1`
+  - `server_io_threads = 4`
+  - `dispatch_worker_threads = 3`
+  - `worker_threads = 32`
+- `T2`
+  - `server_io_threads = 6`
+  - `dispatch_worker_threads = 4`
+  - `worker_threads = 32`
+- `T3`
+  - `server_io_threads = 6`
+  - `dispatch_worker_threads = 5`
+  - `worker_threads = 48`
+
+当前主曲线已经按 `T2` 的比例映射冻结。
+
+### 主扩展曲线口径
+
+主扩展曲线统一在同一台 `24` 核云机上完成：
+
+- 模式：`AI-off`
+- 横轴：总核数 `4 / 8 / 12 / 16 / 20 / 24`
+
+这里的总核数指：
+
+- sender 核数
+- backend 核数
+
+两者之和。
+
+当前 sender/backend 冻结分配表如下：
+
+- `4 -> sender 1 / backend 3`
+- `8 -> sender 2 / backend 6`
+- `12 -> sender 2 / backend 10`
+- `16 -> sender 3 / backend 13`
+- `20 -> sender 3 / backend 17`
+- `24 -> sender 4 / backend 20`
+
+当前冻结的 T2 比例映射如下：
+
+- `4 -> io 1 / dispatch 1 / worker 8`
+- `8 -> io 2 / dispatch 1 / worker 12`
+- `12 -> io 3 / dispatch 2 / worker 16`
+- `16 -> io 4 / dispatch 3 / worker 24`
+- `20 -> io 5 / dispatch 3 / worker 28`
+- `24 -> io 6 / dispatch 4 / worker 32`
+
+### 水位派生规则
+
+主曲线不再把水位拍死成全档位统一常数，而是跟着后端预算缩放。
+
+当前冻结规则如下：
+
+- `worker_queue_size = max(4096, worker_threads * 256)`
+- `trace_active_session_limit`
+  - backend `<= 6`：`512`
+  - backend `<= 10`：`1024`
+  - backend `<= 17`：`1536`
+  - backend `>= 20`：`2048`
+- `trace_buffered_span_limit = trace_active_session_limit * 8`
+
+### 线程职责口径
+
+为了避免后面再把线程角色说反，这里把当前职责继续钉死：
 
 - `server_io_threads`
-- `dispatch_thread`
-- `flush_thread`
+  - 负责 HTTP 收包、JSON 解析、字段校验和 `SpanEvent` 组装，再调用 `TraceSessionManager::Push`
+- `dispatch_worker_threads`
+  - 从 dispatch queue 取任务
+  - 在 worker 前完成建树、序列化、summary/span record 组装和 primary append 准备
 - `worker_threads`
-- `query_tpool` 的查询线程
+  - 负责 dispatch 之后的第二阶段
+  - `AI-off` 时主要剩剩余收尾动作，不再承担外部 provider 调用
 
-其中：
-
-- `server_io_threads` 不是纯网络收包，它还会吃 HTTP 解析和 JSON 解析
-- `dispatch_thread` 现在也不是纯搬运，它会做建树、序列化、summary/span record 组装
-- `flush_thread` 更偏 SQLite 阻塞写
-- `worker_threads` 才更像“混合阻塞型”，因为会等 AI HTTP / webhook
-
-### 当前代码职责硬约束
-
-为了避免后面再把 `dispatch` 和 `worker` 说反，这里把当前实现直接钉死：
+所以 Suite D 这轮的关键线程变量不是“worker 一定先顶满”，而是：
 
 - `server_io_threads`
-  - 负责 HTTP 收包、JSON 解析、字段校验、组装 `SpanEvent`，然后调用 `TraceSessionManager::Push`
-- `dispatch_thread`
-  - 从 `dispatch_queue_` 取 `DispatchJob`
-  - 在 `thread_pool_->submit(...)` 之前完成：
-    - `BuildTraceIndex`
-    - `SerializeTrace`
-    - `BuildTraceSummary`
-    - `BuildSpanRecords`
-    - `AppendPrimary`
+- `dispatch_worker_threads`
 - `worker_threads`
-  - 只负责 `thread_pool_->submit(...)` 进去之后的第二阶段
-  - 开 AI 时主要承担 provider 调用、analysis 写入、webhook 外发
-  - 关 AI 时主要剩余 `UpdateTraceAiState` 这类收尾动作
 
-所以当前真实瓶颈风险不是“worker 一定先满”，而是：
+### flamegraph 口径
 
-- `server_io_threads` 可能先被入口解析压住
-- `dispatch_thread` 可能先被单线程准备阶段压住
-- `flush_thread` 可能先被 SQLite 写入压住
+Suite D flamegraph 现在也已经冻结：
 
-### 为什么不能直接复用现有 ThreadPool 做 dispatch_tpool
+- 只跑 `24` 核 `AI-off`
+- 只服务热点解释
+- 共用主曲线的 `24` 核拓扑和 Suite D Lua
+- 不再作为另一套参数搜索入口
 
-当前项目里的通用 `ThreadPool` 任务类型是 `std::function<void()>`。
+也就是说 flamegraph 负责回答“主曲线在高配档位主要卡在哪”，不是再重新回答“怎么调参最好”。
 
-而 `DispatchJob` 里直接持有 `std::unique_ptr<TraceSession>`，是 move-only 对象。
+### 当前结论边界
 
-这意味着如果后面想写成：
+Suite D 当前要证明的是：
 
-- `dispatch_tpool.submit([job = std::move(job)]() mutable { ... })`
+- 系统不是只能在低配轻量场景里勉强运行
+- 当单机预算增加时，整体处理能力还能继续上升
+- 因此它具备单机纵向扩展能力
 
-在当前 C++17 实现下会直接卡在 `std::function` 的“目标必须可拷贝”这条限制上。
+Suite D 当前不证明：
 
-所以“把 dispatch 改成线程池”不是简单加一个 `dispatch_thread_pool` 变量，而是二选一：
-
-- 路线 A：保留当前 `dispatch_queue_`，把单个 `dispatch_thread_` 扩成多个 consumer 线程
-- 路线 B：先升级通用 `ThreadPool`，让它支持 move-only task，再把 dispatch 正式收口成 `dispatch_tpool`
-
-当前判断：
-
-- 如果目标是最小改动、尽快验证瓶颈，优先走路线 A
-- 如果目标是统一线程模型、减少两套调度实现并存，优先走路线 B
-- 但路线 B 的前置条件不是“新增一个变量”，而是“先重构 ThreadPool 的任务抽象”
-
-所以如果 `dispatch_thread` 继续保持单线程，那么 D 测出来的很可能只是“单线程 dispatch 的上限”。
-
-### 当前实现倾向
-
-在正式做 Suite D 前，优先考虑把 `dispatch_thread` 收口成可配置的 `dispatch_worker_threads`：
-
-- 默认值仍然是 `1`
-- benchmark 时允许把它抬高，观察 dispatch 这层会不会先成为结构性瓶颈
-- 这样 D 测到的是“可扩展的当前架构”，而不是“人为卡死的一条串行链”
-
-`query_tpool` 当前不作为主变量。
-
-原因：
-
-- 只要 benchmark 不混入查询流量，并且 retention 线程关掉或不触发，它基本不在主热路径上
-- 所以 D 不需要专门把 query 线程数拿出来单独扫
-
-### 当前资源锚点
-
-Suite D 当前也先以单机 `16 核` 为设计锚点：
-
-- `wrk_cpu_cores = 2`
-- `ai_proxy_cpu_cores = 2`
-- `backend_cpu_cores = 12`
-
-### 当前口径
-
-D 不再先假定 `server_io_threads = 1` 固定不动。
-
-更合理的顺序是：
-
-Step 0：先做一次后端线程拓扑校准
-
-- 固定 `16 核 / 2-2-12` 资源锚点
-- 固定 benchmark 流量模型
-- 当前默认把容量硬上限略微放大，避免沿用开发态默认值过早触发背压：
-  - `trace_active_session_limit = 2048`
-  - `trace_buffered_span_limit = 16384`
-  - `worker_queue_size = max(20000, worker_threads * 512)`
-- 校准：
-  - `server_io_threads`
-  - `worker_threads`
-  - `dispatch_worker_threads`（如果这刀实现了）
-  - `ai_proxy_max_workers`
-
-Step 1：冻结一套代表性线程拓扑
-
-- 把这套拓扑直接复用给 Suite A
-- 也作为后续 CPU 扩展实验的基准拓扑
-
-Step 2：再做 CPU 资源扩展
-
-- 资源点当前倾向：
-  - `2 / 4 / 8 / 16 / 32 核`
-- 但单机场景里真正给后端的核数，要扣掉 `wrk` 和 `ai-proxy`
-
-### 主要比较内容
-
-- ingest QPS
-- `/logs/spans` p50 / p95 / p99
-- CPU 占用
-- RSS
-- 背压触发率
-- SQLite flush 压力
-
-### 约束
-
-Suite D 不和 Suite A 主实验混成全矩阵。
-
-原因：
-
-如果你同时扫：
-
-- 功能开关
-- CPU 数量
-- worker 数量
-
-那最后虽然图很多，但解释会非常脏。
-
-所以 D 的职责是：
-
-先单独回答“系统扩不扩得起来”。
+- 分布式横向扩展能力
+- 外部 AI provider 配额条件下的完整链路上限
+- 任意 sender 或任意线程参数下的理论最优上限
 
 ## Suite A-Interaction：架构收益与资源区间的交互
 

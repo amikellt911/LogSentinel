@@ -385,3 +385,62 @@
 
 - 如果 flamegraph wrapper 直接把 profile、拓扑和 AI 开关全暴露给调用方，这个 wrapper 很快就会退化成“又一个搜索入口”，不再是 frozen 命令。
 - 如果 common runner 默认语义被这次改坏，Suite A 之前的 flamegraph 口径也会一起漂；所以这次必须保持默认值完全兼容，再让 Suite D wrapper 显式翻开关。
+
+---
+
+# 2026-04-17 docs(benchmark): 收口 Suite D 正式命令与口径
+
+## Git Commit Message
+
+`docs(benchmark): 收口 Suite D 正式命令与口径`
+
+## Modification
+
+- `server/tests/benchmark/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260417-feat-suite-a-buffer-compare.md`
+
+## Summary
+
+- `README` 已把 Suite D 的正式入口明确成 4 个 frozen wrapper：本机 `4` 核 `AI-on` 证明图、`24` 核拓扑搜索、`24` 核主扩展曲线、`24` 核 `AI-off` flamegraph。
+- `README` 也明确把 `run_suite_d.sh` 标成 generic wrapper，不再让它和正式论文命令混在一起。
+- `BENCHMARK_SUITE_OVERVIEW` 的 Suite D 段落已经从“16 核锚点、还没定死”的旧设计，改成当前真正落地的冻结口径：
+  - 两层叙事：本机 `4` 核 `AI-on` 证明图 + `24` 核 `AI-off` 主扩展曲线
+  - 主指标：`online_completed_traces_per_sec`
+  - `wrk` 继续做主发生器，但额外补 `offered_traces`
+  - `24` 核只做 `T1/T2/T3` 小拓扑搜索，再按 `T2` 比例映射缩到 `4/8/12/16/20/24`
+  - flamegraph 只是主曲线解释图，不再是另一套搜索入口
+- 已跑最小 dry-run：
+  - 命令：`python3 server/tests/benchmark/suite_d/run_suite_d_case.py ... --warmup-duration 1s --duration 2s --disable-ai --disable-webhook --no-auto-start-proxy`
+  - artifact：`/tmp/suite_d_case_smoke-20260417-153553-740ms/result.json`
+  - 关键字段：`offered_traces = 2083`、`online_completed_traces_per_sec = 480.0`、`drain_tail_ms = 0`
+
+## Verification
+
+- `python3 -m unittest server/tests/benchmark/common/utils/trace_sqlite_polling_unit_test.py server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py server/tests/benchmark/suite_d/run_suite_d_scaling_unit_test.py server/tests/benchmark/suite_d/suite_d_frozen_wrappers_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/common/utils/trace_sqlite_polling.py server/tests/benchmark/suite_d/run_suite_d_case.py server/tests/benchmark/suite_d/run_suite_d_topology_search.py server/tests/benchmark/suite_d/run_suite_d_scaling.py`
+- `bash -n server/tests/benchmark/suite_d/run_suite_d_local4_ai_on.sh server/tests/benchmark/suite_d/run_suite_d_topology_search_24c.sh server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh server/tests/benchmark/suite_d/run_suite_d_flamegraph_24c.sh`
+- `python3 server/tests/benchmark/suite_d/run_suite_d_case.py --run-root /tmp/suite_d_case_smoke --server-bin ./server/build/LogSentinel --server-cpuset 1-2 --wrk-cpuset 0 --server-io-threads 1 --dispatch-worker-threads 1 --worker-threads 8 --worker-queue-size 4096 --trace-active-session-limit 512 --trace-buffered-span-limit 4096 --trace-max-dispatch-per-tick 64 --connections 20 --wrk-threads 1 --warmup-duration 1s --duration 2s --disable-ai --disable-webhook --no-auto-start-proxy`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 文档收口不是“把已经做过的事再抄一遍”，而是把已经冻结的命令、指标和解释边界写成别人不会再误解的样子。
+- 最小 dry-run 的价值不是看数字漂不漂亮，而是看命令、结果目录和结果 JSON 三者是不是已经连成一条闭环。
+
+### Function Explanation
+
+- `run_suite_d_case.py`
+  - Suite D 的统一单 case 编排器，后面的拓扑搜索和主曲线都基于它，不再各写一套 measurement/drain 逻辑。
+- `run_suite_d_topology_search_24c.sh`
+  - 固定 `24` 核 `AI-off` 小拓扑搜索入口，只负责 `T1/T2/T3`。
+- `run_suite_d_scaling_24c.sh`
+  - 固定 `24` 核主扩展曲线入口，统一按总核数预算驱动 sender/backend 拆分和拓扑映射。
+
+### Pitfalls
+
+- 如果总览文档还保留“16 核锚点、还没定死”的旧说法，后面别人按文档复跑时会直接和 frozen wrapper 打架。
+- 如果最小 dry-run 不留 artifact 路径和关键字段，过几天再回头核对时，很容易又重跑一遍本来已经验证过的命令。

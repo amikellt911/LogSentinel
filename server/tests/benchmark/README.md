@@ -28,6 +28,10 @@
 - `server/tests/benchmark/suite_a/run_suite_a_main_scan.sh`
 - `server/tests/benchmark/suite_a/run_suite_a_cmp_scan.sh`
 - `server/tests/benchmark/suite_a/run_suite_a.sh`
+- `server/tests/benchmark/suite_d/run_suite_d_local4_ai_on.sh`
+- `server/tests/benchmark/suite_d/run_suite_d_topology_search_24c.sh`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh`
+- `server/tests/benchmark/suite_d/run_suite_d_flamegraph_24c.sh`
 - `server/tests/benchmark/suite_d/run_suite_d.sh`
 - `server/tests/benchmark/common/run_flamegraph_case.sh`
 
@@ -74,6 +78,26 @@
   - 两者都比较 `build-cmp` 和 `build-main(tuned protected buffered)`；
   - `4` 核默认固定三档：`light(800/20/1)`、`mid(1600/10/2)`、`heavy(3200/5/2)`；
   - `16` 核默认固定三档：`light(1600/20/2)`、`mid(3200/10/2)`、`heavy(6400/5/2)`。
+- `run_suite_d_local4_ai_on.sh`
+  - 是 Suite D 的本机 `4` 核完整链路证明图入口；
+  - 它只固定一个代表性负载点，目标是证明“轻量环境下 AI-on 真实可运行”；
+  - 这张图不和 `24` 核主扩展曲线混在一起解释。
+- `run_suite_d_topology_search_24c.sh`
+  - 是 Suite D 的 `24` 核小拓扑搜索入口；
+  - 它固定 `sender=4 / backend=20` 和 `AI-off`；
+  - 只比较 `T1/T2/T3` 三组 `io/dispatch/worker` 候选，不再扩成大矩阵。
+- `run_suite_d_scaling_24c.sh`
+  - 是 Suite D 的 `24` 核主扩展曲线入口；
+  - 它固定总核数点位 `4/8/12/16/20/24`；
+  - 固定 sender/backend 拆分、T2 比例映射和水位派生；
+  - 主指标不是单纯 `QPS`，而是 `online_completed_traces_per_sec`。
+- `run_suite_d_flamegraph_24c.sh`
+  - 是 Suite D 的 `24` 核 `AI-off` flamegraph 解释图入口；
+  - 它和主曲线共用同一套 `24` 核拓扑与 Suite D Lua；
+  - 只服务热点解释，不再承担参数搜索职责。
+- `run_suite_d.sh`
+  - 现在只是历史兼容的 generic wrapper；
+  - 它继续把结果落到 `suite_d` 目录，但已经不是论文正式命令。
 
 这样拆的原因很直接：
 
