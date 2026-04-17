@@ -35,6 +35,26 @@
 - `server/tests/benchmark/suite_d/run_suite_d.sh`
 - `server/tests/benchmark/common/run_flamegraph_case.sh`
 
+结果资产口径也已经固定：
+
+- `Suite A / Suite B / Suite D` 的主输出文件不再只落业务指标。
+- 每份 `result.json` 和 `summary.json` 现在都会直接带上：
+  - `experiment_context`
+  - `artifacts`
+- `experiment_context` 里会收口：
+  - 运行时机器信息
+  - CPU 分配 / 绑核口径
+  - 线程拓扑
+  - workload 与有效实验参数
+  - 关键命令上下文
+- 机器信息不靠手填备注，而是运行时用 Linux 命令采集：
+  - `hostname`
+  - `uname -a`
+  - `lscpu`
+- 如果 `lscpu` 不可用，会自动回退到 `nproc --all` 和 `/proc/cpuinfo`，至少把总逻辑核数和 CPU 型号补齐。
+- flamegraph 入口除了原来的 `run-summary.log`，现在还会额外生成 `run-summary.json`。
+- 这样后面从云机拷贝单个 JSON 文件回来时，不需要再额外找“这份结果到底是哪台机器、多少核、什么线程配置”。
+
 其中：
 
 - `run_suite_a_case.py`
@@ -94,7 +114,11 @@
 - `run_suite_d_flamegraph_24c.sh`
   - 是 Suite D 的 `24` 核 `AI-off` flamegraph 解释图入口；
   - 它和主曲线共用同一套 `24` 核拓扑与 Suite D Lua；
-  - 只服务热点解释，不再承担参数搜索职责。
+  - 只服务热点解释，不再承担参数搜索职责；
+  - 当前会同时落：
+    - 人看的 `run-summary.log`
+    - 结构化的 `run-summary.json`
+    - `trace.svg / perf.data / perf.script / trace-flame.db` 这些原始产物路径
 - `run_suite_d.sh`
   - 现在只是历史兼容的 generic wrapper；
   - 它继续把结果落到 `suite_d` 目录，但已经不是论文正式命令。

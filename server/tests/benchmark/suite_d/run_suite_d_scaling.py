@@ -10,10 +10,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 CURRENT_DIR = Path(__file__).resolve().parent
-if str(CURRENT_DIR) not in sys.path:
-    sys.path.insert(0, str(CURRENT_DIR))
+COMMON_UTILS_DIR = CURRENT_DIR.parent / "common" / "utils"
+for candidate_dir in (CURRENT_DIR, COMMON_UTILS_DIR):
+    if str(candidate_dir) not in sys.path:
+        sys.path.insert(0, str(candidate_dir))
 
 import run_suite_d_case
+from benchmark_metadata import attach_benchmark_metadata
 
 
 JsonDict = Dict[str, Any]
@@ -125,6 +128,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     for point in args.total_core_points:
         if point not in DEFAULT_CORE_SPLIT or point not in DEFAULT_TOPOLOGY_MAP:
             parser.error(f"unsupported total core point: {point}")
+    args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
     return args
 
 
@@ -330,6 +334,44 @@ def run_scaling(
         },
     }
     output_summary = args.output_summary or str(Path(args.actual_scaling_root) / "summary.json")
+    summary = attach_benchmark_metadata(
+        payload=summary,
+        suite_name="suite_d",
+        entry_script=__file__,
+        workload={
+            "total_core_points": list(args.total_core_points),
+            "connections_per_sender_core": args.connections_per_sender_core,
+            "duration": args.duration,
+            "warmup_duration": args.warmup_duration,
+            "spans_per_trace": args.spans_per_trace,
+        },
+        cpu_allocation={},
+        thread_topology={
+            "core_split": DEFAULT_CORE_SPLIT,
+            "topology_map": DEFAULT_TOPOLOGY_MAP,
+            "trace_max_dispatch_per_tick": args.trace_max_dispatch_per_tick,
+        },
+        effective_flags={
+            "trace_lifecycle_profile": args.trace_lifecycle_profile,
+            "trace_sealed_grace_window_ms": args.trace_sealed_grace_window_ms,
+            "trace_sweep_interval_ms": args.trace_sweep_interval_ms,
+            "trace_primary_flush_span_threshold": args.trace_primary_flush_span_threshold,
+            "trace_primary_flush_interval_ms": args.trace_primary_flush_interval_ms,
+            "ai_mode": args.ai_mode,
+        },
+        commands={
+            "argv": list(getattr(args, "cli_argv", [])),
+            "server_command_template": args.server_command,
+            "server_bin": args.server_bin,
+            "wrk_bin": args.wrk_bin,
+            "wrk_script": args.wrk_script,
+        },
+        artifacts={
+            "summary_json": output_summary,
+            "requested_scaling_root": args.requested_scaling_root,
+            "actual_scaling_root": args.actual_scaling_root,
+        },
+    )
     write_summary(output_summary, summary)
     return summary
 

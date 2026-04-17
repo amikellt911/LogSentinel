@@ -160,6 +160,9 @@ class SuiteDRunSuiteDTopologySearchUnitTest(unittest.TestCase):
         self.assertEqual("t2", summary["top_candidates"][0]["candidate_name"])
         self.assertEqual("t2", saved["top_candidates"][0]["candidate_name"])
         self.assertEqual(3, len(saved["candidates"]))
+        self.assertIn("experiment_context", saved)
+        self.assertIn("artifacts", saved)
+        self.assertEqual("suite_d", saved["experiment_context"]["suite"])
 
 
 if __name__ == "__main__":

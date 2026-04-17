@@ -112,6 +112,9 @@ class SuiteDRunSuiteDScalingUnitTest(unittest.TestCase):
         self.assertEqual(24, summary["overall"]["best_total_cores"])
         self.assertEqual(24, saved["overall"]["best_total_cores"])
         self.assertEqual(6, len(saved["by_total_cores"]))
+        self.assertIn("experiment_context", saved)
+        self.assertIn("artifacts", saved)
+        self.assertEqual("suite_d", saved["experiment_context"]["suite"])
 
 
 if __name__ == "__main__":

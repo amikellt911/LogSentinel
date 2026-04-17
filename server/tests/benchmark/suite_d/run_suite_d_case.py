@@ -22,6 +22,7 @@ for candidate_dir in (SUITE_A_DIR, COMMON_UTILS_DIR):
         sys.path.insert(0, str(candidate_dir))
 
 import run_suite_a_case as suite_a_common
+from benchmark_metadata import attach_benchmark_metadata, build_cpu_allocation
 from trace_sqlite_polling import read_sqlite_counts, wait_until_sqlite_stable
 
 
@@ -111,6 +112,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         parser.error("--spans-per-trace must be > 0")
     parse_duration_seconds(args.duration)
     parse_duration_seconds(args.warmup_duration)
+    args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
     return args
 
 
@@ -281,6 +283,58 @@ def write_result_json(output_path: str, result: JsonDict) -> None:
     output_file.write_text(json.dumps(result, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
+def enrich_case_result_with_metadata(runtime_args: argparse.Namespace, result: JsonDict) -> JsonDict:
+    return attach_benchmark_metadata(
+        payload=result,
+        suite_name="suite_d",
+        entry_script=__file__,
+        workload={
+            "connections": runtime_args.connections,
+            "wrk_threads": runtime_args.wrk_threads,
+            "duration": runtime_args.duration,
+            "warmup_duration": runtime_args.warmup_duration,
+            "spans_per_trace": runtime_args.spans_per_trace,
+        },
+        cpu_allocation=build_cpu_allocation(
+            server_cpuset=getattr(runtime_args, "server_cpuset", ""),
+            wrk_cpuset=getattr(runtime_args, "wrk_cpuset", ""),
+        ),
+        thread_topology={
+            "server_io_threads": runtime_args.server_io_threads,
+            "dispatch_worker_threads": runtime_args.dispatch_worker_threads,
+            "worker_threads": runtime_args.worker_threads,
+            "worker_queue_size": runtime_args.worker_queue_size,
+            "trace_active_session_limit": runtime_args.trace_active_session_limit,
+            "trace_buffered_span_limit": runtime_args.trace_buffered_span_limit,
+            "trace_max_dispatch_per_tick": runtime_args.trace_max_dispatch_per_tick,
+        },
+        effective_flags={
+            "trace_lifecycle_profile": runtime_args.trace_lifecycle_profile,
+            "trace_sealed_grace_window_ms": runtime_args.trace_sealed_grace_window_ms,
+            "trace_sweep_interval_ms": runtime_args.trace_sweep_interval_ms,
+            "trace_primary_flush_span_threshold": runtime_args.trace_primary_flush_span_threshold,
+            "trace_primary_flush_interval_ms": runtime_args.trace_primary_flush_interval_ms,
+            "disable_ai": runtime_args.disable_ai,
+            "disable_webhook": runtime_args.disable_webhook,
+            "disable_buffered_trace_repo": runtime_args.disable_buffered_trace_repo,
+            "no_auto_start_proxy": runtime_args.no_auto_start_proxy,
+        },
+        commands={
+            "argv": list(getattr(runtime_args, "cli_argv", [])),
+            "server_command": runtime_args.resolved_server_command,
+            "wrk_command_warmup": build_wrk_command(runtime_args, runtime_args.url, runtime_args.warmup_duration),
+            "wrk_command_measurement": build_wrk_command(runtime_args, runtime_args.url, runtime_args.duration),
+        },
+        artifacts={
+            "result_json": runtime_args.output_json,
+            "requested_run_root": runtime_args.requested_run_root,
+            "actual_run_root": runtime_args.actual_run_root,
+            "sqlite_db": runtime_args.sqlite_db,
+            "server_log": runtime_args.server_log,
+        },
+    )
+
+
 def run_suite_d_case(
     args: argparse.Namespace,
     wrk_runner: Callable[[List[str], Dict[str, str]], str] = run_wrk_command,
@@ -377,6 +431,7 @@ def run_suite_d_case(
             "drain_tail_ms": int(stable["drain_tail_ms"]),
             "drain_timeout": bool(stable["drain_timeout"]),
         }
+        result = enrich_case_result_with_metadata(runtime_args, result)
         write_result_json(runtime_args.output_json, result)
         return result
     finally:

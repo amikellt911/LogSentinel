@@ -191,3 +191,8 @@
 - [x] Suite D 实现 Task 5：补 Suite D flamegraph AI-off 口径
 - [x] Suite D 实现 Task 6：同步文档、dry-run 和最终校验
 - [x] 追加 dev-log 完成复盘
+- [x] Benchmark 结果资产收尾：把机器信息、CPU 分配、线程拓扑、有效实验参数和产物路径直接注入 Suite A/B/D 的主 JSON 输出
+  - [x] 先补共享 metadata helper 和最小红灯单测，锁 `hostname/uname/lscpu` 采集、cpuset 解析和 JSON 注入结构
+  - [x] 把 Suite A / Suite B / Suite D 的 `result.json` 与 `summary.json` 统一接上 `experiment_context / artifacts`
+  - [x] 给 flamegraph 入口补 `run-summary.json`，把同一套机器/拓扑信息和 svg/perf 产物路径一起落盘
+  - [x] 同步 benchmark README / 总览文档 / 当日 dev-log，并做语法检查、单测和 diff 校验

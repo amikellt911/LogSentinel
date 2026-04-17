@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 try:
     import run_suite_b as run_suite_b_module
@@ -112,6 +115,10 @@ class SuiteBRunSuiteBUnitTest(unittest.TestCase):
         self.assertEqual(0.0, saved["trace_pollution_rate"]["value"])
         self.assertEqual(1, saved["ingest_latency_ms"]["count"])
         self.assertEqual(7, saved["ingest_latency_ms"]["p95"])
+        self.assertIn("experiment_context", saved)
+        self.assertIn("artifacts", saved)
+        self.assertEqual("suite_b", saved["experiment_context"]["suite"])
+        self.assertIn("thread_topology", saved["experiment_context"])
 
     def test_load_ingest_latency_stats_uses_manifest_send_window(self) -> None:
         if run_suite_b_module is None or not hasattr(run_suite_b_module, "load_ingest_latency_stats"):

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import run_suite_a_case
+from benchmark_metadata import attach_benchmark_metadata, build_cpu_allocation
 
 
 JsonDict = Dict[str, object]
@@ -68,6 +70,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         raise ValueError("--repeats must be > 0")
     if args.port_stride <= 0:
         raise ValueError("--port-stride must be > 0")
+    args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
     return args
 
 
@@ -231,6 +234,34 @@ def run_suite_a_scan(
     }
 
     output_summary = args.output_summary or str(actual_root / "summary.json")
+    # scan summary 也要自带上下文。
+    # 原因不是它比单 case 更重要，而是后面真正引用实验资产时，经常只会拿这份 summary.json，
+    # 如果它不带机器/绑核/基线参数，单看聚合结果根本不知道这批 gap 扫描是在什么环境下跑的。
+    summary = attach_benchmark_metadata(
+        payload=summary,
+        suite_name="suite_a",
+        entry_script=__file__,
+        workload={
+            "gaps_ms": list(args.gap_values),
+            "repeats": args.repeats,
+            "port_base": args.port_base,
+            "port_stride": args.port_stride,
+        },
+        cpu_allocation=build_cpu_allocation(),
+        thread_topology={},
+        effective_flags={
+            "controlled_case_args": sorted(CONTROLLED_CASE_ARGS),
+        },
+        commands={
+            "argv": list(getattr(args, "cli_argv", [])),
+            "case_args": list(args.case_args),
+        },
+        artifacts={
+            "summary_json": output_summary,
+            "requested_scan_root": args.requested_scan_root,
+            "actual_scan_root": args.actual_scan_root,
+        },
+    )
     output_path = Path(output_summary)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(summary, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")

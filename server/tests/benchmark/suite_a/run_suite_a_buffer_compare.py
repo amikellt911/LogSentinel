@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import run_suite_a_case
+from benchmark_metadata import attach_benchmark_metadata, build_cpu_allocation
 
 
 JsonDict = Dict[str, object]
@@ -125,6 +127,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         raise ValueError("--trace-sweep-interval-ms must be > 0")
     if args.top_k <= 0:
         raise ValueError("--top-k must be > 0")
+    args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
     return args
 
 
@@ -248,6 +251,13 @@ def extract_option_value(argv: List[str], option: str) -> str:
             raise ValueError(f"{option} requires a value")
         return argv[index + 1]
     raise ValueError(f"{option} not found")
+
+
+def extract_optional_option_value(argv: List[str], option: str) -> Optional[str]:
+    try:
+        return extract_option_value(argv, option)
+    except ValueError:
+        return None
 
 
 def run_case_once(case_argv: List[str]) -> JsonDict:
@@ -428,6 +438,41 @@ def run_suite_a_buffer_compare(
     }
 
     output_summary = args.output_summary or str(actual_root / "summary.json")
+    summary = attach_benchmark_metadata(
+        payload=summary,
+        suite_name="suite_a",
+        entry_script=__file__,
+        workload={
+            "gap_ms": args.gap_ms,
+            "repeats": args.repeats,
+            "buffered_span_thresholds": list(args.buffered_span_threshold_values),
+            "buffered_flush_interval_ms": list(args.buffered_flush_interval_values),
+            "top_k": args.top_k,
+        },
+        cpu_allocation=build_cpu_allocation(
+            server_cpuset=extract_optional_option_value(args.case_args, "--server-cpuset"),
+        ),
+        thread_topology={
+            "server_io_threads": extract_optional_option_value(args.case_args, "--server-io-threads"),
+            "worker_threads": extract_optional_option_value(args.case_args, "--worker-threads"),
+            "dispatch_worker_threads": extract_optional_option_value(args.case_args, "--dispatch-worker-threads"),
+        },
+        effective_flags={
+            "trace_lifecycle_profile": args.trace_lifecycle_profile,
+            "trace_sealed_grace_window_ms": args.trace_sealed_grace_window_ms,
+            "trace_sweep_interval_ms": args.trace_sweep_interval_ms,
+            "ai_mode": args.ai_mode,
+        },
+        commands={
+            "argv": list(getattr(args, "cli_argv", [])),
+            "case_args": list(args.case_args),
+        },
+        artifacts={
+            "summary_json": output_summary,
+            "requested_compare_root": args.requested_compare_root,
+            "actual_compare_root": args.actual_compare_root,
+        },
+    )
     output_path = Path(output_summary)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(summary, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")

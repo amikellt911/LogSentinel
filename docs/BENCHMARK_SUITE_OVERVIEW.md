@@ -91,6 +91,47 @@ Suite D 回答：资源数量和线程配置变化后，系统扩展性如何。
 - 不做 `A × CPU × worker` 全矩阵
 - 只保留一个小而可解释的交互实验
 
+## 结果资产口径
+
+从现在开始，benchmark 的主结果文件不再只保存业务指标。
+
+统一规则固定为：
+
+- `Suite A / Suite B / Suite D` 的每份 `result.json`
+- `Suite A / Suite B / Suite D` 的每份 `summary.json`
+- flamegraph 的 `run-summary.json`
+
+都必须直接带两块结构化资产：
+
+- `experiment_context`
+- `artifacts`
+
+`experiment_context` 统一收口：
+
+- 机器信息
+- CPU 分配 / 绑核信息
+- 线程拓扑
+- workload
+- 有效实验参数
+- 关键命令上下文
+
+机器信息不再靠人手备注，而是运行时即时采集：
+
+- `hostname`
+- `uname -a`
+- `lscpu`
+
+如果 `lscpu` 不可用，允许回退到：
+
+- `nproc --all`
+- `/proc/cpuinfo`
+
+原因很直接：
+
+- 后面从本机、云机、临时租机拷贝结果时，经常只会留下单个 JSON；
+- 如果这份 JSON 不自带机器和拓扑信息，几天后根本说不清这是哪台机、多少核、哪套线程参数跑出来的；
+- 与其额外维护平行的 metadata 文件，不如把实验上下文直接嵌回主结果资产，避免下载和归档时再次丢信息。
+
 ## Suite A：主链守护型对照实验
 
 ### 目标

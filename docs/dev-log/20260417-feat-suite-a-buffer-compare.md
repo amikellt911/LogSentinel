@@ -444,3 +444,93 @@
 
 - 如果总览文档还保留“16 核锚点、还没定死”的旧说法，后面别人按文档复跑时会直接和 frozen wrapper 打架。
 - 如果最小 dry-run 不留 artifact 路径和关键字段，过几天再回头核对时，很容易又重跑一遍本来已经验证过的命令。
+
+---
+
+# 2026-04-17 feat(benchmark): 为结果文件补实验上下文资产
+
+## Git Commit Message
+
+`feat(benchmark): 为结果文件补实验上下文资产`
+
+## Modification
+
+- `server/tests/benchmark/common/utils/benchmark_metadata.py`
+- `server/tests/benchmark/common/utils/benchmark_metadata_unit_test.py`
+- `server/tests/benchmark/common/utils/write_flamegraph_summary.py`
+- `server/tests/benchmark/common/utils/write_flamegraph_summary_unit_test.py`
+- `server/tests/benchmark/common/run_flamegraph_case.sh`
+- `server/tests/benchmark/suite_a/run_suite_a_case.py`
+- `server/tests/benchmark/suite_a/run_suite_a_scan.py`
+- `server/tests/benchmark/suite_a/run_suite_a_search_stage1.py`
+- `server/tests/benchmark/suite_a/run_suite_a_buffer_compare.py`
+- `server/tests/benchmark/suite_a/run_suite_a_main_vs_cmp.py`
+- `server/tests/benchmark/suite_a/run_suite_a_case_unit_test.py`
+- `server/tests/benchmark/suite_a/run_suite_a_scan_unit_test.py`
+- `server/tests/benchmark/suite_a/run_suite_a_search_stage1_unit_test.py`
+- `server/tests/benchmark/suite_a/run_suite_a_buffer_compare_unit_test.py`
+- `server/tests/benchmark/suite_a/run_suite_a_main_vs_cmp_unit_test.py`
+- `server/tests/benchmark/suite_b/run_suite_b.py`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix.py`
+- `server/tests/benchmark/suite_b/run_suite_b_campaign.py`
+- `server/tests/benchmark/suite_b/run_suite_b_unit_test.py`
+- `server/tests/benchmark/suite_b/run_suite_b_matrix_unit_test.py`
+- `server/tests/benchmark/suite_b/run_suite_b_campaign_unit_test.py`
+- `server/tests/benchmark/suite_d/run_suite_d_case.py`
+- `server/tests/benchmark/suite_d/run_suite_d_topology_search.py`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling.py`
+- `server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py`
+- `server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_unit_test.py`
+- `server/tests/benchmark/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260417-feat-suite-a-buffer-compare.md`
+
+## Summary
+
+- 新增共享 helper `benchmark_metadata.py`，统一负责三件事：
+  - 运行时采集 `hostname / uname -a / lscpu`
+  - 解析 `cpuset`
+  - 把 `experiment_context / artifacts` 直接注入 benchmark 主 JSON
+- `Suite A / Suite B / Suite D` 的代表性单 case runner 和所有正式 summary runner 现在都会在各自的 `result.json / summary.json` 里携带：
+  - 机器信息
+  - CPU 分配
+  - 线程拓扑
+  - workload
+  - 有效实验参数
+  - 产物路径
+- `lscpu` 不可用时，会自动回退到 `nproc --all` 和 `/proc/cpuinfo`，至少把总逻辑核数和 CPU 型号补齐。
+- `Suite B` 这次顺手补了脚本直跑/根目录单测共用的导入路径，避免 benchmark runner 只有“手工跑脚本”能 work，`python3 -m unittest` 却 import 失败。
+- flamegraph 入口新增 `write_flamegraph_summary.py`，在保留原来 `run-summary.log` 的同时，再额外生成一份结构化的 `run-summary.json`。
+- 文档已经同步改成新口径：
+  - benchmark 主 JSON 不再只是业务指标
+  - 结果资产默认自带 `experiment_context / artifacts`
+  - flamegraph 现在也属于同一套实验资产体系
+
+## Verification
+
+- `python3 -m unittest server.tests.benchmark.common.utils.benchmark_metadata_unit_test server.tests.benchmark.common.utils.write_flamegraph_summary_unit_test server.tests.benchmark.suite_a.run_suite_a_case_unit_test server.tests.benchmark.suite_a.run_suite_a_scan_unit_test server.tests.benchmark.suite_a.run_suite_a_search_stage1_unit_test server.tests.benchmark.suite_a.run_suite_a_buffer_compare_unit_test server.tests.benchmark.suite_a.run_suite_a_main_vs_cmp_unit_test server.tests.benchmark.suite_b.run_suite_b_unit_test server.tests.benchmark.suite_b.run_suite_b_matrix_unit_test server.tests.benchmark.suite_b.run_suite_b_campaign_unit_test server.tests.benchmark.suite_d.run_suite_d_case_unit_test server.tests.benchmark.suite_d.run_suite_d_topology_search_unit_test server.tests.benchmark.suite_d.run_suite_d_scaling_unit_test`
+- `python3 -m py_compile server/tests/benchmark/common/utils/benchmark_metadata.py server/tests/benchmark/common/utils/write_flamegraph_summary.py server/tests/benchmark/suite_a/run_suite_a_case.py server/tests/benchmark/suite_a/run_suite_a_scan.py server/tests/benchmark/suite_a/run_suite_a_search_stage1.py server/tests/benchmark/suite_a/run_suite_a_buffer_compare.py server/tests/benchmark/suite_a/run_suite_a_main_vs_cmp.py server/tests/benchmark/suite_b/run_suite_b.py server/tests/benchmark/suite_b/run_suite_b_matrix.py server/tests/benchmark/suite_b/run_suite_b_campaign.py server/tests/benchmark/suite_d/run_suite_d_case.py server/tests/benchmark/suite_d/run_suite_d_topology_search.py server/tests/benchmark/suite_d/run_suite_d_scaling.py`
+- `bash -n server/tests/benchmark/common/run_flamegraph_case.sh server/tests/benchmark/suite_d/run_flamegraph.sh server/tests/benchmark/suite_d/run_suite_d_flamegraph_24c.sh`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- benchmark 结果文件如果只存指标，不存机器和拓扑信息，几天后再看基本等于半废。因为你知道“数字是多少”，但不知道“这数字是在哪套环境下跑出来的”。
+- `result.json` 和 `summary.json` 不能互相偷懒。单 case 会被单独拷走，summary 也会被单独拷走，所以两边都必须能独立自证实验条件。
+
+### Function Explanation
+
+- `collect_machine_info()`：用真实 Linux 命令采集机器信息，并在 `lscpu` 缺失时做最小回退。
+- `build_cpu_allocation()`：把 `server_cpuset / wrk_cpuset / ai_proxy_cpuset` 转成统一的核数统计。
+- `attach_benchmark_metadata()`：把 `experiment_context / artifacts` 直接嵌回主结果 JSON，而不是另外造平行 metadata 文件。
+- `write_flamegraph_summary.py`：复用现有 `run-summary.log`，把 flamegraph 的 shell 变量整理成结构化 `run-summary.json`。
+
+### Pitfalls
+
+- 如果 metadata helper 不做缓存，像 Stage 1 搜索这种几十轮 case 的脚本会重复跑很多次 `lscpu`，虽然不是大问题，但完全没必要。
+- 如果 flamegraph 只留 `run-summary.log` 不留 JSON，后面一旦要批量整理云机产物，就会又回到人工 grep 日志的老路。
+- 如果 summary 级 JSON 不记录 `artifacts`，下载回本地后最容易发生的事就是“看到了聚合指标，却找不到对应的 SQLite / server.log / svg 在哪里”。

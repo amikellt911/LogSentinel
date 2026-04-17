@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 try:
     import run_suite_b_matrix as matrix_module
@@ -315,6 +318,10 @@ class SuiteBRunSuiteBMatrixUnitTest(unittest.TestCase):
         self.assertEqual(0, result["sqlite_unique_constraint_fail_count_by_case"]["protected__clean_baseline"])
         self.assertEqual(1, result["sqlite_unique_constraint_fail_count_by_case"]["minimal__clean_baseline"])
         self.assertEqual(1, result["cases"][2]["sqlite_unique_constraint_fail_count"])
+        self.assertIn("experiment_context", saved)
+        self.assertIn("artifacts", saved)
+        self.assertEqual("suite_b", saved["experiment_context"]["suite"])
+        self.assertIn("summary_json", saved["artifacts"])
 
     def test_build_ingest_p95_latency_delta_by_profile_pairs_lifecycle_cases(self) -> None:
         if matrix_module is None or not hasattr(matrix_module, "build_ingest_p95_latency_delta_by_profile"):

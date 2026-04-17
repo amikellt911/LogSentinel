@@ -10,10 +10,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 CURRENT_DIR = Path(__file__).resolve().parent
-if str(CURRENT_DIR) not in sys.path:
-    sys.path.insert(0, str(CURRENT_DIR))
+COMMON_UTILS_DIR = CURRENT_DIR.parent / "common" / "utils"
+for candidate_dir in (CURRENT_DIR, COMMON_UTILS_DIR):
+    if str(candidate_dir) not in sys.path:
+        sys.path.insert(0, str(candidate_dir))
 
 import run_suite_d_case
+from benchmark_metadata import attach_benchmark_metadata, build_cpu_allocation
 
 
 JsonDict = Dict[str, Any]
@@ -103,6 +106,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     if args.ai_mode != "off":
         parser.error("--ai-mode is currently frozen to off for topology search")
     args.candidates = [dict(item) for item in DEFAULT_CANDIDATES]
+    args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
     return args
 
 
@@ -252,6 +256,51 @@ def run_topology_search(
         "top_candidates": ranked_candidates,
     }
     output_summary = args.output_summary or str(Path(args.actual_search_root) / "summary.json")
+    summary = attach_benchmark_metadata(
+        payload=summary,
+        suite_name="suite_d",
+        entry_script=__file__,
+        workload={
+            "sender_cores": args.sender_cores,
+            "backend_cores": args.backend_cores,
+            "connections": args.connections,
+            "wrk_threads": args.wrk_threads,
+            "duration": args.duration,
+            "warmup_duration": args.warmup_duration,
+            "spans_per_trace": args.spans_per_trace,
+            "candidate_count": len(args.candidates),
+        },
+        cpu_allocation=build_cpu_allocation(
+            server_cpuset=args.server_cpuset,
+            wrk_cpuset=args.wrk_cpuset,
+        ),
+        thread_topology={
+            "worker_queue_size": args.worker_queue_size,
+            "trace_active_session_limit": args.trace_active_session_limit,
+            "trace_buffered_span_limit": args.trace_buffered_span_limit,
+            "trace_max_dispatch_per_tick": args.trace_max_dispatch_per_tick,
+        },
+        effective_flags={
+            "trace_lifecycle_profile": args.trace_lifecycle_profile,
+            "trace_sealed_grace_window_ms": args.trace_sealed_grace_window_ms,
+            "trace_sweep_interval_ms": args.trace_sweep_interval_ms,
+            "trace_primary_flush_span_threshold": args.trace_primary_flush_span_threshold,
+            "trace_primary_flush_interval_ms": args.trace_primary_flush_interval_ms,
+            "ai_mode": args.ai_mode,
+        },
+        commands={
+            "argv": list(getattr(args, "cli_argv", [])),
+            "server_command_template": args.server_command,
+            "server_bin": args.server_bin,
+            "wrk_bin": args.wrk_bin,
+            "wrk_script": args.wrk_script,
+        },
+        artifacts={
+            "summary_json": output_summary,
+            "requested_search_root": args.requested_search_root,
+            "actual_search_root": args.actual_search_root,
+        },
+    )
     write_summary(output_summary, summary)
     return summary
 

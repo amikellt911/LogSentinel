@@ -27,6 +27,7 @@ if str(COMMON_UTILS_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_UTILS_DIR))
 
 from trace_sqlite_polling import read_sqlite_counts, wait_until_sqlite_stable
+from benchmark_metadata import attach_benchmark_metadata, build_cpu_allocation
 
 
 JsonDict = Dict[str, Any]
@@ -95,6 +96,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         if not args.url or not args.sqlite_db:
             parser.error("--url and --sqlite-db are required when auto-start is not used")
 
+    args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
     return args
 
 
@@ -387,6 +389,67 @@ def send_clean_traces(args: argparse.Namespace) -> JsonDict:
     }
 
 
+def enrich_case_result_with_metadata(runtime_args: argparse.Namespace, result: JsonDict) -> JsonDict:
+    commands: JsonDict = {
+        "argv": list(getattr(runtime_args, "cli_argv", [])),
+        "target_url": getattr(runtime_args, "url", ""),
+        "sender_command": "internal_python_sender",
+    }
+    if getattr(runtime_args, "resolved_server_command", ""):
+        commands["server_command"] = runtime_args.resolved_server_command
+
+    artifacts: JsonDict = {
+        "result_json": getattr(runtime_args, "output_json", ""),
+        "sqlite_db": getattr(runtime_args, "sqlite_db", ""),
+        "server_log": getattr(runtime_args, "server_log", ""),
+    }
+    if getattr(runtime_args, "requested_run_root", ""):
+        artifacts["requested_run_root"] = runtime_args.requested_run_root
+    if getattr(runtime_args, "actual_run_root", ""):
+        artifacts["actual_run_root"] = runtime_args.actual_run_root
+
+    # 单 case 结果和 scan/compare/search summary 都会被单独拷走复盘。
+    # 所以这里不能假设“外层 summary 里反正还有一份机器信息”，
+    # 必须让每个 result.json 自己就能说明这轮到底用了多少核、哪些线程参数和哪些后端开关。
+    return attach_benchmark_metadata(
+        payload=result,
+        suite_name="suite_a",
+        entry_script=__file__,
+        workload={
+            "trace_count": getattr(runtime_args, "trace_count", 0),
+            "spans_per_trace": getattr(runtime_args, "spans_per_trace", 0),
+            "inter_trace_gap_ms": getattr(runtime_args, "inter_trace_gap_ms", 0),
+            "send_workers": getattr(runtime_args, "send_workers", 0),
+            "request_timeout_ms": getattr(runtime_args, "request_timeout_ms", 0),
+            "poll_interval_ms": getattr(runtime_args, "poll_interval_ms", 0),
+            "stable_rounds": getattr(runtime_args, "stable_rounds", 0),
+            "confirm_sleep_ms": getattr(runtime_args, "confirm_sleep_ms", 0),
+            "max_drain_wait_ms": getattr(runtime_args, "max_drain_wait_ms", 0),
+            "service_name": getattr(runtime_args, "service_name", ""),
+        },
+        cpu_allocation=build_cpu_allocation(
+            server_cpuset=getattr(runtime_args, "server_cpuset", ""),
+        ),
+        thread_topology={
+            "server_io_threads": getattr(runtime_args, "server_io_threads", None),
+            "worker_threads": getattr(runtime_args, "worker_threads", None),
+            "dispatch_worker_threads": getattr(runtime_args, "dispatch_worker_threads", None),
+        },
+        effective_flags={
+            "disable_ai": bool(getattr(runtime_args, "disable_ai", False)),
+            "disable_webhook": bool(getattr(runtime_args, "disable_webhook", False)),
+            "disable_buffered_trace_repo": bool(getattr(runtime_args, "disable_buffered_trace_repo", False)),
+            "trace_lifecycle_profile": getattr(runtime_args, "trace_lifecycle_profile", ""),
+            "trace_sealed_grace_window_ms": getattr(runtime_args, "trace_sealed_grace_window_ms", 0),
+            "trace_sweep_interval_ms": getattr(runtime_args, "trace_sweep_interval_ms", 0),
+            "trace_primary_flush_span_threshold": getattr(runtime_args, "trace_primary_flush_span_threshold", 0),
+            "trace_primary_flush_interval_ms": getattr(runtime_args, "trace_primary_flush_interval_ms", 0),
+        },
+        commands=commands,
+        artifacts=artifacts,
+    )
+
+
 def run_suite_a_case(
     args: argparse.Namespace,
     sender_runner: Callable[[argparse.Namespace], JsonDict] = send_clean_traces,
@@ -470,6 +533,7 @@ def run_suite_a_case(
             # 只在 auto-start 模式输出这个字段，避免手动模式伪造一条并不存在的命令。
             result["resolved_server_command"] = runtime_args.resolved_server_command
 
+        result = enrich_case_result_with_metadata(runtime_args, result)
         if runtime_args.output_json:
             Path(runtime_args.output_json).write_text(
                 json.dumps(result, ensure_ascii=True, indent=2) + "\n",

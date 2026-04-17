@@ -9,12 +9,21 @@ import shlex
 import signal
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-import run_suite_b
+CURRENT_DIR = Path(__file__).resolve().parent
+COMMON_UTILS_DIR = CURRENT_DIR.parent / "common" / "utils"
+for candidate_dir in (CURRENT_DIR, COMMON_UTILS_DIR):
+    if str(candidate_dir) not in sys.path:
+        # matrix runner 既会被根目录单测 import，也会被用户直接当脚本执行。
+        # 这里统一补路径，避免“直跑可以，单测 import 失败”这种假红灯。
+        sys.path.insert(0, str(candidate_dir))
 
+import run_suite_b
+from benchmark_metadata import attach_benchmark_metadata, build_cpu_allocation
 
 def default_run_root() -> str:
     return "server/tests/benchmark/results/suite_b/matrix"
@@ -101,7 +110,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--stable-rounds", type=int, default=5)
     parser.add_argument("--confirm-sleep-sec", type=float, default=0.3)
     parser.add_argument("--max-wait-sec", type=float, default=30.0)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
+    return args
 
 
 def parse_csv_list(value: str) -> List[str]:
@@ -454,6 +465,54 @@ def run_suite_b_matrix(
     }
 
     output_summary = args.output_summary or str(Path(args.run_root) / "summary.json")
+    summary = attach_benchmark_metadata(
+        payload=summary,
+        suite_name="suite_b",
+        entry_script=__file__,
+        workload={
+            "sender_profiles": parse_csv_list(args.sender_profiles),
+            "trace_lifecycle_profiles": parse_csv_list(args.trace_lifecycle_profiles),
+            "trace_count": args.trace_count,
+            "spans_per_trace": args.spans_per_trace,
+            "base_gap_ms": args.base_gap_ms,
+            "trace_gap_ms": args.trace_gap_ms,
+            "tick_ms": args.tick_ms,
+            "grace_ms": args.grace_ms,
+            "tombstone_window_ms": args.tombstone_window_ms,
+            "send_workers": args.send_workers,
+        },
+        cpu_allocation=build_cpu_allocation(server_cpuset=args.server_cpuset),
+        thread_topology={
+            "server_io_threads": args.server_io_threads,
+            "worker_threads": args.worker_threads,
+            "dispatch_worker_threads": args.dispatch_worker_threads,
+            "worker_queue_size": args.worker_queue_size,
+            "trace_capacity": args.trace_capacity,
+            "trace_token_limit": args.trace_token_limit,
+            "trace_sweep_interval_ms": args.trace_sweep_interval_ms,
+            "trace_idle_timeout_ms": args.trace_idle_timeout_ms,
+            "trace_max_dispatch_per_tick": args.trace_max_dispatch_per_tick,
+            "trace_buffered_span_limit": args.trace_buffered_span_limit,
+            "trace_active_session_limit": args.trace_active_session_limit,
+        },
+        effective_flags={
+            "disable_ai": args.disable_ai,
+            "disable_webhook": args.disable_webhook,
+            "disable_buffered_trace_repo": args.disable_buffered_trace_repo,
+            "no_auto_start_proxy": args.no_auto_start_proxy,
+        },
+        commands={
+            "argv": list(getattr(args, "cli_argv", [])),
+            "server_command_template": args.server_command,
+            "server_bin": args.server_bin,
+            "url_template": args.url_template,
+        },
+        artifacts={
+            "summary_json": output_summary,
+            "requested_run_root": args.requested_run_root,
+            "actual_run_root": args.actual_run_root,
+        },
+    )
     output_path = Path(output_summary)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(summary, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")

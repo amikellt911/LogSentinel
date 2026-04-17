@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 try:
     import run_suite_b_campaign as campaign_module
@@ -140,6 +143,9 @@ class SuiteBRunSuiteBCampaignUnitTest(unittest.TestCase):
         self.assertEqual(3, summary["total_runs"])
         self.assertEqual([101, 202, 303], summary["seeds"])
         self.assertEqual(saved["actual_campaign_root"], summary["actual_campaign_root"])
+        self.assertIn("experiment_context", saved)
+        self.assertIn("artifacts", saved)
+        self.assertEqual("suite_b", saved["experiment_context"]["suite"])
         protected_stats = summary["aggregate"]["correctness_by_case"]["protected__late_replay_stress"]["trace_completeness_rate"]
         self.assertAlmostEqual(0.8, protected_stats["mean"])
         self.assertEqual(0.6, protected_stats["min"])

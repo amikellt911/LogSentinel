@@ -158,6 +158,10 @@ class SuiteARunSuiteAScanUnitTest(unittest.TestCase):
         self.assertEqual(4, summary["total_runs"])
         self.assertEqual([25, 20], summary["gaps_ms"])
         self.assertEqual(saved["actual_scan_root"], summary["actual_scan_root"])
+        # summary.json 后面会直接打包带走，所以扫描汇总也必须自带实验上下文。
+        self.assertIn("experiment_context", saved)
+        self.assertIn("artifacts", saved)
+        self.assertEqual("suite_a", saved["experiment_context"]["suite"])
         gap_25 = summary["aggregate"]["by_gap"]["25"]
         self.assertAlmostEqual(0.96, gap_25["visible_completion_rate_at_stop"]["mean"])
         self.assertEqual(2200.0, gap_25["drain_tail_ms"]["median"])

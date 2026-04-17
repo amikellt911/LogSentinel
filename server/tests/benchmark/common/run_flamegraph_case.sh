@@ -15,6 +15,7 @@ SERVER_BIN="${ROOT_DIR}/server/build/LogSentinel"
 # 如果要切到新脚本，调用方只需要在环境变量里覆写 WRK_SCRIPT 即可。
 WRK_SCRIPT="${WRK_SCRIPT:-${ROOT_DIR}/server/tests/benchmark/common/wrk/trace_model.lua}"
 PACED_SENDER="${ROOT_DIR}/server/tests/benchmark/common/loadgen/trace_paced_sender.py"
+FLAME_SUMMARY_WRITER="${ROOT_DIR}/server/tests/benchmark/common/utils/write_flamegraph_summary.py"
 BENCH_SUITE="${BENCH_SUITE:-suite_a}"
 # 火焰图虽然由 common runner 生成，但产物仍然必须按 suite 收口。
 # 否则后面一边跑 Suite A 一边跑 Suite D，结果目录会重新混回老问题。
@@ -67,6 +68,7 @@ PERF_DATA=""
 PERF_SCRIPT=""
 FLAME_SVG=""
 TRACE_DB=""
+RUN_SUMMARY_JSON=""
 
 usage() {
     cat <<'EOF'
@@ -475,6 +477,7 @@ fi
 require_file "${SERVER_BIN}"
 require_file "${WRK_SCRIPT}"
 require_file "${PACED_SENDER}"
+require_file "${FLAME_SUMMARY_WRITER}"
 require_file "${FLAMEGRAPH_DIR}/stackcollapse-perf.pl"
 require_file "${FLAMEGRAPH_DIR}/flamegraph.pl"
 require_command wrk
@@ -488,6 +491,7 @@ set_profile_args "${PROFILE}"
 
 mkdir -p "${RESULT_ROOT}"
 RUN_DIR="${RESULT_ROOT}/$(date '+%Y%m%d-%H%M%S')-flamegraph-${PROFILE}"
+RUN_SUMMARY_JSON="${RUN_DIR}/run-summary.json"
 mkdir -p "${RUN_DIR}"
 
 {
@@ -536,5 +540,20 @@ start_server
 run_warmup
 run_perf_and_load
 emit_trace_db_stats
+
+python3 "${FLAME_SUMMARY_WRITER}" \
+    --bench-suite "${BENCH_SUITE}" \
+    --entry-script "$0" \
+    --run-summary-log "${RUN_DIR}/run-summary.log" \
+    --output-json "${RUN_SUMMARY_JSON}" \
+    --run-dir "${RUN_DIR}" \
+    --server-log "${SERVER_LOG}" \
+    --warmup-log "${WARMUP_LOG}" \
+    --wrk-log "${WRK_LOG}" \
+    --perf-data "${PERF_DATA}" \
+    --perf-script "${PERF_SCRIPT}" \
+    --flame-svg "${FLAME_SVG}" \
+    --trace-db "${TRACE_DB}" \
+    >/dev/null
 
 log "flamegraph generated at ${FLAME_SVG}"

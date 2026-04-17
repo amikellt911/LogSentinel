@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+CURRENT_DIR = Path(__file__).resolve().parent
+COMMON_UTILS_DIR = CURRENT_DIR.parent / "common" / "utils"
+for candidate_dir in (CURRENT_DIR, COMMON_UTILS_DIR):
+    if str(candidate_dir) not in sys.path:
+        sys.path.insert(0, str(candidate_dir))
+
 import run_suite_b_matrix
+from benchmark_metadata import attach_benchmark_metadata, build_cpu_allocation
 
 
 DEFAULT_SEEDS = "20260415,20260416,20260417,20260418,20260419"
@@ -59,7 +67,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     reject_controlled_matrix_args(matrix_args)
     args.seed_values = parse_seed_list(args.seeds)
     args.matrix_args = matrix_args
+    args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
     return args
+
+
+def extract_optional_matrix_arg(matrix_args: List[str], option: str) -> Optional[str]:
+    for index, token in enumerate(matrix_args):
+        token_option = token.split("=", 1)[0]
+        if token_option != option:
+            continue
+        if "=" in token:
+            return token.split("=", 1)[1]
+        if index + 1 >= len(matrix_args):
+            return None
+        return matrix_args[index + 1]
+    return None
 
 
 def resolve_campaign_root(campaign_root_prefix: str) -> tuple[str, str]:
@@ -239,6 +261,36 @@ def run_suite_b_campaign(
     }
 
     output_summary = args.output_summary or str(actual_root / "summary.json")
+    summary = attach_benchmark_metadata(
+        payload=summary,
+        suite_name="suite_b",
+        entry_script=__file__,
+        workload={
+            "seeds": list(args.seed_values),
+            "port_base": args.port_base,
+            "port_stride": args.port_stride,
+        },
+        cpu_allocation=build_cpu_allocation(
+            server_cpuset=extract_optional_matrix_arg(args.matrix_args, "--server-cpuset"),
+        ),
+        thread_topology={
+            "server_io_threads": extract_optional_matrix_arg(args.matrix_args, "--server-io-threads"),
+            "worker_threads": extract_optional_matrix_arg(args.matrix_args, "--worker-threads"),
+            "dispatch_worker_threads": extract_optional_matrix_arg(args.matrix_args, "--dispatch-worker-threads"),
+        },
+        effective_flags={
+            "controlled_matrix_args": sorted(CONTROLLED_MATRIX_ARGS),
+        },
+        commands={
+            "argv": list(getattr(args, "cli_argv", [])),
+            "matrix_args": list(args.matrix_args),
+        },
+        artifacts={
+            "summary_json": output_summary,
+            "requested_campaign_root": args.requested_campaign_root,
+            "actual_campaign_root": args.actual_campaign_root,
+        },
+    )
     output_path = Path(output_summary)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(summary, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")

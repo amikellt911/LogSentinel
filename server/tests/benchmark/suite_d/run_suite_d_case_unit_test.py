@@ -195,6 +195,10 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
         self.assertEqual(12184, saved["wrk_metrics"]["requests"])
         self.assertEqual("1-3", saved["server_cpuset"])
         self.assertEqual("0", saved["wrk_cpuset"])
+        self.assertIn("experiment_context", saved)
+        self.assertIn("artifacts", saved)
+        self.assertEqual("suite_d", saved["experiment_context"]["suite"])
+        self.assertIn("cpu_allocation", saved["experiment_context"])
 
 
 if __name__ == "__main__":

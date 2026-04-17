@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
+import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import run_suite_a_case
+from benchmark_metadata import attach_benchmark_metadata, build_cpu_allocation
 
 
 JsonDict = Dict[str, object]
@@ -150,6 +152,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         raise ValueError("--trace-primary-flush-span-threshold must be > 0")
     if args.trace_primary_flush_interval_ms <= 0:
         raise ValueError("--trace-primary-flush-interval-ms must be > 0")
+    args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
     return args
 
 
@@ -492,6 +495,39 @@ def run_suite_a_main_vs_cmp(
     }
 
     output_summary = args.output_summary or str(actual_root / "summary.json")
+    summary = attach_benchmark_metadata(
+        payload=summary,
+        suite_name="suite_a",
+        entry_script=__file__,
+        workload={
+            "repeats": args.repeats,
+            "load_points": list(args.load_points),
+        },
+        cpu_allocation=build_cpu_allocation(server_cpuset=args.server_cpuset),
+        thread_topology={
+            "server_io_threads": args.server_io_threads,
+            "worker_threads": args.worker_threads,
+            "dispatch_worker_threads": args.dispatch_worker_threads,
+        },
+        effective_flags={
+            "trace_lifecycle_profile": args.trace_lifecycle_profile,
+            "trace_sealed_grace_window_ms": args.trace_sealed_grace_window_ms,
+            "trace_sweep_interval_ms": args.trace_sweep_interval_ms,
+            "trace_primary_flush_span_threshold": args.trace_primary_flush_span_threshold,
+            "trace_primary_flush_interval_ms": args.trace_primary_flush_interval_ms,
+        },
+        commands={
+            "argv": list(getattr(args, "cli_argv", [])),
+            "main_server_bin": args.main_server_bin,
+            "cmp_server_bin": args.cmp_server_bin,
+            "case_args": list(args.case_args),
+        },
+        artifacts={
+            "summary_json": output_summary,
+            "requested_compare_root": args.requested_compare_root,
+            "actual_compare_root": args.actual_compare_root,
+        },
+    )
     output_path = Path(output_summary)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(summary, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")

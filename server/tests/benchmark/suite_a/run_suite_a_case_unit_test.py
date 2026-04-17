@@ -296,6 +296,13 @@ class SuiteARunSuiteACaseUnitTest(unittest.TestCase):
         self.assertEqual(280, result["sqlite_counts_final"]["trace_summary"])
         self.assertEqual(2240, result["sqlite_counts_final"]["trace_span"])
         self.assertEqual(2560, saved["sender_stats"]["total_requests"])
+        # result.json 现在就是实验资产主文件，不能只剩业务指标。
+        self.assertIn("experiment_context", saved)
+        self.assertIn("artifacts", saved)
+        self.assertEqual("suite_a", saved["experiment_context"]["suite"])
+        self.assertIn("machine", saved["experiment_context"])
+        self.assertIn("cpu_allocation", saved["experiment_context"])
+        self.assertIn("result_json", saved["artifacts"])
 
     def test_run_suite_a_case_records_resolved_server_command_in_result_json(self) -> None:
         if suite_a_module is None or not hasattr(suite_a_module, "run_suite_a_case"):

@@ -5,11 +5,21 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+CURRENT_DIR = Path(__file__).resolve().parent
+COMMON_UTILS_DIR = CURRENT_DIR.parent / "common" / "utils"
+for candidate_dir in (CURRENT_DIR, COMMON_UTILS_DIR):
+    if str(candidate_dir) not in sys.path:
+        # Suite B 这些脚本平时主要按 `python3 path/to/script.py` 直跑。
+        # 这里显式补目录，是为了让根目录单测、真实脚本直跑和后面复用 common helper 三种场景都走同一套导入口径。
+        sys.path.insert(0, str(candidate_dir))
+
 import evaluator
 import sender
+from benchmark_metadata import attach_benchmark_metadata
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -36,7 +46,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--stable-rounds", type=int, default=5)
     parser.add_argument("--confirm-sleep-sec", type=float, default=0.3)
     parser.add_argument("--max-wait-sec", type=float, default=30.0)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
+    return args
 
 
 def build_sender_args(args: argparse.Namespace) -> argparse.Namespace:
@@ -160,6 +172,43 @@ def run_suite_b_case(
         "ingest_latency_ms": ingest_latency_ms,
     }
     result.update(evaluation)
+    result = attach_benchmark_metadata(
+        payload=result,
+        suite_name="suite_b",
+        entry_script=__file__,
+        workload={
+            "trace_count": args.trace_count,
+            "spans_per_trace": args.spans_per_trace,
+            "base_gap_ms": args.base_gap_ms,
+            "trace_gap_ms": args.trace_gap_ms,
+            "tick_ms": args.tick_ms,
+            "grace_ms": args.grace_ms,
+            "tombstone_window_ms": args.tombstone_window_ms,
+            "send_workers": args.send_workers,
+            "service_name": args.service_name,
+            "timeout_sec": args.timeout_sec,
+        },
+        cpu_allocation={},
+        thread_topology={
+            "send_workers": args.send_workers,
+        },
+        effective_flags={
+            "profile": args.profile,
+            "trace_lifecycle_profile": args.trace_lifecycle_profile,
+            "dry_run": args.dry_run,
+        },
+        commands={
+            "argv": list(getattr(args, "cli_argv", [])),
+            "target_url": args.url,
+            "sender_command": "suite_b_sender_internal",
+            "evaluator_command": "suite_b_evaluator_internal",
+        },
+        artifacts={
+            "result_json": args.output_json,
+            "manifest": str(manifest_path),
+            "sqlite_db": str(sqlite_path),
+        },
+    )
 
     if args.output_json:
         output_path = Path(args.output_json)
