@@ -696,3 +696,52 @@
 
 - 不要把这次云机已经跑出的 Suite D `drain=0` 写进论文。修复前只有 `online / ratio / qps` 相对可参考，`drain` 必须复跑。
 - CPU 没打满不等于没有瓶颈。更可能是 trace 完成路径里有串行闸门或单写链路，让空闲 CPU 没机会参与工作。
+
+---
+
+# 2026-04-17 fix(benchmark): 修正 Suite D wrk trace id 冲突
+
+## Git Commit Message
+
+`fix(benchmark): 修正 Suite D wrk trace id 冲突`
+
+## Modification
+
+- `server/tests/benchmark/suite_d/trace_model_suite_d.lua`
+- `server/tests/benchmark/suite_d/trace_model_suite_d_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260417-feat-suite-a-buffer-compare.md`
+
+## Summary
+
+- Suite D 的 wrk Lua 脚本原本在 `setup(thread)` 里通过 `thread:set("thread_id", setup_counter)` 给每个 wrk 工作线程注入线程编号。
+- 文件顶部又声明了 `local thread_id = 0`，Lua 会优先读取同名 local，导致每个 wrk 线程都从同一个 `trace_key` 区间开始生成数据。
+- 高并发下这些重复 trace id 会触发 `trace_summary.trace_id` UNIQUE 冲突；`SavePrimaryBatch` 按批写 SQLite，任意一条重复就会回滚整批，所以日志里会看到 `primary_flush_fail_count` 持续增加、最终落库数明显低于 offered。
+- 现在改成 `wrk_thread_id = _G.thread_id or 0`，显式从 wrk 注入的全局表读取线程编号，再用这个编号切分 `trace_key` 区间。
+- 新增文本级单测锁住这个约束：禁止重新声明 `local thread_id`，并要求 `init()` 从 `_G.thread_id` 取值。
+
+## Verification
+
+- 先写红灯测试：`python3 -m unittest server.tests.benchmark.suite_d.trace_model_suite_d_unit_test`，旧代码因 `local thread_id =` 失败。
+- `python3 -m unittest server.tests.benchmark.suite_d.trace_model_suite_d_unit_test`
+- `python3 -m unittest server.tests.benchmark.suite_d.run_suite_d_case_unit_test server.tests.benchmark.suite_d.suite_d_frozen_wrappers_unit_test`
+- `python3 -m py_compile server/tests/benchmark/suite_d/trace_model_suite_d_unit_test.py`
+- `bash -n server/tests/benchmark/suite_d/run_suite_d_connection_search_24c.sh server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh server/tests/benchmark/run_paper_benchmark_cloud.sh`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- wrk 的 `thread:set` 不是给当前主 Lua 环境设普通局部变量，而是给每个工作线程脚本注入全局变量。你在脚本顶部写同名 `local`，就等于把注入值挡住了。
+- 批量写 SQLite 时，一个重复主键不是“只丢一条”。如果外层事务整批提交，任意一条失败都会导致整批回滚，所以 fail_count 乘以 batch 大小会直接反映丢失规模。
+
+### Function Explanation
+
+- `_G.thread_id`：Lua 全局表里的线程编号，来自 wrk `setup(thread)` 阶段的 `thread:set("thread_id", setup_counter)`。
+- `next_trace_key`：Suite D wrk 线程本地递增的 trace id 源头，不同线程必须切到不同大区间，避免跨线程撞主键。
+
+### Pitfalls
+
+- 不要只看 `submit_ok_count == worker_done_count` 就判断后链路没问题。这里 worker 已经完成了，但 SQLite batch flush 因重复 trace id 回滚，瓶颈和丢数发生在更后面。
+- 修完这个问题后，如果 `primary_flush_fail_count` 仍然不是 0，再继续查 SQLite 写锁或 batch 事务耗时；不要把两个问题混成一个结论。

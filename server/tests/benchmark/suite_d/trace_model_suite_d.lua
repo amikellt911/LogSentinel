@@ -3,7 +3,9 @@
 
 local spans_per_trace = 8
 local setup_counter = 0
-local thread_id = 0
+-- wrk 的 thread:set 会把 thread_id 注入到每个工作线程的全局表里；
+-- 这里不能再定义同名 local，否则 Lua 会优先读本地 0，所有线程都会撞到同一段 trace_key。
+local wrk_thread_id = 0
 local next_trace_key = 0
 local current_trace_key = 0
 local current_span_index = 0
@@ -76,7 +78,8 @@ local function build_span()
         attributes = {
             bench_suite = "suite_d",
             bench_mode = "end",
-            thread_id = tostring(thread_id),
+            -- 把 wrk 线程 ID 写进 attributes，后面查库或看日志时能确认 trace_key 分片是否生效。
+            thread_id = tostring(wrk_thread_id),
         },
     }
 
@@ -112,8 +115,11 @@ end
 
 function init(args)
     spans_per_trace = parse_positive_int(args[2], spans_per_trace)
-    thread_id = thread_id or 0
-    next_trace_key = (thread_id + 1) * 1000000000
+    -- 必须从 _G.thread_id 读取 wrk 在 setup() 阶段注入的线程编号；
+    -- 既然每个 wrk 线程都有独立编号，那么每个线程就能拿到互不重叠的 trace_key 区间，
+    -- 避免 trace_summary.trace_id UNIQUE 冲突把整个 SQLite batch 回滚。
+    wrk_thread_id = _G.thread_id or 0
+    next_trace_key = (wrk_thread_id + 1) * 1000000000
     logical_now_ms = os.time() * 1000
     start_new_trace()
 end

@@ -195,6 +195,7 @@
 - [x] 增加 Suite D `24` 核连接数确认搜索 wrapper：固定 `3/21` 拆分，自动交错复跑 `90/108/120`
 - [x] 增加云机一键 benchmark campaign wrapper：串行执行 Suite A/B/D 当前 frozen 入口，并自动适配高位 cpuset
 - [x] 修正 Suite D `drain_tail_ms` 计时口径：墙钟只用于留档，monotonic 只用于耗时计算
+- [x] 修正 Suite D wrk 线程 trace_key 分片：避免 Lua local 变量遮蔽 `thread:set` 注入的线程 ID，导致多 wrk 线程生成重复 trace_id
 - [x] Benchmark 结果资产收尾：把机器信息、CPU 分配、线程拓扑、有效实验参数和产物路径直接注入 Suite A/B/D 的主 JSON 输出
   - [x] 先补共享 metadata helper 和最小红灯单测，锁 `hostname/uname/lscpu` 采集、cpuset 解析和 JSON 注入结构
   - [x] 把 Suite A / Suite B / Suite D 的 `result.json` 与 `summary.json` 统一接上 `experiment_context / artifacts`
