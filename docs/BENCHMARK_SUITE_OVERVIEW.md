@@ -350,7 +350,11 @@ Suite A 当前不扫描大矩阵，只先冻结两套执行口径。
 - `baseline` 还没有一起被打穿；
 - `visible_completion_rate_at_stop` 已经能形成稳定差异。
 
-`16` 核正式节奏先不在这一步写死，等 `4` 核探测结果出来后再顺推。
+`16` 核正式节奏现在也一起冻结：
+
+- `light = 1600 traces / gap=20ms / send_workers=2`
+- `mid = 3200 traces / gap=10ms / send_workers=2`
+- `heavy = 6400 traces / gap=5ms / send_workers=2`
 
 ### 当前结论
 
@@ -365,7 +369,12 @@ Suite A 当前不扫描大矩阵，只先冻结两套执行口径。
   - `drain_tail_ms`
 - evaluator 只读轮询 SQLite 主数据
 - `4` 核和 `16` 核的资源/线程拓扑已冻结
-- `4` 核三档探测值已冻结，等结果再反推 `16` 核正式节奏
+- `4` 核和 `16` 核的正式命令已经收成 wrapper：
+  - `run_suite_a_main_vs_cmp_4c.sh`
+  - `run_suite_a_main_vs_cmp_16c.sh`
+  - `run_suite_a_buffer_compare_4c.sh`
+  - `run_suite_a_buffer_compare_16c.sh`
+  - `run_suite_a_search_stage1_4c.sh`
 
 ## Suite B：Trace 生命周期鲁棒性
 

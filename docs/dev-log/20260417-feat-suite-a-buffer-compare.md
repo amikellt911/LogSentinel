@@ -88,3 +88,59 @@
 
 - 不能把 `--server-command`、`--trace-count`、`--send-workers` 这类变量再开放给外层 case args；一旦被覆盖，按 load 聚合的真值就会立刻脏掉。
 - delta 语义必须固定。如果一会儿用 `cmp-main`，一会儿用 `main-cmp`，最后表格里负号的含义会彻底乱掉。
+
+---
+
+# 2026-04-17 chore(benchmark): 冻结 Suite A 4核与16核 wrapper 命令
+
+## Git Commit Message
+
+`chore(benchmark): 冻结 Suite A 4核与16核 wrapper 命令`
+
+## Modification
+
+- `server/tests/benchmark/suite_a/run_suite_a_main_vs_cmp_4c.sh`
+- `server/tests/benchmark/suite_a/run_suite_a_main_vs_cmp_16c.sh`
+- `server/tests/benchmark/suite_a/run_suite_a_buffer_compare_4c.sh`
+- `server/tests/benchmark/suite_a/run_suite_a_buffer_compare_16c.sh`
+- `server/tests/benchmark/suite_a/run_suite_a_search_stage1_4c.sh`
+- `server/tests/benchmark/suite_a/suite_a_frozen_wrappers_unit_test.py`
+- `server/tests/benchmark/README.md`
+- `docs/BENCHMARK_SUITE_OVERVIEW.md`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- 新增 5 个 frozen wrapper，把 Suite A 当前真正要反复复跑的命令收成脚本，不再靠手抄长命令。
+- `run_suite_a_main_vs_cmp_4c.sh / run_suite_a_main_vs_cmp_16c.sh` 固定主叙事口径：`cmp_baseline vs main_tuned protected buffered`。
+- `run_suite_a_buffer_compare_4c.sh / run_suite_a_buffer_compare_16c.sh` 固定辅助归因口径：`buffered vs no-buffer`，并只保留 `512/5` 这组已知最稳的 flush 点位。
+- `run_suite_a_search_stage1_4c.sh` 固定 4 核调参入口，后面只有在明确要重搜 tuned 参数时才重新启用。
+- benchmark README 和总览文档同步改口径，把 16 核正式节奏也一起冻结，不再留“之后再推”的悬而未决状态。
+- 新增 wrapper 单测，锁文件名和关键默认参数，防止以后有人改脚本时把正式口径悄悄改漂。
+
+## Verification
+
+- `python3 -m unittest server/tests/benchmark/suite_a/suite_a_frozen_wrappers_unit_test.py`
+- `bash -n server/tests/benchmark/suite_a/run_suite_a_main_vs_cmp_4c.sh server/tests/benchmark/suite_a/run_suite_a_main_vs_cmp_16c.sh server/tests/benchmark/suite_a/run_suite_a_buffer_compare_4c.sh server/tests/benchmark/suite_a/run_suite_a_buffer_compare_16c.sh server/tests/benchmark/suite_a/run_suite_a_search_stage1_4c.sh`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- benchmark 最怕的不是脚本写错，而是“命令散落在聊天记录里”。只要结论要进论文，就必须把命令冻结成 wrapper，不然一周后你自己都不敢保证复跑口径没漂。
+- 资源拓扑和负载点应该跟脚本一起冻结。只写文档、不写 wrapper，最后还是会回到手抄参数的老路。
+
+### Function Explanation
+
+- `run_suite_a_main_vs_cmp_4c.sh / run_suite_a_main_vs_cmp_16c.sh`
+  - 固定主叙事的版本对比入口和三档负载点。
+- `run_suite_a_buffer_compare_4c.sh / run_suite_a_buffer_compare_16c.sh`
+  - 固定辅助归因入口和当前保留的唯一 flush 点位。
+- `suite_a_frozen_wrappers_unit_test.py`
+  - 读取 wrapper 文本，确认 runner 名称和关键默认值没有被改掉。
+
+### Pitfalls
+
+- 16 核 wrapper 里给后端留了更宽的 cpuset，但 sender 本身没有单独 `taskset`；如果你后面真要做“严格 sender 两核独占”，要另起一层外部调度脚本，而不是偷偷改当前 frozen wrapper。
+- 调参 wrapper 和正式结果 wrapper 不是一回事。不要拿 `run_suite_a_search_stage1_4c.sh` 跑出一个新点位后，没复核就直接替换正式结果图。

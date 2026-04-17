@@ -145,10 +145,12 @@
   - [x] 先写 compare runner 红灯单测，锁 CLI、候选矩阵、摘要输出和排序口径
   - [x] 实现 `run_suite_a_buffer_compare.py`，只打印精简摘要，详细 JSON 落盘
   - [x] 跑最小单测、语法检查并补 20260417 dev-log
+  - [x] 冻结 `4` 核 / `16` 核 wrapper，固定辅助归因命令口径
 - [x] Suite A 新旧版本叙事对比入口：固定 `main tuned protected buffered`，直接对比 `build-cmp`
   - [x] 先写红灯单测，锁三档负载点、双版本命令拼装和按 load 聚合输出
   - [x] 实现 `run_suite_a_main_vs_cmp.py`，只打印每档 load 的压缩摘要，详细 JSON 落盘
   - [x] 跑最小单测、语法检查并续写 20260417 dev-log
+  - [x] 冻结 `4` 核 / `16` 核 wrapper，并把正式命令补进 benchmark README / 总览文档
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径
