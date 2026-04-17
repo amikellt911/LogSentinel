@@ -376,9 +376,11 @@ def run_suite_d_case(
             build_wrk_command(runtime_args, runtime_args.url, runtime_args.duration),
             wrk_env,
         )
-        # t_stop 只认“正式 measurement window 的 wrk 已经停发”这一刻。
-        # 后面的 SQLite 追平时间都算 drain tail，不能把停发后的尾巴偷偷摊回主窗口。
+        # t_stop_ms 用墙钟写进结果 JSON，方便和 server.log、云机时间线对齐。
+        # drain_start_ms 必须用 monotonic 记录耗时起点，因为 wait_until_sqlite_stable 内部也用 monotonic；
+        # 如果把 epoch ms 混进去，drain_tail_ms 会被负数压成 0，导致 Suite D 的尾巴指标假好看。
         t_stop_ms = int(time.time() * 1000)
+        drain_start_ms = int(time.monotonic() * 1000)
         wrk_metrics = parse_wrk_metrics(measurement_output)
 
         sqlite_path = Path(runtime_args.sqlite_db)
@@ -390,7 +392,7 @@ def run_suite_d_case(
             stable_rounds=runtime_args.stable_rounds,
             confirm_sleep_ms=runtime_args.confirm_sleep_ms,
             max_wait_ms=runtime_args.max_drain_wait_ms,
-            start_ms=t_stop_ms,
+            start_ms=drain_start_ms,
         )
 
         measurement_seconds = parse_duration_seconds(runtime_args.duration)
@@ -442,12 +444,19 @@ def run_suite_d_case(
 def main() -> None:
     args = parse_args()
     result = run_suite_d_case(args)
+    offered_traces = int(result["wrk_metrics"]["offered_traces"])
+    stop_traces = int(result["sqlite_counts_at_stop"]["trace_summary"])
+    final_traces = int(result["sqlite_counts_final"]["trace_summary"])
+    # stdout 只打印能解释主曲线的关键字段。
+    # 完整机器信息、命令和 SQLite 路径仍然在 result.json 里，避免云机终端被大 JSON 刷屏。
     print(
         "[suite_d_case] "
         f"online={result['online_completed_traces_per_sec']:.2f} "
         f"ratio={result['online_completion_ratio']:.4f} "
         f"drain={result['drain_tail_ms']} "
-        f"qps={result['wrk_metrics']['requests_per_sec']:.2f}"
+        f"qps={result['wrk_metrics']['requests_per_sec']:.2f} "
+        f"stop={stop_traces}/{offered_traces} "
+        f"final={final_traces}/{offered_traces}"
     )
 
 

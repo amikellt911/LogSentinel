@@ -641,3 +641,58 @@
 
 - 不要把 `Suite D flamegraph` 放进默认总入口。当前云机缺 `perf`，而 flamegraph 是解释图，不是主实验必跑项；默认塞进去只会增加失败点。
 - 不要把 `Suite D topology search` 默认一起跑。它是前置校准项，不是每次主 campaign 都必须复跑；总入口保留 `--include-d-topology-search` 即可。
+
+---
+
+# 2026-04-17 fix(benchmark): 修正 Suite D drain 计时口径
+
+## Git Commit Message
+
+`fix(benchmark): 修正 Suite D drain 计时口径`
+
+## Modification
+
+- `server/tests/benchmark/suite_d/run_suite_d_case.py`
+- `server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+- `docs/dev-log/20260417-feat-suite-a-buffer-compare.md`
+
+## Summary
+
+- 修正 Suite D `drain_tail_ms` 的根因问题：
+  - `t_stop_ms` 是 epoch 墙钟，适合写进结果 JSON 和 `server.log` 做时间线对齐；
+  - `wait_until_sqlite_stable()` 内部用的是 `time.monotonic()`；
+  - 之前把 epoch ms 传给 monotonic helper，会让差值变成巨大负数，再被 `max(0, ...)` 压成 `0`；
+  - 所以云机上已跑出的 Suite D `drain=0` 不能作为真实尾巴结论引用。
+- 现在 Suite D case 会在 wrk measurement 停发后同时记录两类时间：
+  - `t_stop_ms = time.time() * 1000`，只用于结果留档；
+  - `drain_start_ms = time.monotonic() * 1000`，只用于 drain 耗时计算。
+- Suite D stdout 现在额外打印 `stop=x/offered` 和 `final=x/offered`，方便云机上直接判断：
+  - 是窗口内没完成但最终追平；
+  - 还是最终也没有追平；
+  - 不需要立刻打开 `result.json` 才能排查。
+
+## Verification
+
+- 先写红灯测试：强制 `time.time()` 返回 `1776419859.941`，`time.monotonic()` 返回 `123.456`，确认旧代码会把 `start_ms` 错传成 `1776419859941`。
+- `python3 -m unittest server.tests.benchmark.suite_d.run_suite_d_case_unit_test.SuiteDRunSuiteDCaseUnitTest.test_run_suite_d_case_writes_online_completion_and_drain_metrics`
+- `python3 -m unittest server.tests.benchmark.suite_d.run_suite_d_case_unit_test`
+- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_case.py server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 墙钟时间和耗时计时不能混用。墙钟会受系统时间影响，适合做日志对齐；`monotonic` 不倒退，适合算耗时。
+- benchmark 指标如果出现“过于完美”的值，比如高压下所有点位 `drain=0`，要先怀疑计量口径，再拿它讲性能。
+
+### Function Explanation
+
+- `time.time()`：返回 epoch 秒数，适合写进结果文件做跨进程/跨日志对齐。
+- `time.monotonic()`：返回单调递增时间，适合计算两个事件之间经过了多久。
+- `wait_until_sqlite_stable()`：轮询 SQLite 是否追平目标 trace 数，并用传入的 `start_ms` 计算 drain tail。
+
+### Pitfalls
+
+- 不要把这次云机已经跑出的 Suite D `drain=0` 写进论文。修复前只有 `online / ratio / qps` 相对可参考，`drain` 必须复跑。
+- CPU 没打满不等于没有瓶颈。更可能是 trace 完成路径里有串行闸门或单写链路，让空闲 CPU 没机会参与工作。

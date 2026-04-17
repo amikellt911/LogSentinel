@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import json
+import io
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -124,6 +126,10 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
             def fake_wait(sqlite_path: Path, **kwargs):
                 self.assertEqual("suite_d.db", sqlite_path.name)
                 self.assertEqual(1523, kwargs["expected_trace_count"])
+                # t_stop_ms 要继续用墙钟写进结果 JSON，方便跨机器对齐日志时间；
+                # 但 drain_tail_ms 是“停发后过了多久才追平”的耗时，只能用 monotonic 起点。
+                # 如果这里把 epoch ms 传进去，monotonic helper 会把负数压成 0，Suite D 的 drain 指标就会假好看。
+                self.assertEqual(123456, kwargs["start_ms"])
                 return {
                     "final_counts": {"trace_summary": 1523, "trace_span": 12184},
                     "drain_tail_ms": 850,
@@ -173,7 +179,9 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
             with mock.patch.object(suite_d_module, "assert_port_available"), \
                 mock.patch.object(suite_d_module, "launch_server_process", side_effect=fake_launch), \
                 mock.patch.object(suite_d_module, "wait_for_port_ready"), \
-                mock.patch.object(suite_d_module, "stop_server_process"):
+                mock.patch.object(suite_d_module, "stop_server_process"), \
+                mock.patch.object(suite_d_module.time, "time", return_value=1776419859.941), \
+                mock.patch.object(suite_d_module.time, "monotonic", return_value=123.456):
                 result = suite_d_module.run_suite_d_case(
                     args,
                     wrk_runner=fake_wrk_runner,
@@ -190,6 +198,7 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
         self.assertEqual(850, result["drain_tail_ms"])
         self.assertFalse(result["drain_timeout"])
         self.assertEqual(1523, result["wrk_metrics"]["offered_traces"])
+        self.assertEqual(1776419859941, result["t_stop_ms"])
         self.assertEqual(1401, result["sqlite_counts_at_stop"]["trace_summary"])
         self.assertEqual(1523, result["sqlite_counts_final"]["trace_summary"])
         self.assertEqual(12184, saved["wrk_metrics"]["requests"])
@@ -199,6 +208,43 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
         self.assertIn("artifacts", saved)
         self.assertEqual("suite_d", saved["experiment_context"]["suite"])
         self.assertIn("cpu_allocation", saved["experiment_context"])
+
+    def test_main_prints_stop_and_final_trace_counts_for_quick_diagnosis(self) -> None:
+        if suite_d_module is None or not hasattr(suite_d_module, "main"):
+            self.fail("main should exist for Suite D single-case runner")
+
+        fake_result = {
+            "online_completed_traces_per_sec": 5824.0,
+            "online_completion_ratio": 0.2276,
+            "drain_tail_ms": 153,
+            "wrk_metrics": {
+                "requests_per_sec": 203357.93,
+                "offered_traces": 38392,
+            },
+            "sqlite_counts_at_stop": {
+                "trace_summary": 8738,
+            },
+            "sqlite_counts_final": {
+                "trace_summary": 38392,
+            },
+        }
+
+        # Suite D 诊断时不能只看 ratio。
+        # stdout 需要直接带上 stop/final/offered，否则云机上观察 CPU 没跑满时，
+        # 还得回头翻 JSON 才知道到底是窗口内没完成，还是最终也没追平。
+        output = io.StringIO()
+        with mock.patch.object(suite_d_module, "parse_args", return_value=object()), \
+            mock.patch.object(suite_d_module, "run_suite_d_case", return_value=fake_result), \
+            redirect_stdout(output):
+            suite_d_module.main()
+
+        line = output.getvalue()
+        self.assertIn("online=5824.00", line)
+        self.assertIn("ratio=0.2276", line)
+        self.assertIn("drain=153", line)
+        self.assertIn("qps=203357.93", line)
+        self.assertIn("stop=8738/38392", line)
+        self.assertIn("final=38392/38392", line)
 
 
 if __name__ == "__main__":
