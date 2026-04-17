@@ -151,6 +151,7 @@
   - [x] 实现 `run_suite_a_main_vs_cmp.py`，只打印每档 load 的压缩摘要，详细 JSON 落盘
   - [x] 跑最小单测、语法检查并续写 20260417 dev-log
   - [x] 冻结 `4` 核 / `16` 核 wrapper，并把正式命令补进 benchmark README / 总览文档
+- [x] 把 Suite D 叙事、主指标、总核数主曲线、`24` 核基线拓扑搜索、水位派生规则和 `4` 核 AI-on 证明图收成正式 spec，避免继续口头漂
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径
