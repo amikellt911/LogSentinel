@@ -338,3 +338,50 @@
 
 - 如果不把 generic wrapper 明确标成“非正式入口”，后面最容易发生的事就是有人图省事，直接拿旧 wrapper 去跑论文图，结果口径和新 runner 不一致。
 - 如果主曲线里不冻结 sender/core split，而是每次靠人手改 cpuset，复跑时最容易把 4 核本机图和 24 核云机的 4 核档位混成一回事。
+
+---
+
+# 2026-04-17 feat(benchmark): 补 Suite D flamegraph AI-off 入口
+
+## Git Commit Message
+
+`feat(benchmark): 补 Suite D flamegraph AI-off 入口`
+
+## Modification
+
+- `server/tests/benchmark/common/run_flamegraph_case.sh`
+- `server/tests/benchmark/suite_d/run_flamegraph.sh`
+- `server/tests/benchmark/suite_d/run_suite_d_flamegraph_24c.sh`
+- `server/tests/benchmark/suite_d/suite_d_frozen_wrappers_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- 在 `run_flamegraph_case.sh` 新增 `SERVER_IO_THREADS / DISABLE_AI / DISABLE_WEBHOOK / NO_AUTO_START_PROXY` 四个环境开关，让 common flamegraph runner 可以复用到 Suite D 的 `AI-off` 解释图。
+- common runner 的默认值保持老口径不变：如果不显式翻这些布尔位，仍然自动起 proxy、自动起 webhook mock，并继续走历史的 flamegraph 流程。
+- `run_suite_d_flamegraph_24c.sh` 固定成 `24` 核、`AI-off`、Suite D 专用 Lua、`4` sender 核 + `20` backend 核、`io=6 / dispatch=4 / worker=32` 的 frozen wrapper，不再让 flamegraph 变成另一套参数搜索入口。
+- `run_flamegraph.sh` 明确改成 generic wrapper，只负责把结果收进 `suite_d` 目录；论文正式解释图应走 `run_suite_d_flamegraph_24c.sh`。
+- wrapper 单测追加 flamegraph 断言，锁定 `trace_model_suite_d.lua`、`SERVER_IO_THREADS` 和 `DISABLE_AI / DISABLE_WEBHOOK / NO_AUTO_START_PROXY` 这些关键片段，防止后面有人把口径改漂。
+
+## Verification
+
+- `python3 -m unittest server/tests/benchmark/suite_d/suite_d_frozen_wrappers_unit_test.py`
+- `bash -n server/tests/benchmark/common/run_flamegraph_case.sh server/tests/benchmark/suite_d/run_flamegraph.sh server/tests/benchmark/suite_d/run_suite_d_flamegraph_24c.sh`
+
+## Learning Tips
+
+### Newbie Tips
+
+- flamegraph 不是新的 benchmark 主图，它只是解释主图热点的辅助证据。所以它最重要的要求不是“花样多”，而是和主曲线口径一致。
+- 如果你想看的是 `AI-off` 后端主链热点，却还让脚本自动起 proxy、自动打 webhook，那火焰图里就会混进不属于这张图的问题。
+
+### Function Explanation
+
+- `SERVER_IO_THREADS`：把 flamegraph 的后端 I/O 线程数显式钉死，避免继续吃老脚本里的隐式默认值。
+- `DISABLE_AI / DISABLE_WEBHOOK / NO_AUTO_START_PROXY`：用环境开关最小改 common runner，而不是再复制一份 Suite D 专用 flamegraph 主脚本。
+- `run_suite_d_flamegraph_24c.sh`：把 Suite D 解释图需要的绑核、线程数、水位和 Lua 脚本一次性固定住。
+
+### Pitfalls
+
+- 如果 flamegraph wrapper 直接把 profile、拓扑和 AI 开关全暴露给调用方，这个 wrapper 很快就会退化成“又一个搜索入口”，不再是 frozen 命令。
+- 如果 common runner 默认语义被这次改坏，Suite A 之前的 flamegraph 口径也会一起漂；所以这次必须保持默认值完全兼容，再让 Suite D wrapper 显式翻开关。

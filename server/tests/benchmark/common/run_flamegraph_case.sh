@@ -25,6 +25,7 @@ PROFILE="${1:-end}"
 PORT="${PORT:-8080}"
 SERVER_CPUSET="${SERVER_CPUSET:-1-2}"
 WRK_CPUSET="${WRK_CPUSET:-0}"
+SERVER_IO_THREADS="${SERVER_IO_THREADS:-1}"
 WORKER_THREADS="${WORKER_THREADS:-3}"
 DISPATCH_WORKER_THREADS="${DISPATCH_WORKER_THREADS:-1}"
 WORKER_QUEUE_SIZE="${WORKER_QUEUE_SIZE:-2048}"
@@ -50,6 +51,11 @@ WARMUP_SETTLE_SEC="${WARMUP_SETTLE_SEC:-1}"
 DRAIN_WAIT_SEC="${DRAIN_WAIT_SEC:-10}"
 WAIT_PORT_RETRY="${WAIT_PORT_RETRY:-50}"
 WAIT_PORT_SLEEP_SEC="${WAIT_PORT_SLEEP_SEC:-0.2}"
+# 这几个开关默认保持老 flamegraph 语义不变。
+# 只有 Suite D 的 frozen wrapper 才会显式把它们翻成 1，用来复现 AI-off 的主曲线条件。
+DISABLE_AI="${DISABLE_AI:-0}"
+DISABLE_WEBHOOK="${DISABLE_WEBHOOK:-0}"
+NO_AUTO_START_PROXY="${NO_AUTO_START_PROXY:-0}"
 
 SERVER_PID=""
 SERVER_LAUNCH_PID=""
@@ -78,6 +84,7 @@ usage() {
   PORT=8080
   SERVER_CPUSET="1-2"
   WRK_CPUSET="0"
+  SERVER_IO_THREADS=1
   WORKER_THREADS=3
   DISPATCH_WORKER_THREADS=1
   LOAD_GENERATOR=wrk|paced
@@ -100,6 +107,9 @@ usage() {
   WARMUP_SETTLE_SEC=1
   DRAIN_WAIT_SEC=10
   FLAMEGRAPH_DIR=~/tools/FlameGraph
+  DISABLE_AI=0|1
+  DISABLE_WEBHOOK=0|1
+  NO_AUTO_START_PROXY=0|1
 EOF
 }
 
@@ -252,26 +262,44 @@ start_server() {
     local listener_pid=""
     ensure_port_available "${PORT}"
 
-    log "starting LogSentinel profile=${PROFILE} worker_threads=${WORKER_THREADS} dispatch_worker_threads=${DISPATCH_WORKER_THREADS}"
-    taskset_wrap "${SERVER_CPUSET}" \
-        "${SERVER_BIN}" \
-        --db "${TRACE_DB}" \
-        --port "${PORT}" \
-        --auto-start-proxy \
-        --auto-start-webhook-mock \
-        --trace-ai-provider mock \
-        --worker-threads "${WORKER_THREADS}" \
-        --dispatch-worker-threads "${DISPATCH_WORKER_THREADS}" \
-        --worker-queue-size "${WORKER_QUEUE_SIZE}" \
-        --trace-capacity "${TRACE_CAPACITY}" \
-        --trace-token-limit "${TRACE_TOKEN_LIMIT}" \
-        --trace-sweep-interval-ms "${TRACE_SWEEP_INTERVAL_MS}" \
-        --trace-idle-timeout-ms "${TRACE_IDLE_TIMEOUT_MS}" \
-        --trace-max-dispatch-per-tick "${TRACE_MAX_DISPATCH_PER_TICK}" \
-        --trace-buffered-span-limit "${TRACE_BUFFERED_SPAN_LIMIT}" \
-        --trace-active-session-limit "${TRACE_ACTIVE_SESSION_LIMIT}" \
-        --trace-lifecycle-profile "${TRACE_LIFECYCLE_PROFILE}" \
-        > "${SERVER_LOG}" 2>&1 &
+    log "starting LogSentinel profile=${PROFILE} server_io_threads=${SERVER_IO_THREADS} worker_threads=${WORKER_THREADS} dispatch_worker_threads=${DISPATCH_WORKER_THREADS}"
+    # 这里先把固定主干参数放进数组，再按环境开关做最小条件追加。
+    # 这样 Suite A 继续保持老语义，Suite D 只靠 wrapper 翻几个布尔位就能切到 AI-off flamegraph。
+    local server_args=(
+        "${SERVER_BIN}"
+        --db "${TRACE_DB}"
+        --port "${PORT}"
+        --server-io-threads "${SERVER_IO_THREADS}"
+        --worker-threads "${WORKER_THREADS}"
+        --dispatch-worker-threads "${DISPATCH_WORKER_THREADS}"
+        --worker-queue-size "${WORKER_QUEUE_SIZE}"
+        --trace-capacity "${TRACE_CAPACITY}"
+        --trace-token-limit "${TRACE_TOKEN_LIMIT}"
+        --trace-sweep-interval-ms "${TRACE_SWEEP_INTERVAL_MS}"
+        --trace-idle-timeout-ms "${TRACE_IDLE_TIMEOUT_MS}"
+        --trace-max-dispatch-per-tick "${TRACE_MAX_DISPATCH_PER_TICK}"
+        --trace-buffered-span-limit "${TRACE_BUFFERED_SPAN_LIMIT}"
+        --trace-active-session-limit "${TRACE_ACTIVE_SESSION_LIMIT}"
+        --trace-lifecycle-profile "${TRACE_LIFECYCLE_PROFILE}"
+    )
+
+    # 默认仍然自动起 proxy + webhook mock，保持历史火焰图入口兼容。
+    # 只有 Suite D 的 AI-off wrapper 才会显式关闭这些副链路，避免 flamegraph 被外部依赖噪声污染。
+    if [[ "${NO_AUTO_START_PROXY}" == "1" ]]; then
+        server_args+=(--no-auto-start-proxy)
+    else
+        server_args+=(--auto-start-proxy --trace-ai-provider mock)
+    fi
+    if [[ "${DISABLE_AI}" == "1" ]]; then
+        server_args+=(--disable-ai)
+    fi
+    if [[ "${DISABLE_WEBHOOK}" == "1" ]]; then
+        server_args+=(--disable-webhook)
+    else
+        server_args+=(--auto-start-webhook-mock)
+    fi
+
+    taskset_wrap "${SERVER_CPUSET}" "${server_args[@]}" > "${SERVER_LOG}" 2>&1 &
     SERVER_LAUNCH_PID=$!
 
     if ! wait_for_port "${PORT}"; then
@@ -486,6 +514,7 @@ mkdir -p "${RUN_DIR}"
     echo "paced_service_name=${PACED_SERVICE_NAME}"
     echo "server_cpuset=${SERVER_CPUSET}"
     echo "wrk_cpuset=${WRK_CPUSET}"
+    echo "server_io_threads=${SERVER_IO_THREADS}"
     echo "perf_freq=${PERF_FREQ}"
     echo "perf_call_graph=${PERF_CALL_GRAPH}"
     echo "perf_event=${PERF_EVENT}"
@@ -497,6 +526,9 @@ mkdir -p "${RUN_DIR}"
     echo "trace_buffered_span_limit=${TRACE_BUFFERED_SPAN_LIMIT}"
     echo "trace_active_session_limit=${TRACE_ACTIVE_SESSION_LIMIT}"
     echo "trace_lifecycle_profile=${TRACE_LIFECYCLE_PROFILE}"
+    echo "disable_ai=${DISABLE_AI}"
+    echo "disable_webhook=${DISABLE_WEBHOOK}"
+    echo "no_auto_start_proxy=${NO_AUTO_START_PROXY}"
     echo "flamegraph_dir=${FLAMEGRAPH_DIR}"
 } > "${RUN_DIR}/run-summary.log"
 

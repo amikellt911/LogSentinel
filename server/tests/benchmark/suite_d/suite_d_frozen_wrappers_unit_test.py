@@ -51,6 +51,35 @@ class SuiteDFrozenWrappersUnitTest(unittest.TestCase):
         self.assertIn("generic wrapper", generic_wrapper)
         self.assertIn("run_wrk_case.sh", generic_wrapper)
 
+    def test_flamegraph_wrappers_and_common_runner_pin_suite_d_ai_off_knobs(self) -> None:
+        # 这组断言专门锁 Suite D 火焰图口径：
+        # 24 核 flamegraph 只是主曲线的结构解释图，所以必须和主曲线共用同一套 AI-off 与 24 核拓扑参数。
+        flamegraph_wrapper = (SUITE_D_DIR / "run_suite_d_flamegraph_24c.sh").read_text(encoding="utf-8")
+        self.assertIn("run_flamegraph.sh", flamegraph_wrapper)
+        self.assertIn("trace_model_suite_d.lua", flamegraph_wrapper)
+        self.assertIn('SERVER_CPUSET="${SUITE_D_SERVER_CPUSET:-4-23}"', flamegraph_wrapper)
+        self.assertIn('WRK_CPUSET="${SUITE_D_WRK_CPUSET:-0-3}"', flamegraph_wrapper)
+        self.assertIn('SERVER_IO_THREADS="${SUITE_D_SERVER_IO_THREADS:-6}"', flamegraph_wrapper)
+        self.assertIn("DISABLE_AI=1", flamegraph_wrapper)
+        self.assertIn("DISABLE_WEBHOOK=1", flamegraph_wrapper)
+        self.assertIn("NO_AUTO_START_PROXY=1", flamegraph_wrapper)
+
+        common_flamegraph = (
+            SUITE_D_DIR.parent / "common" / "run_flamegraph_case.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('SERVER_IO_THREADS="${SERVER_IO_THREADS:-1}"', common_flamegraph)
+        self.assertIn('DISABLE_AI="${DISABLE_AI:-0}"', common_flamegraph)
+        self.assertIn('DISABLE_WEBHOOK="${DISABLE_WEBHOOK:-0}"', common_flamegraph)
+        self.assertIn('NO_AUTO_START_PROXY="${NO_AUTO_START_PROXY:-0}"', common_flamegraph)
+        self.assertIn('--server-io-threads "${SERVER_IO_THREADS}"', common_flamegraph)
+        self.assertIn('--disable-ai', common_flamegraph)
+        self.assertIn('--disable-webhook', common_flamegraph)
+        self.assertIn('--no-auto-start-proxy', common_flamegraph)
+
+        generic_flamegraph_wrapper = (SUITE_D_DIR / "run_flamegraph.sh").read_text(encoding="utf-8")
+        self.assertIn("generic wrapper", generic_flamegraph_wrapper)
+        self.assertIn("run_flamegraph_case.sh", generic_flamegraph_wrapper)
+
 
 if __name__ == "__main__":
     unittest.main()
