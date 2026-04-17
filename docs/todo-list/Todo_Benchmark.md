@@ -191,6 +191,7 @@
 - [x] Suite D 实现 Task 5：补 Suite D flamegraph AI-off 口径
 - [x] Suite D 实现 Task 6：同步文档、dry-run 和最终校验
 - [x] 追加 dev-log 完成复盘
+- [x] 修正 Suite D scaling 的 cpuset 基址假设：支持非 `0` 起始的容器/云机 CPU 区间，并冻结 `24c` wrapper 入口
 - [x] Benchmark 结果资产收尾：把机器信息、CPU 分配、线程拓扑、有效实验参数和产物路径直接注入 Suite A/B/D 的主 JSON 输出
   - [x] 先补共享 metadata helper 和最小红灯单测，锁 `hostname/uname/lscpu` 采集、cpuset 解析和 JSON 注入结构
   - [x] 把 Suite A / Suite B / Suite D 的 `result.json` 与 `summary.json` 统一接上 `experiment_context / artifacts`

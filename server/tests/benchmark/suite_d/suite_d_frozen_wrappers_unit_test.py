@@ -33,6 +33,10 @@ class SuiteDFrozenWrappersUnitTest(unittest.TestCase):
                 "run_suite_d_scaling.py",
                 'TOTAL_CORE_POINTS="${SUITE_D_TOTAL_CORE_POINTS:-4,8,12,16,20,24}"',
                 'CONNECTIONS_PER_SENDER_CORE="${SUITE_D_CONNECTIONS_PER_SENDER_CORE:-30}"',
+                # scaling wrapper 现在必须暴露 core base offset，
+                # 否则云机容器只给高位核区间时，主曲线入口会重新退化成 0 起始 cpuset。
+                'CORE_BASE_OFFSET="${SUITE_D_CORE_BASE_OFFSET:-0}"',
+                "--core-base-offset",
                 "--trace-lifecycle-profile protected",
                 "--trace-primary-flush-span-threshold 512",
             ],

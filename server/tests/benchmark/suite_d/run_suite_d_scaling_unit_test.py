@@ -46,6 +46,8 @@ class SuiteDRunSuiteDScalingUnitTest(unittest.TestCase):
                     str(output_summary),
                     "--server-bin",
                     "./server/build/LogSentinel",
+                    "--core-base-offset",
+                    "160",
                 ]
             )
             args.actual_scaling_root = str(Path(temp_dir) / "suite_d_scaling-actual")
@@ -88,12 +90,13 @@ class SuiteDRunSuiteDScalingUnitTest(unittest.TestCase):
             summary = scaling_module.run_scaling(args, case_runner=fake_case_runner, line_writer=lines.append)
             saved = json.loads(output_summary.read_text(encoding="utf-8"))
 
-        # 最后一个点位必须能还原出 24 核的 sender/backend 绑核关系。
+        # 最后一个点位必须能还原出“从偏移核位开始”的 sender/backend 绑核关系。
+        # 这条红灯专门防止 scaling runner 再把 cpuset 偷偷写死成 0 起始，导致云机容器一启动就炸。
         self.assertEqual(6, len(case_calls))
-        self.assertEqual("0", case_calls[0]["wrk_cpuset"])
-        self.assertEqual("1-3", case_calls[0]["server_cpuset"])
-        self.assertEqual("0-3", case_calls[-1]["wrk_cpuset"])
-        self.assertEqual("4-23", case_calls[-1]["server_cpuset"])
+        self.assertEqual("160", case_calls[0]["wrk_cpuset"])
+        self.assertEqual("161-163", case_calls[0]["server_cpuset"])
+        self.assertEqual("160-163", case_calls[-1]["wrk_cpuset"])
+        self.assertEqual("164-183", case_calls[-1]["server_cpuset"])
         self.assertEqual(1, case_calls[0]["wrk_threads"])
         self.assertEqual(30, case_calls[0]["connections"])
         self.assertEqual(4, case_calls[-1]["wrk_threads"])
@@ -115,6 +118,7 @@ class SuiteDRunSuiteDScalingUnitTest(unittest.TestCase):
         self.assertIn("experiment_context", saved)
         self.assertIn("artifacts", saved)
         self.assertEqual("suite_d", saved["experiment_context"]["suite"])
+        self.assertEqual(160, saved["experiment_context"]["thread_topology"]["core_base_offset"])
 
 
 if __name__ == "__main__":

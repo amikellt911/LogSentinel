@@ -45,6 +45,56 @@
 
 ---
 
+# 2026-04-17 fix(benchmark): 修复 Suite D scaling 的 cpuset 基址假设
+
+## Git Commit Message
+
+`fix(benchmark): 修复 Suite D scaling 的 cpuset 基址假设`
+
+## Modification
+
+- `server/tests/benchmark/suite_d/run_suite_d_scaling.py`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_unit_test.py`
+- `server/tests/benchmark/suite_d/suite_d_frozen_wrappers_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- `run_suite_d_scaling.py` 新增 `--core-base-offset`，让主扩展曲线 runner 不再默认把 sender/backend 的 cpuset 从 `0` 号核开始生成。
+- `build_case_args()` 现在会用 `core_base_offset + sender_cores/backend_cores` 推导 `wrk_cpuset / server_cpuset`，从而支持容器常见的 `160-191` 这类高位 CPU 区间。
+- `summary.json` 的元数据里追加 `core_base_offset`，避免后面回看资产时只看到 `total_cores=24`，却不知道这轮实际绑的是哪一段核位。
+- `run_suite_d_scaling_24c.sh` 暴露 `SUITE_D_CORE_BASE_OFFSET` 环境变量，并把它透传给 scaling runner；云机上只需要设成 `160`，不必再手工改 Python 脚本。
+- 单测同步锁住新行为：一方面验证 offset=160 时 `4` 核点位会派生出 `wrk=160 / server=161-163`，另一方面验证 frozen wrapper 确实保留了这个入口。
+
+## Verification
+
+- `python3 -m unittest server.tests.benchmark.suite_d.run_suite_d_scaling_unit_test`
+- `python3 -m unittest server.tests.benchmark.suite_d.suite_d_frozen_wrappers_unit_test`
+- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_scaling.py server/tests/benchmark/suite_d/run_suite_d_scaling_unit_test.py server/tests/benchmark/suite_d/suite_d_frozen_wrappers_unit_test.py`
+- `bash -n server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- benchmark 脚本里最隐蔽的一类坑不是参数值错，而是“默认假设 CPU 一定从 0 开始”。在裸机上这常常没事，但进容器后，cpuset 经常会被映射到高位核区间。
+- 如果 runner 会自动派生 `taskset`，那 `cpuset` 的起点就属于实验口径的一部分，必须落进结果元数据；否则以后回看 `summary.json`，你只能看到“24 核”，看不到“到底用了哪 24 个核”。
+
+### Function Explanation
+
+- `--core-base-offset`：Suite D scaling runner 新增的 CLI，用来指定 sender/backend 切核时的起始核位。
+- `build_cpuset()`：继续负责把“起点 + 核数”展开成 `160-163` 这种 shell 可直接吃的 cpuset 文本。
+- `SUITE_D_CORE_BASE_OFFSET`：24 核 frozen wrapper 暴露的环境变量入口，云机只改这一个值就能适配不同容器核位映射。
+
+### Pitfalls
+
+- 只改 wrapper、不改 `run_suite_d_scaling.py` 没用，因为真正自动生成 cpuset 的逻辑在 Python runner 里。
+- 只改 Python runner、不补 frozen wrapper 入口也不够，因为正式复跑命令还是会回到手工传一串参数，最后口径照样容易漂。
+
+---
+
 # 2026-04-17 feat(benchmark): 增加 Suite A 新旧版本叙事对比脚本
 
 ## Git Commit Message

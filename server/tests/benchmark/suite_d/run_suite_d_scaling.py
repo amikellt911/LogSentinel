@@ -101,6 +101,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--warmup-duration", default="3s")
     parser.add_argument("--spans-per-trace", type=int, default=8)
     parser.add_argument("--connections-per-sender-core", type=int, default=30)
+    parser.add_argument("--core-base-offset", type=int, default=0)
     parser.add_argument("--trace-max-dispatch-per-tick", type=int, default=64)
     parser.add_argument("--trace-lifecycle-profile", default="protected")
     parser.add_argument("--trace-sealed-grace-window-ms", type=int, default=100)
@@ -122,6 +123,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         parser.error("--port-stride must be > 0")
     if args.connections_per_sender_core <= 0:
         parser.error("--connections-per-sender-core must be > 0")
+    if args.core_base_offset < 0:
+        parser.error("--core-base-offset must be >= 0")
     args.total_core_points = parse_csv_ints(args.total_core_points, "--total-core-points")
     if args.ai_mode != "off":
         parser.error("--ai-mode is currently frozen to off for Suite D main scaling")
@@ -168,8 +171,11 @@ def build_case_args(
     topology = DEFAULT_TOPOLOGY_MAP[total_cores]
     sender_cores = int(split["sender_cores"])
     backend_cores = int(split["backend_cores"])
-    wrk_cpuset = build_cpuset(0, sender_cores)
-    server_cpuset = build_cpuset(sender_cores, backend_cores)
+    # scaling 主曲线不能假设 CPU 一定从 0 开始。
+    # 云机容器常见情况是实际可用核位被映射到高位区间，例如 160-191；
+    # 这里统一用 core_base_offset 作为 sender/backend 切片的起点，避免生成 0-3 这种无效 cpuset。
+    wrk_cpuset = build_cpuset(args.core_base_offset, sender_cores)
+    server_cpuset = build_cpuset(args.core_base_offset + sender_cores, backend_cores)
     worker_queue_size = derive_worker_queue_size(int(topology["worker_threads"]))
     trace_active_session_limit = derive_trace_active_session_limit(backend_cores)
     trace_buffered_span_limit = derive_trace_buffered_span_limit(trace_active_session_limit)
@@ -327,6 +333,7 @@ def run_scaling(
         "requested_scaling_root": args.requested_scaling_root,
         "actual_scaling_root": args.actual_scaling_root,
         "total_core_points": list(args.total_core_points),
+        "core_base_offset": int(args.core_base_offset),
         "by_total_cores": by_total_cores,
         "overall": {
             "best_total_cores": int(best_point["total_cores"]),
@@ -349,6 +356,7 @@ def run_scaling(
         thread_topology={
             "core_split": DEFAULT_CORE_SPLIT,
             "topology_map": DEFAULT_TOPOLOGY_MAP,
+            "core_base_offset": int(args.core_base_offset),
             "trace_max_dispatch_per_tick": args.trace_max_dispatch_per_tick,
         },
         effective_flags={
