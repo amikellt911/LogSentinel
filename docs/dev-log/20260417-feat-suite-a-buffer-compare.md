@@ -239,3 +239,50 @@
 
 - 如果直接复用 `common/wrk/trace_model.lua` 而不补 Suite D summary 行，后面主曲线就只能看到请求级 QPS，看不到 trace 级 offered 分母，结果没法讲。
 - 如果单 case runner 在 warmup 之后不清楚地区分“measurement stop counts”和“final drain counts”，拓扑搜索和主曲线会把窗口内能力和尾巴长度混成一个指标，排序结果会很脏。
+
+---
+
+# 2026-04-17 feat(benchmark): 增加 Suite D 拓扑搜索 runner
+
+## Git Commit Message
+
+`feat(benchmark): 增加 Suite D 拓扑搜索 runner`
+
+## Modification
+
+- `server/tests/benchmark/suite_d/run_suite_d_topology_search.py`
+- `server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- 新增 `run_suite_d_topology_search.py`，把 `24` 核拓扑搜索收口成固定的 `T1/T2/T3` 三候选，不再让 Suite D 重新膨胀成大矩阵调参。
+- runner 固定 `sender=4 / backend=20`、`wrk_cpuset=0-3`、`server_cpuset=4-23` 和 `AI-off`，只比较 `server_io_threads / dispatch_worker_threads / worker_threads` 这三个拓扑差异。
+- 搜索 runner 直接调用 `run_suite_d_case.run_suite_d_case()`，不自己重写 measurement/drain 逻辑，这样后面的拓扑排名和单 case JSON 口径天然一致。
+- 终端输出压缩成每个 candidate 一行摘要：`online / ratio / drain / qps / winner_so_far`，详细结果继续写进 `summary.json`。
+- 新增单测锁住默认 candidate 表、排序规则和 `summary.json` 的 `top_candidates` 结构，避免以后有人把搜索面扩脏或者把排序优先级改反。
+
+## Verification
+
+- `python3 -m unittest server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py`
+- `python3 -m unittest server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_topology_search.py server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py server/tests/benchmark/suite_d/run_suite_d_case.py`
+- `python3 server/tests/benchmark/suite_d/run_suite_d_topology_search.py --help`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 拓扑搜索和参数搜索不是一回事。Suite D 这里要定的是“哪种线程拓扑更像真实部署”，不是把 flush/waterline/lifecycle 再从头搜一遍。
+- 排名第一优先级必须是窗口内已经真正完成了多少 trace。尾巴短只能当 tie-break，不能反过来压过在线完成量，不然会选出一个“停表时少完成、但拖尾略短”的假优胜者。
+
+### Function Explanation
+
+- `DEFAULT_CANDIDATES`：冻结 `T1/T2/T3` 三个 24 核候选拓扑。
+- `build_case_args()`：把候选拓扑差异注入到 `run_suite_d_case.py` 的单 case CLI，并派生每个 candidate 的独立目录和端口。
+- `candidate_sort_key()`：按 `online_completed_traces_per_sec`、`online_completion_ratio`、`drain_tail_ms` 的顺序做排序。
+
+### Pitfalls
+
+- 如果拓扑搜索 runner 自己再写一套 SQLite 轮询和结果聚合，后面单 case、拓扑搜索、主曲线三层口径很容易分叉，最后表格看起来像一个系统，实际上是三套脚本。
+- 如果搜索脚本默认就允许 `AI-on`，24 核拓扑排名会被 proxy 限流、外部 provider 抖动之类的噪声污染，根本看不出 `io/dispatch-heavy` 拓扑差异。
