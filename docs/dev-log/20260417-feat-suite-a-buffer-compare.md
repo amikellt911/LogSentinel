@@ -190,3 +190,52 @@
 
 - 如果 helper 在 timeout 分支不回最后一次可见 counts，benchmark 结果只会剩一个布尔值 `timeout=true`，根本不知道系统卡在什么位置。
 - 如果脚本直跑时不处理共享 helper 的导入路径，单测可能是绿的，但真实命令 `python3 server/tests/benchmark/suite_a/run_suite_a_case.py ...` 会直接在 import 阶段炸掉。
+
+---
+
+# 2026-04-17 feat(benchmark): 增加 Suite D 单 case runner
+
+## Git Commit Message
+
+`feat(benchmark): 增加 Suite D 单 case runner`
+
+## Modification
+
+- `server/tests/benchmark/suite_d/trace_model_suite_d.lua`
+- `server/tests/benchmark/suite_d/run_suite_d_case.py`
+- `server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- 新增 `trace_model_suite_d.lua`，只保留 Suite D 需要的 clean end-trace 发送语义，并在 `done()` 阶段额外打印 `offered_traces / spans_per_trace / latency_p95_ms / latency_p99_ms`。
+- 新增 `run_suite_d_case.py`，负责自动派生 `run_root / sqlite_db / server_log / result.json`，启动后端，先跑 warmup，再跑正式 wrk measurement。
+- 单 case runner 在 measurement 结束后记录 `t_stop`，读取 SQLite stop 快照，再调用共享 polling helper 等待 `trace_summary` 追平 `offered_traces`，从而同时给出窗口内完成量和 drain 尾巴。
+- runner 输出统一结果 JSON，收口 `wrk_metrics / sqlite_counts_at_stop / sqlite_counts_final / online_completed_traces_per_sec / online_completion_ratio / drain_tail_ms / drain_timeout`。
+- 新增 `run_suite_d_case_unit_test.py`，锁 CLI 参数、wrk 摘要解析和单 case 编排结果，避免后面拓扑搜索和主曲线 runner 接进来时把底层口径改漂。
+
+## Verification
+
+- `python3 -m unittest server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py`
+- `python3 -m unittest server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py server/tests/benchmark/common/utils/trace_sqlite_polling_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_case.py server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py server/tests/benchmark/common/utils/trace_sqlite_polling.py`
+- `python3 server/tests/benchmark/suite_d/run_suite_d_case.py --help`
+- `git diff --check -- server/tests/benchmark/suite_d/trace_model_suite_d.lua server/tests/benchmark/suite_d/run_suite_d_case.py server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py`
+
+## Learning Tips
+
+### Newbie Tips
+
+- wrk 的 `QPS` 只是请求级速率，不是 trace 级完成量。Suite D 要看的是 measurement window 结束时 SQLite 已经真正补齐了多少条 trace，所以必须自己补 `offered_traces` 这个分母。
+- `t_stop` 必须认“measurement window 停发”的时刻，而不是“SQLite 最终追平”的时刻。否则你会把停发后的排空时间偷偷塞回主窗口，图上看起来更好看，但结论是假的。
+
+### Function Explanation
+
+- `parse_wrk_metrics()`：从 wrk stdout 里同时摘 `requests / requests_per_sec` 和 Suite D Lua 额外打印的 `offered_traces / latency_p95_ms / latency_p99_ms`。
+- `build_wrk_command()`：固定 Suite D 的 wrk 调用骨架，继续走 clean end-trace，并支持 `taskset` 给 sender 绑核。
+- `run_suite_d_case()`：把“起服务 -> warmup -> measurement -> 记 t_stop -> SQLite stop 快照 -> drain 追平 -> 写 result.json”这一整条时间线收进一个最小入口。
+
+### Pitfalls
+
+- 如果直接复用 `common/wrk/trace_model.lua` 而不补 Suite D summary 行，后面主曲线就只能看到请求级 QPS，看不到 trace 级 offered 分母，结果没法讲。
+- 如果单 case runner 在 warmup 之后不清楚地区分“measurement stop counts”和“final drain counts”，拓扑搜索和主曲线会把窗口内能力和尾巴长度混成一个指标，排序结果会很脏。
