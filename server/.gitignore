@@ -22,5 +22,7 @@ tests/build
 *.script
 *.folded
 .codex
-/build-cmp
-/build-main
+/build-cmp/*
+!/build-cmp/LogSentinel
+/build-main/*
+!/build-main/LogSentinel
