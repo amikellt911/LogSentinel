@@ -2,8 +2,9 @@
 
 set -euo pipefail
 
-# 这个 wrapper 把通用 wrk runner 的产物落到 Suite D。
-# 这样 D 扫资源轴时和 A 共用同一套实现，但结果目录不会重新混在一起。
+# 这是给历史 wrk 压测留下来的 generic wrapper。
+# 它不是论文正式命令；正式入口应走 run_suite_d_case.py / run_suite_d_topology_search.py / run_suite_d_scaling.py。
+# 这里继续保留，只是为了让旧的 common runner 还能把结果稳定落到 suite_d 目录。
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 export BENCH_SUITE="suite_d"

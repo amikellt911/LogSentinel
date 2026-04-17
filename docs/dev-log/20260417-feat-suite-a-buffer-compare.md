@@ -258,31 +258,83 @@
 
 - 新增 `run_suite_d_topology_search.py`，把 `24` 核拓扑搜索收口成固定的 `T1/T2/T3` 三候选，不再让 Suite D 重新膨胀成大矩阵调参。
 - runner 固定 `sender=4 / backend=20`、`wrk_cpuset=0-3`、`server_cpuset=4-23` 和 `AI-off`，只比较 `server_io_threads / dispatch_worker_threads / worker_threads` 这三个拓扑差异。
-- 搜索 runner 直接调用 `run_suite_d_case.run_suite_d_case()`，不自己重写 measurement/drain 逻辑，这样后面的拓扑排名和单 case JSON 口径天然一致。
-- 终端输出压缩成每个 candidate 一行摘要：`online / ratio / drain / qps / winner_so_far`，详细结果继续写进 `summary.json`。
-- 新增单测锁住默认 candidate 表、排序规则和 `summary.json` 的 `top_candidates` 结构，避免以后有人把搜索面扩脏或者把排序优先级改反。
 
 ## Verification
 
-- `python3 -m unittest server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py`
 - `python3 -m unittest server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py`
-- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_topology_search.py server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py server/tests/benchmark/suite_d/run_suite_d_case.py`
+- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_topology_search.py server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py`
 - `python3 server/tests/benchmark/suite_d/run_suite_d_topology_search.py --help`
+- `git diff --check -- server/tests/benchmark/suite_d/run_suite_d_topology_search.py server/tests/benchmark/suite_d/run_suite_d_topology_search_unit_test.py`
 
 ## Learning Tips
 
 ### Newbie Tips
 
-- 拓扑搜索和参数搜索不是一回事。Suite D 这里要定的是“哪种线程拓扑更像真实部署”，不是把 flush/waterline/lifecycle 再从头搜一遍。
-- 排名第一优先级必须是窗口内已经真正完成了多少 trace。尾巴短只能当 tie-break，不能反过来压过在线完成量，不然会选出一个“停表时少完成、但拖尾略短”的假优胜者。
+- 拓扑搜索不是把所有线程参数全排列暴力枚举。主图真正要的是“统一部署策略下，资源加上去以后会不会继续涨”，所以这里只做很小的代表性候选搜索。
+- `AI-off` 时 `worker_threads` 不再背 AI 调用这类长尾阻塞，真正更值得优先怀疑的是 `server_io_threads` 和 `dispatch_worker_threads`。
 
 ### Function Explanation
 
-- `DEFAULT_CANDIDATES`：冻结 `T1/T2/T3` 三个 24 核候选拓扑。
-- `build_case_args()`：把候选拓扑差异注入到 `run_suite_d_case.py` 的单 case CLI，并派生每个 candidate 的独立目录和端口。
-- `candidate_sort_key()`：按 `online_completed_traces_per_sec`、`online_completion_ratio`、`drain_tail_ms` 的顺序做排序。
+- `build_candidates()`：固定产出 `T1/T2/T3` 三个候选，不把搜索面继续放大。
+- `candidate_sort_key()`：先按 `online_completed_traces_per_sec`，再按 `online_completion_ratio`，最后才比较 `drain_tail_ms`。
+- `run_topology_search()`：只负责编排候选、调用单 case runner、汇总摘要，不自己处理 wrk 或 SQLite 细节。
 
 ### Pitfalls
 
-- 如果拓扑搜索 runner 自己再写一套 SQLite 轮询和结果聚合，后面单 case、拓扑搜索、主曲线三层口径很容易分叉，最后表格看起来像一个系统，实际上是三套脚本。
-- 如果搜索脚本默认就允许 `AI-on`，24 核拓扑排名会被 proxy 限流、外部 provider 抖动之类的噪声污染，根本看不出 `io/dispatch-heavy` 拓扑差异。
+- 如果每个总核数点位都独立重搜最优拓扑，后面老师一问“到底是核数变了还是参数变了”，整张主曲线就讲不干净了。
+- 如果拓扑搜索输出一上来就打印整块 JSON，批跑时终端几乎没法看，人只能重新翻结果文件。
+
+---
+
+# 2026-04-17 feat(benchmark): 冻结 Suite D 主曲线入口
+
+## Git Commit Message
+
+`feat(benchmark): 冻结 Suite D 主曲线入口`
+
+## Modification
+
+- `server/tests/benchmark/suite_d/run_suite_d_scaling.py`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_unit_test.py`
+- `server/tests/benchmark/suite_d/run_suite_d_local4_ai_on.sh`
+- `server/tests/benchmark/suite_d/run_suite_d_topology_search_24c.sh`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh`
+- `server/tests/benchmark/suite_d/run_suite_d.sh`
+- `server/tests/benchmark/suite_d/suite_d_frozen_wrappers_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+## Summary
+
+- 新增 `run_suite_d_scaling.py`，把 Suite D 主扩展曲线固定成 `4/8/12/16/20/24` 六个总核数点位，并冻结 sender/backend 核数拆分、T2 拓扑比例映射和水位派生规则。
+- scaling runner 统一按 `sender` 从 0 号核开始、`backend` 紧跟其后 的方式自动派生 `wrk_cpuset / server_cpuset`，避免每个点位再手抄绑核命令。
+- scaling runner 统一派生 `worker_queue_size / trace_active_session_limit / trace_buffered_span_limit`，这样主曲线比较的是“总预算变大后的统一部署策略”，不是每个点各自临时拍参数。
+- 新增 `run_suite_d_local4_ai_on.sh`、`run_suite_d_topology_search_24c.sh`、`run_suite_d_scaling_24c.sh` 三个 frozen wrapper，分别固定本机 4 核完整链路证明图、24 核拓扑搜索和 24 核主扩展曲线入口。
+- `run_suite_d.sh` 明确改口为 generic wrapper，只给历史 common runner 兜底，避免再被误当成论文正式命令。
+- 新增两组单测：`run_suite_d_scaling_unit_test.py` 锁主曲线的总核数/拓扑/水位派生和摘要格式；`suite_d_frozen_wrappers_unit_test.py` 锁 3 个 frozen wrapper 与 generic wrapper 的关键命令片段。
+
+## Verification
+
+- `python3 -m unittest server/tests/benchmark/suite_d/run_suite_d_scaling_unit_test.py server/tests/benchmark/suite_d/suite_d_frozen_wrappers_unit_test.py server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_scaling.py`
+- `python3 server/tests/benchmark/suite_d/run_suite_d_scaling.py --help`
+- `bash -n server/tests/benchmark/suite_d/run_suite_d_local4_ai_on.sh server/tests/benchmark/suite_d/run_suite_d_topology_search_24c.sh server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh server/tests/benchmark/suite_d/run_suite_d.sh`
+- `git diff --check`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 主扩展曲线不要把“每个点单独调到最优”当成优点。那样画出来的不是扩展曲线，而是六套不同系统拼成的一张图。
+- 这里的 `worker_threads` 不是 CPU 并行度承诺，它只是阻塞槽位；真正决定 sender 和 backend 怎么分家的，是总核数预算和绑核范围。
+
+### Function Explanation
+
+- `DEFAULT_CORE_SPLIT`：冻结主曲线的总核数拆分，回答“这档预算下 sender/backend 各拿多少核”。
+- `DEFAULT_TOPOLOGY_MAP`：冻结 T2 拓扑的比例映射，回答“这档预算下 io/dispatch/worker 线程怎么配”。
+- `build_case_args()`：把总核数点位自动派生为单 case runner 所需的完整命令参数，包括绑核、水位、结果目录和端口。
+- `run_scaling()`：顺序跑六个点位，输出简明摘要，并把完整结果聚合进 `summary.json`。
+
+### Pitfalls
+
+- 如果不把 generic wrapper 明确标成“非正式入口”，后面最容易发生的事就是有人图省事，直接拿旧 wrapper 去跑论文图，结果口径和新 runner 不一致。
+- 如果主曲线里不冻结 sender/core split，而是每次靠人手改 cpuset，复跑时最容易把 4 核本机图和 24 核云机的 4 核档位混成一回事。

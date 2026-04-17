@@ -187,7 +187,7 @@
 - [x] Suite D 实现 Task 1：抽共享 SQLite polling helper，并让 Suite A 改成复用 common helper
 - [x] Suite D 实现 Task 2：落单 case runner 和 Suite D 专用 wrk Lua 摘要口径
 - [x] Suite D 实现 Task 3：落 24 核小拓扑搜索 runner
-- [ ] Suite D 实现 Task 4：落主扩展曲线 runner 和 frozen wrappers
+- [x] Suite D 实现 Task 4：落主扩展曲线 runner 和 frozen wrappers
 - [ ] Suite D 实现 Task 5：补 Suite D flamegraph AI-off 口径
 - [ ] Suite D 实现 Task 6：同步文档、dry-run 和最终校验
 - [x] 追加 dev-log 完成复盘
