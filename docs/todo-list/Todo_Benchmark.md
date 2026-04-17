@@ -140,6 +140,11 @@
   - [x] 实现 Stage 1 搜索脚本，只输出单行摘要和最终 top-k
   - [x] 更新 benchmark 文档和当日 dev-log
   - [x] 跑最小单测、语法检查和后端编译验证
+- [x] Suite A buffered 对比入口：固定 protected 基线，直接比较 tuned buffered 和 `disable_buffered_trace_repo`
+  - [x] 明确本轮口径不再搜 `minimal`，而是用 `protected + grace/sweep/flush` 的已知优胜点位做同口径比较
+  - [x] 先写 compare runner 红灯单测，锁 CLI、候选矩阵、摘要输出和排序口径
+  - [x] 实现 `run_suite_a_buffer_compare.py`，只打印精简摘要，详细 JSON 落盘
+  - [x] 跑最小单测、语法检查并补 20260417 dev-log
 
 ## 3. 代码改造 (Main Enhancement)
 - [x] 为 `dispatch_worker_threads` 补最小黑盒，先锁冷启动消费和启动日志口径
