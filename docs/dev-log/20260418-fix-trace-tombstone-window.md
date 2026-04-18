@@ -231,3 +231,50 @@
 
 - `worker-threads` 是后端线程数，不等于 CPU 核数；论文口径仍要写 `taskset/server-cpuset` 绑定的实际核心数。
 - 导出脚本不能默认搬全量 DB 和日志；这些文件适合临时诊断，不适合作为论文默认资产包。
+
+---
+
+## 追加记录：fix(benchmark): 让 Suite D 导出脚本自动收口 conn23 scaling
+
+### Git Commit Message
+
+`fix(benchmark): 自动导出 Suite D conn23 scaling 资产`
+
+### Modification
+
+- `server/tests/benchmark/paper/export_suite_d_paper_assets.sh`
+
+### Summary
+
+- 修正远端手工导出 conn23 scaling 容易被换行、heredoc 和 grep 参数破坏的问题。
+- `export_suite_d_paper_assets.sh` 现在会自动检测 `/tmp/suite_d_scaling_24c_conn23_final_summary.json`：
+  - 如果存在，就复制到 `summary/scaling_summary_conn23.json`；
+  - 自动读取 summary 内的 `actual_scaling_root`；
+  - 复制对应 `result.json` 到 `cases/scaling_conn23/`；
+  - 生成 `diagnostics/diagnostics_scaling_conn23.log`。
+- 如果当前容器没有有效火焰图产物，导出脚本会写 `diagnostics/flamegraph_unavailable.log`：
+  - 明确记录 `perf_event_open` 被容器权限拒绝或没有有效 perf 样本；
+  - 避免把 0 样本的错误 SVG 当成论文证据。
+
+### Verification
+
+- `bash -n server/tests/benchmark/paper/export_suite_d_paper_assets.sh`
+- `git diff --check`
+- 使用 `/tmp/suite_d_export_mock.*` 临时目录模拟 connection/default scaling/conn23 scaling/无效 flamegraph，确认脚本会导出 `scaling_summary_conn23.json`、`cases/scaling_conn23/.../result.json`、`diagnostics_scaling_conn23.log`，并清理无效 `flamegraph/overload_conn90` 后写入 `flamegraph_unavailable.log`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- 远端终端里复制多行 Python/grep 最容易被自动换行打断。只要逻辑超过三四行，就应该进脚本文件，而不是继续靠手敲。
+- benchmark summary 里已经记录了 `actual_scaling_root`，导出脚本应该读取这个字段，而不是让人手工记 `/tmp` 目录名。
+
+#### Function Explanation
+
+- `export_scaling_variant(...)`：按一个 scaling summary 自动导出 summary、case result 和诊断摘录。
+- `python3 - "${summary_json}"`：把 summary 路径作为参数传给 Python，避免把长路径直接拼进 Python 字符串里。
+
+#### Pitfalls
+
+- 0 字节 `perf.data` 生成出来的 SVG 不是有效火焰图，只是错误产物，不能作为论文资产。
+- conn23 scaling 和默认 scaling 属于两个不同口径，资产名必须区分，不能直接覆盖不留痕。
