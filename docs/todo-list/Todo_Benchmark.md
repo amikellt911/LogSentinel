@@ -204,3 +204,4 @@
   - [x] 把 Suite A / Suite B / Suite D 的 `result.json` 与 `summary.json` 统一接上 `experiment_context / artifacts`
   - [x] 给 flamegraph 入口补 `run-summary.json`，把同一套机器/拓扑信息和 svg/perf 产物路径一起落盘
   - [x] 同步 benchmark README / 总览文档 / 当日 dev-log，并做语法检查、单测和 diff 校验
+- [x] 固定远端论文实验运行/导出脚本：Suite A/B/D 都提供一键运行入口和一键资产导出入口，避免在云机手敲长命令时破坏 shell/Python 引号。

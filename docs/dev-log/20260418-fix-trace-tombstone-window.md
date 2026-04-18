@@ -174,3 +174,60 @@
 
 - 只把 final 指标打印出来但不接入排序，没有意义；那只是“看板变漂亮了”，不是口径修正。
 - 只看 `final_trace_summary` 也不够，因为不同点位的 `offered_traces` 会波动；所以必须同时保留 `final_completion_ratio` 这个归一化口径。
+
+---
+
+## 追加记录：chore(benchmark): 固定论文远端运行与资产导出脚本
+
+### Git Commit Message
+
+`chore(benchmark): 固定论文远端运行与资产导出脚本`
+
+### Modification
+
+- `server/tests/benchmark/paper/run_suite_a_paper.sh`
+- `server/tests/benchmark/paper/run_suite_b_paper.sh`
+- `server/tests/benchmark/paper/run_suite_d_paper.sh`
+- `server/tests/benchmark/paper/export_suite_a_paper_assets.sh`
+- `server/tests/benchmark/paper/export_suite_b_paper_assets.sh`
+- `server/tests/benchmark/paper/export_suite_d_paper_assets.sh`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### Summary
+
+- 新增 `paper/` 目录，把论文最终实验拆成 6 个固定入口：
+  - Suite A：一键跑 16c 主对比和 buffer 辅助归因；
+  - Suite B：一键跑 x10 总量 campaign；
+  - Suite D：一键跑 final-aware 连接确认和 24c scaling；
+  - A/B/D 各自对应一键资产导出脚本。
+- 运行脚本都会写 `/tmp/logsentinel_paper_latest/suite_x.env`：
+  - 这个 state 文件记录本轮真实 summary/root 路径；
+  - 导出脚本默认读取 state，不再要求远端手工复制一堆 `/tmp/...-timestamp` 路径。
+- 导出脚本只搬论文轻量资产：
+  - suite-level summary；
+  - matrix/run-level summary；
+  - 必要的 `result.json`；
+  - 摘录后的 `diagnostics.log`。
+- 默认不搬 SQLite、WAL/SHM、manifest 和完整 server log，避免云机磁盘再次被实验资产打满。
+
+### Verification
+
+- `bash -n server/tests/benchmark/paper/run_suite_a_paper.sh server/tests/benchmark/paper/run_suite_b_paper.sh server/tests/benchmark/paper/run_suite_d_paper.sh server/tests/benchmark/paper/export_suite_a_paper_assets.sh server/tests/benchmark/paper/export_suite_b_paper_assets.sh server/tests/benchmark/paper/export_suite_d_paper_assets.sh`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- 远端复制长命令最容易坏在 heredoc、引号和换行缩进。把命令收成脚本后，复杂的 Python 诊断生成逻辑可以安全放在脚本文件里，不再通过终端逐行解释。
+- 运行脚本写 state 文件，导出脚本读取 state 文件，这比“人肉记住最后一个 timestamp 目录”可靠得多。
+
+#### Function Explanation
+
+- `detect_core_base_offset()`：从 cgroup cpuset 里读容器可用 CPU 起点，避免云机把 CPU 映射到高位区间时还写死 `0-15`。
+- `build_cpuset()`：按起点和核心数生成 `taskset -c` 能消费的区间字符串。
+- `source "${STATE_FILE}"`：把上一阶段运行脚本记录的 shell 变量读回来，用来定位真实结果目录和 summary JSON。
+
+#### Pitfalls
+
+- `worker-threads` 是后端线程数，不等于 CPU 核数；论文口径仍要写 `taskset/server-cpuset` 绑定的实际核心数。
+- 导出脚本不能默认搬全量 DB 和日志；这些文件适合临时诊断，不适合作为论文默认资产包。
