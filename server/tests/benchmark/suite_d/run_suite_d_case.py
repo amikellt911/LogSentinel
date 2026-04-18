@@ -385,9 +385,14 @@ def run_suite_d_case(
 
         sqlite_path = Path(runtime_args.sqlite_db)
         stop_counts = sqlite_counter(sqlite_path)
+        # stop_counts 只代表“wrk 停止这一刻 SQLite 已经看见多少 trace”，也就是在线窗口内完成量。
+        # 这里不能直接把它当 final，因为 buffered repo / dispatch / shutdown drain 还可能继续把尾巴补进去。
+        # Suite D 当前又存在 non-2xx/503，所以 offered_traces 不是“最终一定要追满的真值”。
+        # 真正的 final 必须先停服，让进程把退出路径上的 drain 做完，再按“SQLite 是否稳定”收最终计数。
+        stop_server_process(process_info, args.stop_timeout_sec)
+        process_info = None
         stable = wait_for_stable_runner(
             sqlite_path,
-            expected_trace_count=int(wrk_metrics["offered_traces"]),
             poll_interval_ms=runtime_args.poll_interval_ms,
             stable_rounds=runtime_args.stable_rounds,
             confirm_sleep_ms=runtime_args.confirm_sleep_ms,

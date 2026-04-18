@@ -125,7 +125,9 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
 
             def fake_wait(sqlite_path: Path, **kwargs):
                 self.assertEqual("suite_d.db", sqlite_path.name)
-                self.assertEqual(1523, kwargs["expected_trace_count"])
+                # Suite D 的 final 现在以“停服后 SQLite 稳定”为准，不再拿 offered_traces 强行追满。
+                # 否则一旦入口存在 503/non-2xx，drain 就会被伪装成永远超时。
+                self.assertIsNone(kwargs.get("expected_trace_count"))
                 # t_stop_ms 要继续用墙钟写进结果 JSON，方便跨机器对齐日志时间；
                 # 但 drain_tail_ms 是“停发后过了多久才追平”的耗时，只能用 monotonic 起点。
                 # 如果这里把 epoch ms 传进去，monotonic helper 会把负数压成 0，Suite D 的 drain 指标就会假好看。
@@ -208,6 +210,108 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
         self.assertIn("artifacts", saved)
         self.assertEqual("suite_d", saved["experiment_context"]["suite"])
         self.assertIn("cpu_allocation", saved["experiment_context"])
+
+    def test_run_suite_d_case_stops_server_before_waiting_for_final_sqlite_counts(self) -> None:
+        if suite_d_module is None or not hasattr(suite_d_module, "run_suite_d_case"):
+            self.fail("run_suite_d_case should exist for Suite D single-case runner")
+
+        sample_output = """
+Running 15s test @ http://127.0.0.1:18080
+  2 threads and 120 connections
+  Latency Distribution
+     95%   12.35ms
+     99%   18.90ms
+Requests/sec:  812.34
+12184 requests in 15.00s, 1.20MB read
+trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_ms=12.35 latency_p99_ms=18.90
+"""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            requested_root = str(Path(temp_dir) / "suite_d_case")
+            stop_state = {"called": False}
+
+            def fake_wrk_runner(command, _env):
+                command_text = " ".join(command)
+                if "-d3s" in command_text:
+                    return "warmup ok"
+                return sample_output
+
+            def fake_launch(command: str, _log_path: Path):
+                return {"process": object(), "log_file": object(), "command": command}
+
+            def fake_stop(_process_info, _timeout_sec: float):
+                stop_state["called"] = True
+
+            def fake_wait(sqlite_path: Path, **kwargs):
+                # 这里专门锁“先停服，再等 final”这条时序：
+                # 如果还沿用旧逻辑先 wait 再 stop，那么 buffered repo / shutdown drain
+                # 追加写进去的 summary 就会被 benchmark 提前漏掉。
+                self.assertTrue(stop_state["called"])
+                # Suite D 的 offered_traces 会把 non-2xx 也算进去。
+                # 停服以后再等 final 时，不能继续拿 offered 去追满，否则 drain 会被假性 timeout 污染。
+                self.assertIsNone(kwargs.get("expected_trace_count"))
+                self.assertEqual("suite_d.db", sqlite_path.name)
+                return {
+                    "final_counts": {"trace_summary": 1490, "trace_span": 11920},
+                    "drain_tail_ms": 275,
+                    "drain_timeout": False,
+                }
+
+            args = SimpleNamespace(
+                server_bin="./server/build/LogSentinel",
+                server_command="",
+                run_root=requested_root,
+                output_json="",
+                sqlite_db="",
+                server_log="",
+                port_base=18080,
+                server_cpuset="1-3",
+                wrk_cpuset="0",
+                wrk_bin="wrk",
+                wrk_threads=2,
+                connections=120,
+                duration="15s",
+                warmup_duration="3s",
+                spans_per_trace=8,
+                server_io_threads=2,
+                dispatch_worker_threads=1,
+                worker_threads=12,
+                worker_queue_size=4096,
+                trace_active_session_limit=512,
+                trace_buffered_span_limit=4096,
+                trace_max_dispatch_per_tick=64,
+                trace_lifecycle_profile="protected",
+                trace_sealed_grace_window_ms=100,
+                trace_sweep_interval_ms=200,
+                trace_primary_flush_span_threshold=512,
+                trace_primary_flush_interval_ms=5,
+                startup_timeout_sec=10.0,
+                stop_timeout_sec=5.0,
+                poll_interval_ms=50,
+                stable_rounds=3,
+                confirm_sleep_ms=100,
+                max_drain_wait_ms=30000,
+                disable_ai=True,
+                disable_webhook=True,
+                no_auto_start_proxy=True,
+                disable_buffered_trace_repo=False,
+            )
+
+            with mock.patch.object(suite_d_module, "assert_port_available"), \
+                mock.patch.object(suite_d_module, "launch_server_process", side_effect=fake_launch), \
+                mock.patch.object(suite_d_module, "wait_for_port_ready"), \
+                mock.patch.object(suite_d_module, "stop_server_process", side_effect=fake_stop):
+                result = suite_d_module.run_suite_d_case(
+                    args,
+                    wrk_runner=fake_wrk_runner,
+                    sqlite_counter=lambda _path: {"trace_summary": 1401, "trace_span": 11208},
+                    wait_for_stable_runner=fake_wait,
+                )
+
+        self.assertTrue(stop_state["called"])
+        self.assertEqual(1401, result["sqlite_counts_at_stop"]["trace_summary"])
+        self.assertEqual(1490, result["sqlite_counts_final"]["trace_summary"])
+        self.assertEqual(275, result["drain_tail_ms"])
 
     def test_main_prints_stop_and_final_trace_counts_for_quick_diagnosis(self) -> None:
         if suite_d_module is None or not hasattr(suite_d_module, "main"):

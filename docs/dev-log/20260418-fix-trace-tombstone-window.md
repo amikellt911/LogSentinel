@@ -53,3 +53,61 @@
 
 - 不要用 `sweep=500ms` 作为最终性能参数。它只能验证 tombstone 根因，因为它会明显拖慢 dispatch。
 - 修复后正式 Suite D 仍应回到 `sweep=20ms + max_dispatch_per_tick=256` 这类高频 dispatch 参数，再观察 `primary_flush_fail_count` 是否下降。
+
+---
+
+## 追加记录：fix(benchmark): 修正 Suite D final 口径被停服时序低估
+
+### Git Commit Message
+
+`fix(benchmark): 修正 Suite D final 口径被停服时序低估`
+
+### Modification
+
+- `server/tests/benchmark/suite_d/run_suite_d_case.py`
+- `server/tests/benchmark/suite_d/run_suite_d_case_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### Summary
+
+- 修正 Suite D single-case runner 的 final 统计时序：
+  - 之前是在服务进程还活着时先读 SQLite `final`，然后才停服；
+  - 如果 buffered repo 或 shutdown drain 还会继续补写，benchmark 就会把这段尾巴提前漏掉。
+- 现在改成：
+  - `sqlite_counts_at_stop` 继续保留 wrk 停止时的在线完成量；
+  - 先停服，确保 buffered repo / dispatch / shutdown 路径都执行完；
+  - 再等待 SQLite 计数稳定，并把它写入 `sqlite_counts_final`。
+- 同时去掉 Suite D final 等待对 `offered_traces` 的强制追满：
+  - Suite D 存在 `503/non-2xx` 时，`offered_traces` 会高于“真正被服务端接受的 trace 数”；
+  - 如果继续拿它当 `expected_trace_count`，`drain_tail_ms` 会被误报成永远超时。
+- 新增单测 `test_run_suite_d_case_stops_server_before_waiting_for_final_sqlite_counts`，锁住“先停服，再等 final”的关键时序。
+
+### Verification
+
+- 先写红灯测试并确认旧代码失败：
+  - `python3 -m unittest server.tests.benchmark.suite_d.run_suite_d_case_unit_test.SuiteDRunSuiteDCaseUnitTest.test_run_suite_d_case_stops_server_before_waiting_for_final_sqlite_counts`
+  - 失败点：旧逻辑会先调 `wait_until_sqlite_stable`，`stop_server_process` 还没发生。
+- `python3 -m unittest server.tests.benchmark.suite_d.trace_model_suite_d_unit_test server.tests.benchmark.suite_d.run_suite_d_case_unit_test server.tests.benchmark.suite_d.suite_d_frozen_wrappers_unit_test`
+- `bash -n server/tests/benchmark/suite_d/run_suite_d_connection_search_24c.sh server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh server/tests/benchmark/run_paper_benchmark_cloud.sh`
+- `git diff --check`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- benchmark 里的 `online / stop / final` 是三个不同口径：
+  - `online` 看测量窗口内已经落库多少；
+  - `stop` 看 wrk 停止瞬间 SQLite 已经看见多少；
+  - `final` 看整条 case 完全收尾后最终落了多少。
+- 如果把 `final` 提前到停服前读取，含缓冲写入的系统很容易被测成“少落了一截”。
+
+#### Function Explanation
+
+- `stop_server_process(...)`：结束 auto-start 的后端进程，并等待它把退出路径走完。
+- `wait_until_sqlite_stable(...)`：轮询 SQLite 计数，直到计数稳定或超时。
+- `sqlite_counts_at_stop / sqlite_counts_final`：前者服务在线指标，后者服务 case 完整收尾口径，不能混用。
+
+#### Pitfalls
+
+- `offered_traces` 只是 wrk 侧“理论上发起了多少条 trace”，不等于后端一定接受了这么多 trace。
+- 只要压测里存在 `503/non-2xx`，就不能再拿 `offered_traces` 当 final drain 的硬目标，否则 `drain_tail_ms` 会被系统性高估。
