@@ -2045,6 +2045,54 @@ TEST_F(TraceSessionManagerUnitTest, CompletedTombstoneExpiresAndAllowsTraceKeyRe
     pool.shutdown();
 }
 
+TEST_F(TraceSessionManagerUnitTest, CompletedTombstoneWindowDoesNotShrinkWithFastSweepTick)
+{
+    // 目的：复现云机 Suite D 的真实问题。
+    // 当 sweep tick 从默认 500ms 压到 20ms 时，TIME_WAIT 仍应保留约 12.5s；
+    // 否则同一 trace 的慢到 span 会在 500ms 后复活旧 trace_key，最终把 SQLite 主键打重。
+    ThreadPool pool(1);
+    FakeTraceRepository repo;
+    auto buffered_repo = MakeBufferedTraceRepository(&repo);
+    TraceSessionManager manager(
+        &pool,
+        buffered_repo.get(),
+        nullptr,
+        /*capacity*/10,
+        /*token_limit*/0,
+        /*notifier*/nullptr,
+        /*idle_timeout_ms*/5000,
+        /*wheel_tick_ms*/20,
+        /*sealed_grace_window_ms*/100);
+
+    SpanEvent first = MakeSpan(130, 13001, 1000);
+    first.trace_end = true;
+    ASSERT_EQ(manager.Push(first), TraceSessionManager::PushResult::Accepted);
+
+    for (int tick = 1; tick <= 6; ++tick) {
+        SweepOneTick(manager, /*now_ms*/tick * 20, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    }
+
+    ASSERT_TRUE(WaitUntil([&repo]() {
+        return repo.save_summary_count.load(std::memory_order_acquire) >= 1 &&
+               repo.save_spans_count.load(std::memory_order_acquire) >= 1;
+    }));
+    ASSERT_EQ(manager.size(), 0u);
+    ASSERT_EQ(manager.completed_trace_expire_tick_.count(130), 1u);
+    EXPECT_GE(manager.completed_trace_expire_tick_[130] - manager.current_tick_, 600u);
+
+    for (int tick = 7; tick <= 36; ++tick) {
+        SweepOneTick(manager, /*now_ms*/tick * 20, /*idle_timeout_ms*/5000, /*max_dispatch_per_tick*/8);
+    }
+
+    EXPECT_EQ(manager.completed_trace_expire_tick_.count(130), 1u);
+    SpanEvent late = MakeSpan(130, 13002, 1600);
+    EXPECT_EQ(manager.Push(late), TraceSessionManager::PushResult::Accepted);
+    EXPECT_EQ(manager.size(), 0u);
+    EXPECT_EQ(manager.index_by_trace_.count(130), 0u);
+
+    pool.shutdown();
+}
+
 TEST_F(TraceSessionManagerUnitTest, RebuildTimeWheelKeepsReadyRetryLaterOnRetrySchedule)
 {
     // 目的：验证 ReadyRetryLater 会话在重建时间轮后仍走“快速重投”语义，而不是退回普通 idle timeout。

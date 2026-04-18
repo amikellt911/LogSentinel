@@ -409,8 +409,10 @@ private:
     // 冷启动配置在构造时先换算成 tick，后面状态机只读缓存值，不再每次临时做毫秒到 tick 的折算。
     uint64_t sealed_grace_ticks_ = 2;
     uint64_t retry_base_delay_ticks_ = 1;
-    // completed tombstone 默认保留 25 tick；当前只在 protected profile 下生效。
-    uint64_t completed_trace_tombstone_ticks_ = 25;
+    // completed tombstone 在构造期由固定毫秒窗口换算成 tick；当前只在 protected profile 下生效。
+    // 这里不能再把默认值写成 25 tick，因为 sweep tick 可能被 benchmark 压到 20ms，
+    // 固定 tick 会把 TIME_WAIT 从 12.5s 误缩成 500ms，导致已完成 trace 被慢到 span 复活。
+    uint64_t completed_trace_tombstone_ticks_ = 1;
     uint64_t timeout_ticks_ = 10;
     uint64_t current_tick_ = 0;
     int64_t last_tick_now_ms_ = 0;

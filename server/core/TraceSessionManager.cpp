@@ -22,6 +22,10 @@ namespace
     constexpr const char* kAiStatusSkippedCircuit = "skipped_circuit";
     constexpr const char* kAiStatusFailedPrimary = "failed_primary";
     constexpr const char* kAiStatusFailedBoth = "failed_both";
+    // completed tombstone 是防止“已完成 trace 的慢到 span 复活旧 trace_key”的 TIME_WAIT 窗口。
+    // 这个窗口必须按真实毫秒保持稳定，不能跟 sweep tick 绑定；否则 benchmark 把 sweep 从 500ms 压到 20ms 时，
+    // 固定 25 tick 会从 12.5s 退化成 500ms，最终让同一 trace_id 再次落库并触发 SQLite UNIQUE 冲突。
+    constexpr int64_t kCompletedTraceTombstoneWindowMs = 12500;
 
     std::string toLowerCopy(std::string value)
     {
@@ -246,6 +250,10 @@ TraceSessionManager::TraceSessionManager(ThreadPool *thread_pool,
     // sealed/retry 这两档时间现在也跟着启动配置走，避免状态机里继续保留 1/2 tick 的硬编码。
     sealed_grace_ticks_ = ComputeDelayTicks(sealed_grace_window_ms);
     retry_base_delay_ticks_ = ComputeDelayTicks(retry_base_delay_ms);
+    // completed tombstone 保留的是固定毫秒语义，不是固定 tick 数。
+    // 既然 sweep_interval_ms 同时决定时间轮粒度，那么这里必须在构造期按当前 tick 向上换算；
+    // 这样 sweep=20ms 时会得到约 625 tick，sweep=500ms 时仍是 25 tick，两者都保留 12.5s TIME_WAIT。
+    completed_trace_tombstone_ticks_ = ComputeDelayTicks(kCompletedTraceTombstoneWindowMs);
     time_wheel_.resize(wheel_size_);
     // 先把 completed tombstone 的桶位也按同样的 wheel_size 建好。
     // 这样后面只要跟着 current_tick_ 同步推进，就能在同一套 tick 节奏里做过期回收。
