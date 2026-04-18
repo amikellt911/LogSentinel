@@ -198,6 +198,7 @@
 - [x] 修正 Suite D wrk 线程 trace_key 分片：避免 Lua local 变量遮蔽 `thread:set` 注入的线程 ID，导致多 wrk 线程生成重复 trace_id
 - [x] 修正 TraceSessionManager completed tombstone 时长：从固定 25 tick 改为固定毫秒窗口，避免 `sweep=20ms` 时 TIME_WAIT 被压短到 500ms
 - [x] 修正 Suite D single-case runner 的 final 口径：停服后再等待 SQLite 稳定，避免 buffered repo / shutdown drain 被 benchmark 提前截断
+- [x] 修正 Suite D 连接搜索汇总/选优口径：把 final completion 纳入 summary 与 winner 判定，避免只看 online 指标误选参数
 - [x] Benchmark 结果资产收尾：把机器信息、CPU 分配、线程拓扑、有效实验参数和产物路径直接注入 Suite A/B/D 的主 JSON 输出
   - [x] 先补共享 metadata helper 和最小红灯单测，锁 `hostname/uname/lscpu` 采集、cpuset 解析和 JSON 注入结构
   - [x] 把 Suite A / Suite B / Suite D 的 `result.json` 与 `summary.json` 统一接上 `experiment_context / artifacts`

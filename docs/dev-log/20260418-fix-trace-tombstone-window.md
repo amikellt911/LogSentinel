@@ -111,3 +111,66 @@
 
 - `offered_traces` 只是 wrk 侧“理论上发起了多少条 trace”，不等于后端一定接受了这么多 trace。
 - 只要压测里存在 `503/non-2xx`，就不能再拿 `offered_traces` 当 final drain 的硬目标，否则 `drain_tail_ms` 会被系统性高估。
+
+---
+
+## 追加记录：fix(benchmark): 修正 Suite D 连接搜索汇总/选优只看 online 的误判
+
+### Git Commit Message
+
+`fix(benchmark): 修正 Suite D 连接搜索汇总选优口径`
+
+### Modification
+
+- `server/tests/benchmark/suite_d/run_suite_d_connection_search_24c.sh`
+- `server/tests/benchmark/suite_d/run_suite_d_connection_search_summary.py`
+- `server/tests/benchmark/suite_d/run_suite_d_connection_search_summary_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### Summary
+
+- 把 Suite D `24c` 连接确认搜索的汇总逻辑从 shell inline Python 抽成独立 helper：
+  - 新增 `run_suite_d_connection_search_summary.py`；
+  - 统一读取每个 case 的 `online / ratio / qps / sqlite_counts_final.trace_summary / wrk_metrics.offered_traces / drain_tail_ms`。
+- 连接搜索 summary 不再只输出 `median_online / median_ratio / median_qps`，现在会额外输出：
+  - `median_final_trace_summary`
+  - `median_final_completion_ratio`
+  - `median_drain_tail_ms`
+- winner 判定口径同步调整：
+  - 先看 `median_final_completion_ratio`
+  - 再看 `median_final_trace_summary`
+  - 再看 `median_online_completed_traces_per_sec`
+  - 再看 `median_online_completion_ratio`
+  - 最后才用 `median_drain_tail_ms` 与更小连接数做 tie-break
+- 这样修完以后，像你这轮已经暴露出来的场景就不会再误选：
+  - 某个点位虽然 `online` 更高；
+  - 但如果 `final` 明显掉单，summary/best 会把它排到后面。
+
+### Verification
+
+- 先写红灯测试并确认旧逻辑失败：
+  - `python3 -m unittest server.tests.benchmark.suite_d.run_suite_d_connection_search_summary_unit_test`
+  - 失败点：缺少 helper，且不存在 final-aware summary/best 逻辑。
+- `python3 -m unittest server.tests.benchmark.suite_d.trace_model_suite_d_unit_test server.tests.benchmark.suite_d.run_suite_d_case_unit_test server.tests.benchmark.suite_d.run_suite_d_connection_search_summary_unit_test server.tests.benchmark.suite_d.suite_d_frozen_wrappers_unit_test`
+- `bash -n server/tests/benchmark/suite_d/run_suite_d_connection_search_24c.sh server/tests/benchmark/suite_d/run_suite_d_scaling_24c.sh server/tests/benchmark/run_paper_benchmark_cloud.sh`
+- `git diff --check`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- `online` 和 `final` 不是一回事：
+  - `online` 只看测量窗口内已经落库的 trace；
+  - `final` 看的是停服收尾后 SQLite 最终留下来的 trace。
+- benchmark summary 如果只看 `online`，会天然偏向“窗口里冲得快但尾巴掉得多”的配置，结论会歪。
+
+#### Function Explanation
+
+- `build_connection_search_summary(...)`：读取连接搜索目录下的 `r*_cXXX.json`，按连接数聚合出中位数 summary。
+- `connection_summary_sort_key(...)`：定义 winner 的排序键，把 final completion 放在 online 指标前面。
+- `print_connection_search_summary(...)`：统一打印 `[summary] / [best]` 行，避免 shell wrapper 自己维护一份漂移逻辑。
+
+#### Pitfalls
+
+- 只把 final 指标打印出来但不接入排序，没有意义；那只是“看板变漂亮了”，不是口径修正。
+- 只看 `final_trace_summary` 也不够，因为不同点位的 `offered_traces` 会波动；所以必须同时保留 `final_completion_ratio` 这个归一化口径。

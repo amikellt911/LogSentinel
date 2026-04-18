@@ -106,80 +106,9 @@ for ((repeat_index = 0; repeat_index < REPEATS; ++repeat_index)); do
   done
 done
 
-# 这里统一按每个连接点的 online/ratio 中位数做确认汇总。
-# 一旦单次波动比点位差异还大，就必须看中位数，不能继续拿单次最优冒充冻结结论。
-SEARCH_ROOT_ENV="${SEARCH_ROOT}" CONNECTION_SET_ENV="${CONNECTION_SET}" PYTHON_BIN_ENV="${PYTHON_BIN}" "${PYTHON_BIN}" - <<'PY'
-import json
-import os
-import statistics
-from pathlib import Path
-
-search_root = Path(os.environ["SEARCH_ROOT_ENV"])
-connection_values = [int(item.strip()) for item in os.environ["CONNECTION_SET_ENV"].split(",") if item.strip()]
-
-grouped = {value: [] for value in connection_values}
-for value in connection_values:
-    pattern = f"r*_c{value:03d}.json"
-    for path in sorted(search_root.glob(pattern)):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        grouped[value].append(
-            {
-                "online": float(payload["online_completed_traces_per_sec"]),
-                "ratio": float(payload["online_completion_ratio"]),
-                "qps": float(payload["wrk_metrics"]["requests_per_sec"]),
-            }
-        )
-
-summary = {
-    "search_root": str(search_root),
-    "connection_set": connection_values,
-    "by_connections": [],
-}
-
-for value in connection_values:
-    records = grouped[value]
-    if not records:
-        continue
-    online_values = [item["online"] for item in records]
-    ratio_values = [item["ratio"] for item in records]
-    qps_values = [item["qps"] for item in records]
-    item = {
-        "connections": value,
-        "runs": len(records),
-        "median_online_completed_traces_per_sec": statistics.median(online_values),
-        "median_online_completion_ratio": statistics.median(ratio_values),
-        "median_requests_per_sec": statistics.median(qps_values),
-        "max_online_completed_traces_per_sec": max(online_values),
-        "min_online_completed_traces_per_sec": min(online_values),
-    }
-    summary["by_connections"].append(item)
-    print(
-        "[summary] "
-        f"connections={value} "
-        f"median_online={item['median_online_completed_traces_per_sec']:.2f} "
-        f"median_ratio={item['median_online_completion_ratio']:.4f} "
-        f"median_qps={item['median_requests_per_sec']:.2f} "
-        f"runs={item['runs']}"
-    )
-
-best = max(
-    summary["by_connections"],
-    key=lambda item: (
-        float(item["median_online_completed_traces_per_sec"]),
-        float(item["median_online_completion_ratio"]),
-        -int(item["connections"]),
-    ),
-)
-summary["best"] = best
-print(
-    "[best] "
-    f"connections={best['connections']} "
-    f"median_online={best['median_online_completed_traces_per_sec']:.2f} "
-    f"median_ratio={best['median_online_completion_ratio']:.4f}"
-)
-
-(search_root / "summary.json").write_text(
-    json.dumps(summary, indent=2, ensure_ascii=True) + "\n",
-    encoding="utf-8",
-)
-PY
+# 连接确认搜索现在不能再只看 online 中位数。
+# online 只能说明测量窗口内已经落了多少，final completion 才能说明 case 收尾后真正留下了多少。
+# 这里改成统一走 Python helper，把 final ratio/final count 一起纳入 summary 与 winner 判定。
+"${PYTHON_BIN}" "${ROOT_DIR}/server/tests/benchmark/suite_d/run_suite_d_connection_search_summary.py" \
+  --search-root "${SEARCH_ROOT}" \
+  --connection-set "${CONNECTION_SET}"
