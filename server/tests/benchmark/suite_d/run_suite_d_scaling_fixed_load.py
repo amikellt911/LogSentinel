@@ -92,6 +92,10 @@ def parse_optional_positive_int(value: Any, option_name: str) -> Optional[int]:
     return parsed
 
 
+def parse_bool_env(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def build_cpuset(start_core: int, core_count: int) -> str:
     if core_count <= 0:
         raise ValueError("core_count must be > 0")
@@ -140,6 +144,21 @@ def resolve_backend_topology(args: argparse.Namespace, backend_cores: int) -> Js
     return topology
 
 
+def cleanup_case_sqlite_db(case_result: JsonDict, line_writer: Callable[[str], None]) -> None:
+    sqlite_db = str(case_result.get("sqlite_db", "")).strip()
+    if not sqlite_db:
+        line_writer("[cleanup_sqlite_db] skipped reason=missing_sqlite_db")
+        return
+    sqlite_path = Path(sqlite_db)
+    if not sqlite_path.exists():
+        line_writer(f"[cleanup_sqlite_db] skipped reason=not_found path={sqlite_path}")
+        return
+    # 每个 case 的 summary/result/server.log 已经落盘，正式复跑时真正占空间和拖慢 overlay 的是 SQLite DB。
+    # 这里只删 DB，不删 run 目录，后续诊断脚本仍然能读取 result.json 和 server.log。
+    sqlite_path.unlink()
+    line_writer(f"[cleanup_sqlite_db] removed path={sqlite_path}")
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Suite D fixed-load scaling runner: 固定 wrk/sender 输入，只扫后端核心数"
@@ -169,6 +188,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--trace-sweep-interval-ms", type=int, default=20)
     parser.add_argument("--trace-primary-flush-span-threshold", type=int, default=512)
     parser.add_argument("--trace-primary-flush-interval-ms", type=int, default=5)
+    parser.add_argument(
+        "--cleanup-sqlite-db",
+        action="store_true",
+        default=parse_bool_env(os.environ.get("SUITE_D_CLEANUP_SQLITE_DB")),
+        help="正式复跑用：每个 case 完成后删除该 case 的 SQLite DB，保留 result/log",
+    )
+    parser.add_argument(
+        "--cooldown-sec",
+        type=float,
+        default=float(os.environ.get("SUITE_D_COOLDOWN_SEC", "0") or "0"),
+        help="正式复跑用：每个 case 完成并清理后等待，让 overlay/writeback 有时间恢复",
+    )
     parser.add_argument(
         "--force-server-io-threads",
         default=os.environ.get("SUITE_D_FORCE_SERVER_IO_THREADS", ""),
@@ -203,6 +234,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         parser.error("--connections must be > 0")
     if args.backend_core_offset < 0:
         parser.error("--backend-core-offset must be >= 0")
+    if args.cooldown_sec < 0:
+        parser.error("--cooldown-sec must be >= 0")
     if args.ai_mode != "off":
         parser.error("--ai-mode is currently frozen to off for Suite D fixed-load scaling")
     args.backend_core_points = parse_csv_ints(args.backend_core_points, "--backend-core-points")
@@ -325,6 +358,7 @@ def run_fixed_load_scaling(
     args: argparse.Namespace,
     case_runner: Callable[[argparse.Namespace], JsonDict] = run_case_once,
     line_writer: Callable[[str], None] = print,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> JsonDict:
     ensure_scaling_root_resolved(args)
     Path(args.actual_scaling_root).mkdir(parents=True, exist_ok=True)
@@ -367,6 +401,13 @@ def run_fixed_load_scaling(
             f"drain={point_summary['drain_tail_ms']} "
             f"qps={float(point_summary['wrk_metrics']['requests_per_sec']):.2f}"
         )
+        if args.cleanup_sqlite_db:
+            cleanup_case_sqlite_db(case_result, line_writer)
+        if args.cooldown_sec > 0:
+            # cooldown 放在清理之后，避免下一个 case 立刻踩到上一轮 SQLite/overlay 的后台回写。
+            # 这里不改变 benchmark 指标，只改变 case 之间的环境恢复时间。
+            line_writer(f"[cooldown] seconds={float(args.cooldown_sec):.1f}")
+            sleeper(float(args.cooldown_sec))
 
     best_point = max(
         by_backend_cores,
@@ -387,6 +428,8 @@ def run_fixed_load_scaling(
             "connections": int(args.connections),
             "backend_core_offset": int(args.backend_core_offset),
             "forced_topology": forced_topology_from_args(args),
+            "cleanup_sqlite_db": bool(args.cleanup_sqlite_db),
+            "cooldown_sec": float(args.cooldown_sec),
         },
         "by_backend_cores": by_backend_cores,
         "overall": {
@@ -423,6 +466,8 @@ def run_fixed_load_scaling(
             "trace_sweep_interval_ms": args.trace_sweep_interval_ms,
             "trace_primary_flush_span_threshold": args.trace_primary_flush_span_threshold,
             "trace_primary_flush_interval_ms": args.trace_primary_flush_interval_ms,
+            "cleanup_sqlite_db": bool(args.cleanup_sqlite_db),
+            "cooldown_sec": float(args.cooldown_sec),
             "ai_mode": args.ai_mode,
         },
         commands={

@@ -214,3 +214,7 @@
   - [x] 先写红灯单测，锁“覆写线程拓扑但不缩小 backend cpuset”。
   - [x] 实现 CLI/env 覆写入口，并把 forced topology 写入 summary metadata。
   - [x] 验证固定负载单测和 Python 语法。
+- [x] Suite D 正式 clean runner：每个 fixed-load case 后删除 SQLite DB 并冷却，避免 overlay/DB 文件污染后续点位。
+  - [x] 先写红灯单测，锁 `--cleanup-sqlite-db` 会删 DB、`--cooldown-sec` 会逐 case 等待。
+  - [x] 实现 runner 参数和一键 formal clean shell。
+  - [x] 验证 Python 单测、语法检查和 shell `bash -n`。

@@ -106,3 +106,55 @@
 
 - 不能用缩小 `server_cpuset` 来模拟 20 核线程拓扑；那会同时改变 CPU 资源和线程数，诊断变量不干净。
 - forced topology 只适合定位瓶颈，不应该直接覆盖原始 fixed-load 主曲线，除非后续重新冻结论文口径。
+
+---
+
+## 追加：Suite D formal clean runner
+
+### Git Commit Message
+
+`feat(benchmark): 增加 Suite D 正式清理复跑脚本`
+
+### Modification
+
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load.py`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `server/tests/benchmark/paper/run_suite_d_formal_clean.sh`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### Summary
+
+- fixed-load runner 增加 `--cleanup-sqlite-db`：
+  - 每个 case 完成后只删除该 case 的 SQLite DB；
+  - 保留 `result.json / server.log / wrk.log`，保证后续诊断和论文资产可复核。
+- fixed-load runner 增加 `--cooldown-sec`：
+  - 每个 case 清理后等待指定秒数；
+  - 目标是减少 overlay/page-cache/writeback 状态对后续 case 的污染。
+- 新增 `run_suite_d_formal_clean.sh`：
+  - 默认固定 `dispatch=512 / flush_threshold=1024 / flush_interval=5ms`；
+  - 默认打开 `cleanup_sqlite_db=1` 和 `cooldown_sec=60`；
+  - 自动导出 summary、diagnostics、result/log 到 `${HOME}/paper_assets/<date>/suite_d_formal/<tag>`。
+
+### Verification
+
+- `python3 server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py -k test_cleanup_sqlite_db_and_cooldown_after_each_case`
+- `python3 server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load.py server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `bash -n server/tests/benchmark/paper/run_suite_d_formal_clean.sh`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- benchmark 的“数据文件清理”和“结果可复核”不冲突：大 DB 可以删，小 JSON/log 必须留。
+- SQLite 压测很容易被文件系统状态污染，尤其容器 overlay 接近满盘时，单次 flush 延迟会从十几毫秒飙到上百毫秒。
+
+#### Function Explanation
+
+- `cleanup_case_sqlite_db(...)`：从 case result 里读取 `sqlite_db` 路径，删除 DB 文件但保留 run 目录。
+- `sleeper` 注入：单测用 list append 代替真实 `time.sleep`，这样能验证 cooldown 调用次数又不拖慢测试。
+
+#### Pitfalls
+
+- 不能在 case 结束后直接删整个 run 目录，否则诊断脚本会丢失 `result.json/server.log`。
+- 不能只靠外层 shell `sleep`；如果一个 runner 内部连续跑 `16/20/24`，case 之间仍然需要 runner 内部 cooldown。

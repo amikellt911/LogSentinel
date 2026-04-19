@@ -205,6 +205,74 @@ class SuiteDRunSuiteDScalingFixedLoadUnitTest(unittest.TestCase):
             saved["experiment_context"]["thread_topology"]["forced_topology"],
         )
 
+    def test_cleanup_sqlite_db_and_cooldown_after_each_case(self) -> None:
+        if fixed_scaling_module is None or not hasattr(fixed_scaling_module, "run_fixed_load_scaling"):
+            self.fail("run_fixed_load_scaling should exist for Suite D fixed-load runner")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_summary = Path(temp_dir) / "summary.json"
+            args = fixed_scaling_module.parse_args(
+                [
+                    "--scaling-root",
+                    str(Path(temp_dir) / "suite_d_fixed"),
+                    "--output-summary",
+                    str(output_summary),
+                    "--server-bin",
+                    "./server/build/LogSentinel",
+                    "--backend-core-points",
+                    "20,24",
+                    "--cleanup-sqlite-db",
+                    "--cooldown-sec",
+                    "7",
+                ]
+            )
+            args.actual_scaling_root = str(Path(temp_dir) / "suite_d_fixed-actual")
+            db_paths = []
+            sleeps = []
+            lines = []
+
+            def fake_case_runner(case_args):
+                run_root = Path(case_args.run_root)
+                actual_run_root = Path(f"{run_root}-actual")
+                actual_run_root.mkdir(parents=True, exist_ok=True)
+                sqlite_db = actual_run_root / "suite_d.db"
+                sqlite_db.write_text("fake sqlite payload", encoding="utf-8")
+                db_paths.append(sqlite_db)
+                return {
+                    "requested_run_root": str(run_root),
+                    "actual_run_root": str(actual_run_root),
+                    "sqlite_db": str(sqlite_db),
+                    "wrk_metrics": {
+                        "requests": 1000,
+                        "requests_per_sec": 100000.0,
+                        "offered_traces": 200000,
+                        "latency_p95_ms": 0.7,
+                        "latency_p99_ms": 1.2,
+                    },
+                    "online_completed_traces_per_sec": 9000.0,
+                    "online_completion_ratio": 0.45,
+                    "drain_tail_ms": 8000,
+                    "drain_timeout": False,
+                }
+
+            summary = fixed_scaling_module.run_fixed_load_scaling(
+                args,
+                case_runner=fake_case_runner,
+                line_writer=lines.append,
+                sleeper=sleeps.append,
+            )
+            saved = json.loads(output_summary.read_text(encoding="utf-8"))
+
+        self.assertEqual([7.0, 7.0], sleeps)
+        self.assertEqual(2, len(db_paths))
+        self.assertTrue(all(not path.exists() for path in db_paths))
+        self.assertTrue(any("[cleanup_sqlite_db]" in line for line in lines))
+        self.assertTrue(any("[cooldown]" in line for line in lines))
+        self.assertTrue(summary["fixed_load"]["cleanup_sqlite_db"])
+        self.assertEqual(7.0, summary["fixed_load"]["cooldown_sec"])
+        self.assertTrue(saved["experiment_context"]["effective_flags"]["cleanup_sqlite_db"])
+        self.assertEqual(7.0, saved["experiment_context"]["effective_flags"]["cooldown_sec"])
+
 
 if __name__ == "__main__":
     unittest.main()
