@@ -351,6 +351,74 @@ class SuiteDRunSuiteDScalingFixedLoadUnitTest(unittest.TestCase):
             saved["experiment_context"]["effective_flags"]["forced_trace_limits"],
         )
 
+    def test_sqlite_root_override_moves_db_out_of_run_root(self) -> None:
+        if fixed_scaling_module is None or not hasattr(fixed_scaling_module, "run_fixed_load_scaling"):
+            self.fail("run_fixed_load_scaling should exist for Suite D fixed-load runner")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sqlite_root = Path(temp_dir) / "tmpfs_like_sqlite"
+            output_summary = Path(temp_dir) / "summary.json"
+            args = fixed_scaling_module.parse_args(
+                [
+                    "--scaling-root",
+                    str(Path(temp_dir) / "suite_d_fixed"),
+                    "--output-summary",
+                    str(output_summary),
+                    "--server-bin",
+                    "./server/build/LogSentinel",
+                    "--backend-core-points",
+                    "20",
+                    "--sqlite-root",
+                    str(sqlite_root),
+                ]
+            )
+            args.actual_scaling_root = str(Path(temp_dir) / "suite_d_fixed-actual")
+            case_calls = []
+
+            def fake_case_runner(case_args):
+                # 这个覆写的目的不是改 result/log 目录，而是把高频写的 SQLite DB 单独放到另一个根目录。
+                # 如果 sqlite_db 还落在 run_root 下面，就说明 /dev/shm 之类的隔离路径根本没生效。
+                case_calls.append(
+                    {
+                        "run_root": case_args.run_root,
+                        "sqlite_db": case_args.sqlite_db,
+                    }
+                )
+                return {
+                    "requested_run_root": str(Path(case_args.run_root)),
+                    "actual_run_root": f"{case_args.run_root}-actual",
+                    "sqlite_db": case_args.sqlite_db,
+                    "wrk_metrics": {
+                        "requests": 1000,
+                        "requests_per_sec": 100000.0,
+                        "offered_traces": 200000,
+                        "latency_p95_ms": 0.7,
+                        "latency_p99_ms": 1.2,
+                    },
+                    "online_completed_traces_per_sec": 9000.0,
+                    "online_completion_ratio": 0.45,
+                    "drain_tail_ms": 8000,
+                    "drain_timeout": False,
+                }
+
+            summary = fixed_scaling_module.run_fixed_load_scaling(
+                args,
+                case_runner=fake_case_runner,
+                line_writer=lambda _line: None,
+            )
+            saved = json.loads(output_summary.read_text(encoding="utf-8"))
+
+            # 这些断言必须放在 TemporaryDirectory 生命周期内。
+            # 否则 temp_dir 先被清理掉，目录不存在会变成测试自身的假失败，而不是 sqlite-root 逻辑失效。
+            self.assertEqual(1, len(case_calls))
+            sqlite_db_path = Path(case_calls[0]["sqlite_db"])
+            run_root_path = Path(case_calls[0]["run_root"])
+            self.assertTrue(str(sqlite_db_path).startswith(str(sqlite_root)))
+            self.assertFalse(str(sqlite_db_path).startswith(str(run_root_path)))
+            self.assertTrue(sqlite_db_path.parent.exists())
+            self.assertEqual(str(sqlite_root), summary["fixed_load"]["sqlite_root"])
+            self.assertEqual(str(sqlite_root), saved["fixed_load"]["sqlite_root"])
+
 
 if __name__ == "__main__":
     unittest.main()

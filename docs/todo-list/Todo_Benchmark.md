@@ -222,3 +222,7 @@
   - [x] 先写红灯单测，锁 CLI 覆写会进入单 case runner 和 summary。
   - [x] 实现 runner 参数、summary metadata 和 formal clean `"$@"` 透传。
   - [x] 验证 Python 单测、语法检查和 shell `bash -n`。
+- [x] Suite D fixed-load SQLite 落盘根目录覆写：允许把单 case 的 `suite_d.db` 挪到独立根目录，例如 `/dev/shm`，验证 overlay 写盘噪声是否仍在污染峰值。
+  - [x] 先写红灯单测，锁 `sqlite_db` 会脱离 `run_root`，并把 `sqlite_root` 写进 summary metadata。
+  - [x] 实现 runner 参数与单 case `--sqlite-db` 派生逻辑，保留 `result.json/server.log/wrk.log` 原目录不变。
+  - [x] 验证定向单测、全量单测、Python 语法检查和 formal clean shell `bash -n`。

@@ -123,6 +123,26 @@ def derive_trace_buffered_span_limit(active_session_limit: int) -> int:
     return active_session_limit * 8
 
 
+def resolve_case_sqlite_db_path(
+    args: argparse.Namespace,
+    backend_cores: int,
+) -> str:
+    sqlite_root = str(getattr(args, "sqlite_root", "") or "").strip()
+    if not sqlite_root:
+        return ""
+    # result/server.log 仍然留在 run_root 下，只有 SQLite DB 被挪到独立根目录。
+    # 这样可以把高频写盘路径单独切到 /dev/shm 之类的位置，同时保留原有资产目录结构不变。
+    sqlite_db = (
+        Path(sqlite_root)
+        / Path(args.actual_scaling_root).name
+        / f"backend_{backend_cores:02d}"
+        / "run_01"
+        / "suite_d.db"
+    )
+    sqlite_db.parent.mkdir(parents=True, exist_ok=True)
+    return str(sqlite_db)
+
+
 def forced_trace_limits_from_args(args: argparse.Namespace) -> JsonDict:
     forced: JsonDict = {}
     if args.force_trace_active_session_limit is not None:
@@ -188,6 +208,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--wrk-threads", type=int, default=DEFAULT_WRK_THREADS)
     parser.add_argument("--connections", type=int, default=DEFAULT_CONNECTIONS)
     parser.add_argument("--backend-core-offset", type=int, default=DEFAULT_BACKEND_CORE_OFFSET)
+    parser.add_argument(
+        "--sqlite-root",
+        default=os.environ.get("SUITE_D_SQLITE_ROOT", ""),
+        help="把单 case 的 SQLite DB 落到独立根目录，例如 /dev/shm，用于隔离 overlay 存储噪声",
+    )
     parser.add_argument("--duration", default="15s")
     parser.add_argument("--warmup-duration", default="3s")
     parser.add_argument("--spans-per-trace", type=int, default=8)
@@ -302,12 +327,15 @@ def build_case_args(
     run_root = Path(args.actual_scaling_root) / f"backend_{backend_cores:02d}" / "run_01"
     run_root.mkdir(parents=True, exist_ok=True)
     output_json = run_root / "result.json"
+    sqlite_db_path = resolve_case_sqlite_db_path(args, backend_cores)
 
     argv = [
         "--run-root",
         str(run_root),
         "--output-json",
         str(output_json),
+        "--sqlite-db",
+        sqlite_db_path,
         "--port-base",
         str(args.port_base + point_index * args.port_stride),
         "--server-cpuset",
@@ -458,6 +486,7 @@ def run_fixed_load_scaling(
             "wrk_threads": int(args.wrk_threads),
             "connections": int(args.connections),
             "backend_core_offset": int(args.backend_core_offset),
+            "sqlite_root": str(args.sqlite_root or ""),
             "forced_topology": forced_topology_from_args(args),
             "forced_trace_limits": forced_trace_limits_from_args(args),
             "cleanup_sqlite_db": bool(args.cleanup_sqlite_db),
@@ -498,6 +527,7 @@ def run_fixed_load_scaling(
             "trace_sweep_interval_ms": args.trace_sweep_interval_ms,
             "trace_primary_flush_span_threshold": args.trace_primary_flush_span_threshold,
             "trace_primary_flush_interval_ms": args.trace_primary_flush_interval_ms,
+            "sqlite_root": str(args.sqlite_root or ""),
             "forced_trace_limits": forced_trace_limits_from_args(args),
             "cleanup_sqlite_db": bool(args.cleanup_sqlite_db),
             "cooldown_sec": float(args.cooldown_sec),

@@ -206,3 +206,54 @@
 
 - formal clean 脚本如果不透传 `"$@"`，你在命令行补的 probe 参数会在 shell 层被吞掉，看起来像“跑成功了”，实际上完全没生效。
 - `trace_buffered_span_limit` 不能强制跟 `active_session_limit * 8` 绑死；做 probe 时必须允许两者拆开验证。
+
+---
+
+## 追加：Suite D fixed-load SQLite 独立根目录隔离
+
+### Git Commit Message
+
+`feat(benchmark): 支持 Suite D 固定负载 SQLite 独立根目录`
+
+### Modification
+
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load.py`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### Summary
+
+- fixed-load runner 新增 `--sqlite-root`，并支持环境变量 `SUITE_D_SQLITE_ROOT`。
+- 这个参数只把单 case 的 `suite_d.db` 挪到独立根目录，例如 `/dev/shm/logsentinel_suite_d`：
+  - `result.json / server.log / wrk.log` 仍然留在原 `run_root`；
+  - 高频 SQLite 写盘路径单独隔离出去，便于判断 overlay 写放大和 writeback 抖动是不是还在压低峰值。
+- summary metadata 增加 `sqlite_root`，后续看结果 JSON 就能确认这轮实验到底有没有把 DB 真正挪走。
+- 新增单测覆盖：
+  - 锁 `sqlite_db` 路径必须脱离 `run_root`；
+  - 锁 `sqlite_root` 会进入 summary 文件。
+
+### Verification
+
+- `python3 server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py -k test_sqlite_root_override_moves_db_out_of_run_root`
+- `python3 server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load.py server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `bash -n server/tests/benchmark/paper/run_suite_d_formal_clean.sh`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- “删 DB” 和“把 DB 放到更干净的盘”是两件事：
+  - 前者解决 case 之间的污染；
+  - 后者解决单个 case 内部的落盘抖动。
+- benchmark 资产目录和高频写盘目录最好拆开，不然一边想保留证据，一边又把慢路径继续留在 overlay 上。
+
+#### Function Explanation
+
+- `resolve_case_sqlite_db_path(...)`：根据 `sqlite_root + actual_scaling_root + backend_XX/run_01` 派生出单 case SQLite 路径，并提前创建父目录。
+- `build_case_args(...)`：统一把派生出的 `--sqlite-db` 透传给单 case runner，避免每个 wrapper 手工拼接。
+
+#### Pitfalls
+
+- 如果断言写在 `TemporaryDirectory()` 生命周期外，单测会把“临时目录自动清理”误报成 `sqlite-root` 失效。
+- `sqlite_root` 只适合隔离 SQLite 写盘噪声；如果 `result.json/server.log` 也一起挪走，论文导出脚本和诊断路径就要跟着变，变量会变脏。
