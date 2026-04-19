@@ -86,8 +86,26 @@ def extract_last_stats(log_lines: Iterable[str]) -> Tuple[JsonDict, JsonDict]:
     return trace_stats, buffered_stats
 
 
+def resolve_result_path(point: JsonDict) -> Path:
+    candidates = []
+    if point.get("requested_run_root"):
+        candidates.append(Path(point["requested_run_root"]) / "result.json")
+    if point.get("actual_run_root"):
+        candidates.append(Path(point["actual_run_root"]) / "result.json")
+
+    # Suite D single-case runner 当前把 result.json 写在 requested_run_root，
+    # 但 SQLite/server.log 会落在 actual_run_root 时间戳目录。
+    # 这里必须两边都尝试，避免诊断脚本把“结果 JSON 缺失”和“日志目录带时间戳”混成一个路径。
+    for path in candidates:
+        if path.exists():
+            return path
+
+    joined = ", ".join(str(path) for path in candidates) or "<no candidate paths>"
+    raise FileNotFoundError(f"missing result.json for backend={point.get('backend_cores')}: {joined}")
+
+
 def print_point(point: JsonDict, tail_lines: int) -> None:
-    result_path = Path(point["actual_run_root"]) / "result.json"
+    result_path = resolve_result_path(point)
     result = load_json(result_path)
     server_log = Path(result["server_log"])
     runtime_lines = tail_matching_lines(server_log, RUNTIME_PATTERNS, tail_lines)
