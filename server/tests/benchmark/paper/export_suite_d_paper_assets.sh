@@ -22,6 +22,7 @@ export_scaling_variant() {
   local summary_name="$2"
   local cases_name="$3"
   local diagnostics_name="$4"
+  local diagnostics_heading="${5:-suite_d_scaling_variant}"
 
   [[ -f "${summary_json}" ]] || { echo "Fatal Error: missing Suite D scaling variant summary: ${summary_json}" >&2; exit 1; }
 
@@ -49,12 +50,12 @@ PY
   done < <(find "${actual_root}" -name result.json -type f | sort)
 
   # 诊断文件只摘最关键的 scaling 字段：核数、online、ratio、drain 和 QPS。
-  # 它服务论文复核，不替代完整 summary JSON。
-  python3 - "${summary_json}" "${ASSET_DIR}/diagnostics/${diagnostics_name}" <<'PY'
+  # 它同时兼容旧 total-core 曲线和 fixed-load backend-core 曲线，避免远端再手写 grep。
+  python3 - "${summary_json}" "${ASSET_DIR}/diagnostics/${diagnostics_name}" "${diagnostics_heading}" <<'PY'
 import json
 import sys
 
-summary_path, out_path = sys.argv[1:3]
+summary_path, out_path, diagnostics_heading = sys.argv[1:4]
 with open(summary_path, "r", encoding="utf-8") as fh:
     payload = json.load(fh)
 
@@ -63,18 +64,29 @@ def fmt(value):
         return "NA"
     return f"{float(value):.4f}"
 
-lines = ["[suite_d_scaling_variant]"]
-for item in payload.get("by_total_cores", []):
+items = payload.get("by_total_cores")
+label_name = "total_cores"
+best_key = "best_total_cores"
+if items is None:
+    items = payload.get("by_backend_cores", [])
+    label_name = "backend_cores"
+    best_key = "best_backend_cores"
+
+lines = [f"[{diagnostics_heading}]"]
+for item in items:
+    qps = item.get("requests_per_sec")
+    if qps is None:
+        qps = item.get("wrk_metrics", {}).get("requests_per_sec")
     lines.append(
-        f"total_cores={item.get('total_cores')} "
+        f"{label_name}={item.get(label_name)} "
         f"online={fmt(item.get('online_completed_traces_per_sec'))} "
         f"ratio={fmt(item.get('online_completion_ratio'))} "
         f"drain_ms={item.get('drain_tail_ms')} "
-        f"qps={fmt(item.get('requests_per_sec'))}"
+        f"qps={fmt(qps)}"
     )
 overall = payload.get("overall", {})
 lines.append(
-    f"overall: best_total_cores={overall.get('best_total_cores')} "
+    f"overall: {best_key}={overall.get(best_key)} "
     f"best_online={fmt(overall.get('best_online_completed_traces_per_sec'))}"
 )
 
@@ -105,6 +117,7 @@ CONNECTION_SUMMARY_JSON="${SUITE_D_CONNECTION_SUMMARY_JSON:-}"
 SCALING_ROOT="${SUITE_D_SCALING_ROOT:-}"
 SCALING_SUMMARY_JSON="${SUITE_D_SCALING_SUMMARY_JSON:-}"
 CONN23_SCALING_SUMMARY_JSON="${SUITE_D_CONN23_SCALING_SUMMARY_JSON:-/tmp/suite_d_scaling_24c_conn23_final_summary.json}"
+FIXED90_SCALING_SUMMARY_JSON="${SUITE_D_FIXED90_SCALING_SUMMARY_JSON:-/tmp/suite_d_scaling_fixed90_24backend_summary.json}"
 
 if [[ -z "${RUN_ROOT}" ]]; then
   RUN_ROOT="$(latest_dir 'suite_d_paper_final-*')"
@@ -209,7 +222,19 @@ if [[ -f "${CONN23_SCALING_SUMMARY_JSON}" ]]; then
     "${CONN23_SCALING_SUMMARY_JSON}" \
     "scaling_summary_conn23.json" \
     "scaling_conn23" \
-    "diagnostics_scaling_conn23.log"
+    "diagnostics_scaling_conn23.log" \
+    "suite_d_scaling_conn23"
+fi
+
+# fixed90 是补充公平性实验：sender/wrk 固定为 0-3、connections 固定为 90，只扫 backend 核数。
+# 它不覆盖旧 scaling 曲线，而是单独进入 fixed90 命名空间，便于论文区分两种实验口径。
+if [[ -f "${FIXED90_SCALING_SUMMARY_JSON}" ]]; then
+  export_scaling_variant \
+    "${FIXED90_SCALING_SUMMARY_JSON}" \
+    "scaling_summary_fixed90.json" \
+    "scaling_fixed90" \
+    "diagnostics_scaling_fixed90.log" \
+    "suite_d_scaling_fixed90"
 fi
 
 # 当前租用容器可能禁止 perf_event_open，导致 perf.data 为空，不能生成有效火焰图。
@@ -237,5 +262,8 @@ du -sh "${ASSET_DIR}"
 sed -n '1,160p' "${ASSET_DIR}/diagnostics/diagnostics.log"
 if [[ -f "${ASSET_DIR}/diagnostics/diagnostics_scaling_conn23.log" ]]; then
   sed -n '1,120p' "${ASSET_DIR}/diagnostics/diagnostics_scaling_conn23.log"
+fi
+if [[ -f "${ASSET_DIR}/diagnostics/diagnostics_scaling_fixed90.log" ]]; then
+  sed -n '1,120p' "${ASSET_DIR}/diagnostics/diagnostics_scaling_fixed90.log"
 fi
 find "${ASSET_DIR}" -type f | sort
