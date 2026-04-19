@@ -210,3 +210,7 @@
   - [x] 实现 fixed-load Python runner 与 24c wrapper。
   - [x] 让 Suite D paper export 自动导出 fixed90 summary/cases/diagnostics。
   - [x] 验证单测、语法检查和 shell wrapper 片段。
+- [x] Suite D 固定负载拓扑诊断：允许 24 核资源下覆写 io/dispatch/worker 线程数，用来确认高核退化是否来自过度线程化。
+  - [x] 先写红灯单测，锁“覆写线程拓扑但不缩小 backend cpuset”。
+  - [x] 实现 CLI/env 覆写入口，并把 forced topology 写入 summary metadata。
+  - [x] 验证固定负载单测和 Python 语法。

@@ -62,3 +62,47 @@
 
 - 不能复用旧 `run_suite_d_scaling_24c.sh` 来假装 fixed-load，因为旧脚本会让 sender 核数、wrk threads 和 connections 一起变化。
 - 不能把 fixed90 结果覆盖旧 scaling summary；这两组实验口径不同，必须用独立文件名和独立 cases 目录。
+
+---
+
+## 追加：Suite D fixed-load 拓扑覆写诊断
+
+### Git Commit Message
+
+`feat(benchmark): 支持 Suite D 固定负载线程拓扑覆写`
+
+### Modification
+
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load.py`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### Summary
+
+- 为 fixed-load runner 增加 `--force-server-io-threads / --force-dispatch-worker-threads / --force-worker-threads`。
+- 同时支持 `SUITE_D_FORCE_SERVER_IO_THREADS / SUITE_D_FORCE_DISPATCH_WORKER_THREADS / SUITE_D_FORCE_WORKER_THREADS` 环境变量，方便远端 wrapper 直接透传。
+- 覆写只改变线程拓扑，不改变 `backend_cores` 对应的 `server_cpuset`，用于验证高核退化是否来自过度线程化。
+- summary metadata 增加 `forced_topology`，避免后续导出资产时看不出该轮是否使用了诊断拓扑。
+
+### Verification
+
+- `python3 server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py -k test_thread_topology_override_keeps_backend_cpuset`
+- `python3 server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load.py server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- CPU 资源窗口和线程拓扑是两回事：`server_cpuset=68-91` 表示进程可用 24 个核，但 `worker_threads=28` 是应用内部调度策略。
+- 高核退化不一定是“核不够”，也可能是线程太多导致共享锁、队列和 SQLite flush 竞争变重。
+
+#### Function Explanation
+
+- `parse_optional_positive_int(...)`：把 CLI/env 输入统一解析成正整数或 `None`，`None` 表示沿用默认拓扑。
+- `resolve_backend_topology(...)`：先取默认 backend 拓扑，再叠加用户明确指定的线程覆写。
+
+#### Pitfalls
+
+- 不能用缩小 `server_cpuset` 来模拟 20 核线程拓扑；那会同时改变 CPU 资源和线程数，诊断变量不干净。
+- forced topology 只适合定位瓶颈，不应该直接覆盖原始 fixed-load 主曲线，除非后续重新冻结论文口径。

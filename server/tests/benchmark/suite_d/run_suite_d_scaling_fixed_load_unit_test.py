@@ -117,6 +117,94 @@ class SuiteDRunSuiteDScalingFixedLoadUnitTest(unittest.TestCase):
         self.assertEqual("4-27", saved["by_backend_cores"][-1]["server_cpuset"])
         self.assertEqual(90, saved["experiment_context"]["workload"]["connections"])
 
+    def test_thread_topology_override_keeps_backend_cpuset(self) -> None:
+        if fixed_scaling_module is None or not hasattr(fixed_scaling_module, "run_fixed_load_scaling"):
+            self.fail("run_fixed_load_scaling should exist for Suite D fixed-load runner")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_summary = Path(temp_dir) / "summary.json"
+            args = fixed_scaling_module.parse_args(
+                [
+                    "--scaling-root",
+                    str(Path(temp_dir) / "suite_d_fixed"),
+                    "--output-summary",
+                    str(output_summary),
+                    "--server-bin",
+                    "./server/build/LogSentinel",
+                    "--backend-core-points",
+                    "24",
+                    "--backend-core-offset",
+                    "68",
+                    "--force-server-io-threads",
+                    "5",
+                    "--force-dispatch-worker-threads",
+                    "3",
+                    "--force-worker-threads",
+                    "28",
+                ]
+            )
+            args.actual_scaling_root = str(Path(temp_dir) / "suite_d_fixed-actual")
+            case_calls = []
+
+            def fake_case_runner(case_args):
+                # 这个诊断开关只覆写线程拓扑，不应该偷偷减少 server_cpuset。
+                # 如果 cpuset 也变小，就无法判断“24 核资源 + 20 核线程拓扑”是否更稳。
+                case_calls.append(
+                    {
+                        "server_cpuset": case_args.server_cpuset,
+                        "server_io_threads": case_args.server_io_threads,
+                        "dispatch_worker_threads": case_args.dispatch_worker_threads,
+                        "worker_threads": case_args.worker_threads,
+                        "worker_queue_size": case_args.worker_queue_size,
+                    }
+                )
+                return {
+                    "requested_run_root": str(Path(case_args.run_root)),
+                    "actual_run_root": f"{case_args.run_root}-actual",
+                    "wrk_metrics": {
+                        "requests": 1000,
+                        "requests_per_sec": 100000.0,
+                        "offered_traces": 200000,
+                        "latency_p95_ms": 0.7,
+                        "latency_p99_ms": 1.2,
+                    },
+                    "online_completed_traces_per_sec": 9000.0,
+                    "online_completion_ratio": 0.45,
+                    "drain_tail_ms": 8000,
+                    "drain_timeout": False,
+                }
+
+            summary = fixed_scaling_module.run_fixed_load_scaling(
+                args,
+                case_runner=fake_case_runner,
+                line_writer=lambda _line: None,
+            )
+            saved = json.loads(output_summary.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            [
+                {
+                    "server_cpuset": "68-91",
+                    "server_io_threads": 5,
+                    "dispatch_worker_threads": 3,
+                    "worker_threads": 28,
+                    "worker_queue_size": 7168,
+                }
+            ],
+            case_calls,
+        )
+        self.assertEqual(5, summary["by_backend_cores"][0]["server_io_threads"])
+        self.assertEqual(3, summary["by_backend_cores"][0]["dispatch_worker_threads"])
+        self.assertEqual(28, summary["by_backend_cores"][0]["worker_threads"])
+        self.assertEqual(
+            {
+                "server_io_threads": 5,
+                "dispatch_worker_threads": 3,
+                "worker_threads": 28,
+            },
+            saved["experiment_context"]["thread_topology"]["forced_topology"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

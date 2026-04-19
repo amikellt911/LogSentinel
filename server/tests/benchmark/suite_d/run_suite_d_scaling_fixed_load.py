@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -76,6 +77,21 @@ def parse_csv_ints(value: str, option_name: str) -> List[int]:
     return values
 
 
+def parse_optional_positive_int(value: Any, option_name: str) -> Optional[int]:
+    # 环境变量和 CLI 都先按字符串进来；这里统一把空值视为“不覆写”。
+    # 这样 wrapper 不需要拼复杂参数，也能用 SUITE_D_FORCE_* 在远端快速做拓扑探针。
+    raw_value = "" if value is None else str(value).strip()
+    if raw_value == "":
+        return None
+    try:
+        parsed = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{option_name} must be a positive integer") from exc
+    if parsed <= 0:
+        raise ValueError(f"{option_name} must be a positive integer")
+    return parsed
+
+
 def build_cpuset(start_core: int, core_count: int) -> str:
     if core_count <= 0:
         raise ValueError("core_count must be > 0")
@@ -101,6 +117,27 @@ def derive_trace_active_session_limit(backend_cores: int) -> int:
 
 def derive_trace_buffered_span_limit(active_session_limit: int) -> int:
     return active_session_limit * 8
+
+
+def forced_topology_from_args(args: argparse.Namespace) -> JsonDict:
+    # 只返回用户明确指定的线程字段，summary 里可以直接看出本轮是否用了诊断拓扑。
+    # 没指定的字段继续走 DEFAULT_BACKEND_TOPOLOGY_MAP，避免无意改变旧 fixed-load 口径。
+    forced: JsonDict = {}
+    if args.force_server_io_threads is not None:
+        forced["server_io_threads"] = int(args.force_server_io_threads)
+    if args.force_dispatch_worker_threads is not None:
+        forced["dispatch_worker_threads"] = int(args.force_dispatch_worker_threads)
+    if args.force_worker_threads is not None:
+        forced["worker_threads"] = int(args.force_worker_threads)
+    return forced
+
+
+def resolve_backend_topology(args: argparse.Namespace, backend_cores: int) -> JsonDict:
+    topology = dict(DEFAULT_BACKEND_TOPOLOGY_MAP[backend_cores])
+    # 覆写只改变线程拓扑，不改变 backend_cores 对应的 CPU 资源窗口。
+    # 这样可以专门验证“24 核资源 + 较保守线程数”是否缓解锁竞争和 flush 积压。
+    topology.update(forced_topology_from_args(args))
+    return topology
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -132,6 +169,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--trace-sweep-interval-ms", type=int, default=20)
     parser.add_argument("--trace-primary-flush-span-threshold", type=int, default=512)
     parser.add_argument("--trace-primary-flush-interval-ms", type=int, default=5)
+    parser.add_argument(
+        "--force-server-io-threads",
+        default=os.environ.get("SUITE_D_FORCE_SERVER_IO_THREADS", ""),
+        help="诊断用：只覆写 server I/O 线程数，不改变 backend cpuset",
+    )
+    parser.add_argument(
+        "--force-dispatch-worker-threads",
+        default=os.environ.get("SUITE_D_FORCE_DISPATCH_WORKER_THREADS", ""),
+        help="诊断用：只覆写 trace dispatch 线程数，不改变 backend cpuset",
+    )
+    parser.add_argument(
+        "--force-worker-threads",
+        default=os.environ.get("SUITE_D_FORCE_WORKER_THREADS", ""),
+        help="诊断用：只覆写 worker 线程数，不改变 backend cpuset",
+    )
     parser.add_argument("--startup-timeout-sec", type=float, default=10.0)
     parser.add_argument("--stop-timeout-sec", type=float, default=5.0)
     parser.add_argument("--poll-interval-ms", type=int, default=50)
@@ -157,6 +209,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     for point in args.backend_core_points:
         if point not in DEFAULT_BACKEND_TOPOLOGY_MAP:
             parser.error(f"unsupported backend core point: {point}")
+    for attr_name, option_name in (
+        ("force_server_io_threads", "--force-server-io-threads"),
+        ("force_dispatch_worker_threads", "--force-dispatch-worker-threads"),
+        ("force_worker_threads", "--force-worker-threads"),
+    ):
+        try:
+            setattr(args, attr_name, parse_optional_positive_int(getattr(args, attr_name), option_name))
+        except ValueError as exc:
+            parser.error(str(exc))
     args.cli_argv = list(argv) if argv is not None else list(sys.argv[1:])
     return args
 
@@ -166,7 +227,7 @@ def build_case_args(
     backend_cores: int,
     point_index: int,
 ) -> argparse.Namespace:
-    topology = DEFAULT_BACKEND_TOPOLOGY_MAP[backend_cores]
+    topology = resolve_backend_topology(args, backend_cores)
     # sender/wrk 始终固定在同一段 CPU 上；后端从 backend_core_offset 开始扩张。
     # 这样每个点面对同一份外部输入压力，drain 和完成率才有公平比较意义。
     server_cpuset = build_cpuset(args.backend_core_offset, backend_cores)
@@ -270,7 +331,7 @@ def run_fixed_load_scaling(
 
     by_backend_cores: List[JsonDict] = []
     for index, backend_cores in enumerate(args.backend_core_points):
-        topology = DEFAULT_BACKEND_TOPOLOGY_MAP[backend_cores]
+        topology = resolve_backend_topology(args, backend_cores)
         case_args = build_case_args(args, backend_cores, index)
         case_result = dict(case_runner(case_args))
         # 每行同时保留固定输入负载和后端拓扑。
@@ -325,6 +386,7 @@ def run_fixed_load_scaling(
             "wrk_threads": int(args.wrk_threads),
             "connections": int(args.connections),
             "backend_core_offset": int(args.backend_core_offset),
+            "forced_topology": forced_topology_from_args(args),
         },
         "by_backend_cores": by_backend_cores,
         "overall": {
@@ -352,6 +414,7 @@ def run_fixed_load_scaling(
         },
         thread_topology={
             "backend_topology_map": DEFAULT_BACKEND_TOPOLOGY_MAP,
+            "forced_topology": forced_topology_from_args(args),
             "trace_max_dispatch_per_tick": args.trace_max_dispatch_per_tick,
         },
         effective_flags={
