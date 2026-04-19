@@ -62,7 +62,8 @@ env \
     --server-bin "${SERVER_BIN}" \
     --trace-max-dispatch-per-tick "${TRACE_MAX_DISPATCH_PER_TICK}" \
     --trace-primary-flush-span-threshold "${TRACE_PRIMARY_FLUSH_SPAN_THRESHOLD}" \
-    --trace-primary-flush-interval-ms "${TRACE_PRIMARY_FLUSH_INTERVAL_MS}"
+    --trace-primary-flush-interval-ms "${TRACE_PRIMARY_FLUSH_INTERVAL_MS}" \
+    "$@"
 
 cp "${SUMMARY_JSON}" "${ASSET_DIR}/summary/scaling_summary.json"
 

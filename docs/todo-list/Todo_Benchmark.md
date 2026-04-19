@@ -218,3 +218,7 @@
   - [x] 先写红灯单测，锁 `--cleanup-sqlite-db` 会删 DB、`--cooldown-sec` 会逐 case 等待。
   - [x] 实现 runner 参数和一键 formal clean shell。
   - [x] 验证 Python 单测、语法检查和 shell `bash -n`。
+- [x] Suite D fixed-load 容量闸门覆写：允许直接覆写 `trace_active_session_limit / trace_buffered_span_limit`，验证高核退化是否来自 session/buffer 闸门。
+  - [x] 先写红灯单测，锁 CLI 覆写会进入单 case runner 和 summary。
+  - [x] 实现 runner 参数、summary metadata 和 formal clean `"$@"` 透传。
+  - [x] 验证 Python 单测、语法检查和 shell `bash -n`。

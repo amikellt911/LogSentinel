@@ -123,6 +123,15 @@ def derive_trace_buffered_span_limit(active_session_limit: int) -> int:
     return active_session_limit * 8
 
 
+def forced_trace_limits_from_args(args: argparse.Namespace) -> JsonDict:
+    forced: JsonDict = {}
+    if args.force_trace_active_session_limit is not None:
+        forced["trace_active_session_limit"] = int(args.force_trace_active_session_limit)
+    if args.force_trace_buffered_span_limit is not None:
+        forced["trace_buffered_span_limit"] = int(args.force_trace_buffered_span_limit)
+    return forced
+
+
 def forced_topology_from_args(args: argparse.Namespace) -> JsonDict:
     # 只返回用户明确指定的线程字段，summary 里可以直接看出本轮是否用了诊断拓扑。
     # 没指定的字段继续走 DEFAULT_BACKEND_TOPOLOGY_MAP，避免无意改变旧 fixed-load 口径。
@@ -189,6 +198,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--trace-primary-flush-span-threshold", type=int, default=512)
     parser.add_argument("--trace-primary-flush-interval-ms", type=int, default=5)
     parser.add_argument(
+        "--trace-active-session-limit",
+        dest="force_trace_active_session_limit",
+        default=os.environ.get("SUITE_D_FORCE_TRACE_ACTIVE_SESSION_LIMIT", ""),
+        help="诊断用：覆写每个点的 active session limit，不再按 backend 核数派生",
+    )
+    parser.add_argument(
+        "--trace-buffered-span-limit",
+        dest="force_trace_buffered_span_limit",
+        default=os.environ.get("SUITE_D_FORCE_TRACE_BUFFERED_SPAN_LIMIT", ""),
+        help="诊断用：覆写每个点的 buffered span limit，不再按 active session limit 派生",
+    )
+    parser.add_argument(
         "--cleanup-sqlite-db",
         action="store_true",
         default=parse_bool_env(os.environ.get("SUITE_D_CLEANUP_SQLITE_DB")),
@@ -246,6 +267,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         ("force_server_io_threads", "--force-server-io-threads"),
         ("force_dispatch_worker_threads", "--force-dispatch-worker-threads"),
         ("force_worker_threads", "--force-worker-threads"),
+        ("force_trace_active_session_limit", "--trace-active-session-limit"),
+        ("force_trace_buffered_span_limit", "--trace-buffered-span-limit"),
     ):
         try:
             setattr(args, attr_name, parse_optional_positive_int(getattr(args, attr_name), option_name))
@@ -267,6 +290,14 @@ def build_case_args(
     worker_queue_size = derive_worker_queue_size(int(topology["worker_threads"]))
     trace_active_session_limit = derive_trace_active_session_limit(backend_cores)
     trace_buffered_span_limit = derive_trace_buffered_span_limit(trace_active_session_limit)
+    if args.force_trace_active_session_limit is not None:
+        # active_session_limit 会直接决定能同时容纳多少 trace 会话。
+        # 这里允许诊断性覆写，用来验证高核退化是不是闸门太紧，而不是 CPU 本身不够。
+        trace_active_session_limit = int(args.force_trace_active_session_limit)
+    if args.force_trace_buffered_span_limit is not None:
+        # buffered span limit 和 active_session_limit 不一定总是同倍数关系。
+        # 单独开放覆写，是为了把“会话数闸门”和“缓冲容量闸门”拆开验证。
+        trace_buffered_span_limit = int(args.force_trace_buffered_span_limit)
 
     run_root = Path(args.actual_scaling_root) / f"backend_{backend_cores:02d}" / "run_01"
     run_root.mkdir(parents=True, exist_ok=True)
@@ -428,6 +459,7 @@ def run_fixed_load_scaling(
             "connections": int(args.connections),
             "backend_core_offset": int(args.backend_core_offset),
             "forced_topology": forced_topology_from_args(args),
+            "forced_trace_limits": forced_trace_limits_from_args(args),
             "cleanup_sqlite_db": bool(args.cleanup_sqlite_db),
             "cooldown_sec": float(args.cooldown_sec),
         },
@@ -466,6 +498,7 @@ def run_fixed_load_scaling(
             "trace_sweep_interval_ms": args.trace_sweep_interval_ms,
             "trace_primary_flush_span_threshold": args.trace_primary_flush_span_threshold,
             "trace_primary_flush_interval_ms": args.trace_primary_flush_interval_ms,
+            "forced_trace_limits": forced_trace_limits_from_args(args),
             "cleanup_sqlite_db": bool(args.cleanup_sqlite_db),
             "cooldown_sec": float(args.cooldown_sec),
             "ai_mode": args.ai_mode,

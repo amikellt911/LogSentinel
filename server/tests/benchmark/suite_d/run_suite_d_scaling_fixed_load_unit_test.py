@@ -273,6 +273,84 @@ class SuiteDRunSuiteDScalingFixedLoadUnitTest(unittest.TestCase):
         self.assertTrue(saved["experiment_context"]["effective_flags"]["cleanup_sqlite_db"])
         self.assertEqual(7.0, saved["experiment_context"]["effective_flags"]["cooldown_sec"])
 
+    def test_trace_limit_override_replaces_derived_limits(self) -> None:
+        if fixed_scaling_module is None or not hasattr(fixed_scaling_module, "run_fixed_load_scaling"):
+            self.fail("run_fixed_load_scaling should exist for Suite D fixed-load runner")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_summary = Path(temp_dir) / "summary.json"
+            args = fixed_scaling_module.parse_args(
+                [
+                    "--scaling-root",
+                    str(Path(temp_dir) / "suite_d_fixed"),
+                    "--output-summary",
+                    str(output_summary),
+                    "--server-bin",
+                    "./server/build/LogSentinel",
+                    "--backend-core-points",
+                    "24",
+                    "--trace-active-session-limit",
+                    "4096",
+                    "--trace-buffered-span-limit",
+                    "32768",
+                ]
+            )
+            args.actual_scaling_root = str(Path(temp_dir) / "suite_d_fixed-actual")
+            case_calls = []
+
+            def fake_case_runner(case_args):
+                # 这组覆写是为了验证 active/buffer 两个容量闸门是不是能真正进到单 case runner。
+                # 如果这里还是默认 2048/16384，就说明 CLI 只停留在 wrapper，没有打进后端配置。
+                case_calls.append(
+                    {
+                        "trace_active_session_limit": case_args.trace_active_session_limit,
+                        "trace_buffered_span_limit": case_args.trace_buffered_span_limit,
+                    }
+                )
+                return {
+                    "requested_run_root": str(Path(case_args.run_root)),
+                    "actual_run_root": f"{case_args.run_root}-actual",
+                    "wrk_metrics": {
+                        "requests": 1000,
+                        "requests_per_sec": 100000.0,
+                        "offered_traces": 200000,
+                        "latency_p95_ms": 0.7,
+                        "latency_p99_ms": 1.2,
+                    },
+                    "online_completed_traces_per_sec": 9000.0,
+                    "online_completion_ratio": 0.45,
+                    "drain_tail_ms": 8000,
+                    "drain_timeout": False,
+                }
+
+            summary = fixed_scaling_module.run_fixed_load_scaling(
+                args,
+                case_runner=fake_case_runner,
+                line_writer=lambda _line: None,
+            )
+            saved = json.loads(output_summary.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            [{"trace_active_session_limit": 4096, "trace_buffered_span_limit": 32768}],
+            case_calls,
+        )
+        self.assertEqual(4096, summary["by_backend_cores"][0]["trace_active_session_limit"])
+        self.assertEqual(32768, summary["by_backend_cores"][0]["trace_buffered_span_limit"])
+        self.assertEqual(
+            {
+                "trace_active_session_limit": 4096,
+                "trace_buffered_span_limit": 32768,
+            },
+            saved["fixed_load"]["forced_trace_limits"],
+        )
+        self.assertEqual(
+            {
+                "trace_active_session_limit": 4096,
+                "trace_buffered_span_limit": 32768,
+            },
+            saved["experiment_context"]["effective_flags"]["forced_trace_limits"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

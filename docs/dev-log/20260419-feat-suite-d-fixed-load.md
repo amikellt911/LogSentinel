@@ -158,3 +158,51 @@
 
 - 不能在 case 结束后直接删整个 run 目录，否则诊断脚本会丢失 `result.json/server.log`。
 - 不能只靠外层 shell `sleep`；如果一个 runner 内部连续跑 `16/20/24`，case 之间仍然需要 runner 内部 cooldown。
+
+---
+
+## 追加：Suite D fixed-load 容量闸门覆写
+
+### Git Commit Message
+
+`feat(benchmark): 支持 Suite D 固定负载容量闸门覆写`
+
+### Modification
+
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load.py`
+- `server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `server/tests/benchmark/paper/run_suite_d_formal_clean.sh`
+- `docs/todo-list/Todo_Benchmark.md`
+
+### Summary
+
+- fixed-load runner 新增：
+  - `--trace-active-session-limit`
+  - `--trace-buffered-span-limit`
+- 这两个参数会直接覆写每个点位原本按 backend 核数派生的 session/buffer 闸门，便于验证高核退化到底是 CPU、线程拓扑还是容量闸门导致。
+- summary metadata 增加 `forced_trace_limits`，后续看 JSON 就能知道这轮 probe 有没有真的打进后端。
+- `run_suite_d_formal_clean.sh` 增加 `"$@"` 透传，允许正式 clean runner 直接携带额外 probe 参数，不需要手改脚本。
+
+### Verification
+
+- `python3 server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py -k test_trace_limit_override_replaces_derived_limits`
+- `python3 server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `python3 -m py_compile server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load.py server/tests/benchmark/suite_d/run_suite_d_scaling_fixed_load_unit_test.py`
+- `bash -n server/tests/benchmark/paper/run_suite_d_formal_clean.sh`
+
+### Learning Tips
+
+#### Newbie Tips
+
+- “线程数不够”和“容量闸门太紧”是两类完全不同的瓶颈，不能混着猜。
+- 如果实验参数没有写进 summary metadata，后面很容易把“没生效的 probe”误当成真实结果。
+
+#### Function Explanation
+
+- `forced_trace_limits_from_args(...)`：只收集用户明确指定的容量覆写字段，方便 summary 直接留痕。
+- `build_case_args(...)`：先按 backend 核数派生默认值，再叠加 CLI/env 覆写，保证默认口径不回归。
+
+#### Pitfalls
+
+- formal clean 脚本如果不透传 `"$@"`，你在命令行补的 probe 参数会在 shell 层被吞掉，看起来像“跑成功了”，实际上完全没生效。
+- `trace_buffered_span_limit` 不能强制跟 `active_session_limit * 8` 绑死；做 probe 时必须允许两者拆开验证。
