@@ -1,0 +1,249 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1180" viewBox="0 0 1900 1180">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#111827"/>
+  </marker>
+</defs>
+<rect x="0" y="0" width="1900" height="1180" fill="#ffffff"/>
+
+<text x="950.0" y="46" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="34" font-weight="700" fill="#111827" text-anchor="middle">
+<tspan x="950.0" dy="0">配置快照、分片版本与局部热更新机制</tspan>
+</text>
+<rect x="25" y="85" width="610" height="940" rx="8" fill="#f8fbff" stroke="#60a5fa" stroke-width="1.8" />
+<rect x="660" y="85" width="305" height="940" rx="8" fill="#f8fafc" stroke="#93a4bf" stroke-width="1.8" />
+<rect x="990" y="85" width="885" height="940" rx="8" fill="#fff7ed" stroke="#fb923c" stroke-width="1.8" />
+<rect x="25" y="85" width="610" height="52" rx="8" fill="#eaf4ff" stroke="#60a5fa" stroke-width="1.5" />
+<rect x="660" y="85" width="305" height="52" rx="8" fill="#edf4fb" stroke="#93a4bf" stroke-width="1.5" />
+<rect x="990" y="85" width="885" height="52" rx="8" fill="#fff1e6" stroke="#fb923c" stroke-width="1.5" />
+<text x="330" y="119" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18" font-weight="700" fill="#1e3a8a" text-anchor="middle">
+<tspan x="330" dy="0">第一层：配置写入与总快照发布</tspan>
+</text>
+<text x="812" y="119" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18" font-weight="700" fill="#1e3a8a" text-anchor="middle">
+<tspan x="812" dy="0">第二层：消费域版本信号</tspan>
+</text>
+<text x="1432" y="119" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18" font-weight="700" fill="#9a3412" text-anchor="middle">
+<tspan x="1432" dy="0">第三层：高频路径局部热更新</tspan>
+</text>
+<rect x="55" y="190" width="150" height="150" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.8" />
+<text x="130.0" y="218" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="16" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="130.0" dy="0">设置页面</tspan>
+<tspan x="130.0" dy="23.2">（Settings）</tspan>
+</text>
+<text x="130.0" y="262" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="130.0" dy="0">基础设置</tspan>
+<tspan x="130.0" dy="18.849999999999998">Prompt 配置</tspan>
+<tspan x="130.0" dy="18.849999999999998">渠道配置</tspan>
+</text>
+<rect x="250" y="190" width="165" height="150" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.8" />
+<text x="332.5" y="218" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="16" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="332.5" dy="0">ConfigHandler</tspan>
+</text>
+<text x="332.5" y="248" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="332.5" dy="0">接收更新请求</tspan>
+<tspan x="332.5" dy="18.849999999999998">按配置类别处理</tspan>
+</text>
+<rect x="470" y="190" width="150" height="150" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="2.1" />
+<text x="545.0" y="218" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="545.0" dy="0">ConfigRepository</tspan>
+</text>
+<text x="545.0" y="248" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="545.0" dy="0">SQLite 持久化</tspan>
+<tspan x="545.0" dy="18.849999999999998">提交后发布快照</tspan>
+</text>
+<polyline points="205,265 250,265" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<text x="227" y="255" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="500" fill="#111827" text-anchor="middle">
+<tspan x="227" dy="0">保存</tspan>
+</text>
+<polyline points="415,265 470,265" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<text x="442" y="255" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="500" fill="#111827" text-anchor="middle">
+<tspan x="442" dy="0">更新</tspan>
+</text>
+<rect x="110" y="575" width="190" height="135" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.8" />
+<text x="205.0" y="603" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="16" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="205.0" dy="0">SQLite 配置表</tspan>
+</text>
+<text x="205.0" y="633" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="205.0" dy="0">app_config</tspan>
+<tspan x="205.0" dy="18.849999999999998">prompts</tspan>
+<tspan x="205.0" dy="18.849999999999998">alert_channels</tspan>
+</text>
+<rect x="360" y="560" width="240" height="165" rx="8" fill="#e0f2fe" stroke="#0b66c3" stroke-width="2.8" />
+<text x="480.0" y="588" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="17" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="480.0" dy="0">不可变总快照</tspan>
+<tspan x="480.0" dy="24.65">（SystemConfig）</tspan>
+</text>
+<text x="480.0" y="638" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="480.0" dy="0">shared_ptr&lt;const SystemConfig&gt;</tspan>
+<tspan x="480.0" dy="18.849999999999998">统一配置视图</tspan>
+<tspan x="480.0" dy="18.849999999999998">读侧只读成品快照</tspan>
+</text>
+<polyline points="545,340 545,450 205,450 205,575" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<text x="250" y="475" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="500" fill="#111827" text-anchor="middle">
+<tspan x="250" dy="0">事务提交</tspan>
+<tspan x="250" dy="18.849999999999998">BEGIN / COMMIT</tspan>
+</text>
+<polyline points="545,340 545,455 480,455 480,560" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<text x="532" y="475" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="500" fill="#111827" text-anchor="middle">
+<tspan x="532" dy="0">提交成功后</tspan>
+<tspan x="532" dy="18.849999999999998">原子发布</tspan>
+</text>
+<rect x="65" y="800" width="290" height="95" rx="8" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.3" />
+<text x="85" y="832" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="16" font-weight="700" fill="#374151" text-anchor="start">
+<tspan x="85" dy="0">一致性约束</tspan>
+</text>
+<text x="85" y="862" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="400" fill="#374151" text-anchor="start">
+<tspan x="85" dy="0">先提交数据库，再发布内存快照</tspan>
+<tspan x="85" dy="18.849999999999998">避免配置写入失败但内存已变化</tspan>
+</text>
+<rect x="700" y="350" width="225" height="420" rx="8" fill="#edf4fb" stroke="#64748b" stroke-width="1.8" />
+<text x="812.5" y="378" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="19" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="812.5" dy="0">分片版本信号</tspan>
+</text>
+<rect x="725" y="430" width="175" height="70" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.4" />
+<text x="812.5" y="458" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="812.5" dy="0">AI 请求域</tspan>
+</text>
+<text x="812.5" y="488" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="812.5" dy="0">当前已落地</tspan>
+</text>
+<rect x="725" y="540" width="175" height="70" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.4" />
+<text x="812.5" y="568" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="812.5" dy="0">其他消费域</tspan>
+</text>
+<text x="812.5" y="598" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="812.5" dy="0">可扩展</tspan>
+</text>
+<rect x="725" y="650" width="175" height="70" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.4" />
+<text x="812.5" y="678" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="812.5" dy="0">按域独立变化</tspan>
+</text>
+<text x="812.5" y="708" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="812.5" dy="0">互不触发刷新</tspan>
+</text>
+<polyline points="600,640 700,640" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<text x="635" y="622" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="500" fill="#334155" text-anchor="middle">
+<tspan x="635" dy="0">配置变更</tspan>
+<tspan x="650" dy="18.849999999999998">只更新相关域</tspan>
+</text>
+<rect x="1120" y="170" width="270" height="205" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.8" />
+<text x="1255.0" y="198" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="17" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="1255.0" dy="0">冷启动配置</tspan>
+</text>
+<text x="1255.0" y="228" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="1255.0" dy="0">线程模型与并发参数</tspan>
+<tspan x="1255.0" dy="18.849999999999998">路由与服务启动参数</tspan>
+<tspan x="1255.0" dy="18.849999999999998">Trace 生命周期参数</tspan>
+<tspan x="1255.0" dy="18.849999999999998">Provider 与渠道策略</tspan>
+</text>
+<text x="1430" y="255" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14" font-weight="400" fill="#1f2937" text-anchor="start">
+<tspan x="1430" dy="0">这类配置主要在服务启动时读取</tspan>
+<tspan x="1430" dy="20.3">运行中通常不自动重建</tspan>
+</text>
+<polyline points="600,620 850,620 850,235 1120,235" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<text x="1015" y="222" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="500" fill="#111827" text-anchor="middle">
+<tspan x="1015" dy="0">启动读取</tspan>
+<tspan x="1015" dy="18.849999999999998">固定生效</tspan>
+</text>
+<rect x="1015" y="410" width="610" height="575" rx="8" fill="#ffedd5" stroke="#fb923c" stroke-width="2.2" />
+<text x="1320" y="445" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="20" font-weight="700" fill="#9a3412" text-anchor="middle">
+<tspan x="1320" dy="0">高频消费侧局部热更新</tspan>
+</text>
+<rect x="1040" y="485" width="125" height="95" rx="8" fill="#fffaf4" stroke="#f97316" stroke-width="1.8" />
+<text x="1102.5" y="513" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="1102.5" dy="0">高频请求</tspan>
+</text>
+<text x="1102.5" y="543" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="1102.5" dy="0">进入消费路径</tspan>
+</text>
+<rect x="1200" y="475" width="190" height="115" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="2.6" />
+<text x="1295.0" y="503" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="1295.0" dy="0">局部运行时快照</tspan>
+</text>
+<text x="1295.0" y="533" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="1295.0" dy="0">只缓存本域字段</tspan>
+<tspan x="1295.0" dy="17.4">平时直接复用</tspan>
+</text>
+<rect x="1420" y="485" width="145" height="95" rx="8" fill="#fffaf4" stroke="#f97316" stroke-width="1.8" />
+<text x="1492.5" y="513" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="1492.5" dy="0">读取版本信号</tspan>
+</text>
+<text x="1492.5" y="543" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="1492.5" dy="0">只读本消费域</tspan>
+</text>
+<rect x="1505" y="625" width="105" height="75" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="2.6" />
+<text x="1557.5" y="653" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="16" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="1557.5" dy="0">版本比较</tspan>
+</text>
+<polyline points="1165,532 1200,532" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<polyline points="1390,532 1420,532" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<polyline points="1492,580 1558,625" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<rect x="1080" y="705" width="185" height="100" rx="8" fill="#fffaf4" stroke="#f97316" stroke-width="1.8" />
+<text x="1172.5" y="733" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="1172.5" dy="0">版本一致</tspan>
+</text>
+<text x="1172.5" y="763" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="1172.5" dy="0">复用局部快照</tspan>
+<tspan x="1172.5" dy="17.4">继续处理请求</tspan>
+</text>
+<rect x="1325" y="705" width="220" height="100" rx="8" fill="#fffaf4" stroke="#f97316" stroke-width="1.8" />
+<text x="1435.0" y="733" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="1435.0" dy="0">版本变化</tspan>
+</text>
+<text x="1435.0" y="763" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="1435.0" dy="0">从最新总快照</tspan>
+<tspan x="1435.0" dy="17.4">提取本域配置</tspan>
+</text>
+<polyline points="1505,662 1265,662 1265,730" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<polyline points="1560,700 1560,730 1545,730" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<rect x="1290" y="835" width="240" height="75" rx="8" fill="#fffaf4" stroke="#f97316" stroke-width="1.8" />
+<text x="1410.0" y="863" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="1410.0" dy="0">重建局部快照</tspan>
+</text>
+<text x="1410.0" y="893" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="1410.0" dy="0">生成新的配置镜像</tspan>
+</text>
+<rect x="1290" y="930" width="240" height="75" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="2.6" />
+<text x="1410.0" y="958" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="1410.0" dy="0">atomic shared_ptr 替换</tspan>
+</text>
+<text x="1410.0" y="988" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="1410.0" dy="0">避免原地修改共享对象</tspan>
+</text>
+<rect x="1060" y="900" width="225" height="80" rx="8" fill="#fffaf4" stroke="#f97316" stroke-width="1.8" />
+<text x="1172.5" y="928" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#0f172a" text-anchor="middle">
+<tspan x="1172.5" dy="0">继续本域处理</tspan>
+</text>
+<text x="1172.5" y="958" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="12" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="1172.5" dy="0">热路径只用局部快照</tspan>
+</text>
+<polyline points="1435,805 1435,835" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<polyline points="1410,910 1410,930" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<polyline points="1290,968 1285,968" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<polyline points="1172,805 1172,900" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<polyline points="1410,1005 1410,1030 1172,1030 1172,980" stroke="#111827" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+<rect x="1650" y="510" width="195" height="120" rx="8" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.3" />
+<text x="1670" y="542" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#374151" text-anchor="start">
+<tspan x="1670" dy="0">图中重点</tspan>
+</text>
+<text x="1670" y="572" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="400" fill="#374151" text-anchor="start">
+<tspan x="1670" dy="0">写侧发布总快照</tspan>
+<tspan x="1670" dy="18.849999999999998">读侧按域局部刷新</tspan>
+<tspan x="1670" dy="18.849999999999998">无关配置不进热路径</tspan>
+</text>
+<rect x="1650" y="705" width="195" height="95" rx="8" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.3" />
+<text x="1670" y="737" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15" font-weight="700" fill="#374151" text-anchor="start">
+<tspan x="1670" dy="0">当前落地</tspan>
+</text>
+<text x="1670" y="767" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="13" font-weight="400" fill="#374151" text-anchor="start">
+<tspan x="1670" dy="0">先用于 Trace AI 高频链路</tspan>
+<tspan x="1670" dy="18.849999999999998">其他消费域可继续扩展</tspan>
+</text>
+<rect x="360" y="1060" width="1180" height="85" rx="8" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.4" />
+<text x="950" y="1092" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="17" font-weight="700" fill="#374151" text-anchor="middle">
+<tspan x="950" dy="0">生效边界</tspan>
+</text>
+<text x="950" y="1123" font-family="Microsoft YaHei, SimHei, Noto Sans CJK SC, Arial, sans-serif" font-size="14" font-weight="400" fill="#374151" text-anchor="middle">
+<tspan x="950" dy="0">写侧统一持久化并发布不可变总快照；读侧只在本消费域版本变化时刷新局部快照。</tspan>
+<tspan x="950" dy="20.3">这样可以保证配置切换一致性，同时避免无关设置变化进入所有高频路径。</tspan>
+</text>
+</svg>

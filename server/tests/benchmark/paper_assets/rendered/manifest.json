@@ -1,0 +1,28 @@
+{
+  "archives": [
+    "suite_a_20260418.tar.gz",
+    "suite_b_20260418_x10.tar.gz",
+    "suite_d_final_curve_rerun_d512_f1024.tar.gz",
+    "suite_d_final_peak_20c_d512_f1024.tar.gz"
+  ],
+  "output_dir": ".",
+  "tables": [
+    "paper_tables/suite_a_main_vs_cmp.csv",
+    "paper_tables/suite_a_main_vs_cmp.tex",
+    "paper_tables/suite_a_buffer_compare.csv",
+    "paper_tables/suite_a_buffer_compare.tex",
+    "paper_tables/suite_b_correctness.csv",
+    "paper_tables/suite_b_correctness.tex",
+    "paper_tables/suite_d_fixed_load_curve.csv",
+    "paper_tables/suite_d_fixed_load_curve.tex",
+    "paper_tables/suite_d_peak.csv",
+    "paper_tables/suite_d_peak.tex"
+  ],
+  "figures": [
+    "paper_figures/suite_a_buffer_compare.svg",
+    "paper_figures/suite_a_main_vs_cmp.svg",
+    "paper_figures/suite_b_correctness.svg",
+    "paper_figures/suite_d_fixed_load_curve.svg",
+    "paper_figures/suite_d_peak.svg"
+  ]
+}

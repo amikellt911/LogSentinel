@@ -1,0 +1,3 @@
+candidate,visible_completion_rate_at_stop,drain_tail_ms
+buffered_512_5,0.9984,125.80
+disable_buffered,0.9957,126.80

@@ -1,0 +1,98 @@
+参考文献候选集（2026-04-20）
+
+说明：
+1. 这是一份“候选池”，目的是先凑出一份更贴合终稿正文的 15+ 文献集，不等于最终提交版参考文献。
+2. [旧] 表示来自原“开题参考文献”；[新] 表示本轮额外补搜；[已下载] 表示本地已经拿到 PDF 或作者公开版；[待核] 表示最终卷期页码或正式出版信息还需要再核一次。
+3. 当前额外下载文件目录：/tmp/logsentinel-papers-20260420/
+4. 已排除的假 PDF：10664_2021_Article_10063.pdf、mdpi-srdetector.pdf。
+
+一、核心候选（优先用于绪论、研究现状、相关技术、系统设计）
+
+[1] [旧] LI B, PENG X, XIANG Q, et al. Enjoy Your Observability: An Industrial Survey of Microservice Tracing and Analysis[J]. Empirical Software Engineering, 2022, 27(1): 25. DOI:10.1007/s10664-021-10063-9.
+用途：微服务 tracing / 可观测性 / 工业调查。
+
+[2] [旧] HE S, HE P, CHEN Z, et al. A Survey on Automated Log Analysis for Reliability Engineering[J]. ACM Computing Surveys, 2021, 54(6): 130:1-130:37. DOI:10.1145/3460345.
+用途：传统日志分析、日志自动化综述。
+
+[3] [旧] AHMED T, GHOSH S, BANSAL C, et al. Recommending Root-Cause and Mitigation Steps for Cloud Incidents Using Large Language Models[C]//2023 IEEE/ACM 45th International Conference on Software Engineering (ICSE '23). 2023: 1737-1749. DOI:10.1109/ICSE48619.2023.00149.
+用途：LLM 做云故障根因分析与处置建议。
+
+[4] [旧] LANDAUER M, ONDER S, SKOPIK F, et al. Deep Learning for Anomaly Detection in Log Data: A Survey[J]. Machine Learning with Applications, 2023, 12: 100470. DOI:10.1016/j.mlwa.2023.100470.
+用途：日志异常检测、深度学习方法综述。
+
+[5] [旧] AKHTAR S, KHAN S, PARKINSON S. LLM-Based Event Log Analysis Techniques: A Survey[EB/OL]. arXiv:2502.00677, 2025-02-02. DOI:10.48550/arXiv.2502.00677. [已下载]
+用途：LLM+日志分析综述。
+本地文件：/tmp/logsentinel-papers-20260420/2502.00677.pdf
+
+[6] [旧] ZHANG L, JIA T, JIA M, et al. A Survey of AIOps in the Era of Large Language Models[EB/OL]. arXiv:2507.12472, 2025-06-23. DOI:10.48550/arXiv.2507.12472. [已下载]
+用途：AIOps / LLM4AIOps 总览。
+本地文件：/tmp/logsentinel-papers-20260420/2507.12472.pdf
+
+[7] [旧] XIAO Y, LE V-H, ZHANG H. Demonstration-Free: Towards More Practical Log Parsing with Large Language Models[C]//Proceedings of the 39th IEEE/ACM International Conference on Automated Software Engineering (ASE 2024). New York: Association for Computing Machinery, 2024: 153-165. DOI:10.1145/3691620.3694994. [已下载]
+用途：LLM 日志解析，强调低示例成本。
+本地文件：/tmp/logsentinel-papers-20260420/2406.06156.pdf
+
+[8] [旧] MA Z, CHEN A R, KIM D J, et al. LLMParser: An Exploratory Study on Using Large Language Models for Log Parsing[C]//2024 IEEE/ACM 46th International Conference on Software Engineering (ICSE '24). 2024: 99:1-99:13. DOI:10.1145/3597503.3639150. [已下载]
+用途：LLM 日志解析、结构化模板提取。
+本地文件：/tmp/logsentinel-papers-20260420/2404.18001.pdf
+
+[9] [旧] WANG Z, LIU Z, ZHANG Y, et al. RCAgent: Cloud Root Cause Analysis by Autonomous Agents with Tool-Augmented Large Language Models[C]//Proceedings of the 33rd ACM International Conference on Information and Knowledge Management (CIKM '24). 2024: 4966-4974. DOI:10.1145/3627673.3680016.
+用途：面向根因分析的 agent/LLM 方法。
+
+[10] [新] BENTO A, CORREIA J, FILIPE R, et al. Automated Analysis of Distributed Tracing: Challenges and Research Directions[J]. Journal of Grid Computing, 2021, 19: 9. DOI:10.1007/s10723-021-09551-5. [已下载]
+用途：分布式 tracing 分析、挑战与研究方向。
+本地文件：/tmp/logsentinel-papers-20260420/JA-2021-026-Automated_Analysis_of_Distributed_Tracing.pdf
+
+[11] [新] ZHANG C, PENG X, SHA C, et al. DeepTraLog: Trace-Log Combined Microservice Anomaly Detection through Graph-based Deep Learning[C]//44th International Conference on Software Engineering (ICSE '22). New York: Association for Computing Machinery, 2022: 623-634. DOI:10.1145/3510003.3510180. [已下载] [待核页码]
+用途：Trace+Log 联合异常检测，和你的终稿题目非常贴。
+本地文件：/tmp/logsentinel-papers-20260420/icse22-DeepTraLog.pdf
+
+[12] [新] PANAHANDEH M, HAMOU-LHADJ A, HAMDAQA M, et al. ServiceAnomaly: An Anomaly Detection Approach in Microservices Using Distributed Traces and Profiling Metrics[J/OL]. 作者公开版 PDF，2024 前后版本，正式卷期页码待核。 [已下载] [待核]
+用途：分布式 traces + profiling metrics 的微服务异常检测。
+本地文件：/tmp/logsentinel-papers-20260420/JSS24-ServiceAnomaly_preprint.pdf
+
+[13] [新] KOHYARNEJADFARD I, ALOISE D, AZHARI S V, et al. Anomaly detection in microservice environments using distributed tracing data analysis and NLP[J]. Journal of Cloud Computing, 2022, 11:25. DOI:10.1186/s13677-022-00296-4. [已下载]
+用途：基于 distributed tracing + NLP 的微服务异常检测。
+本地文件：/tmp/logsentinel-papers-20260420/s13677-022-00296-4.pdf
+
+[14] [新] SHORTEN C, PIERSE C, SMITH T B, et al. StructuredRAG: JSON Response Formatting with Large Language Models[EB/OL]. arXiv:2408.11061, 2024-08-07. [已下载]
+用途：如果正文要论证“AI 代理必须做结构化输出约束”，这篇很合适。
+本地文件：/tmp/logsentinel-papers-20260420/2408.11061.pdf
+
+[15] [新] GENG S, COOPER H, BERMAN J, et al. JSONSchemaBench: A Rigorous Benchmark of Structured Outputs for Language Models[EB/OL]. arXiv:2501.10868, 2025-02-27. [已下载]
+用途：结构化输出、约束解码、JSON Schema 可靠性。
+本地文件：/tmp/logsentinel-papers-20260420/2501.10868.pdf
+
+[16] [旧] DEBNATH B, SOLAIMANI M, GULZAR M A, et al. LogLens: A Real-Time Log Analysis System[C]//2018 IEEE 38th International Conference on Distributed Computing Systems (ICDCS). 2018: 1052-1062. DOI:10.1109/ICDCS.2018.00105.
+用途：实时日志分析系统、系统背景。
+
+二、技术背景补充（可用于第二章相关技术与系统实现依据）
+
+[17] [旧] YANG S, PARK S J, OUSTERHOUT J. NanoLog: A Nanosecond Scale Logging System[C]//2018 USENIX Annual Technical Conference. USENIX Association, 2018: 335-349.
+用途：高性能日志记录、系统实现背景。
+
+[18] [旧] SCHMIDT D C. Reactor: An Object Behavioral Pattern for Demultiplexing and Dispatching Handles for Synchronous Events[C]//Pattern Languages of Program Design. Reading: Addison-Wesley, 1995: 529-545.
+用途：Reactor 事件驱动模型、后端接入层理论背景。
+
+[19] [旧] WELSH M, CULLER D, BREWER E. SEDA: An Architecture for Well-Conditioned, Scalable Internet Services[C]//Proceedings of the 18th ACM Symposium on Operating Systems Principles. 2001: 230-243. DOI:10.1145/502034.502057.
+用途：分阶段事件驱动架构、异步解耦背景。
+
+[20] [旧] BONÉR J, FARLEY D, KUHN R, et al. The Reactive Manifesto[EB/OL]. http://www.reactivemanifesto.org, 2014-09-16/2026-01-05.
+用途：响应式系统理念、异步与弹性设计背景。
+
+三、当前这份候选池的使用建议
+
+1. 绪论/研究现状优先从 [1]-[6]、[10]-[13] 里面挑。
+2. 相关技术基础里如果写 LLM 日志解析，可优先用 [7][8]；写 tracing/异常检测可优先用 [10][11][12][13]。
+3. 如果正文里要论证“AI 输出必须是结构化 JSON，不能随便生成自然语言”，可用 [14][15]。
+4. 第二章实现技术背景里写 Reactor/异步/高性能日志时，可补 [17][18][19][20]。
+5. 最终交稿前，建议优先再补 2-4 篇中文文献，这样“国内外研究现状”会更稳，不会显得全是英文文献。
+
+四、我当前更推荐优先保留的 12 篇
+
+[1] [2] [3] [4] [5] [7] [8] [10] [11] [12] [13] [15]
+
+原因：
+1. 这 12 篇和你论文主题“日志 + Trace + 智能分析 + 正确性/异常检测”最贴。
+2. 其中 [10][11][12][13] 是原开题参考文献里没有或明显更贴终稿的新补文献。
+3. [14][15] 更适合支撑你正文里 AI 结构化输出与代理可靠性那一段，不一定非放研究现状，也可以放系统设计依据。

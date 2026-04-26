@@ -226,3 +226,10 @@
   - [x] 先写红灯单测，锁 `sqlite_db` 会脱离 `run_root`，并把 `sqlite_root` 写进 summary metadata。
   - [x] 实现 runner 参数与单 case `--sqlite-db` 派生逻辑，保留 `result.json/server.log/wrk.log` 原目录不变。
   - [x] 验证定向单测、全量单测、Python 语法检查和 formal clean shell `bash -n`。
+- [x] Benchmark 论文资产渲染：把 4 个正式 `tar.gz` 资产包转换为可直接贴论文的 CSV、LaTeX 表和 SVG 图。
+  - [x] 先写红灯单测，锁定排除 `suite_d_20260418.tar.gz` 后只处理其余 4 个资产包。
+  - [x] 实现 `render_paper_assets.py`，解析 Suite A/B/D summary 并输出稳定文件名。
+  - [x] 生成 `paper_tables/*.csv`、`paper_tables/*.tex` 与 `paper_figures/*.svg`。
+  - [x] 验证单测、Python 语法检查、脚本实际输出和 diff 校验。
+  - [x] 修正 `suite_b_correctness.svg`：回到竖向 completeness 主图，使用 `M-CB / P-LR` 这类短标签，并对 `0.00 / 1.00` 极值显式贴值。
+  - [x] 修正 `suite_b_correctness.svg`：6 根 completeness 柱全部显式贴值，不再只给右侧 `P` 组显示数值。

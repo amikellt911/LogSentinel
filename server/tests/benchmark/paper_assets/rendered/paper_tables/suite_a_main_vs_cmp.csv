@@ -1,0 +1,4 @@
+load,trace_count,gap_ms,send_workers,cmp_visible_completion_rate_at_stop,main_visible_completion_rate_at_stop,delta_visible_completion_rate_at_stop,cmp_drain_tail_ms,main_drain_tail_ms,delta_drain_tail_ms
+light,1600,20,2,1.0000,0.9975,-0.0025,1.00,155.00,154.00
+mid,3200,10,2,1.0000,0.9975,-0.0025,1.67,156.00,154.33
+heavy,6400,5,2,1.0000,0.9953,-0.0047,2.00,88.67,86.67

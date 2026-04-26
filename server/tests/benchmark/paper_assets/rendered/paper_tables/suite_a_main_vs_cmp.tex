@@ -1,0 +1,13 @@
+\begin{table}[htbp]
+\centering
+\caption{Suite A main versus compare target}
+\begin{tabular}{llllllllll}
+\hline
+load & trace\_count & gap\_ms & send\_workers & cmp\_visible\_completion\_rate\_at\_stop & main\_visible\_completion\_rate\_at\_stop & delta\_visible\_completion\_rate\_at\_stop & cmp\_drain\_tail\_ms & main\_drain\_tail\_ms & delta\_drain\_tail\_ms \\
+\hline
+light & 1600 & 20 & 2 & 1.0000 & 0.9975 & -0.0025 & 1.00 & 155.00 & 154.00 \\
+mid & 3200 & 10 & 2 & 1.0000 & 0.9975 & -0.0025 & 1.67 & 156.00 & 154.33 \\
+heavy & 6400 & 5 & 2 & 1.0000 & 0.9953 & -0.0047 & 2.00 & 88.67 & 86.67 \\
+\hline
+\end{tabular}
+\end{table}

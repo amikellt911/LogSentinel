@@ -1,0 +1,7 @@
+case,lifecycle_profile,sender_profile,trace_completeness_median,trace_completeness_min,trace_pollution_median,duplicate_persistence_median,sqlite_unique_constraint_fail_median
+minimal__clean_baseline,minimal,clean_baseline,0.8800,0.8500,0.0000,0.0000,0.00
+minimal__late_replay_stress,minimal,late_replay_stress,0.0800,0.0700,0.1400,0.0000,12.00
+minimal__mixed_realistic,minimal,mixed_realistic,0.1200,0.0300,0.0900,0.0000,11.00
+protected__clean_baseline,protected,clean_baseline,1.0000,1.0000,0.0000,0.0000,0.00
+protected__late_replay_stress,protected,late_replay_stress,1.0000,0.9800,0.0000,0.0000,0.00
+protected__mixed_realistic,protected,mixed_realistic,1.0000,0.9900,0.0000,0.0000,0.00

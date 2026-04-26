@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+\centering
+\caption{Suite B lifecycle correctness}
+\begin{tabular}{llllllll}
+\hline
+case & lifecycle\_profile & sender\_profile & trace\_completeness\_median & trace\_completeness\_min & trace\_pollution\_median & duplicate\_persistence\_median & sqlite\_unique\_constraint\_fail\_median \\
+\hline
+minimal\_\_clean\_baseline & minimal & clean\_baseline & 0.8800 & 0.8500 & 0.0000 & 0.0000 & 0.00 \\
+minimal\_\_late\_replay\_stress & minimal & late\_replay\_stress & 0.0800 & 0.0700 & 0.1400 & 0.0000 & 12.00 \\
+minimal\_\_mixed\_realistic & minimal & mixed\_realistic & 0.1200 & 0.0300 & 0.0900 & 0.0000 & 11.00 \\
+protected\_\_clean\_baseline & protected & clean\_baseline & 1.0000 & 1.0000 & 0.0000 & 0.0000 & 0.00 \\
+protected\_\_late\_replay\_stress & protected & late\_replay\_stress & 1.0000 & 0.9800 & 0.0000 & 0.0000 & 0.00 \\
+protected\_\_mixed\_realistic & protected & mixed\_realistic & 1.0000 & 0.9900 & 0.0000 & 0.0000 & 0.00 \\
+\hline
+\end{tabular}
+\end{table}
