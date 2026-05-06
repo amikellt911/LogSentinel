@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "ai/TraceAiProvider.h"
+#include "ai/TraceAiBackend.h"
 #include "ai/TraceProxyProtocol.h"
 #include "ai/TraceProxyTransportError.h"
 #define private public
@@ -334,6 +335,16 @@ TEST(TraceProxyProtocolTest, ThrowsNormalizedProviderFailureWhenOkIsFalse)
     } catch (const std::runtime_error& e) {
         EXPECT_STREQ(e.what(), "Trace AI Provider Error: [429 RESOURCE_EXHAUSTED] quota exhausted");
     }
+}
+
+TEST(TraceAiBackendTest, ParsesDeepSeekRouteSegment)
+{
+    TraceAiBackend backend = TraceAiBackend::Mock;
+
+    // 这条测试只锁 C++ 到 Python proxy 的路由语义。
+    // DeepSeek 的 base_url、鉴权和 JSON 解析都在 Python provider 单测里覆盖，C++ 不应该感知那些厂商细节。
+    ASSERT_TRUE(TryParseTraceAiBackend("deepseek", &backend));
+    EXPECT_EQ(TraceAiBackendToRouteSegment(backend), "deepseek");
 }
 
 TEST(TraceProxyTransportErrorTest, IncludesCprErrorDetailsWhenStatusCodeIsZero)

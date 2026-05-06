@@ -1243,10 +1243,12 @@ def run_flow(args: argparse.Namespace) -> int:
         provider_model_map = {
             "gemini": "gemini-fake-model",
             "glm": "glm-fake-model",
+            "deepseek": "deepseek-v4-flash",
         }
         provider_api_key_map = {
             "gemini": "gemini-fake-key",
             "glm": "glm-fake-key",
+            "deepseek": "deepseek-fake-key",
         }
 
         def configure_provider_pair(primary: str, fallback: str) -> None:
@@ -1388,6 +1390,24 @@ def run_flow(args: argparse.Namespace) -> int:
         assert_last_provider_request(
             probe_service.state,
             ["glm", "gemini"],
+            expected_model_by_provider=provider_model_map,
+            expected_api_key_by_provider=provider_api_key_map,
+        )
+
+        # 场景 4.5：deepseek 作为主路成功。
+        # 这条黑盒不连真实 DeepSeek，只证明 Settings 冷启动 provider 能被 C++ 解析成 /analyze/trace/deepseek。
+        configure_provider_pair("deepseek", "glm")
+        proc = restart_server_with_fake_proxy(proc, server_bin, db_path, frontend_dist, new_url, args.ready_timeout, probe_service, args.proxy_timeout_ms)
+        probe_service.state.clear_trace_requests()
+        probe_service.state.set_provider_behavior("deepseek", build_probe_success_payload("deepseek", risk_level="warning"))
+        probe_service.state.set_provider_behavior("glm", build_probe_success_payload("glm", risk_level="warning"))
+        deepseek_primary_trace_id = send_trace_pair(new_url, int(time.time() * 1000) + 650, "deepseek-primary-success")
+        wait_trace_summary_status(db_path, deepseek_primary_trace_id, "completed", args.dispatch_timeout)
+        if query_trace_analysis_count(db_path, deepseek_primary_trace_id) != 1:
+            raise RuntimeError("deepseek 主路成功场景应该产出 1 条 trace_analysis")
+        assert_last_provider_request(
+            probe_service.state,
+            ["deepseek"],
             expected_model_by_provider=provider_model_map,
             expected_api_key_by_provider=provider_api_key_map,
         )

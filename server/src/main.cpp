@@ -825,7 +825,7 @@ int main(int argc, char* argv[])
         TraceAiBackend backend = TraceAiBackend::Mock;
         if (!TryParseTraceAiBackend(effective_trace_ai_provider, &backend)) {
             std::cerr << "Fatal Error: unsupported --trace-ai-provider '"
-                      << effective_trace_ai_provider << "'. expected one of: mock|gemini|glm" << std::endl;
+                      << effective_trace_ai_provider << "'. expected one of: mock|gemini|glm|deepseek" << std::endl;
             return -1;
         }
         TraceAiFactoryOptions options;
@@ -859,7 +859,7 @@ int main(int argc, char* argv[])
             // 这样主/备两路 provider 都保持“单次调用对象”的边界，不把动态切路由塞进 provider 内部。
             if (!TryParseTraceAiBackend(effective_ai_fallback_provider, &fallback_backend)) {
                 std::cerr << "Fatal Error: unsupported ai_fallback_provider '"
-                          << effective_ai_fallback_provider << "'. expected one of: mock|gemini|glm"
+                          << effective_ai_fallback_provider << "'. expected one of: mock|gemini|glm|deepseek"
                           << std::endl;
                 return -1;
             }

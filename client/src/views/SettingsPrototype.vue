@@ -68,15 +68,18 @@
                   </el-form-item>
 
                   <el-form-item label="默认 Provider">
+                    <!-- provider 本身决定 C++ 到 Python proxy 的 /analyze/trace/{provider} 路由。
+                         当前只支持冷启动切换；运行中保存只会热更新同一路由下的 model/api_key。 -->
                     <el-select v-model="ai.provider" class="w-full" :disabled="!ai.analysisEnabled">
                       <el-option label="Local Mock (Dev)" value="mock" />
                       <el-option label="Google Gemini" value="gemini" />
                       <el-option label="智谱 GLM" value="glm" />
+                      <el-option label="DeepSeek" value="deepseek" />
                     </el-select>
                   </el-form-item>
 
                   <el-form-item label="默认模型">
-                    <el-input v-model="ai.model" placeholder="e.g. gemini-2.5-flash" :disabled="!ai.analysisEnabled" />
+                    <el-input v-model="ai.model" placeholder="e.g. deepseek-v4-flash" :disabled="!ai.analysisEnabled" />
                   </el-form-item>
 
                   <el-form-item label="API Key">
@@ -134,10 +137,13 @@
                     </div>
                     <div class="grid grid-cols-1 gap-4">
                       <el-form-item label="Fallback Provider" class="mb-0">
+                        <!-- fallback provider 和主 provider 一样决定冷启动路由。
+                             运行中热更新只覆盖 fallback model/api_key，不能把已创建的 fallback provider 改成另一家。 -->
                         <el-select v-model="ai.fallbackProvider" class="w-full" :disabled="!ai.autoDegrade">
                           <el-option label="Local Mock (Dev)" value="mock" />
                           <el-option label="Google Gemini" value="gemini" />
                           <el-option label="智谱 GLM" value="glm" />
+                          <el-option label="DeepSeek" value="deepseek" />
                         </el-select>
                       </el-form-item>
                       <el-form-item label="Fallback Model" class="mb-0">

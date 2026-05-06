@@ -38,6 +38,7 @@ load_dotenv(dotenv_path=dotenv_path)
 # ==========================================
 # 现在可以使用绝对导入了
 from ai.proxy.providers.base import AIProvider
+from ai.proxy.providers.deepseek import DeepSeekProvider
 from ai.proxy.providers.gemini import GeminiProvider
 from ai.proxy.providers.glm import GlmProvider
 from ai.proxy.providers.mock import MockProvider
@@ -384,6 +385,13 @@ providers["mock"] = MockProvider(delay=0.5)
 glm_api_key = os.getenv("GLM_API_KEY", "") or os.getenv("BIGMODEL_API_KEY", "")
 glm_model_name = os.getenv("GLM_MODEL", "glm-5.1")
 providers["glm"] = GlmProvider(api_key=glm_api_key, model_name=glm_model_name)
+
+# DeepSeek 同样只接 Trace 主链。
+# C++ 侧仍然通过 /analyze/trace/deepseek 路由进入 proxy；真正的 OpenAI-compatible HTTP 细节留在 provider 内部，
+# 避免把 DeepSeek 的 base_url、错误体和 usage 字段扩散到主链。
+deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "")
+deepseek_model_name = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+providers["deepseek"] = DeepSeekProvider(api_key=deepseek_api_key, model_name=deepseek_model_name)
 # 未来可以在这里添加并注册 OpenAI, Claude 等其他 Provider
 # openai_api_key = os.getenv("OPENAI_API_KEY")
 # if openai_api_key:

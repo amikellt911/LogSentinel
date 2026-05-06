@@ -237,6 +237,78 @@ class AiProxyTraceProtocolTest(unittest.TestCase):
         self.assertEqual(result["error_status"], "PROVIDER_FORMAT_ERROR")
         self.assertIn("JSON", result["error_message"])
 
+    def test_deepseek_provider_analyze_trace_uses_openai_compatible_json_object_and_usage(self):
+        project_root = pathlib.Path(__file__).resolve().parents[1]
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        module = importlib.import_module("ai.proxy.providers.deepseek")
+
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "{\"summary\":\"deepseek ok\",\"risk_level\":\"warning\",\"root_cause\":\"slow db\",\"solution\":\"add index\"}"
+                            }
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 21,
+                        "completion_tokens": 9,
+                        "total_tokens": 30,
+                    },
+                }
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                # 这里锁 provider 仍然使用同步 httpx.Client。
+                # 路由层已经负责把阻塞调用丢进线程池，provider 自己不要再混一套 async 生命周期。
+                captured["client_kwargs"] = kwargs
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def post(self, url, *, headers=None, json=None):
+                # 这里直接抓 DeepSeek 出站 HTTP 载荷。
+                # 既然 DeepSeek 官方是 OpenAI-compatible，这个测试要锁住 base_url、Bearer key 和 JSON mode。
+                captured["url"] = url
+                captured["headers"] = headers
+                captured["json"] = json
+                return FakeResponse()
+
+        from unittest import mock
+        with mock.patch.object(module.httpx, "Client", FakeClient):
+            provider = module.DeepSeekProvider(api_key="", model_name="deepseek-v4-flash")
+            result = provider.analyze_trace(
+                trace_text="trace body should not be duplicated",
+                prompt="rendered trace prompt with json instruction",
+                api_key="deepseek-key",
+                model="deepseek-v4-pro",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["analysis"]["summary"], "deepseek ok")
+        self.assertEqual(result["usage"]["input_tokens"], 21)
+        self.assertEqual(result["usage"]["output_tokens"], 9)
+        self.assertEqual(result["usage"]["total_tokens"], 30)
+        self.assertEqual(captured["url"], "https://api.deepseek.com/chat/completions")
+        self.assertEqual(captured["headers"]["Authorization"], "Bearer deepseek-key")
+        self.assertEqual(captured["json"]["model"], "deepseek-v4-pro")
+        self.assertEqual(captured["json"]["response_format"], {"type": "json_object"})
+        self.assertEqual(captured["json"]["messages"][0]["role"], "user")
+        self.assertEqual(captured["json"]["messages"][0]["content"], "rendered trace prompt with json instruction")
+
     def test_trace_route_passes_timeout_ms_to_provider(self):
         module = load_module("ai_proxy_main_timeout", "ai/proxy/main.py")
         captured = {}
