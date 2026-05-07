@@ -45,3 +45,14 @@
 - [x] `python3 -m py_compile server/ai/proxy/providers/deepseek.py server/ai/proxy/main.py`：通过
 - [ ] `npm run build`：失败在既有 TypeScript 错误，失败文件包括 `AIEngineSearchBar.vue`、`BatchArchiveList.vue`、`BusinessHealthCards.vue`、`PromptDebugger.vue`、`RiskDistribution.vue`、`TraceWaterfall.vue`、`AIEngine.vue`、`Settings.vue`，不在本次 DeepSeek 修改点
 - [ ] `python3 server/tests/smoke_settings_blackbox.py --server-bin ./server/build/LogSentinel --ready-timeout 15 --dispatch-timeout 15`：DeepSeek 主路场景已执行到后续阶段，最终失败在既有 `trace_lifecycle_profile=` 启动日志等待点
+
+## DeepSeek 手工联通 CLI
+
+- [x] 新增 `server/tests/manual_deepseek_trace_probe.py`，默认使用 `deepseek-v4-flash`
+- [x] CLI 支持 `--api-key`，也支持从 `DEEPSEEK_API_KEY` 读取
+- [x] 脚本复用生产 `DeepSeekProvider.analyze_trace()`，不另写一套 HTTP 请求逻辑
+- [x] 脚本内置支付链路超时 demo trace，并校验返回 analysis 四字段
+- [x] `python3 -m py_compile server/tests/manual_deepseek_trace_probe.py`：通过
+- [x] `python3 server/tests/manual_deepseek_trace_probe.py --help`：通过
+- [x] `python3 server/tests/manual_deepseek_trace_probe.py`：无 key 时按预期退出并提示传 `--api-key`
+- [ ] 真实 DeepSeek 联通：等待用户传入真实 API Key 后手工执行
