@@ -59,20 +59,12 @@
                  页面自己滚动，避免右侧编辑器再被“上面一截 + 下面保存栏”夹成小窗。 -->
             <div class="flex flex-col">
               <div class="bg-[#1a1a1a] border-b border-gray-700 p-6 flex flex-col justify-center shrink-0">
-                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">全局 Provider 配置</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">模型总览</h3>
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <!-- 这个总开关控制的是 Trace 主链是否真的发起 AI 分析。
                        关闭后 provider/model/key 仍然保留，但后端 worker 只会把 ai_status 记成 skipped_manual。 -->
                   <el-form-item label="AI 分析开关">
                     <el-switch v-model="ai.analysisEnabled" inline-prompt active-text="ON" inactive-text="OFF" />
-                  </el-form-item>
-
-                  <el-form-item label="默认 Provider">
-                    <!-- provider 本身决定 C++ 到 Python proxy 的 /analyze/trace/{provider} 路由。
-                         当前只支持冷启动切换；model/api_key 已经改为从下方 provider profile 表读取。 -->
-                    <el-select v-model="ai.provider" class="w-full" :disabled="!ai.analysisEnabled">
-                      <el-option v-for="provider in providerIds" :key="provider" :label="provider" :value="provider" />
-                    </el-select>
                   </el-form-item>
 
                   <el-form-item label="分析输出语言">
@@ -95,7 +87,7 @@
               </div>
 
               <div class="bg-[#1a1a1a] border-b border-gray-700 p-6 flex flex-col justify-center shrink-0">
-                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">Provider Profiles</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">模型库</h3>
                 <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <div
                     v-for="provider in providerIds"
@@ -103,11 +95,17 @@
                     class="border border-gray-700 p-4 rounded bg-gray-800/30"
                   >
                     <div class="mb-4 flex items-center justify-between">
-                      <span class="font-mono text-sm font-bold text-gray-200">{{ provider }}</span>
-                      <span v-if="ai.provider === provider || ai.fallbackProvider === provider" class="rounded border border-emerald-500/50 px-2 py-0.5 text-xs text-emerald-300">selected</span>
+                      <div class="min-w-0 pr-3">
+                        <div class="text-sm font-bold text-gray-200 break-all">{{ providerProfiles[provider].model.trim() || provider }}</div>
+                        <div class="mt-1 text-xs text-gray-500">模型配置槽位</div>
+                      </div>
+                      <div class="flex shrink-0 items-center gap-2">
+                        <span v-if="ai.provider === provider" class="rounded border border-sky-500/50 px-2 py-0.5 text-xs text-sky-300">Primary</span>
+                        <span v-if="ai.autoDegrade && ai.fallbackProvider === provider" class="rounded border border-emerald-500/50 px-2 py-0.5 text-xs text-emerald-300">Fallback</span>
+                      </div>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <el-form-item label="Model" class="mb-0">
+                      <el-form-item label="模型名称" class="mb-0">
                         <el-input v-model="providerProfiles[provider].model" :disabled="!ai.analysisEnabled" />
                       </el-form-item>
                       <el-form-item label="API Key" class="mb-0">
@@ -118,6 +116,24 @@
                           :disabled="!ai.analysisEnabled"
                         />
                       </el-form-item>
+                    </div>
+                    <div class="mt-4 flex flex-wrap gap-2">
+                      <el-button
+                        size="small"
+                        :type="ai.provider === provider ? 'primary' : 'default'"
+                        :disabled="!ai.analysisEnabled"
+                        @click="setPrimaryModel(provider)"
+                      >
+                        设为主模型
+                      </el-button>
+                      <el-button
+                        size="small"
+                        :type="ai.fallbackProvider === provider && ai.autoDegrade ? 'success' : 'default'"
+                        :disabled="!ai.analysisEnabled || ai.provider === provider"
+                        @click="setFallbackModel(provider)"
+                      >
+                        设为备用模型
+                      </el-button>
                     </div>
                   </div>
                 </div>
@@ -147,14 +163,8 @@
                       <span class="text-sm font-bold text-gray-300">自动降级</span>
                       <el-switch v-model="ai.autoDegrade" inline-prompt active-text="ON" inactive-text="OFF" />
                     </div>
-                    <div class="grid grid-cols-1 gap-4">
-                      <el-form-item label="Fallback Provider" class="mb-0">
-                        <!-- fallback provider 和主 provider 一样决定冷启动路由。
-                             运行中热更新只覆盖该 provider profile 下的 model/api_key，不能把已创建的 fallback provider 改成另一家。 -->
-                        <el-select v-model="ai.fallbackProvider" class="w-full" :disabled="!ai.autoDegrade">
-                          <el-option v-for="provider in providerIds" :key="provider" :label="provider" :value="provider" />
-                        </el-select>
-                      </el-form-item>
+                    <div class="rounded border border-gray-700 bg-[#202020] px-4 py-3 text-sm text-gray-300">
+                      当前备用模型：{{ providerProfiles[ai.fallbackProvider].model.trim() || ai.fallbackProvider }}
                     </div>
                   </div>
 
@@ -1337,6 +1347,24 @@ function removeChannel(id: number) {
   if (index < 0) return
   channels.splice(index, 1)
   ensureChannelSelection()
+}
+
+function setPrimaryModel(provider: string) {
+  ai.provider = provider
+  // 主模型和备用模型如果指到同一个槽位，用户会以为有主备，实际上请求还是同一套配置。
+  // 所以这里在前端先把 fallback 挪回别的槽位，避免保存出一份自相矛盾的设置。
+  if (ai.fallbackProvider === provider) {
+    const fallbackCandidate = providerIds.find((item) => item !== provider)
+    if (fallbackCandidate) {
+      ai.fallbackProvider = fallbackCandidate
+    }
+  }
+}
+
+function setFallbackModel(provider: string) {
+  if (provider === ai.provider) return
+  ai.autoDegrade = true
+  ai.fallbackProvider = provider
 }
 
 function thresholdClass(level: string) {
