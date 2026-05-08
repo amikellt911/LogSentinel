@@ -58,7 +58,7 @@
         </el-table-column>
 
         <!-- 列表里单独拉一列 AI 状态，是为了把“风险等级未知”和“AI 没跑/失败”拆开。 -->
-        <el-table-column prop="ai_status" label="AI 状态" width="120">
+        <el-table-column prop="ai_status" :label="$t('traceExplorer.table.aiStatus')" width="120">
           <template #default="{ row }">
             <span class="px-2 py-1 rounded text-xs font-bold" :class="getAiStatusBadgeClass(row.ai_status)">
               {{ getAiStatusLabel(row.ai_status) }}
@@ -83,7 +83,7 @@
                 size="small"
                 @click.stop="handleDeleteTrace(row)"
               >
-                删除
+                {{ $t('traceExplorer.table.deleteTrace') }}
               </el-button>
             </div>
           </template>
@@ -112,6 +112,7 @@
 
 <script setup lang="ts">
 import { View } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
 import type { TraceListItem } from '../types/trace'
 
 // Props
@@ -135,6 +136,8 @@ const emit = defineEmits<{
   'page-change': [page: number]
   'size-change': [size: number]
 }>()
+
+const { t } = useI18n()
 
 /**
  * 格式化数字（千分位分隔符）
@@ -164,19 +167,21 @@ function getLevelBadgeClass(level: string): string {
 }
 
 function getAiStatusLabel(status: string): string {
+  // 这里映射的是后端稳定返回的 ai_status 枚举值。
+  // 表格只负责把协议状态翻译成人能读懂的展示文案，不再在组件里写死语言。
   switch (status) {
     case 'completed':
-      return '已完成'
+      return t('traceExplorer.aiStatus.completed')
     case 'skipped_manual':
-      return '已关闭'
+      return t('traceExplorer.aiStatus.skippedManual')
     case 'skipped_circuit':
-      return '熔断跳过'
+      return t('traceExplorer.aiStatus.skippedCircuit')
     case 'failed_primary':
-      return '主路失败'
+      return t('traceExplorer.aiStatus.failedPrimary')
     case 'failed_both':
-      return '双路失败'
+      return t('traceExplorer.aiStatus.failedBoth')
     default:
-      return '处理中'
+      return t('traceExplorer.aiStatus.pending')
   }
 }
 

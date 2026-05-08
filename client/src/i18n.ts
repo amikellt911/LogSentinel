@@ -6,7 +6,9 @@ const messages = {
       copy: 'Copy',
       copySuccess: 'Copied to clipboard',
       copyFailed: 'Failed to copy',
-      operations: 'Actions'
+      operations: 'Actions',
+      delete: 'Delete',
+      cancel: 'Cancel'
     },
     layout: {
       serviceMonitor: 'Service Monitor',
@@ -118,11 +120,13 @@ const messages = {
         spanCount: 'Span Count',
         tokenCount: 'Tokens',
         riskLevel: 'Risk Level',
+        aiStatus: 'AI Status',
         actions: 'Actions',
         aiAnalysis: 'AI Analysis',
         callChain: 'Call Chain',
         promptDebugger: 'Prompt',
-        viewDetails: 'Details'
+        viewDetails: 'Details',
+        deleteTrace: 'Delete'
       },
       waterfall: {
         title: 'Trace Waterfall Visualization',
@@ -140,6 +144,20 @@ const messages = {
         solution: 'Solution',
         noAnalysis: 'No AI analysis available',
         spanList: 'Span List'
+      },
+      // Trace 读侧统一复用 ai_status 文案，避免表格和详情各写一套字符串。
+      aiStatus: {
+        completed: 'Completed',
+        skippedManual: 'Disabled',
+        skippedCircuit: 'Skipped by Circuit Breaker',
+        failedPrimary: 'Primary Failed',
+        failedBoth: 'Both Failed',
+        pending: 'Pending',
+        skippedManualDesc: 'AI analysis was manually disabled for this trace. Only aggregated data is available.',
+        skippedCircuitDesc: 'AI analysis was skipped because the circuit breaker is active.',
+        failedPrimaryDesc: 'The primary AI analysis failed, so no analysis result was generated for this trace.',
+        failedBothDesc: 'Both the primary and fallback AI analysis failed, so no analysis result was generated.',
+        pendingDesc: 'AI analysis is still in progress.'
       },
       pagination: {
         total: 'Total'
@@ -315,6 +333,34 @@ const messages = {
       },
       save: 'Save Configuration',
       success: 'Configuration applied successfully'
+    },
+    messages: {
+      traceExplorer: {
+        customRangeMissing: 'Custom time range requires both start time and end time.',
+        customRangeInvalid: 'Invalid custom time format.',
+        customRangeOrder: 'End time must be later than start time.',
+        listFetchFailed: 'Failed to query trace list',
+        detailFetchFailed: 'Failed to query trace details',
+        deleteFailed: 'Failed to delete trace',
+        deleteSuccess: 'Trace deleted successfully',
+        deleteConfirmTitle: 'Delete Confirmation',
+        deleteConfirmBody: 'Delete trace {traceId}? This will also remove the summary, spans, and AI analysis.'
+      },
+      settingsPrototype: {
+        loadFailed: 'Failed to load settings. Local defaults are kept for now.',
+        resetSuccess: 'Reverted to the last saved settings.',
+        webhookMissing: 'Please fill in the Webhook URL before sending a test message.',
+        probeWithSecret: 'Signature secret attached',
+        probeWithoutSecret: 'No signature secret provided',
+        probeSuccess: 'Simulated test message sent: {name} ({secretState})',
+        saveSuccess: 'Settings saved successfully',
+        saveSuccessRestart: 'Settings saved successfully: includes fields that take effect after restart',
+        saveFailed: 'Failed to save settings',
+        defaultPromptName: 'Default Prompt',
+        defaultChannelName: 'Default Feishu Channel',
+        newPromptName: 'New Business Prompt {id}',
+        newChannelName: 'New Feishu Channel {id}'
+      }
     }
   },
   zh: {
@@ -322,7 +368,9 @@ const messages = {
       copy: '复制',
       copySuccess: '已复制到剪贴板',
       copyFailed: '复制失败',
-      operations: '操作'
+      operations: '操作',
+      delete: '删除',
+      cancel: '取消'
     },
     layout: {
       serviceMonitor: '服务监控',
@@ -434,11 +482,13 @@ const messages = {
         spanCount: 'Span 数量',
         tokenCount: 'Token 数',
         riskLevel: '风险等级',
+        aiStatus: 'AI 状态',
         actions: '操作',
         aiAnalysis: 'AI 分析',
         callChain: '调用链',
         promptDebugger: 'Prompt',
-        viewDetails: '详情'
+        viewDetails: '详情',
+        deleteTrace: '删除'
       },
       waterfall: {
         title: 'Trace 瀑布图可视化',
@@ -456,6 +506,20 @@ const messages = {
         solution: '解决方案',
         noAnalysis: '暂无 AI 分析',
         spanList: 'Span 列表'
+      },
+      // Trace 读侧统一复用 ai_status 文案，避免表格和详情各写一套字符串。
+      aiStatus: {
+        completed: '已完成',
+        skippedManual: '已关闭',
+        skippedCircuit: '熔断跳过',
+        failedPrimary: '主路失败',
+        failedBoth: '双路失败',
+        pending: '处理中',
+        skippedManualDesc: 'AI 分析已被手动关闭，本次 trace 只保留聚合结果。',
+        skippedCircuitDesc: 'AI 当前处于熔断跳过状态，本次 trace 未发起分析。',
+        failedPrimaryDesc: '主 AI 分析失败，本次 trace 没有生成分析结果。',
+        failedBothDesc: '主 AI 和降级 AI 都失败了，本次 trace 没有生成分析结果。',
+        pendingDesc: 'AI 分析尚未完成。'
       },
       pagination: {
         total: '总计'
@@ -631,6 +695,34 @@ const messages = {
       },
       save: '保存配置',
       success: '配置已应用'
+    },
+    messages: {
+      traceExplorer: {
+        customRangeMissing: '自定义时间范围需要同时填写开始时间和结束时间',
+        customRangeInvalid: '自定义时间格式无效',
+        customRangeOrder: '结束时间必须晚于开始时间',
+        listFetchFailed: 'Trace 列表查询失败',
+        detailFetchFailed: 'Trace 详情查询失败',
+        deleteFailed: 'Trace 删除失败',
+        deleteSuccess: 'Trace 删除成功',
+        deleteConfirmTitle: '删除确认',
+        deleteConfirmBody: '确认删除 Trace {traceId} 吗？此操作会同时删除 summary、span 和 AI analysis。'
+      },
+      settingsPrototype: {
+        loadFailed: '设置加载失败，当前先保留本地默认值',
+        resetSuccess: '已恢复到上一次保存的设置',
+        webhookMissing: '请先填写 Webhook URL，再发送测试消息',
+        probeWithSecret: '已附带签名 Secret',
+        probeWithoutSecret: '未填写签名 Secret',
+        probeSuccess: '已模拟发送测试消息：{name}（{secretState}）',
+        saveSuccess: '设置已保存',
+        saveSuccessRestart: '设置已保存：包含重启后生效字段',
+        saveFailed: '设置保存失败',
+        defaultPromptName: '默认 Prompt',
+        defaultChannelName: '默认飞书渠道',
+        newPromptName: '新业务 Prompt {id}',
+        newChannelName: '新飞书渠道 {id}'
+      }
     }
   }
 }

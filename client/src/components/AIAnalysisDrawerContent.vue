@@ -68,6 +68,7 @@
 
 <script setup lang="ts">
 import { MagicStick } from '@element-plus/icons-vue'
+import { useI18n } from 'vue-i18n'
 import type { TraceDetail } from '../types/trace'
 
 // Props
@@ -76,6 +77,8 @@ interface Props {
 }
 
 defineProps<Props>()
+
+const { t } = useI18n()
 
 /**
  * 根据风险等级返回徽章样式类名
@@ -98,34 +101,36 @@ function getLevelBadgeClass(level: string): string {
 }
 
 function getAiStatusLabel(status: string): string {
+  // 详情卡和列表必须共用同一组 ai_status 文案口径。
+  // 否则同一个 trace 在不同组件里会出现两套说法，切语言时也更容易漏改。
   switch (status) {
     case 'completed':
-      return '已完成'
+      return t('traceExplorer.aiStatus.completed')
     case 'skipped_manual':
-      return '已关闭'
+      return t('traceExplorer.aiStatus.skippedManual')
     case 'skipped_circuit':
-      return '熔断跳过'
+      return t('traceExplorer.aiStatus.skippedCircuit')
     case 'failed_primary':
-      return '主路失败'
+      return t('traceExplorer.aiStatus.failedPrimary')
     case 'failed_both':
-      return '双路失败'
+      return t('traceExplorer.aiStatus.failedBoth')
     default:
-      return '处理中'
+      return t('traceExplorer.aiStatus.pending')
   }
 }
 
 function getAiStatusDescription(status: string): string {
   switch (status) {
     case 'skipped_manual':
-      return 'AI 分析已被手动关闭，本次 trace 只保留聚合结果。'
+      return t('traceExplorer.aiStatus.skippedManualDesc')
     case 'skipped_circuit':
-      return 'AI 当前处于熔断跳过状态，本次 trace 未发起分析。'
+      return t('traceExplorer.aiStatus.skippedCircuitDesc')
     case 'failed_primary':
-      return '主 AI 分析失败，本次 trace 没有生成分析结果。'
+      return t('traceExplorer.aiStatus.failedPrimaryDesc')
     case 'failed_both':
-      return '主 AI 和降级 AI 都失败了，本次 trace 没有生成分析结果。'
+      return t('traceExplorer.aiStatus.failedBothDesc')
     default:
-      return 'AI 分析尚未完成。'
+      return t('traceExplorer.aiStatus.pendingDesc')
   }
 }
 

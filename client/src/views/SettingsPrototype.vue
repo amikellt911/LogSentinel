@@ -583,39 +583,39 @@
               </div>
 
               <div class="bg-[#1a1a1a] border border-gray-700 p-6 rounded">
-                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">水位阈值</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ kernelWatermarkLabels.title }}</h3>
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
-                    <div class="text-sm font-bold text-gray-300 mb-4">Active Sessions</div>
+                    <div class="text-sm font-bold text-gray-300 mb-4">{{ kernelWatermarkLabels.activeSessions }}</div>
                     <div class="space-y-4">
-                      <el-form-item label="Overload" class="mb-0">
+                      <el-form-item :label="kernelWatermarkLabels.overload" class="mb-0">
                         <el-slider v-model="kernel.watermarks.activeSessions.overload" :min="1" :max="100" show-input />
                       </el-form-item>
-                      <el-form-item label="Critical" class="mb-0">
+                      <el-form-item :label="kernelWatermarkLabels.critical" class="mb-0">
                         <el-slider v-model="kernel.watermarks.activeSessions.critical" :min="1" :max="100" show-input />
                       </el-form-item>
                     </div>
                   </div>
 
                   <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
-                    <div class="text-sm font-bold text-gray-300 mb-4">Buffered Spans</div>
+                    <div class="text-sm font-bold text-gray-300 mb-4">{{ kernelWatermarkLabels.bufferedSpans }}</div>
                     <div class="space-y-4">
-                      <el-form-item label="Overload" class="mb-0">
+                      <el-form-item :label="kernelWatermarkLabels.overload" class="mb-0">
                         <el-slider v-model="kernel.watermarks.bufferedSpans.overload" :min="1" :max="100" show-input />
                       </el-form-item>
-                      <el-form-item label="Critical" class="mb-0">
+                      <el-form-item :label="kernelWatermarkLabels.critical" class="mb-0">
                         <el-slider v-model="kernel.watermarks.bufferedSpans.critical" :min="1" :max="100" show-input />
                       </el-form-item>
                     </div>
                   </div>
 
                   <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
-                    <div class="text-sm font-bold text-gray-300 mb-4">Pending Tasks</div>
+                    <div class="text-sm font-bold text-gray-300 mb-4">{{ kernelWatermarkLabels.pendingTasks }}</div>
                     <div class="space-y-4">
-                      <el-form-item label="Overload" class="mb-0">
+                      <el-form-item :label="kernelWatermarkLabels.overload" class="mb-0">
                         <el-slider v-model="kernel.watermarks.pendingTasks.overload" :min="1" :max="100" show-input />
                       </el-form-item>
-                      <el-form-item label="Critical" class="mb-0">
+                      <el-form-item :label="kernelWatermarkLabels.critical" class="mb-0">
                         <el-slider v-model="kernel.watermarks.pendingTasks.critical" :min="1" :max="100" show-input />
                       </el-form-item>
                     </div>
@@ -637,7 +637,7 @@
           <el-button :disabled="!isDirty || isLoading || isSaving" @click="resetPrototype">放弃修改</el-button>
           <el-button type="primary" size="large" :disabled="!isDirty || isLoading" :loading="isSaving" @click="savePrototype">
             <el-icon class="mr-2"><Check /></el-icon>
-            保存设置
+            {{ saveButtonLabel }}
           </el-button>
         </div>
       </div>
@@ -887,6 +887,18 @@ const selectedPromptPreview = computed(() => {
   return renderBusinessGuidancePreview(selectedPrompt.value.content)
 })
 
+const kernelWatermarkLabels = computed(() => {
+  const isZh = general.language === 'zh'
+  return {
+    title: isZh ? '水位阈值' : 'Watermark Thresholds',
+    activeSessions: isZh ? '活跃会话数' : 'Active Sessions',
+    bufferedSpans: isZh ? '缓存 Span 数' : 'Buffered Spans',
+    pendingTasks: isZh ? '待处理任务数' : 'Pending Tasks',
+    overload: isZh ? '过载阈值' : 'Overload',
+    critical: isZh ? '严重阈值' : 'Critical'
+  }
+})
+
 const promptEditorLabels = computed(() => {
   const isZh = general.language === 'zh'
   return {
@@ -903,6 +915,10 @@ const promptEditorLabels = computed(() => {
 
 const activePromptBadgeLabel = computed(() => {
   return general.language === 'zh' ? '生效中' : 'Active'
+})
+
+const saveButtonLabel = computed(() => {
+  return general.language === 'zh' ? '保存设置' : 'Save Settings'
 })
 
 const selectedChannel = computed(() => {
@@ -1249,14 +1265,14 @@ async function loadSettings() {
     if (nextSnapshot.prompts.length === 0) {
       nextSnapshot.prompts.push({
         id: 1,
-        name: '默认 Prompt',
+        name: i18n.global.t('messages.settingsPrototype.defaultPromptName'),
         content: createEmptyPromptContent()
       })
     }
     if (nextSnapshot.channels.length === 0) {
       nextSnapshot.channels.push({
         id: 1,
-        name: '默认飞书渠道',
+        name: i18n.global.t('messages.settingsPrototype.defaultChannelName'),
         enabled: false,
         webhookUrl: '',
         secret: '',
@@ -1272,7 +1288,7 @@ async function loadSettings() {
     savedSnapshot.value = snapshotState()
   } catch (error) {
     console.error('Failed to load settings prototype data:', error)
-    ElMessage.error('设置加载失败，当前先保留本地默认值')
+    ElMessage.error(i18n.global.t('messages.settingsPrototype.loadFailed'))
   } finally {
     isLoading.value = false
   }
@@ -1284,7 +1300,7 @@ function savePrototype() {
 
 function resetPrototype() {
   applySnapshot(JSON.parse(JSON.stringify(savedSnapshot.value)) as PrototypeSnapshot)
-  ElMessage.info('已恢复到上一次保存的设置')
+  ElMessage.info(i18n.global.t('messages.settingsPrototype.resetSuccess'))
 }
 
 /**
@@ -1307,7 +1323,7 @@ function addPrompt() {
   const nextId = Math.max(...prompts.map((item) => item.id), 0) + 1
   prompts.unshift({
     id: nextId,
-    name: `新业务 Prompt ${nextId}`,
+    name: i18n.global.t('messages.settingsPrototype.newPromptName', { id: nextId }),
     content: createEmptyPromptContent()
   })
   selectedPromptId.value = nextId
@@ -1332,7 +1348,7 @@ function addChannel() {
   const nextId = Math.max(...channels.map((item) => item.id), 0) + 1
   channels.push({
     id: nextId,
-    name: `新飞书渠道 ${nextId}`,
+    name: i18n.global.t('messages.settingsPrototype.newChannelName', { id: nextId }),
     enabled: false,
     webhookUrl: '',
     secret: '',
@@ -1400,12 +1416,18 @@ function removePromptListRow(target: 'focusAreas' | 'riskPreference' | 'outputPr
  */
 function sendChannelProbe() {
   if (!selectedChannel.value?.webhookUrl.trim()) {
-    ElMessage.warning('请先填写 Webhook URL，再发送测试消息')
+    ElMessage.warning(i18n.global.t('messages.settingsPrototype.webhookMissing'))
     return
   }
 
-  const secretState = selectedChannel.value.secret.trim() ? '已附带签名 Secret' : '未填写签名 Secret'
-  ElMessage.success(`已模拟发送测试消息：${selectedChannel.value.name}（${secretState}）`)
+  // 测试提示也要走翻译表，否则语言切到英文后这里仍然会弹中文消息。
+  const secretState = selectedChannel.value.secret.trim()
+    ? i18n.global.t('messages.settingsPrototype.probeWithSecret')
+    : i18n.global.t('messages.settingsPrototype.probeWithoutSecret')
+  ElMessage.success(i18n.global.t('messages.settingsPrototype.probeSuccess', {
+    name: selectedChannel.value.name,
+    secretState
+  }))
 }
 
 // 这里故意不复用旧 system.ts。
@@ -1503,10 +1525,14 @@ async function persistSettings() {
     }
 
     await loadSettings()
-    ElMessage.success(restartTouched ? '设置已保存：包含重启后生效字段' : '设置已保存')
+    ElMessage.success(
+      restartTouched
+        ? i18n.global.t('messages.settingsPrototype.saveSuccessRestart')
+        : i18n.global.t('messages.settingsPrototype.saveSuccess')
+    )
   } catch (error) {
     console.error('Failed to save settings prototype data:', error)
-    ElMessage.error('设置保存失败')
+    ElMessage.error(i18n.global.t('messages.settingsPrototype.saveFailed'))
   } finally {
     isSaving.value = false
   }

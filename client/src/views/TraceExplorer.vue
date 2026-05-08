@@ -65,6 +65,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import TraceSearchBar from '../components/TraceSearchBar.vue'
 import TraceListTable from '../components/TraceListTable.vue'
 import AIAnalysisDrawerContent from '../components/AIAnalysisDrawerContent.vue'
@@ -83,6 +84,8 @@ import type {
   TraceAiStatus
 } from '../types/trace'
 import dayjs from 'dayjs'
+
+const { t } = useI18n()
 
 // 响应式状态
 const loading = ref(false)
@@ -249,17 +252,17 @@ function buildTraceSearchPayload(criteria: TraceSearchCriteria): TraceSearchRequ
   const timeRange = criteria.time_range ?? '24h'
   if (timeRange === 'custom') {
     if (!criteria.custom_time_start || !criteria.custom_time_end) {
-      ElMessage.warning('自定义时间范围需要同时填写开始时间和结束时间')
+      ElMessage.warning(t('messages.traceExplorer.customRangeMissing'))
       return null
     }
     const startTime = dayjs(criteria.custom_time_start)
     const endTime = dayjs(criteria.custom_time_end)
     if (!startTime.isValid() || !endTime.isValid()) {
-      ElMessage.warning('自定义时间格式无效')
+      ElMessage.warning(t('messages.traceExplorer.customRangeInvalid'))
       return null
     }
     if (endTime.valueOf() <= startTime.valueOf()) {
-      ElMessage.warning('结束时间必须晚于开始时间')
+      ElMessage.warning(t('messages.traceExplorer.customRangeOrder'))
       return null
     }
     payload.start_time_ms = startTime.valueOf()
@@ -296,7 +299,7 @@ async function fetchTraceList() {
     })
 
     if (!response.ok) {
-      let errorMessage = `Trace 列表查询失败（HTTP ${response.status}）`
+      let errorMessage = `${t('messages.traceExplorer.listFetchFailed')}（HTTP ${response.status}）`
       try {
         const errorBody = await response.json()
         if (typeof errorBody?.error === 'string' && errorBody.error.length > 0) {
@@ -312,10 +315,10 @@ async function fetchTraceList() {
     traceList.value = result.items.map(mapTraceListItem)
     total.value = result.total
   } catch (error) {
-    console.error('Trace 列表查询失败:', error)
+    console.error('Trace list fetch failed:', error)
     traceList.value = []
     total.value = 0
-    ElMessage.error(error instanceof Error ? error.message : 'Trace 列表查询失败')
+    ElMessage.error(error instanceof Error ? error.message : t('messages.traceExplorer.listFetchFailed'))
   } finally {
     loading.value = false
   }
@@ -324,7 +327,7 @@ async function fetchTraceList() {
 async function fetchTraceDetail(traceId: string): Promise<TraceDetail> {
   const response = await fetch(`/api/traces/${encodeURIComponent(traceId)}`)
   if (!response.ok) {
-    let errorMessage = `Trace 详情查询失败（HTTP ${response.status}）`
+    let errorMessage = `${t('messages.traceExplorer.detailFetchFailed')}（HTTP ${response.status}）`
     try {
       const errorBody = await response.json()
       if (typeof errorBody?.error === 'string' && errorBody.error.length > 0) {
@@ -345,7 +348,7 @@ async function deleteTrace(traceId: string): Promise<void> {
     method: 'DELETE'
   })
   if (!response.ok) {
-    let errorMessage = `Trace 删除失败（HTTP ${response.status}）`
+    let errorMessage = `${t('messages.traceExplorer.deleteFailed')}（HTTP ${response.status}）`
     try {
       const errorBody = await response.json()
       if (typeof errorBody?.error === 'string' && errorBody.error.length > 0) {
@@ -378,7 +381,7 @@ async function ensureTraceDetail(traceId: string): Promise<boolean> {
   } catch (error) {
     if (requestSeq === detailRequestSeq) {
       selectedTraceDetail.value = null
-      ElMessage.error(error instanceof Error ? error.message : 'Trace 详情查询失败')
+      ElMessage.error(error instanceof Error ? error.message : t('messages.traceExplorer.detailFetchFailed'))
     }
     return false
   } finally {
@@ -448,11 +451,11 @@ async function handleViewDetail(row: TraceListItem) {
 async function handleDeleteTrace(row: TraceListItem) {
   try {
     await ElMessageBox.confirm(
-      `确认删除 Trace ${row.trace_id} 吗？此操作会同时删除 summary、span 和 AI analysis。`,
-      '删除确认',
+      t('messages.traceExplorer.deleteConfirmBody', { traceId: row.trace_id }),
+      t('messages.traceExplorer.deleteConfirmTitle'),
       {
-        confirmButtonText: '删除',
-        cancelButtonText: '取消',
+        confirmButtonText: t('common.delete'),
+        cancelButtonText: t('common.cancel'),
         type: 'warning'
       }
     )
@@ -483,9 +486,9 @@ async function handleDeleteTrace(row: TraceListItem) {
     }
 
     await fetchTraceList()
-    ElMessage.success('Trace 删除成功')
+    ElMessage.success(t('messages.traceExplorer.deleteSuccess'))
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : 'Trace 删除失败')
+    ElMessage.error(error instanceof Error ? error.message : t('messages.traceExplorer.deleteFailed'))
   } finally {
     loading.value = false
   }
