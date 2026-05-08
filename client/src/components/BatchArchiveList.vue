@@ -203,7 +203,8 @@ const pagination = reactive({
  * Mock 数据生成器
  */
 function generateMockData() {
-  const risks: Array<'CRITICAL' | 'ERROR' | 'WARNING' | 'INFO' | 'SAFE'> = ['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'SAFE']
+  // 批次存档目前仍是旧演示组件，风险等级由 templates 直接给出。
+  // 删除未使用的 risks 数组，避免严格 TS 构建因为死变量阻塞正式 dist 产物。
   const services = ['auth-service', 'api-gateway', 'payment-service', 'user-service', 'order-service']
   const templates = [
     { summary: '流量模式正常。用户认证流程运行符合预期。', tags: ['认证', '正常'], risk_level: 'SAFE' as const },

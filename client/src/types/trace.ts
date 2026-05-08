@@ -25,6 +25,7 @@ export interface TraceSpan {
   parent_id: string | null // 父 Span ID（null 表示根 Span）
   status: 'success' | 'error' | 'warning' // 状态
   operation?: string // 操作名称（如 "GET /api/v1/user"）
+  attributes: Record<string, unknown> // Span 业务属性，用于详情页展示 AI 分析依据
 }
 
 /**
@@ -100,6 +101,7 @@ export interface TraceSpanDto {
   start_time_ms: number
   duration_ms: number
   raw_status: string
+  attributes?: Record<string, unknown> // 后端透出的 Span attributes，前端只展示事实不做根因推断
 }
 
 /**

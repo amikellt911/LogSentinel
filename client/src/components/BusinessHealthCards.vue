@@ -157,7 +157,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+// 当前健康卡片只用 ref 承载 mock 指标，computed 已经没有真实消费者。
+// 保持 import 最小化，避免旧演示组件阻塞 v1.0.0 前端构建。
+import { ref } from 'vue'
 import { CircleCheck, Warning, Timer, ArrowUp, ArrowDown } from '@element-plus/icons-vue'
 
 // TODO: Replace with real API

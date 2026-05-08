@@ -51,6 +51,27 @@
             <div>Start: {{ span.start_time }}ms</div>
             <div v-if="span.parent_id">Parent: {{ span.parent_id }}</div>
           </div>
+
+          <!-- attributes 展示的是业务侧随 Span 上报的埋点事实，不是 AI 推理结论。
+               答辩时可以直接对照这些字段说明模型为什么能判断金额和规则口径异常。 -->
+          <div
+            v-if="getAttributeEntries(span.attributes).length > 0"
+            class="mt-3 rounded border border-gray-700/80 bg-black/20"
+          >
+            <div class="border-b border-gray-700/80 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+              Attributes
+            </div>
+            <div class="divide-y divide-gray-800/80">
+              <div
+                v-for="[key, value] in getAttributeEntries(span.attributes)"
+                :key="key"
+                class="grid grid-cols-[minmax(140px,220px)_1fr] gap-3 px-3 py-2 text-xs"
+              >
+                <div class="font-mono text-cyan-300 break-all">{{ key }}</div>
+                <pre class="m-0 whitespace-pre-wrap break-all font-mono text-gray-300">{{ formatAttributeValue(value) }}</pre>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -61,7 +82,7 @@
 import { ref } from 'vue'
 import { List, ArrowDown } from '@element-plus/icons-vue'
 import TraceWaterfall from './TraceWaterfall.vue'
-import type { TraceDetail } from '../types/trace'
+import type { TraceDetail, TraceSpan } from '../types/trace'
 
 // Props
 interface Props {
@@ -96,6 +117,32 @@ function getDurationClass(duration: number): string {
   if (duration > 1000) return 'text-red-400 font-bold'
   if (duration > 500) return 'text-yellow-400 font-bold'
   return 'text-gray-300'
+}
+
+function getAttributeEntries(attributes: TraceSpan['attributes']) {
+  return Object.entries(attributes ?? {})
+}
+
+function formatAttributeValue(value: unknown): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+        (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        return JSON.stringify(JSON.parse(trimmed), null, 2)
+      } catch {
+        return value
+      }
+    }
+    return value
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  if (value === null) {
+    return 'null'
+  }
+  return JSON.stringify(value, null, 2)
 }
 
 /**

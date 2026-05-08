@@ -150,6 +150,22 @@ nlohmann::json BuildSearchResultJson(const TraceSearchResult& result)
     return root;
 }
 
+nlohmann::json ParseSpanAttributesForDetail(const std::string& attributes_json)
+{
+    if (attributes_json.empty()) {
+        return nlohmann::json::object();
+    }
+    try {
+        const nlohmann::json parsed = nlohmann::json::parse(attributes_json);
+        if (parsed.is_object()) {
+            return parsed;
+        }
+    } catch (const nlohmann::json::parse_error&) {
+        // attributes_json 来自历史落库数据，读侧不能因为单条脏属性让整个详情接口失败。
+    }
+    return nlohmann::json{{"_raw", attributes_json}};
+}
+
 nlohmann::json BuildTraceDetailJson(const TraceDetailRecord& detail)
 {
     nlohmann::json spans = nlohmann::json::array();
@@ -162,6 +178,9 @@ nlohmann::json BuildTraceDetailJson(const TraceDetailRecord& detail)
         row["start_time_ms"] = span.start_time_ms;
         row["duration_ms"] = span.duration_ms;
         row["raw_status"] = span.raw_status;
+        // Span attributes 是详情页证明 AI 结论来源的关键证据。
+        // 正常 JSON 对象直接透传；历史脏数据降级为 _raw，避免读侧展示被一条坏记录打挂。
+        row["attributes"] = ParseSpanAttributesForDetail(span.attributes_json);
         spans.push_back(std::move(row));
     }
 

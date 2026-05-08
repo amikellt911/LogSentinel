@@ -424,7 +424,8 @@ function deletePrompt(id: number | string) {
     const index = systemStore.settings.ai.prompts.findIndex(p => p.id === id)
     if (index === -1) return
 
-    const deletedPrompt = systemStore.settings.ai.prompts[index]
+    // 删除旧 Prompt 时只需要根据 id 修正 active/selected 状态。
+    // 这里不保留 deletedPrompt 临时变量，避免旧设置页阻塞严格 TS 构建。
     systemStore.settings.ai.prompts.splice(index, 1)
 
     // Check if we deleted the active prompt

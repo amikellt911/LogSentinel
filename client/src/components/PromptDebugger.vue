@@ -137,7 +137,9 @@ function syntaxHighlight(json: any): string {
 
   json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+  // replace 回调参数在严格 TS 下不会自动推断类型，显式标注 string。
+  // 这里只做展示层语法高亮，不改变 PromptDebugger 的输入输出数据。
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match: string) {
     let cls = 'text-purple-400' // number
     if (/^"/.test(match)) {
       if (/:$/.test(match)) {

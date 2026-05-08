@@ -51,6 +51,9 @@ struct TraceSpanDetail
     int64_t start_time_ms = 0;
     int64_t duration_ms = 0;
     std::string raw_status;
+    // attributes_json 是写入 trace_span 时保留下来的 Span 业务属性原文。
+    // 读侧只负责把它带回详情接口，方便前端展示 AI 判断依据，不在这里做查询过滤或业务推断。
+    std::string attributes_json;
 };
 
 struct TraceAnalysisDetail

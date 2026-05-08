@@ -105,7 +105,9 @@ interface Props {
   loading?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), {
+// 这里不把 props 绑定成局部变量，模板可以直接读取 loading。
+// 旧写法会在严格 TS 构建下触发未使用变量错误，导致前端 dist 无法重新生成。
+withDefaults(defineProps<Props>(), {
   loading: false
 })
 

@@ -46,8 +46,9 @@
 
     <!-- Prompt 透视抽屉 -->
     <PromptDebugger
-      v-model:visible="promptDebuggerVisible"
-      :debug-info="currentDebugInfo"
+      v-model="promptDebuggerVisible"
+      :prompt-debug-info="currentDebugInfo"
+      :trace-id="currentDebugInfo?.trace_id || ''"
     />
   </div>
 </template>
@@ -56,32 +57,11 @@
 import { ref } from 'vue'
 import { Cpu, FolderOpened } from '@element-plus/icons-vue'
 import TokenMetricsCard from '../components/TokenMetricsCard.vue'
-import AIEngineSearchBar, { AIEngineSearchCriteria } from '../components/AIEngineSearchBar.vue'
+import AIEngineSearchBar from '../components/AIEngineSearchBar.vue'
+import type { AIEngineSearchCriteria } from '../components/AIEngineSearchBar.vue'
 import BatchArchiveList from '../components/BatchArchiveList.vue'
 import PromptDebugger from '../components/PromptDebugger.vue'
-
-// TODO: Replace with real API
-/**
- * Prompt 调试信息数据结构（与 PromptDebugger.vue 保持一致）
- */
-interface PromptDebugInfo {
-  trace_id: string
-  model: string
-  duration: number
-  totalTokens: number
-  timestamp: string
-  input: {
-    trace_context: any
-    constraint: string
-    system_prompt: string
-  }
-  output: {
-    risk_level: string
-    summary: string
-    root_cause: string
-    solution: string
-  }
-}
+import type { PromptDebugInfo } from '../types/trace'
 
 // 加载状态
 const loading = ref(false)
@@ -119,12 +99,10 @@ function handleReset() {
  */
 function handleOpenPromptDebugger(batch: any) {
   // TODO: 从 API 获取详细的 Prompt 调试信息
+  // 旧 AIEngine 页面仍然使用 mock 数据，但必须按 PromptDebugger 的真实 props 结构组装。
+  // 否则即使页面不在正式路由里，也会被 vue-tsc 全量检查拦住前端构建。
   currentDebugInfo.value = {
     trace_id: batch.trace_id,
-    model: 'gemini-pro',
-    duration: Math.floor(Math.random() * 500) + 100,
-    totalTokens: batch.token_count,
-    timestamp: batch.created_at,
     input: {
       trace_context: {
         trace_id: batch.trace_id,
@@ -142,6 +120,12 @@ function handleOpenPromptDebugger(batch: any) {
       summary: batch.summary,
       root_cause: 'Detected elevated error rates in authentication service due to database connection timeout.',
       solution: '1. Check database connection pool settings.\n2. Increase connection timeout threshold.\n3. Monitor database query performance.'
+    },
+    metadata: {
+      timestamp: batch.created_at,
+      model: 'gemini-pro',
+      duration: Math.floor(Math.random() * 500) + 100,
+      total_tokens: batch.token_count
     }
   }
   promptDebuggerVisible.value = true

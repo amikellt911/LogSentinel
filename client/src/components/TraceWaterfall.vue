@@ -180,7 +180,9 @@ function updateChart() {
     series: [
       {
         type: 'custom',
-        renderItem: (params: any, api: any) => {
+        // renderItem 当前只需要 api 读取编码后的数据，不需要 params。
+        // 删除未使用参数可以让旧瀑布图组件通过严格 TS 构建。
+        renderItem: (_params: any, api: any) => {
           const categoryIndex = api.value(0)
           const start = api.value(1)
           const duration = api.value(2)

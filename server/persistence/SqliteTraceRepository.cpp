@@ -479,7 +479,8 @@ std::optional<TraceDetailRecord> SqliteTraceRepository::GetTraceDetail(const std
                    operation,
                    start_time_ms,
                    duration_ms,
-                   status
+                   status,
+                   attributes_json
             FROM trace_span
             WHERE trace_id = ?
             ORDER BY start_time_ms ASC, span_id ASC;
@@ -508,6 +509,9 @@ std::optional<TraceDetailRecord> SqliteTraceRepository::GetTraceDetail(const std
             span.start_time_ms = sqlite3_column_int64(spans_stmt.get(), 4);
             span.duration_ms = sqlite3_column_int64(spans_stmt.get(), 5);
             span.raw_status = reinterpret_cast<const char*>(sqlite3_column_text(spans_stmt.get(), 6));
+            // 详情页需要把 Span attributes 展示为 AI 分析证据，所以这里从存储层原样读出。
+            // 解析和降级展示放在 Handler/前端完成，仓库层不抢业务语义。
+            span.attributes_json = reinterpret_cast<const char*>(sqlite3_column_text(spans_stmt.get(), 7));
             detail.spans.push_back(std::move(span));
         }
 

@@ -1,5 +1,15 @@
 # Todo_TraceReadSide
 
+## 2026-05-07 演示证据补口
+
+- [x] 后端详情查询带出 `trace_span.attributes_json`
+- [x] 详情接口每个 span 返回可展示的 `attributes`
+- [x] 前端 Trace 类型与 DTO 映射透传 `attributes`
+- [x] Trace 详情 Span 卡片内展示 attributes 证据区
+- [x] 跑后端仓库测试与前端构建/类型检查，确认读侧补口没有破坏现有详情页
+- [x] 修复旧前端页面/组件阻塞 `npm run build` 的 TypeScript 错误
+- [x] 增加 `/logs/spans -> /traces/{trace_id}` attributes 黑盒验证
+
 - [x] 明确读侧最小范围：`/traces/search` + `/traces/{trace_id}`
 - [x] 收口本轮不做项：`prompt_debug`、按耗时过滤
 - [x] 明确列表 `service_name` 先按入口服务语义处理

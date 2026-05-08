@@ -189,6 +189,11 @@ function mapTraceAnalysis(dto: TraceAnalysisDto | null) {
 }
 
 function mapTraceSpan(dto: TraceSpanDto, traceStartTimeMs: number) {
+  // attributes 不参与瀑布图时间计算，只作为 Span 卡片里的业务证据透传。
+  // 这里做对象兜底，避免旧接口或脏数据让详情组件访问 undefined。
+  const attributes = dto.attributes && typeof dto.attributes === 'object' && !Array.isArray(dto.attributes)
+    ? dto.attributes
+    : {}
   return {
     span_id: dto.span_id,
     service_name: dto.service_name,
@@ -196,7 +201,8 @@ function mapTraceSpan(dto: TraceSpanDto, traceStartTimeMs: number) {
     duration: dto.duration_ms,
     parent_id: dto.parent_id,
     status: mapSpanStatus(dto.raw_status),
-    operation: dto.operation
+    operation: dto.operation,
+    attributes
   }
 }
 

@@ -26,11 +26,10 @@ let chart: echarts.ECharts | null = null
 function initChart() {
   if (!chartRef.value) return
 
-  // 初始化 ECharts 实例（深色主题，透明背景）
-  // @ts-ignore
+  // 初始化 ECharts 实例只传 EChartsInitOpts 支持的字段。
+  // 透明背景属于图表 option，不能塞进 init opts，否则严格类型检查会失败。
   chart = echarts.init(chartRef.value, 'dark', {
-    renderer: 'canvas',
-    backgroundColor: 'transparent'
+    renderer: 'canvas'
   })
 
   updateChart()

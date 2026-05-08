@@ -342,12 +342,14 @@ TEST_F(SqliteTraceRepositoryTest, GetTraceDetailReturnsSummarySpansAndAnalysis)
     child_span.operation = "charge";
     child_span.start_time_ms = 1200;
     child_span.duration_ms = 200;
+    child_span.attributes_json = R"({"payment_status":"success","paid_amount":"700"})";
 
     persistence::TraceSpanRecord root_span = MakeSpan(summary.trace_id, "span-1", "");
     root_span.service_name = "order-service";
     root_span.operation = "create-order";
     root_span.start_time_ms = 1000;
     root_span.duration_ms = 600;
+    root_span.attributes_json = R"({"campaign_id":"PRESALE_0428","config_snapshot_version":"promo_rule_v18"})";
 
     std::vector<persistence::TraceSpanRecord> spans;
     // 故意按乱序写入，验证详情查询会按 start_time_ms ASC, span_id ASC 排好。
@@ -383,9 +385,11 @@ TEST_F(SqliteTraceRepositoryTest, GetTraceDetailReturnsSummarySpansAndAnalysis)
     EXPECT_EQ(detail->spans[0].span_id, "span-1");
     EXPECT_EQ(detail->spans[0].service_name, "order-service");
     EXPECT_EQ(detail->spans[0].raw_status, "OK");
+    EXPECT_EQ(detail->spans[0].attributes_json, root_span.attributes_json);
     EXPECT_EQ(detail->spans[1].span_id, "span-2");
     ASSERT_TRUE(detail->spans[1].parent_id.has_value());
     EXPECT_EQ(detail->spans[1].parent_id.value(), "span-1");
+    EXPECT_EQ(detail->spans[1].attributes_json, child_span.attributes_json);
 }
 
 TEST_F(SqliteTraceRepositoryTest, GetTraceDetailReturnsNulloptWhenTraceMissing)
