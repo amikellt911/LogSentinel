@@ -534,6 +534,12 @@ bool SqliteTraceRepository::DeleteTraceById(const std::string& trace_id)
     if (!db_ || trace_id.empty()) {
         return false;
     }
+    // 单条删除对前端暴露的是“幂等成功”语义：
+    // 只要请求里的 trace_id 合法，就算这条记录已经被别人删掉，也按成功收口。
+    // 这样列表页重复点击删除时，不会出现第一次成功、第二次却报错的割裂体验。
+    if (!HasTraceSummaryLocked(trace_id)) {
+        return true;
+    }
     return DeleteTracesByIdsAtomic({trace_id});
 }
 
@@ -658,6 +664,36 @@ bool SqliteTraceRepository::DeleteTracesByIdsAtomic(const std::vector<std::strin
         rollback();
         return false;
     }
+}
+
+bool SqliteTraceRepository::HasTraceSummaryLocked(const std::string& trace_id)
+{
+    if (!db_ || trace_id.empty()) {
+        return false;
+    }
+
+    const char* sql = R"(
+        SELECT 1
+        FROM trace_summary
+        WHERE trace_id = ?
+        LIMIT 1;
+    )";
+    persistence::StmtPtr stmt;
+    sqlite3_stmt* raw_stmt = nullptr;
+    const int rc = sqlite3_prepare_v2(db_, sql, -1, &raw_stmt, nullptr);
+    persistence::checkSqliteError(db_, rc, "Prepare trace existence check");
+    stmt.reset(raw_stmt);
+    sqlite3_bind_text(stmt.get(), 1, trace_id.c_str(), -1, SQLITE_TRANSIENT);
+
+    const int step_rc = sqlite3_step(stmt.get());
+    if (step_rc == SQLITE_ROW) {
+        return true;
+    }
+    if (step_rc == SQLITE_DONE) {
+        return false;
+    }
+    persistence::checkSqliteError(db_, step_rc, "Step trace existence check");
+    return false;
 }
 
 bool SqliteTraceRepository::SaveSingleTraceSummary(const TraceSummary& summary)

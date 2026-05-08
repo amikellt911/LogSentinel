@@ -384,3 +384,52 @@ void TraceQueryHandler::handleGetTraceDetail(const HttpRequest& req,
 
     resp->isHandledAsync = true;
 }
+
+void TraceQueryHandler::handleDeleteTrace(const HttpRequest& req,
+                                          HttpResponse* resp,
+                                          const MiniMuduo::net::TcpConnectionPtr&)
+{
+    resp->setHeader("Content-Type", "application/json");
+    resp->addCorsHeaders();
+
+    if (!repo_) {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
+        resp->body_ = "{\"error\":\"Trace query service is unavailable\"}";
+        return;
+    }
+
+    const std::string trace_id = ExtractTraceIdFromPath(req.path());
+    if (trace_id.empty()) {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
+        resp->body_ = "{\"error\":\"Missing trace_id in path\"}";
+        return;
+    }
+
+    try {
+        // 删除这里故意走同步事务，不再复用 query_tpool：
+        // 单条 trace 删除本身就是一笔很短的 SQLite 事务，而前端又需要立刻根据结果刷新列表/关闭抽屉。
+        // 既然同步返回更容易保证“按钮点下去 -> 当前页状态立刻收口”，那就别为了形式统一把简单路径硬塞进异步回调。
+        const bool deleted = repo_->DeleteTraceById(trace_id);
+        if (!deleted) {
+            resp->setStatusCode(HttpResponse::HttpStatusCode::k500InternalServerError);
+            resp->body_ = nlohmann::json{
+                {"error", "Delete trace failed"},
+                {"trace_id", trace_id}
+            }.dump();
+            return;
+        }
+
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
+        resp->body_ = nlohmann::json{
+            {"deleted", true},
+            {"trace_id", trace_id}
+        }.dump();
+    } catch (const std::exception& e) {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k500InternalServerError);
+        resp->body_ = nlohmann::json{
+            {"error", "Delete trace failed"},
+            {"detail", e.what()},
+            {"trace_id", trace_id}
+        }.dump();
+    }
+}

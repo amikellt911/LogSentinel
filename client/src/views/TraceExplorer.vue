@@ -24,6 +24,7 @@
         :page-size="pageSize"
         @row-click="handleRowClick"
         @view-detail="handleViewDetail"
+        @delete-trace="handleDeleteTrace"
         @page-change="handlePageChange"
         @size-change="handleSizeChange"
       />
@@ -63,7 +64,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import TraceSearchBar from '../components/TraceSearchBar.vue'
 import TraceListTable from '../components/TraceListTable.vue'
 import AIAnalysisDrawerContent from '../components/AIAnalysisDrawerContent.vue'
@@ -339,6 +340,24 @@ async function fetchTraceDetail(traceId: string): Promise<TraceDetail> {
   return mapTraceDetail(result)
 }
 
+async function deleteTrace(traceId: string): Promise<void> {
+  const response = await fetch(`/api/traces/${encodeURIComponent(traceId)}`, {
+    method: 'DELETE'
+  })
+  if (!response.ok) {
+    let errorMessage = `Trace 删除失败（HTTP ${response.status}）`
+    try {
+      const errorBody = await response.json()
+      if (typeof errorBody?.error === 'string' && errorBody.error.length > 0) {
+        errorMessage = errorBody.error
+      }
+    } catch {
+      // 这里吞掉 JSON 解析失败，继续使用默认错误文案。
+    }
+    throw new Error(errorMessage)
+  }
+}
+
 async function ensureTraceDetail(traceId: string): Promise<boolean> {
   if (selectedTraceDetail.value && selectedTraceId.value === traceId) {
     return true
@@ -423,6 +442,52 @@ async function handleViewDetail(row: TraceListItem) {
   if (!ok) {
     detailDrawerVisible.value = false
     clearSelectedTraceDetailIfAllDrawersClosed()
+  }
+}
+
+async function handleDeleteTrace(row: TraceListItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除 Trace ${row.trace_id} 吗？此操作会同时删除 summary、span 和 AI analysis。`,
+      '删除确认',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+  } catch {
+    return
+  }
+
+  loading.value = true
+  try {
+    await deleteTrace(row.trace_id)
+
+    // 删除成功后要先判断是否需要退页。
+    // 因为当前页如果只剩这一条，直接原页刷新会留下一个空页，用户还得再手工点上一页。
+    const shouldMoveToPreviousPage =
+      currentPage.value > 1 &&
+      traceList.value.length === 1 &&
+      total.value > 1
+    if (shouldMoveToPreviousPage) {
+      currentPage.value -= 1
+    }
+
+    // 如果当前抽屉展示的正是被删掉的 trace，就必须主动关抽屉并作废详情请求序号。
+    // 否则列表已经刷新没了，右侧还残留旧详情，甚至晚到请求还可能把已删数据重新刷回界面。
+    if (selectedTraceId.value === row.trace_id) {
+      detailDrawerVisible.value = false
+      detailRequestSeq += 1
+      clearSelectedTraceDetailIfAllDrawersClosed()
+    }
+
+    await fetchTraceList()
+    ElMessage.success('Trace 删除成功')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : 'Trace 删除失败')
+  } finally {
+    loading.value = false
   }
 }
 

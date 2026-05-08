@@ -113,6 +113,7 @@ public:
     size_t DeleteExpiredTracesBatch(int64_t cutoff_ms, size_t limit);
 
 private:
+    bool HasTraceSummaryLocked(const std::string& trace_id);
     bool DeleteTracesByIdsAtomic(const std::vector<std::string>& trace_ids);
 
     std::string db_path_;

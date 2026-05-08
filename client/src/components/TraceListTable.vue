@@ -66,17 +66,26 @@
           </template>
         </el-table-column>
 
-        <!-- 操作按钮（统一为查看详情） -->
-        <el-table-column :label="$t('traceExplorer.table.actions')" width="120" fixed="right">
+        <!-- 操作按钮 -->
+        <el-table-column :label="$t('traceExplorer.table.actions')" width="210" fixed="right">
           <template #default="{ row }">
-            <el-button
-              type="primary"
-              :icon="View"
-              size="small"
-              @click.stop="handleViewDetail(row)"
-            >
-              {{ $t('traceExplorer.table.viewDetails') }}
-            </el-button>
+            <div class="flex items-center gap-2">
+              <el-button
+                type="primary"
+                :icon="View"
+                size="small"
+                @click.stop="handleViewDetail(row)"
+              >
+                {{ $t('traceExplorer.table.viewDetails') }}
+              </el-button>
+              <el-button
+                type="danger"
+                size="small"
+                @click.stop="handleDeleteTrace(row)"
+              >
+                删除
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -122,6 +131,7 @@ withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   'row-click': [row: TraceListItem]
   'view-detail': [row: TraceListItem]
+  'delete-trace': [row: TraceListItem]
   'page-change': [page: number]
   'size-change': [size: number]
 }>()
@@ -207,6 +217,14 @@ function handleRowClick(row: TraceListItem) {
  */
 function handleViewDetail(row: TraceListItem) {
   emit('view-detail', row)
+}
+
+/**
+ * 删除按钮点击事件
+ */
+function handleDeleteTrace(row: TraceListItem) {
+  // 这里必须 stop 住冒泡，否则删按钮点一下会先触发行点击，再把详情抽屉打开，前端状态会乱。
+  emit('delete-trace', row)
 }
 
 /**

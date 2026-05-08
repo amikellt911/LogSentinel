@@ -209,6 +209,10 @@ add_executable(test_dashboard_handler
   tests/DashboardHandler_test.cpp
 )
 
+add_executable(test_trace_query_handler
+  tests/TraceQueryHandler_test.cpp
+)
+
 add_executable(test_webhook_notifier
   tests/WebhookNotifier_test.cpp
 )
@@ -276,6 +280,10 @@ target_link_libraries(test_dashboard_handler PRIVATE
 GTest::gtest_main
 handler_module
 )
+target_link_libraries(test_trace_query_handler PRIVATE
+GTest::gtest_main
+handler_module
+)
 target_link_libraries(test_webhook_notifier PRIVATE
 GTest::gtest_main
 notification_module
@@ -301,6 +309,7 @@ gtest_discover_tests(test_webhook_notifier)
 gtest_discover_tests(test_service_runtime_accumulator)
 gtest_discover_tests(test_system_runtime_accumulator)
 gtest_discover_tests(test_dashboard_handler)
+gtest_discover_tests(test_trace_query_handler)
 gtest_discover_tests(test_frontend_asset_handler)
 #-----------主程序---------------
 add_executable(LogSentinel

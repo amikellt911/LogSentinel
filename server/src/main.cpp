@@ -1089,6 +1089,9 @@ int main(int argc, char* argv[])
     router->add("GET", "/traces/*", [trace_query_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         trace_query_handler->handleGetTraceDetail(req, resp, conn);
     });
+    router->add("DELETE", "/traces/*", [trace_query_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        trace_query_handler->handleDeleteTrace(req, resp, conn);
+    });
     router->add("GET", "/service-monitor/runtime", [service_monitor_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         service_monitor_handler->handleGetRuntimeSnapshot(req, resp, conn);
     });

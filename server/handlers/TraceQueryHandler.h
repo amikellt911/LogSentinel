@@ -27,6 +27,10 @@ public:
                               HttpResponse* resp,
                               const MiniMuduo::net::TcpConnectionPtr& conn);
 
+    void handleDeleteTrace(const HttpRequest& req,
+                           HttpResponse* resp,
+                           const MiniMuduo::net::TcpConnectionPtr& conn);
+
 private:
     std::shared_ptr<SqliteTraceRepository> repo_;
     ThreadPool* query_tpool_ = nullptr;

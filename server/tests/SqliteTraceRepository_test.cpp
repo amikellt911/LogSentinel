@@ -417,6 +417,15 @@ TEST_F(SqliteTraceRepositoryTest, DeleteTraceByIdRemovesSummarySpansAndAnalysisT
     EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
 }
 
+TEST_F(SqliteTraceRepositoryTest, DeleteTraceByIdTreatsAlreadyMissingTraceAsSuccess)
+{
+    // 单条删除接口要按幂等语义收口：同一个 trace 被重复删时，前端不该看到一次成功一次失败。
+    EXPECT_TRUE(repo->DeleteTraceById("missing-trace"));
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_summary;"), 0);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_span;"), 0);
+    EXPECT_EQ(QueryCount("SELECT COUNT(*) FROM trace_analysis;"), 0);
+}
+
 TEST_F(SqliteTraceRepositoryTest, DeleteExpiredTracesBatchRemovesOnlyExpiredTraceIds)
 {
     persistence::TraceSummary expired_with_end = MakeSummary("expired-end");

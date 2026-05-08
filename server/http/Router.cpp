@@ -18,7 +18,9 @@ bool Router::dispatch(const HttpRequest &request, HttpResponse *response, const 
     if(request.method()=="OPTIONS"){
         response->setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
         response->setHeader("Access-Control-Allow-Origin","*");
-        response->setHeader("Access-Control-Allow-Methods","POST,GET,OPTIONS");
+        // TraceExplorer 新增单条删除后，浏览器会先发 DELETE 预检；
+        // 这里如果还只放行 POST/GET，前端按钮就会在真正到达业务 handler 前被 CORS 卡死。
+        response->setHeader("Access-Control-Allow-Methods","POST,GET,DELETE,OPTIONS");
         response->setHeader("Access-Control-Allow-Headers","Content-Type");
         response->setHeader("Access-Control-Max-Age","86400");
         MiniMuduo::net::Buffer buf;
