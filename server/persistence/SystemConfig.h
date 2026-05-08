@@ -3,12 +3,17 @@
 #include <memory>
 #include <string>
 #include <algorithm>
+#include <map>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include "persistence/ConfigTypes.h"
 
 struct SystemConfig {
     const AppConfig app_config;
+    // provider profile 是 Trace AI 请求体里的 model/api_key 来源。
+    // 快照发布后只读访问，worker 热更新时直接按 provider id 查这张 map，不再回 app_config 找旧字段。
+    const std::map<std::string, ProviderProfile> provider_profiles;
     // 单一 Prompt 列表
     const std::vector<PromptConfig> prompts;
     const std::vector<AlertChannel> channels;
@@ -22,9 +27,11 @@ struct SystemConfig {
     std::unordered_map<int, std::string> prompt_index_;
 
     SystemConfig(AppConfig app,
+                 std::map<std::string, ProviderProfile> provider_profiles_,
                  std::vector<PromptConfig> prompts_,
                  std::vector<AlertChannel> c)
         : app_config(std::move(app)),
+          provider_profiles(std::move(provider_profiles_)),
           prompts(std::move(prompts_)),
           channels(std::move(c))
     {
@@ -38,6 +45,17 @@ struct SystemConfig {
     }
 
     SystemConfig& operator=(const SystemConfig&) = delete;
+
+    std::optional<ProviderProfile> resolveProviderProfile(const std::string& provider) const
+    {
+        // provider 路由由启动期固定，model/api_key 允许通过 profile 热更新。
+        // 这里返回拷贝而不是引用，是为了让调用方拿到一份稳定小对象，避免快照换代后还悬挂着内部引用。
+        const auto it = provider_profiles.find(provider);
+        if (it == provider_profiles.end()) {
+            return std::nullopt;
+        }
+        return it->second;
+    }
 
 private:
     // 优化后的解析逻辑：优先查表 (O(1))，失败则找第一个 Active (O(N))

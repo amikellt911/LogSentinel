@@ -189,6 +189,10 @@ add_executable(test_sqlite_trace_repo
   tests/SqliteTraceRepository_test.cpp
 )
 
+add_executable(test_config_repository_profile
+  tests/ConfigRepository_profile_test.cpp
+)
+
 add_executable(test_log_handler
   tests/LogHandler_test.cpp
 )
@@ -249,6 +253,10 @@ GTest::gtest_main
 core_module
 )
 target_link_libraries(test_sqlite_trace_repo PRIVATE
+GTest::gtest_main
+persistence_module
+)
+target_link_libraries(test_config_repository_profile PRIVATE
 GTest::gtest_main
 persistence_module
 )

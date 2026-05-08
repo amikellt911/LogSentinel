@@ -549,6 +549,23 @@ def post_config_patch(url: str, items: list[dict]) -> None:
         raise RuntimeError(f"POST /settings/config 失败: status={resp.status_code}, body={resp.text}")
 
 
+def post_provider_profiles(url: str, profiles: list[dict]) -> None:
+    """
+    写入 provider -> model/api_key profile。
+
+    旧的 ai_model/ai_api_key 已经不再是主来源，所以黑盒必须单独打这条接口；
+    否则测试只能证明 provider 路由被保存了，证明不了请求体里的 model/key 真来自 profile 表。
+    """
+    resp = requests.post(
+        f"{url}/settings/provider-profiles",
+        headers={"Content-Type": "application/json"},
+        json=profiles,
+        timeout=3.0,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"POST /settings/provider-profiles 失败: status={resp.status_code}, body={resp.text}")
+
+
 def post_prompts(url: str, prompts: list[dict]) -> None:
     resp = requests.post(
         f"{url}/settings/prompts",
@@ -1065,10 +1082,14 @@ def run_flow(args: argparse.Namespace) -> int:
             [
                 {"key": "ai_analysis_enabled", "value": "1"},
                 {"key": "ai_provider", "value": "mock"},
-                {"key": "ai_model", "value": "probe-model"},
-                {"key": "ai_api_key", "value": "probe-key"},
                 {"key": "ai_language", "value": "zh"},
                 {"key": "active_prompt_id", "value": str(active_prompt["id"])},
+            ],
+        )
+        post_provider_profiles(
+            new_url,
+            [
+                {"provider": "mock", "model": "probe-model", "api_key": "probe-key"},
             ],
         )
         post_channels(
@@ -1168,8 +1189,12 @@ def run_flow(args: argparse.Namespace) -> int:
         post_config_patch(
             new_url,
             [
-                {"key": "ai_model", "value": "hot-reload-model"},
-                {"key": "ai_api_key", "value": "hot-reload-key"},
+            ],
+        )
+        post_provider_profiles(
+            new_url,
+            [
+                {"provider": "mock", "model": "hot-reload-model", "api_key": "hot-reload-key"},
             ],
         )
         hot_reload_trace_id = send_trace_pair(
@@ -1258,11 +1283,16 @@ def run_flow(args: argparse.Namespace) -> int:
                     {"key": "ai_analysis_enabled", "value": "1"},
                     {"key": "ai_auto_degrade", "value": "1"},
                     {"key": "ai_provider", "value": primary},
-                    {"key": "ai_model", "value": provider_model_map[primary]},
-                    {"key": "ai_api_key", "value": provider_api_key_map[primary]},
                     {"key": "ai_fallback_provider", "value": fallback},
-                    {"key": "ai_fallback_model", "value": provider_model_map[fallback]},
-                    {"key": "ai_fallback_api_key", "value": provider_api_key_map[fallback]},
+                ],
+            )
+            # 主备 provider 的路由仍走 app_config，model/key 统一写进 profile 表。
+            # 这样黑盒能直接证明 C++ 启动时按 provider 查 profile，而不是继续吃旧全局字段。
+            post_provider_profiles(
+                new_url,
+                [
+                    {"provider": primary, "model": provider_model_map[primary], "api_key": provider_api_key_map[primary]},
+                    {"provider": fallback, "model": provider_model_map[fallback], "api_key": provider_api_key_map[fallback]},
                 ],
             )
 
@@ -1275,10 +1305,14 @@ def run_flow(args: argparse.Namespace) -> int:
                     {"key": "ai_analysis_enabled", "value": "1"},
                     {"key": "ai_auto_degrade", "value": "0"},
                     {"key": "ai_provider", "value": primary},
-                    {"key": "ai_model", "value": provider_model_map[primary]},
-                    {"key": "ai_api_key", "value": provider_api_key_map[primary]},
                     {"key": "ai_retry_enabled", "value": "1" if retry_enabled else "0"},
                     {"key": "ai_retry_max_attempts", "value": str(retry_max_attempts)},
+                ],
+            )
+            post_provider_profiles(
+                new_url,
+                [
+                    {"provider": primary, "model": provider_model_map[primary], "api_key": provider_api_key_map[primary]},
                 ],
             )
 
@@ -1340,11 +1374,10 @@ def run_flow(args: argparse.Namespace) -> int:
         # 所以这里先用重启把 gemini->glm 这条主备路由钉死，然后不再重启服务，只改 fallback 凭证。
         hot_reload_fallback_model = "glm-hot-fallback-model"
         hot_reload_fallback_api_key = "glm-hot-fallback-key"
-        post_config_patch(
+        post_provider_profiles(
             new_url,
             [
-                {"key": "ai_fallback_model", "value": hot_reload_fallback_model},
-                {"key": "ai_fallback_api_key", "value": hot_reload_fallback_api_key},
+                {"provider": "glm", "model": hot_reload_fallback_model, "api_key": hot_reload_fallback_api_key},
             ],
         )
         probe_service.state.clear_trace_requests()

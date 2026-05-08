@@ -75,11 +75,10 @@ static void ReplaceTraceEndAliases(sqlite3* db, const std::vector<std::string>& 
 static bool TouchesTraceAiRuntimeHotKeys(const std::map<std::string, std::string>& mp)
 {
     // 这条版本线只管“已经固定好 provider 路由之后，请求体里还能热切的凭证字段”。
-    // 所以主路和 fallback 的 model/api_key 都算，但 provider/prompt 这些仍然按冷启动处理。
-    return mp.find("ai_model") != mp.end() ||
-           mp.find("ai_api_key") != mp.end() ||
-           mp.find("ai_fallback_model") != mp.end() ||
-           mp.find("ai_fallback_api_key") != mp.end();
+    // 旧 ai_model / ai_api_key 已经从 app_config 主来源删除，所以普通 app_config patch 不再碰这条版本线。
+    // 真正会 bump 的地方是 handleUpdateProviderProfiles()，因为那里才写 model/api_key。
+    (void)mp;
+    return false;
 }
 
 // 辅助函数：将 DB 字符串值应用到 AppConfig 结构体
@@ -88,8 +87,6 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
     try
     {
         if (key == "ai_provider") config.ai_provider = val;
-        else if (key == "ai_model") config.ai_model = val;
-        else if (key == "ai_api_key") config.ai_api_key = val;
         // 这个开关决定的是 Trace 主链 worker 是否真的发 AI，
         // 不是 provider/model/key 这些静态参数是否保留在配置里。
         else if (key == "ai_analysis_enabled") config.ai_analysis_enabled = IsTruthyConfigValue(val);
@@ -104,10 +101,6 @@ static void ApplyConfigValue(AppConfig &config, const std::string &key, const st
         else if (key == "ai_retry_max_attempts") config.ai_retry_max_attempts = std::stoi(val);
         else if (key == "ai_auto_degrade") config.ai_auto_degrade = IsTruthyConfigValue(val);
         else if (key == "ai_fallback_provider") config.ai_fallback_provider = val;
-        else if (key == "ai_fallback_model") config.ai_fallback_model = val;
-        // fallback key 单独存，是为了允许“主模型”和“降级模型”走不同供应商或不同额度。
-        // 如果这里继续偷懒复用 ai_api_key，那么真正触发降级时反而可能因为凭证不匹配再次失败。
-        else if (key == "ai_fallback_api_key") config.ai_fallback_api_key = val;
         else if (key == "ai_circuit_breaker") config.ai_circuit_breaker = IsTruthyConfigValue(val);
         else if (key == "ai_failure_threshold") config.ai_failure_threshold = std::stoi(val);
         else if (key == "ai_cooldown_seconds") config.ai_cooldown_seconds = std::stoi(val);
@@ -183,9 +176,10 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
 
         // 这一刀继续收口 Settings 的持久化契约，不在这里做整套配置中心重构：
         // 1. app_config 继续走 KV，便于后面继续增删 key；
-        // 2. trace_end_aliases 从 app_config 里拆出来单独落表，避免 /logs/spans 热路径反复 JSON 解析；
-        // 2. prompts 保持单表不扩字段，避免把还没钉死的 prompt 语义提前写死；
-        // 3. alert_channels 改成最小真实外发字段集，去掉 msg_template，补上飞书签名 secret。
+        // 2. ai_provider_profiles 单独按 provider 保存 model/api_key，避免切 provider 时沿用上一家的模型名；
+        // 3. trace_end_aliases 从 app_config 里拆出来单独落表，避免 /logs/spans 热路径反复 JSON 解析；
+        // 4. prompts 保持单表不扩字段，避免把还没钉死的 prompt 语义提前写死；
+        // 5. alert_channels 改成最小真实外发字段集，去掉 msg_template，补上飞书签名 secret。
         // 当前仍假设这是测试阶段的新库或可重建库，所以这里不额外补旧 schema 迁移逻辑。
         const char *init_sql = R"(
             CREATE TABLE IF NOT EXISTS app_config (
@@ -200,6 +194,12 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
                 content TEXT NOT NULL,
                 is_active INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS ai_provider_profiles (
+                provider TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                api_key TEXT DEFAULT '',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS trace_end_aliases (
                 position INTEGER PRIMARY KEY,
@@ -217,8 +217,6 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             );
             INSERT OR IGNORE INTO app_config (config_key, config_value, description) VALUES 
             ('ai_provider', 'mock', 'AI服务商类型'),
-            ('ai_model', 'gpt-4-turbo', '模型名称'),
-            ('ai_api_key', '', 'API密钥'),
             ('ai_analysis_enabled', '1', 'Trace AI 分析总开关'),
             ('ai_language', 'en', '解析语言'),
             ('app_language', 'en', '界面语言'),
@@ -231,8 +229,6 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('ai_retry_max_attempts', '3', 'AI最大重试次数'),
             ('ai_auto_degrade', '0', '自动降级开关'),
             ('ai_fallback_provider', 'mock', '降级服务商类型'),
-            ('ai_fallback_model', 'mock', '降级模型名称'),
-            ('ai_fallback_api_key', '', '降级模型 API 密钥'),
             ('ai_circuit_breaker', '1', '熔断机制开关'),
             ('ai_failure_threshold', '5', '熔断触发阈值'),
             ('ai_cooldown_seconds', '60', '熔断冷却时间s'),
@@ -254,6 +250,11 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
             ('wm_buffered_spans_critical', '90', 'buffered spans critical 百分比阈值'),
             ('wm_pending_tasks_overload', '75', 'pending tasks overload 百分比阈值'),
             ('wm_pending_tasks_critical', '90', 'pending tasks critical 百分比阈值');
+            INSERT OR IGNORE INTO ai_provider_profiles (provider, model, api_key) VALUES
+            ('mock', 'mock-trace-analyzer', '88888888'),
+            ('gemini', 'gemini-3-pro-preview', ''),
+            ('glm', 'glm-5.1', ''),
+            ('deepseek', 'deepseek-v4-flash', '');
             DELETE FROM app_config
             WHERE config_key IN (
                 'max_disk_usage_gb',
@@ -261,7 +262,11 @@ SqliteConfigRepository::SqliteConfigRepository(const std::string &db_path)
                 'kernel_max_batch',
                 'kernel_refresh_interval',
                 'kernel_io_buffer',
-                'trace_end_aliases'
+                'trace_end_aliases',
+                'ai_model',
+                'ai_api_key',
+                'ai_fallback_model',
+                'ai_fallback_api_key'
             );
         )";
 
@@ -310,6 +315,11 @@ std::vector<PromptConfig> SqliteConfigRepository::getAllPrompts()
     return getSnapshot()->prompts;
 }
 
+std::map<std::string, ProviderProfile> SqliteConfigRepository::getProviderProfiles()
+{
+    return getSnapshot()->provider_profiles;
+}
+
 std::vector<AlertChannel> SqliteConfigRepository::getAllChannels()
 {
     return getSnapshot()->channels;
@@ -317,8 +327,9 @@ std::vector<AlertChannel> SqliteConfigRepository::getAllChannels()
 
 AllSettings SqliteConfigRepository::getAllSettings()
 {
-    // 组装 AllSettings，Prompt 列表已是统一单表
-    return AllSettings{getAppConfig(), getAllPrompts(), getAllChannels()};
+    // 组装 AllSettings 时把 provider_profiles 一起返回给前端。
+    // 旧 model/api_key 不再挂在 config 下，否则页面会继续形成“主 provider + 单全局模型”的错觉。
+    return AllSettings{getAppConfig(), getProviderProfiles(), getAllPrompts(), getAllChannels()};
 }
 
 void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, std::string> &mp)
@@ -397,6 +408,7 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
         // 更新快照
         auto new_snap = std::make_shared<SystemConfig>(
             std::move(configClone),
+            old_snap->provider_profiles,
             old_snap->prompts,
             old_snap->channels
         );
@@ -416,6 +428,74 @@ void SqliteConfigRepository::handleUpdateAppConfig(const std::map<std::string, s
     }
     catch (...)
     {
+        sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+        throw;
+    }
+}
+
+void SqliteConfigRepository::handleUpdateProviderProfiles(const std::vector<ProviderProfile>& profiles_input)
+{
+    std::lock_guard<std::mutex> db_lock(db_write_mutex_);
+
+    SystemConfigPtr old_snap = getSnapshot();
+    auto new_profiles_cache = old_snap->provider_profiles;
+
+    const char* sql = R"(
+        INSERT INTO ai_provider_profiles (provider, model, api_key, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(provider) DO UPDATE SET
+            model = excluded.model,
+            api_key = excluded.api_key,
+            updated_at = CURRENT_TIMESTAMP;
+    )";
+
+    sqlite3_stmt* stmt_raw = nullptr;
+    int rc = SQLITE_OK;
+    try {
+        rc = sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
+        checkSqliteError(db_, rc, "Failed to begin transaction for provider profiles");
+
+        rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_raw, nullptr);
+        checkSqliteError(db_, rc, "Failed to prepare provider profile upsert");
+        StmtPtr stmt(stmt_raw);
+
+        for (const auto& profile : profiles_input) {
+            if (profile.provider.empty()) {
+                continue;
+            }
+            // profile 更新是增量 patch，不会删除其它 provider。
+            // 这样前端只保存被改动的某一行时，mock/gemini/glm/deepseek 其它行不会被误清空。
+            sqlite3_bind_text(stmt.get(), 1, profile.provider.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt.get(), 2, profile.model.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(stmt.get(), 3, profile.api_key.c_str(), -1, SQLITE_STATIC);
+            const int step_rc = sqlite3_step(stmt.get());
+            if (step_rc != SQLITE_DONE) {
+                checkSqliteError(db_, step_rc, "Failed to upsert provider profile");
+            }
+            new_profiles_cache[profile.provider] = profile;
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+        }
+
+        auto new_snap = std::make_shared<SystemConfig>(
+            old_snap->app_config,
+            std::move(new_profiles_cache),
+            old_snap->prompts,
+            old_snap->channels
+        );
+
+        rc = sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+        checkSqliteError(db_, rc, "Failed to commit transaction for provider profiles");
+        std::atomic_store_explicit(
+            &current_snapshot_,
+            std::shared_ptr<const SystemConfig>(std::move(new_snap)),
+            std::memory_order_release);
+        // model/api_key 已经迁到 provider profile，所以热更新版本号在这里 bump。
+        // TraceProxyAi 看到版本变化后会重新按固定 provider id 读取对应 profile。
+        if (!profiles_input.empty()) {
+            trace_ai_runtime_version_.fetch_add(1, std::memory_order_acq_rel);
+        }
+    } catch (...) {
         sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
         throw;
     }
@@ -498,6 +578,7 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
         // 更新快照
         auto new_snap = std::make_shared<SystemConfig>(
             old_snap->app_config,
+            old_snap->provider_profiles,
             std::move(new_prompts),
             old_snap->channels
         );
@@ -592,6 +673,7 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
         // 更新快照
         auto new_snap = std::make_shared<SystemConfig>(
             old_snap->app_config,
+            old_snap->provider_profiles,
             old_snap->prompts,
             std::move(new_channels_cache)
         );
@@ -634,6 +716,34 @@ std::vector<PromptConfig> SqliteConfigRepository::getAllPromptsInternal()
     }
 
     return prompts;
+}
+
+std::map<std::string, ProviderProfile> SqliteConfigRepository::getProviderProfilesInternal()
+{
+    std::map<std::string, ProviderProfile> profiles;
+    const char* sql = "select provider,model,api_key from ai_provider_profiles;";
+    sqlite3_stmt* stmt_ = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt_, nullptr);
+    if (rc != SQLITE_OK) checkSqliteError(db_, rc, "Failed to prepare statement for provider profiles");
+    StmtPtr stmt(stmt_);
+    while ((rc = sqlite3_step(stmt.get())) == SQLITE_ROW)
+    {
+        const char* provider_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
+        const char* model_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
+        const char* api_key_ptr = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
+        if (!provider_ptr || !model_ptr) {
+            continue;
+        }
+        ProviderProfile profile{
+            provider_ptr,
+            model_ptr,
+            api_key_ptr ? api_key_ptr : ""
+        };
+        // 读库时按 provider 做一次索引化。
+        // 后面 main.cpp 和运行时热更新都只关心“给定 provider 拿哪套 model/key”，不应该每次遍历数组。
+        profiles[profile.provider] = std::move(profile);
+    }
+    return profiles;
 }
 
 // 内部加载器 (保持原样)
@@ -711,6 +821,7 @@ void SqliteConfigRepository::loadFromDbInternal()
     // DB 里读回来的别名也只做最小过滤，不再在后端兜底去重。
     // 这一轮我们明确把“避免重复别名”收回到前端控件状态处理。
     app.trace_end_aliases = FilterTraceEndAliases(getTraceEndAliasesInternal(), app.trace_end_field);
+    auto provider_profiles = getProviderProfilesInternal();
     auto prompts = getAllPromptsInternal();
     auto channels = getAllChannelsInternal();
 
@@ -718,6 +829,7 @@ void SqliteConfigRepository::loadFromDbInternal()
         &current_snapshot_,
         std::shared_ptr<const SystemConfig>(std::make_shared<SystemConfig>(
             std::move(app),
+            std::move(provider_profiles),
             std::move(prompts),
             std::move(channels))),
         std::memory_order_release);

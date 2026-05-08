@@ -2,6 +2,7 @@
 #include<string>
 #include<vector>
 #include<utility>
+#include<map>
 #include<nlohmann/json.hpp>
 #include "ai/AiTypes.h"
 // 【新增历史日志结构体】
@@ -31,8 +32,6 @@ struct HistoryPage {
 struct AppConfig {
     // AI 设置
     std::string ai_provider = "mock";
-    std::string ai_model = "gpt-4-turbo";
-    std::string ai_api_key = "";
     // 这个总开关表达的是“当前是否允许 trace 主链真正发起 AI 分析”。
     // 关闭后 trace 仍然会正常聚合、落 summary/spans，只是 worker 会把 ai_status 收成 skipped_manual。
     bool ai_analysis_enabled = true;
@@ -50,12 +49,9 @@ struct AppConfig {
     bool ai_retry_enabled = false;
     int ai_retry_max_attempts = 3;
     bool ai_auto_degrade = false;
-    // 降级链路不能默认复用主链路密钥。
-    // 一旦主 provider 和 fallback provider 不是同一家，或者用户故意给它们分开配额/权限，
-    // 那么 fallback 必须有自己独立的 provider/model/api_key 三元组。
+    // provider 路由仍然只存主/备选择；真正的 model/api_key 已经下沉到 ai_provider_profiles。
+    // 这样用户切 provider 时不会把上一家 provider 的模型名误带到下一家请求里。
     std::string ai_fallback_provider = "mock";
-    std::string ai_fallback_model = "mock";
-    std::string ai_fallback_api_key = "";
     bool ai_circuit_breaker = true;
     int ai_failure_threshold = 5;
     int ai_cooldown_seconds = 60;
@@ -99,10 +95,10 @@ struct AppConfig {
 
     // 序列化宏 (注意：字段名需与 JSON key 及 DB config_key 一致)
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AppConfig, 
-        ai_provider, ai_model, ai_api_key, ai_analysis_enabled, ai_language, app_language, ai_timeout_ms,
+        ai_provider, ai_analysis_enabled, ai_language, app_language, ai_timeout_ms,
         http_port, log_retention_days,
         ai_retry_enabled, ai_retry_max_attempts,
-        ai_auto_degrade, ai_fallback_provider, ai_fallback_model, ai_fallback_api_key,
+        ai_auto_degrade, ai_fallback_provider,
         ai_circuit_breaker, ai_failure_threshold, ai_cooldown_seconds,
         active_prompt_id,
         kernel_io_threads, kernel_worker_threads, dispatch_worker_threads,
@@ -113,6 +109,21 @@ struct AppConfig {
         wm_buffered_spans_overload, wm_buffered_spans_critical,
         wm_pending_tasks_overload, wm_pending_tasks_critical
     )
+};
+
+// AI Provider Profile 是 model/api_key 的唯一配置来源。
+// app_config 只保留“当前选哪家 provider”的冷启动路由选择，profile 表按 provider 保存这家自己的模型和凭证。
+// 这样数据流会变成：Settings 保存 profile -> Repository 发布快照 -> main.cpp 按 provider 解析 -> TraceProxyAi 请求体透传。
+struct ProviderProfile {
+    std::string provider;
+    std::string model;
+    std::string api_key;
+
+    ProviderProfile() = default;
+    ProviderProfile(std::string provider_, std::string model_, std::string api_key_)
+        : provider(std::move(provider_)), model(std::move(model_)), api_key(std::move(api_key_)) {}
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProviderProfile, provider, model, api_key)
 };
 
 // 2. Prompt 配置 (对应 prompts 表)
@@ -222,12 +233,21 @@ struct AlertChannel {
 // 4. 聚合大对象 (用于 GET /settings/all)
 struct AllSettings {
     AppConfig config;
+    // 前端 Settings 直接按 provider id 展示这张表。
+    // 这里用 map 而不是 vector，是为了让 `mock/gemini/glm/deepseek` 的 model/key 回填不依赖数组顺序。
+    std::map<std::string, ProviderProfile> provider_profiles;
     std::vector<PromptConfig> prompts;
     std::vector<AlertChannel> channels;
     AllSettings() = default;
-    AllSettings(AppConfig config_,std::vector<PromptConfig> prompts_,std::vector<AlertChannel> channels_)
-    : config(std::move(config_)), prompts(std::move(prompts_)), channels(std::move(channels_)){}
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AllSettings, config, prompts, channels)
+    AllSettings(AppConfig config_,
+                std::map<std::string, ProviderProfile> provider_profiles_,
+                std::vector<PromptConfig> prompts_,
+                std::vector<AlertChannel> channels_)
+    : config(std::move(config_)),
+      provider_profiles(std::move(provider_profiles_)),
+      prompts(std::move(prompts_)),
+      channels(std::move(channels_)){}
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AllSettings, config, provider_profiles, prompts, channels)
 };
 
 struct AlertInfo{

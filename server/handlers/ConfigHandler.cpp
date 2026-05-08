@@ -59,6 +59,33 @@ std::map<std::string, std::string> ParseConfigUpdatesPayload(const std::string& 
     return updates;
 }
 
+std::vector<ProviderProfile> ParseProviderProfilesPayload(const std::string& request_body)
+{
+    auto j = json::parse(request_body);
+    if (!j.is_array())
+    {
+        throw std::invalid_argument("Error: provider profiles payload must be an array.");
+    }
+
+    std::vector<ProviderProfile> profiles;
+    profiles.reserve(j.size());
+    for (const auto& item : j)
+    {
+        if (!item.is_object())
+        {
+            throw std::invalid_argument("Error: each provider profile item must be an object.");
+        }
+        if (!item.contains("provider") || !item.contains("model") || !item.contains("api_key"))
+        {
+            throw std::invalid_argument("Error: provider profile requires 'provider', 'model' and 'api_key'.");
+        }
+        // provider profile 是 model/key 的新边界。
+        // Handler 只做形状校验，具体允许哪些 provider 先由前端和 main.cpp 的 provider 解析共同收口。
+        profiles.push_back(item.get<ProviderProfile>());
+    }
+    return profiles;
+}
+
 std::vector<AlertChannel> ParseChannelPayload(const std::string& request_body)
 {
     auto j = json::parse(request_body);
@@ -271,6 +298,68 @@ void ConfigHandler::handleUpdatePrompts(const HttpRequest &req, HttpResponse *re
             }
         }
     };
+    if (tpool_->submit(std::move(work)))
+    {
+        resp->isHandledAsync = true;
+    }
+    else
+    {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
+        resp->addCorsHeaders();
+        resp->body_ = "{\"error\": \"Server overloaded\"}";
+    }
+}
+
+void ConfigHandler::handleUpdateProviderProfiles(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
+{
+    std::weak_ptr<MiniMuduo::net::TcpConnection> weakConn(conn);
+    std::string requestBody = req.body_;
+
+    auto work = [repo = repo_, weakConn, requestBody]()
+    {
+        try
+        {
+            std::vector<ProviderProfile> profiles = ParseProviderProfilesPayload(requestBody);
+
+            repo->handleUpdateProviderProfiles(profiles);
+
+            if (auto conn = weakConn.lock(); conn)
+            {
+                auto loop = conn->getLoop();
+                loop->queueInLoop([weakConn]()
+                                  {
+                    if(auto conn = weakConn.lock(); conn){
+                        HttpResponse resp;
+                        resp.setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
+                        resp.addCorsHeaders();
+                        resp.setBody("{\"status\": \"success\"}");
+                        MiniMuduo::net::Buffer buf;
+                        resp.appendToBuffer(&buf);
+                        conn->send(std::move(buf));
+                    } });
+            }
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "[Worker Error] updateProviderProfiles: " << e.what() << '\n';
+            if (auto conn = weakConn.lock())
+            {
+                conn->getLoop()->queueInLoop([weakConn, msg = std::string(e.what())]()
+                                             {
+                    auto conn = weakConn.lock();
+                    if(conn) {
+                        HttpResponse errResp;
+                        errResp.setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
+                        errResp.addCorsHeaders();
+                        errResp.setBody("{\"error\": \"" + msg + "\"}");
+                        MiniMuduo::net::Buffer buf;
+                        errResp.appendToBuffer(&buf);
+                        conn->send(std::move(buf));
+                    } });
+            }
+        }
+    };
+
     if (tpool_->submit(std::move(work)))
     {
         resp->isHandledAsync = true;

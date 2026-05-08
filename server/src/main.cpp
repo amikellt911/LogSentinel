@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <chrono>
 #include <csignal>
+#include <iostream>
 #include <optional>
 #include <vector>
 
@@ -116,6 +117,20 @@ std::string StripApiPrefix(const std::string& path)
         return "/";
     }
     return path.substr(4);
+}
+
+ProviderProfile ResolveProviderProfileOrDefault(const SystemConfigPtr& snapshot,
+                                                const std::string& provider)
+{
+    if (snapshot) {
+        const auto profile = snapshot->resolveProviderProfile(provider);
+        if (profile.has_value()) {
+            return profile.value();
+        }
+    }
+    // 如果库里缺了某个 provider profile，就给 main.cpp 一个可诊断的空 profile。
+    // 这不是老库迁移兼容，而是防止配置表被手工删坏时直接空指针；后续日志会打印 model/key 是否为空。
+    return ProviderProfile{provider, "", ""};
 }
 
 std::string ToLowerCopy(std::string value)
@@ -529,17 +544,19 @@ int main(int argc, char* argv[])
     const std::string effective_trace_prompt_template =
         BuildTracePromptTemplate(startup_app_config.ai_language,
                                  startup_config_snapshot->active_prompt);
-    // trace AI 的 provider/model/api_key 这一刀也一起收口成冷启动配置。
-    // 原因很直接：既然 trace prompt 已经按“保存后重启生效”处理，
-    // 那同一条调用链上的 provider/model/key 也应该在启动时一次性决策，避免前后口径继续分裂。
+    // trace AI 的 provider 路由仍然按冷启动配置收口。
+    // 但 model/api_key 不再放在 app_config 里，而是按 provider 从 ai_provider_profiles 解析；
+    // 这样用户把 provider 从 gemini 切到 deepseek 时，不会继续带着 Gemini 的 model/key 去请求 DeepSeek。
     const std::string effective_trace_ai_provider =
         trace_ai_provider_explicit
             ? trace_ai_provider
             : (!startup_app_config.ai_provider.empty()
                    ? startup_app_config.ai_provider
                    : trace_ai_provider);
-    const std::string effective_trace_ai_model = startup_app_config.ai_model;
-    const std::string effective_trace_ai_api_key = startup_app_config.ai_api_key;
+    const ProviderProfile effective_trace_ai_profile =
+        ResolveProviderProfileOrDefault(startup_config_snapshot, effective_trace_ai_provider);
+    const std::string effective_trace_ai_model = effective_trace_ai_profile.model;
+    const std::string effective_trace_ai_api_key = effective_trace_ai_profile.api_key;
     // AI 调用超时也必须走冷启动配置。
     // 否则前端把 ai_timeout_ms 改成 30000，看起来已经保存成功，但后端实际还在沿用硬编码 10s，就会变成假配置。
     const int effective_trace_ai_timeout_ms =
@@ -549,8 +566,10 @@ int main(int argc, char* argv[])
     // 既然主/备 provider 都是在启动时构对象，那 provider/model/api_key 三元组自然也不能运行中热切。
     const bool effective_ai_auto_degrade = startup_app_config.ai_auto_degrade;
     const std::string effective_ai_fallback_provider = startup_app_config.ai_fallback_provider;
-    const std::string effective_ai_fallback_model = startup_app_config.ai_fallback_model;
-    const std::string effective_ai_fallback_api_key = startup_app_config.ai_fallback_api_key;
+    const ProviderProfile effective_ai_fallback_profile =
+        ResolveProviderProfileOrDefault(startup_config_snapshot, effective_ai_fallback_provider);
+    const std::string effective_ai_fallback_model = effective_ai_fallback_profile.model;
+    const std::string effective_ai_fallback_api_key = effective_ai_fallback_profile.api_key;
     const bool effective_ai_circuit_breaker = startup_app_config.ai_circuit_breaker;
     const int effective_ai_failure_threshold =
         startup_app_config.ai_failure_threshold > 0
@@ -845,11 +864,12 @@ int main(int argc, char* argv[])
         options.runtime_version_reader = [config_repo]() -> uint64_t {
             return config_repo->getTraceAiRuntimeVersion();
         };
-        options.runtime_credentials_reader = [config_repo]() -> TraceAiRuntimeCredentials {
+        options.runtime_credentials_reader = [config_repo, effective_trace_ai_provider]() -> TraceAiRuntimeCredentials {
             const auto snapshot = config_repo->getSnapshot();
+            const auto profile = snapshot ? snapshot->resolveProviderProfile(effective_trace_ai_provider) : std::nullopt;
             return TraceAiRuntimeCredentials{
-                snapshot ? snapshot->app_config.ai_model : "",
-                snapshot ? snapshot->app_config.ai_api_key : "",
+                profile ? profile->model : "",
+                profile ? profile->api_key : "",
             };
         };
         trace_ai = CreateTraceAiProvider(options);
@@ -879,11 +899,12 @@ int main(int argc, char* argv[])
             fallback_options.runtime_version_reader = [config_repo]() -> uint64_t {
                 return config_repo->getTraceAiRuntimeVersion();
             };
-            fallback_options.runtime_credentials_reader = [config_repo]() -> TraceAiRuntimeCredentials {
+            fallback_options.runtime_credentials_reader = [config_repo, effective_ai_fallback_provider]() -> TraceAiRuntimeCredentials {
                 const auto snapshot = config_repo->getSnapshot();
+                const auto profile = snapshot ? snapshot->resolveProviderProfile(effective_ai_fallback_provider) : std::nullopt;
                 return TraceAiRuntimeCredentials{
-                    snapshot ? snapshot->app_config.ai_fallback_model : "",
-                    snapshot ? snapshot->app_config.ai_fallback_api_key : "",
+                    profile ? profile->model : "",
+                    profile ? profile->api_key : "",
                 };
             };
             fallback_trace_ai = CreateTraceAiProvider(fallback_options);
@@ -1079,6 +1100,11 @@ int main(int argc, char* argv[])
     });
     router->add("POST", "/settings/config", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         config_handler->handleUpdateAppConfig(req, resp, conn);
+    });
+    router->add("POST", "/settings/provider-profiles", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        // provider profiles 单独走一条接口。
+        // 这能把“选择 provider 的冷启动路由”和“该 provider 的 model/api_key 热更新”在 HTTP 契约上拆开。
+        config_handler->handleUpdateProviderProfiles(req, resp, conn);
     });
     router->add("POST", "/settings/prompts", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         config_handler->handleUpdatePrompts(req, resp, conn);

@@ -69,27 +69,10 @@
 
                   <el-form-item label="默认 Provider">
                     <!-- provider 本身决定 C++ 到 Python proxy 的 /analyze/trace/{provider} 路由。
-                         当前只支持冷启动切换；运行中保存只会热更新同一路由下的 model/api_key。 -->
+                         当前只支持冷启动切换；model/api_key 已经改为从下方 provider profile 表读取。 -->
                     <el-select v-model="ai.provider" class="w-full" :disabled="!ai.analysisEnabled">
-                      <el-option label="Local Mock (Dev)" value="mock" />
-                      <el-option label="Google Gemini" value="gemini" />
-                      <el-option label="智谱 GLM" value="glm" />
-                      <el-option label="DeepSeek" value="deepseek" />
+                      <el-option v-for="provider in providerIds" :key="provider" :label="provider" :value="provider" />
                     </el-select>
-                  </el-form-item>
-
-                  <el-form-item label="默认模型">
-                    <el-input v-model="ai.model" placeholder="e.g. deepseek-v4-flash" :disabled="!ai.analysisEnabled" />
-                  </el-form-item>
-
-                  <el-form-item label="API Key">
-                    <el-input
-                      v-model="ai.apiKey"
-                      type="password"
-                      show-password
-                      placeholder="provider api key"
-                      :disabled="!ai.analysisEnabled"
-                    />
                   </el-form-item>
 
                   <el-form-item label="分析输出语言">
@@ -108,6 +91,35 @@
                       :disabled="!ai.analysisEnabled"
                     />
                   </el-form-item>
+                </div>
+              </div>
+
+              <div class="bg-[#1a1a1a] border-b border-gray-700 p-6 flex flex-col justify-center shrink-0">
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">Provider Profiles</h3>
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <div
+                    v-for="provider in providerIds"
+                    :key="provider"
+                    class="border border-gray-700 p-4 rounded bg-gray-800/30"
+                  >
+                    <div class="mb-4 flex items-center justify-between">
+                      <span class="font-mono text-sm font-bold text-gray-200">{{ provider }}</span>
+                      <span v-if="ai.provider === provider || ai.fallbackProvider === provider" class="rounded border border-emerald-500/50 px-2 py-0.5 text-xs text-emerald-300">selected</span>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <el-form-item label="Model" class="mb-0">
+                        <el-input v-model="providerProfiles[provider].model" :disabled="!ai.analysisEnabled" />
+                      </el-form-item>
+                      <el-form-item label="API Key" class="mb-0">
+                        <el-input
+                          v-model="providerProfiles[provider].apiKey"
+                          type="password"
+                          show-password
+                          :disabled="!ai.analysisEnabled"
+                        />
+                      </el-form-item>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -138,26 +150,10 @@
                     <div class="grid grid-cols-1 gap-4">
                       <el-form-item label="Fallback Provider" class="mb-0">
                         <!-- fallback provider 和主 provider 一样决定冷启动路由。
-                             运行中热更新只覆盖 fallback model/api_key，不能把已创建的 fallback provider 改成另一家。 -->
+                             运行中热更新只覆盖该 provider profile 下的 model/api_key，不能把已创建的 fallback provider 改成另一家。 -->
                         <el-select v-model="ai.fallbackProvider" class="w-full" :disabled="!ai.autoDegrade">
-                          <el-option label="Local Mock (Dev)" value="mock" />
-                          <el-option label="Google Gemini" value="gemini" />
-                          <el-option label="智谱 GLM" value="glm" />
-                          <el-option label="DeepSeek" value="deepseek" />
+                          <el-option v-for="provider in providerIds" :key="provider" :label="provider" :value="provider" />
                         </el-select>
-                      </el-form-item>
-                      <el-form-item label="Fallback Model" class="mb-0">
-                        <el-input v-model="ai.fallbackModel" :disabled="!ai.autoDegrade" />
-                      </el-form-item>
-                      <!-- 降级配置这里单独放一份 key，不和默认 provider 共用。
-                           既然 fallback 允许切供应商/切账号，那么用户就必须能明确填自己的备用凭证。 -->
-                      <el-form-item label="Fallback API Key" class="mb-0">
-                        <el-input
-                          v-model="ai.fallbackApiKey"
-                          type="password"
-                          show-password
-                          :disabled="!ai.autoDegrade"
-                        />
                       </el-form-item>
                     </div>
                   </div>
@@ -692,8 +688,15 @@ interface BackendChannelConfig {
   is_active: number | boolean
 }
 
+interface BackendProviderProfile {
+  provider: string
+  model: string
+  api_key: string
+}
+
 interface BackendSettingsResponse {
   config: Record<string, unknown>
+  provider_profiles?: Record<string, BackendProviderProfile>
   prompts: BackendPromptConfig[]
   channels: BackendChannelConfig[]
 }
@@ -707,20 +710,18 @@ interface PrototypeSnapshot {
   ai: {
     analysisEnabled: boolean
     provider: string
-    model: string
-    apiKey: string
     language: string
+    aiTimeoutMs: number
     retryEnabled: boolean
     retryMaxAttempts: number
     autoDegrade: boolean
     fallbackProvider: string
-    fallbackModel: string
-    fallbackApiKey: string
     circuitBreaker: boolean
     failureThreshold: number
     cooldownSeconds: number
     activePromptId: number
   }
+  providerProfiles: Record<string, { model: string; apiKey: string }>
   prompts: PromptDraft[]
   channels: ChannelDraft[]
   kernel: {
@@ -759,20 +760,27 @@ const general = reactive({
 const ai = reactive({
   analysisEnabled: true,
   provider: 'gemini',
-  model: 'gemini-2.5-flash',
-  apiKey: '',
   language: 'zh',
   aiTimeoutMs: 30000,
   retryEnabled: true,
   retryMaxAttempts: 3,
   autoDegrade: true,
   fallbackProvider: 'mock',
-  fallbackModel: 'mock-trace-analyzer',
-  fallbackApiKey: '',
   circuitBreaker: true,
   failureThreshold: 5,
   cooldownSeconds: 60,
   activePromptId: 2
+})
+
+const providerIds = ['mock', 'gemini', 'glm', 'deepseek'] as const
+
+const providerProfiles = reactive<Record<string, { model: string; apiKey: string }>>({
+  // mock 的 key 是测试用防误触口令，不是安全边界。
+  // 后端 proxy 只有收到 88888888 才会让 mock trace 分析成功，避免用户误把 mock 当成真实联通验证。
+  mock: { model: 'mock-trace-analyzer', apiKey: '88888888' },
+  gemini: { model: 'gemini-3-pro-preview', apiKey: '' },
+  glm: { model: 'glm-5.1', apiKey: '' },
+  deepseek: { model: 'deepseek-v4-flash', apiKey: '' }
 })
 
 const prompts = reactive<PromptDraft[]>([
@@ -1044,6 +1052,21 @@ function parseAliasList(value: unknown) {
   }
 }
 
+function normalizeProviderProfiles(rawProfiles: BackendSettingsResponse['provider_profiles']) {
+  const next = JSON.parse(JSON.stringify(providerProfiles)) as Record<string, { model: string; apiKey: string }>
+  // 后端按 provider id 返回 map；这里仍按固定 providerIds 展示四行。
+  // 如果数据库缺某一行，就保留页面默认值，避免 Settings 页因为半张 profile 表直接空白。
+  for (const provider of providerIds) {
+    const rawProfile = rawProfiles?.[provider]
+    if (!rawProfile) continue
+    next[provider] = {
+      model: typeof rawProfile.model === 'string' ? rawProfile.model : next[provider].model,
+      apiKey: typeof rawProfile.api_key === 'string' ? rawProfile.api_key : next[provider].apiKey
+    }
+  }
+  return next
+}
+
 function normalizeAliasDrafts(rawAliases: string[], primaryField: string) {
   const next: string[] = []
   const seen = new Set<string>()
@@ -1065,6 +1088,7 @@ function snapshotState(): PrototypeSnapshot {
   return JSON.parse(JSON.stringify({
     general,
     ai,
+    providerProfiles,
     prompts,
     channels,
     kernel
@@ -1116,6 +1140,9 @@ function normalizePromptSelection() {
 function applySnapshot(next: PrototypeSnapshot) {
   Object.assign(general, next.general)
   Object.assign(ai, next.ai)
+  for (const provider of providerIds) {
+    Object.assign(providerProfiles[provider], next.providerProfiles[provider])
+  }
   prompts.splice(0, prompts.length, ...next.prompts)
   channels.splice(0, channels.length, ...next.channels)
   Object.assign(kernel, next.kernel)
@@ -1156,21 +1183,18 @@ async function loadSettings() {
       ai: {
         analysisEnabled: toBool(config.ai_analysis_enabled, true),
         provider: typeof config.ai_provider === 'string' ? config.ai_provider : 'mock',
-        model: typeof config.ai_model === 'string' ? config.ai_model : 'gpt-4-turbo',
-        apiKey: typeof config.ai_api_key === 'string' ? config.ai_api_key : '',
         language: typeof config.ai_language === 'string' ? config.ai_language : 'zh',
+        aiTimeoutMs: toNumber(config.ai_timeout_ms, 30000),
         retryEnabled: toBool(config.ai_retry_enabled, false),
         retryMaxAttempts: toNumber(config.ai_retry_max_attempts, 3),
         autoDegrade: toBool(config.ai_auto_degrade, false),
         fallbackProvider: typeof config.ai_fallback_provider === 'string' ? config.ai_fallback_provider : 'mock',
-        fallbackModel: typeof config.ai_fallback_model === 'string' ? config.ai_fallback_model : 'mock',
-        // 这里单独回填 fallbackApiKey，是为了让“降级链路有独立凭证”这个语义在页面上可见、可改、可保存。
-        fallbackApiKey: typeof config.ai_fallback_api_key === 'string' ? config.ai_fallback_api_key : '',
         circuitBreaker: toBool(config.ai_circuit_breaker, true),
         failureThreshold: toNumber(config.ai_failure_threshold, 5),
         cooldownSeconds: toNumber(config.ai_cooldown_seconds, 60),
         activePromptId: toNumber(config.active_prompt_id, 0)
       },
+      providerProfiles: normalizeProviderProfiles(data.provider_profiles),
       prompts: (data.prompts ?? []).map((item) => ({
         id: item.id,
         name: item.name,
@@ -1369,17 +1393,12 @@ async function persistSettings() {
       { key: 'log_retention_days', value: general.retentionDays.toString() },
       { key: 'ai_analysis_enabled', value: ai.analysisEnabled ? '1' : '0' },
       { key: 'ai_provider', value: ai.provider },
-      { key: 'ai_model', value: ai.model },
-      { key: 'ai_api_key', value: ai.apiKey },
       { key: 'ai_language', value: ai.language },
       { key: 'ai_timeout_ms', value: ai.aiTimeoutMs.toString() },
       { key: 'ai_retry_enabled', value: ai.retryEnabled ? '1' : '0' },
       { key: 'ai_retry_max_attempts', value: ai.retryMaxAttempts.toString() },
       { key: 'ai_auto_degrade', value: ai.autoDegrade ? '1' : '0' },
       { key: 'ai_fallback_provider', value: ai.fallbackProvider },
-      { key: 'ai_fallback_model', value: ai.fallbackModel },
-      // 保存时把 fallback key 和 provider/model 一起发下去，避免后端只能看到半套降级配置。
-      { key: 'ai_fallback_api_key', value: ai.fallbackApiKey },
       { key: 'ai_circuit_breaker', value: ai.circuitBreaker ? '1' : '0' },
       { key: 'ai_failure_threshold', value: ai.failureThreshold.toString() },
       { key: 'ai_cooldown_seconds', value: ai.cooldownSeconds.toString() },
@@ -1421,11 +1440,22 @@ async function persistSettings() {
       is_active: item.enabled ? 1 : 0
     }))
 
+    const providerProfilesPayload = providerIds.map((provider) => ({
+      provider,
+      model: providerProfiles[provider].model,
+      api_key: providerProfiles[provider].apiKey
+    }))
+
     const responses = await Promise.all([
       fetch('/api/settings/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: configItems })
+      }),
+      fetch('/api/settings/provider-profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(providerProfilesPayload)
       }),
       fetch('/api/settings/prompts', {
         method: 'POST',

@@ -3,6 +3,7 @@
 #include<atomic>
 #include<string>
 #include<vector>
+#include<map>
 #include <memory>
 #include<mutex>
 #include "persistence/SystemConfig.h"
@@ -14,6 +15,8 @@ private:
     AppConfig getAppConfigInternal();
     // 获取 Prompt 列表
     std::vector<PromptConfig> getAllPromptsInternal();
+    // profile 表按 provider id 保存 model/api_key，是 Trace AI 凭证热更新的唯一来源。
+    std::map<std::string, ProviderProfile> getProviderProfilesInternal();
     // 别名单独落表，避免热路径重复反序列化 JSON 字符串。
     std::vector<std::string> getTraceEndAliasesInternal();
     std::vector<AlertChannel> getAllChannelsInternal();
@@ -44,11 +47,13 @@ public:
     AppConfig getAppConfig();
     // 返回 Prompt 列表
     std::vector<PromptConfig> getAllPrompts();
+    std::map<std::string, ProviderProfile> getProviderProfiles();
     std::vector<AlertChannel> getAllChannels();
     AllSettings getAllSettings();
 
     // 写操作
     void handleUpdateAppConfig(const std::map<std::string,std::string>& mp);
+    void handleUpdateProviderProfiles(const std::vector<ProviderProfile>& profiles_input);
     void handleUpdatePrompt(const std::vector<PromptConfig>& prompts_input);
     void handleUpdateChannel(const std::vector<AlertChannel>& channels_input);
 

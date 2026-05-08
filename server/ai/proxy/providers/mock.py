@@ -23,6 +23,13 @@ class MockProvider(AIProvider):
         self.delay = delay
         self.default_api_key = api_key
 
+    def _is_reserved_trace_api_key(self, api_key: Optional[str]) -> bool:
+        """
+        Mock Trace 也要求显式测试 key。
+        这不是安全边界，只是防误触：没有传 88888888 时，测试链路不能伪装成“AI 已经正常联通”。
+        """
+        return api_key == "88888888"
+
     def analyze(self, log_text: str, prompt: str, api_key: Optional[str] = None, model: Optional[str] = None) -> str:
         """
         模拟单次分析。
@@ -67,13 +74,20 @@ class MockProvider(AIProvider):
                       prompt: str,
                       api_key: Optional[str] = None,
                       model: Optional[str] = None,
-                      timeout_ms: Optional[int] = None) -> str:
+                      timeout_ms: Optional[int] = None) -> Dict[str, Any]:
         """
         模拟 Trace 聚合结果分析。
         这里单独实现而不是复用 analyze，便于后续扩展 Trace 专用策略。
         timeout_ms 对 mock 没有业务意义，但签名要跟真实 provider 保持一致，
         否则路由层开始透传超时预算后，mock 反而会因为参数不匹配把测试链路打断。
         """
+        if not self._is_reserved_trace_api_key(api_key):
+            return {
+                "ok": False,
+                "error_status": "CONFIG_ERROR",
+                "error_message": "Mock trace provider requires reserved api_key=88888888.",
+            }
+
         actual_delay = self.delay + random.uniform(0, 0.1)
         time.sleep(actual_delay)
 
@@ -102,7 +116,11 @@ class MockProvider(AIProvider):
             "solution": "This is a mock trace solution. 1. Inspect trace. 2. Correlate spans. 3. Verify service health."
         }
 
-        return json.dumps(result)
+        return {
+            "ok": True,
+            "analysis": result,
+            "usage": None,
+        }
 
     def chat(self, history: List[Dict[str, Any]], new_message: str) -> str:
         """

@@ -19,6 +19,11 @@ def load_module(module_name: str, relative_path: str):
 
 
 class AiProxyTraceProtocolTest(unittest.TestCase):
+    async def direct_trace_provider_call(self, func, *args, **kwargs):
+        # retry executor 单测只关心“失败后要不要再打一枪”和 timeout 预算怎么算。
+        # 这里不用真实 Starlette threadpool，避免单测被 AnyIO 线程上下文拖住，业务断言反而跑不出来。
+        return func(**kwargs)
+
     def test_parse_proxy_args_reads_max_workers_from_cli(self):
         module = load_module("ai_proxy_main_cli_args", "ai/proxy/main.py")
 
@@ -114,6 +119,34 @@ class AiProxyTraceProtocolTest(unittest.TestCase):
         self.assertEqual(error_payload["error_code"], 429)
         self.assertEqual(error_payload["error_status"], "RESOURCE_EXHAUSTED")
         self.assertEqual(error_payload["error_message"], "quota exhausted")
+
+    def test_mock_provider_requires_reserved_api_key_for_trace_analysis(self):
+        project_root = pathlib.Path(__file__).resolve().parents[1]
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        module = importlib.import_module("ai.proxy.providers.mock")
+
+        provider = module.MockProvider(api_key="88888888", delay=0)
+
+        # mock 不是安全边界，但必须有一个显式测试 key。
+        # 否则用户随手选 mock 就会得到“成功分析”，很容易把配置链路是否真的生效误判成已经验证过。
+        bad_result = provider.analyze_trace(
+            trace_text="error span",
+            prompt="return json",
+            api_key="wrong-key",
+            model="mock-trace-analyzer",
+        )
+        self.assertFalse(bad_result["ok"])
+        self.assertEqual(bad_result["error_status"], "CONFIG_ERROR")
+
+        good_result = provider.analyze_trace(
+            trace_text="error span",
+            prompt="return json",
+            api_key="88888888",
+            model="mock-trace-analyzer",
+        )
+        self.assertTrue(good_result["ok"])
+        self.assertEqual(good_result["analysis"]["risk_level"], "error")
 
     def test_glm_provider_analyze_trace_uses_json_object_and_extracts_usage(self):
         project_root = pathlib.Path(__file__).resolve().parents[1]
@@ -512,6 +545,7 @@ class AiProxyTraceProtocolTest(unittest.TestCase):
                 timeout_ms=3000,
                 retry_enabled=True,
                 retry_max_attempts=3,
+                provider_call_fn=self.direct_trace_provider_call,
                 monotonic_fn=clock.monotonic,
                 sleep_fn=clock.sleep,
             )
@@ -551,6 +585,7 @@ class AiProxyTraceProtocolTest(unittest.TestCase):
                 timeout_ms=3000,
                 retry_enabled=True,
                 retry_max_attempts=3,
+                provider_call_fn=self.direct_trace_provider_call,
             )
         )
 
@@ -597,6 +632,7 @@ class AiProxyTraceProtocolTest(unittest.TestCase):
                 timeout_ms=5000,
                 retry_enabled=True,
                 retry_max_attempts=5,
+                provider_call_fn=self.direct_trace_provider_call,
             )
         )
 

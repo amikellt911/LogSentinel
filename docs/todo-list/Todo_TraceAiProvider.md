@@ -59,12 +59,23 @@
 
 ## Provider Profile 配置表改造
 
-- [ ] 删除旧 `ai_model / ai_api_key / ai_fallback_model / ai_fallback_api_key` 作为主要配置来源，不做老库迁移兼容
-- [ ] 新增 `ai_provider_profiles` 表，按 `provider -> model/api_key` 保存 mock/gemini/glm/deepseek 四套 profile
-- [ ] 默认 profile：`mock/mock-trace-analyzer/88888888`、`gemini/gemini-3-pro-preview/空 key`、`glm/glm-5.1/空 key`、`deepseek/deepseek-v4-flash/空 key`
-- [ ] 实现 mock provider key 校验：只有 `api_key == 88888888` 才允许 mock trace 分析成功
-- [ ] 后端启动期按 `ai_provider / ai_fallback_provider` 从 profiles 里解析主/备 model/api_key
-- [ ] 运行时热更新版本线改成监听 provider profile 的 model/api_key，而不是旧 app_config 四个字段
-- [ ] Settings 页面改成 provider profiles UI，provider 显示统一改成 `mock/gemini/glm/deepseek`
-- [ ] 更新黑盒测试：验证主/备 provider 从 profiles 取 model/key，mock key 错误时失败、正确时成功
-- [ ] 运行 C++ 构建、Trace AI 单测、Settings 黑盒和 Python proxy 协议测试
+- [x] 删除旧 `ai_model / ai_api_key / ai_fallback_model / ai_fallback_api_key` 作为主要配置来源，不做老库迁移兼容
+- [x] 新增 `ai_provider_profiles` 表，按 `provider -> model/api_key` 保存 mock/gemini/glm/deepseek 四套 profile
+- [x] 默认 profile：`mock/mock-trace-analyzer/88888888`、`gemini/gemini-3-pro-preview/空 key`、`glm/glm-5.1/空 key`、`deepseek/deepseek-v4-flash/空 key`
+- [x] 实现 mock provider key 校验：只有 `api_key == 88888888` 才允许 mock trace 分析成功
+- [x] 后端启动期按 `ai_provider / ai_fallback_provider` 从 profiles 里解析主/备 model/api_key
+- [x] 运行时热更新版本线改成监听 provider profile 的 model/api_key，而不是旧 app_config 四个字段
+- [x] Settings 页面改成 provider profiles UI，provider 显示统一改成 `mock/gemini/glm/deepseek`
+- [x] 更新黑盒测试：验证主/备 provider 从 profiles 取 model/key，mock key 错误时失败、正确时成功
+- [x] 运行 C++ 构建、Trace AI 单测、Settings 黑盒和 Python proxy 协议测试
+
+### Provider Profile 验证记录
+
+- [x] `cmake --build server/build`：通过
+- [x] `./server/build/test_config_repository_profile`：2 条通过
+- [x] `./server/build/test_trace_session_manager_unit`：54 条通过
+- [x] `./server/build/test_trace_session_manager_integration`：14 条通过
+- [x] `python3 server/tests/ai_proxy_trace_protocol_test.py -v`：15 条通过
+- [x] `python3 -m py_compile server/tests/smoke_settings_blackbox.py server/ai/proxy/providers/mock.py server/ai/proxy/main.py`：通过
+- [x] `npm run build`：通过，保留 Vite chunk size warning
+- [ ] `python3 server/tests/smoke_settings_blackbox.py --server-bin ./server/build/LogSentinel --ready-timeout 15 --dispatch-timeout 15`：执行到 provider profile 主备链路后，最终仍失败在既有 `trace_lifecycle_profile=` 日志等待点；探针已看到 `glm-fake-model/glm-fake-key` 从 profile 进入请求体
