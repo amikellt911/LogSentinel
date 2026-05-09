@@ -50,3 +50,42 @@ Newbie Tips
 Pitfalls
 - `Primary/Fallback` 这种短词特别容易漏，因为开发时会把它们当“技术术语”而不是 UI 文案，但用户看到的就是界面文本，照样要跟语言切换。
 - 只看模板正文不够，`el-form-item label`、tab label、section title、empty state、按钮文字都要一起排查，否则页面还是会在切换语言时出现零星串台。
+
+20260509 再追加
+Modification
+- client/src/views/SettingsPrototype.vue
+- client/src/i18n.ts
+
+Newbie Tips
+- 国际化扫尾时，placeholder 和 `el-switch` 的 `active-text/inactive-text` 特别容易被漏掉，因为它们不是主标题，但用户一操作就会直接看到。
+- 如果一页里还留着很多“示例输入文案”，不要硬塞回业务逻辑里判断语言，继续复用前面那组集中 label/computed 才不容易越修越散。
+
+Pitfalls
+- `template #suffix` 里的单位，比如这里的 `s`，本质上也是 UI 文案。如果前面都翻了，单位没翻，页面看起来还是会很别扭。
+- `Feishu / Lark`、`term / meaning` 这种看起来像“固定术语”的字段，如果它是给用户看的占位文本或只读值，同样要按界面语言检查，而不是默认当成不用翻。
+
+20260509 最后追加
+Modification
+- client/src/views/SettingsPrototype.vue
+- client/src/i18n.ts
+
+Newbie Tips
+- 默认 seed 数据里如果有“名称型字段”，比如默认 Prompt 名称、默认渠道名，它们虽然不是接口返回的真实业务数据，但依然会直接出现在正式页面上，所以也会影响语言切换观感。
+- 这类 seed 名称可以先国际化；但更长的业务示例内容要不要翻，最好单独判断，不要为了追求“全翻”把业务示例和 UI 壳一次性搅在一起。
+
+Pitfalls
+- 名称型 seed 数据和示例内容要分开处理。前者属于显式 UI 列表项，优先级高；后者更像演示素材，贸然全改会让改动面失控。
+- 国际化扫尾时，别忘了本地默认值路径。哪怕后端正常会回填，加载失败或空数据回退时，用户照样可能先看到这些本地 seed 文案。
+
+20260509 收尾追加
+Modification
+- client/src/views/SettingsPrototype.vue
+- docs/todo-list/Todo_frontend_i18n_cleanup.md
+
+Newbie Tips
+- 如果语言切换要兼顾“默认示例跟着变”以及“用户手工编辑不能被覆盖”，最稳的办法不是无脑重刷整份表单，而是拿旧语言默认值做哨兵，只同步那些还没被用户改动过的字段。
+- 这种默认 seed 内容最好抽成纯函数或常量映射，不要把一堆中英文字符串直接塞进 `watch` 里。否则后面一改文案，比较逻辑和赋值逻辑很容易一起漂掉。
+
+Pitfalls
+- 像 `{ value: xxx }` 这种临时包装对象，如果没有把结果真正写回响应式源字段，就只是看起来“调用了同步函数”，实际 Vue 状态完全没变。
+- 原型页收尾时，别只顾着修脚本里的语言切换；页头、表单标题这类高频可见硬编码如果还留着，用户第一眼还是会觉得页面没修干净。

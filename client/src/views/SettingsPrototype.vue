@@ -5,7 +5,7 @@
         <div class="border-b border-gray-700 pb-4">
           <!-- 这一版原型页把说明性文案整体拿掉，只保留标题、标签和操作本身。
                用户当前要看的不是字段解释，而是页面结构和可编辑范围，所以这里不再让辅助文字抢视觉注意力。 -->
-          <h2 class="text-2xl font-bold text-white tracking-wide">设置</h2>
+          <h2 class="text-2xl font-bold text-white tracking-wide">{{ settingsPrototypeLabels.pageTitle }}</h2>
         </div>
 
         <el-form label-position="top" size="large" class="demo-tabs">
@@ -29,7 +29,7 @@
                     </el-select>
                   </el-form-item>
 
-                  <el-form-item label="HTTP 端口">
+                  <el-form-item :label="settingsPrototypeLabels.httpPort">
                     <el-input-number v-model="general.httpPort" :min="1024" :max="65535" class="w-full" />
                   </el-form-item>
                 </div>
@@ -63,18 +63,18 @@
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <!-- 这个总开关控制的是 Trace 主链是否真的发起 AI 分析。
                        关闭后 provider/model/key 仍然保留，但后端 worker 只会把 ai_status 记成 skipped_manual。 -->
-                  <el-form-item label="AI 分析开关">
-                    <el-switch v-model="ai.analysisEnabled" inline-prompt active-text="ON" inactive-text="OFF" />
+                  <el-form-item :label="settingsPrototypeLabels.aiAnalysisEnabled">
+                    <el-switch v-model="ai.analysisEnabled" inline-prompt :active-text="settingsPrototypeLabels.switchOn" :inactive-text="settingsPrototypeLabels.switchOff" />
                   </el-form-item>
 
-                  <el-form-item label="分析输出语言">
+                  <el-form-item :label="settingsPrototypeLabels.aiOutputLanguage">
                     <el-select v-model="ai.language" class="w-full" :disabled="!ai.analysisEnabled">
                       <el-option label="English" value="en" />
                       <el-option label="中文 (Chinese)" value="zh" />
                     </el-select>
                   </el-form-item>
 
-                  <el-form-item label="AI 调用超时 (ms)">
+                  <el-form-item :label="settingsPrototypeLabels.aiTimeoutMs">
                     <el-input-number
                       v-model="ai.aiTimeoutMs"
                       :min="1000"
@@ -105,10 +105,10 @@
                       </div>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <el-form-item label="模型名称" class="mb-0">
+                      <el-form-item :label="settingsPrototypeLabels.modelName" class="mb-0">
                         <el-input v-model="providerProfiles[provider].model" :disabled="!ai.analysisEnabled" />
                       </el-form-item>
-                      <el-form-item label="API Key" class="mb-0">
+                      <el-form-item :label="settingsPrototypeLabels.apiKey" class="mb-0">
                         <el-input
                           v-model="providerProfiles[provider].apiKey"
                           type="password"
@@ -145,7 +145,7 @@
                   <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
                     <div class="flex items-center justify-between mb-4">
                       <span class="text-sm font-bold text-gray-300">{{ settingsPrototypeLabels.retryTitle }}</span>
-                      <el-switch v-model="ai.retryEnabled" inline-prompt active-text="ON" inactive-text="OFF" />
+                      <el-switch v-model="ai.retryEnabled" inline-prompt :active-text="settingsPrototypeLabels.switchOn" :inactive-text="settingsPrototypeLabels.switchOff" />
                     </div>
                     <el-form-item :label="settingsPrototypeLabels.retryMaxAttempts" class="mb-0">
                       <el-input-number
@@ -161,7 +161,7 @@
                   <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
                     <div class="flex items-center justify-between mb-4">
                       <span class="text-sm font-bold text-gray-300">{{ settingsPrototypeLabels.degradeTitle }}</span>
-                      <el-switch v-model="ai.autoDegrade" inline-prompt active-text="ON" inactive-text="OFF" />
+                      <el-switch v-model="ai.autoDegrade" inline-prompt :active-text="settingsPrototypeLabels.switchOn" :inactive-text="settingsPrototypeLabels.switchOff" />
                     </div>
                     <div class="rounded border border-gray-700 bg-[#202020] px-4 py-3 text-sm text-gray-300">
                       {{ settingsPrototypeLabels.currentFallback(providerProfiles[ai.fallbackProvider].model.trim() || ai.fallbackProvider) }}
@@ -171,7 +171,7 @@
                   <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
                     <div class="flex items-center justify-between mb-4">
                       <span class="text-sm font-bold text-gray-300">{{ settingsPrototypeLabels.breakerTitle }}</span>
-                      <el-switch v-model="ai.circuitBreaker" inline-prompt active-text="ON" inactive-text="OFF" />
+                      <el-switch v-model="ai.circuitBreaker" inline-prompt :active-text="settingsPrototypeLabels.switchOn" :inactive-text="settingsPrototypeLabels.switchOff" />
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                       <el-form-item :label="settingsPrototypeLabels.failureThreshold" class="mb-0">
@@ -191,7 +191,7 @@
                           class="w-full"
                           :disabled="!ai.circuitBreaker"
                         >
-                          <template #suffix>s</template>
+                          <template #suffix>{{ settingsPrototypeLabels.secondsSuffix }}</template>
                         </el-input-number>
                       </el-form-item>
                     </div>
@@ -288,7 +288,7 @@
                               type="textarea"
                               :rows="3"
                               resize="none"
-                              placeholder="例如：支付链路异常分析"
+                              :placeholder="settingsPrototypeLabels.domainGoalPlaceholder"
                             />
                           </div>
 
@@ -297,7 +297,7 @@
                               <div class="text-sm font-semibold text-gray-200">{{ promptEditorLabels.businessGlossary }}</div>
                               <el-button size="small" @click="addPromptGlossaryRow">
                                 <el-icon class="mr-1"><Plus /></el-icon>
-                                添加术语
+                                {{ settingsPrototypeLabels.glossaryAdd }}
                               </el-button>
                             </div>
                             <div class="space-y-3">
@@ -306,8 +306,8 @@
                                 :key="`glossary-${index}`"
                                 class="grid grid-cols-1 gap-3 rounded border border-gray-800 bg-[#202020] p-3 md:grid-cols-[minmax(180px,240px)_1fr_auto]"
                               >
-                                <el-input v-model="row.term" placeholder="term" />
-                                <el-input v-model="row.meaning" placeholder="meaning" />
+                                <el-input v-model="row.term" :placeholder="settingsPrototypeLabels.glossaryTermPlaceholder" />
+                                <el-input v-model="row.meaning" :placeholder="settingsPrototypeLabels.glossaryMeaningPlaceholder" />
                                 <div class="flex items-center justify-end">
                                   <el-button
                                     type="danger"
@@ -327,7 +327,7 @@
                               <div class="text-sm font-semibold text-gray-200">{{ promptEditorLabels.focusAreas }}</div>
                               <el-button size="small" @click="addPromptListRow('focusAreas')">
                                 <el-icon class="mr-1"><Plus /></el-icon>
-                                添加关注点
+                                {{ settingsPrototypeLabels.focusAdd }}
                               </el-button>
                             </div>
                             <div class="space-y-3">
@@ -336,7 +336,7 @@
                                 :key="`focus-${index}`"
                                 class="flex items-center gap-3 rounded border border-gray-800 bg-[#202020] p-3"
                               >
-                                <el-input v-model="selectedPrompt.content.focusAreas[index]" placeholder="例如：timeout" />
+                                <el-input v-model="selectedPrompt.content.focusAreas[index]" :placeholder="settingsPrototypeLabels.focusPlaceholder" />
                                 <el-button
                                   type="danger"
                                   link
@@ -354,7 +354,7 @@
                               <div class="text-sm font-semibold text-gray-200">{{ promptEditorLabels.riskPreference }}</div>
                               <el-button size="small" @click="addPromptListRow('riskPreference')">
                                 <el-icon class="mr-1"><Plus /></el-icon>
-                                添加偏好
+                                {{ settingsPrototypeLabels.riskAdd }}
                               </el-button>
                             </div>
                             <div class="space-y-3">
@@ -363,7 +363,7 @@
                                 :key="`risk-${index}`"
                                 class="flex items-center gap-3 rounded border border-gray-800 bg-[#202020] p-3"
                               >
-                                <el-input v-model="selectedPrompt.content.riskPreference[index]" placeholder="例如：涉及资金安全的问题，风险等级从严判断。" />
+                                <el-input v-model="selectedPrompt.content.riskPreference[index]" :placeholder="settingsPrototypeLabels.riskPlaceholder" />
                                 <el-button
                                   type="danger"
                                   link
@@ -381,7 +381,7 @@
                               <div class="text-sm font-semibold text-gray-200">{{ promptEditorLabels.outputPreference }}</div>
                               <el-button size="small" @click="addPromptListRow('outputPreference')">
                                 <el-icon class="mr-1"><Plus /></el-icon>
-                                添加输出要求
+                                {{ settingsPrototypeLabels.outputAdd }}
                               </el-button>
                             </div>
                             <div class="space-y-3">
@@ -390,7 +390,7 @@
                                 :key="`output-${index}`"
                                 class="flex items-center gap-3 rounded border border-gray-800 bg-[#202020] p-3"
                               >
-                                <el-input v-model="selectedPrompt.content.outputPreference[index]" placeholder="例如：summary 要短，solution 要偏操作建议。" />
+                                <el-input v-model="selectedPrompt.content.outputPreference[index]" :placeholder="settingsPrototypeLabels.outputPlaceholder" />
                                 <el-button
                                   type="danger"
                                   link
@@ -410,7 +410,7 @@
                              因为这里展示的不是 UI 文案，而是后面真正会被渲染成 business_guidance 的 prompt 片段。 -->
                         <div class="mb-3 text-sm font-semibold text-gray-200">{{ promptEditorLabels.preview }}</div>
                         <div class="rounded border border-gray-700 bg-[#111111] p-4">
-                          <pre class="whitespace-pre-wrap break-words text-xs leading-6 text-gray-300 font-mono min-h-[480px]">{{ selectedPromptPreview || '当前还没有可预览的业务 guidance。' }}</pre>
+                          <pre class="whitespace-pre-wrap break-words text-xs leading-6 text-gray-300 font-mono min-h-[480px]">{{ selectedPromptPreview || settingsPrototypeLabels.previewEmpty }}</pre>
                         </div>
                       </div>
                     </div>
@@ -473,7 +473,7 @@
                     </el-form-item>
 
                     <el-form-item :label="settingsPrototypeLabels.vendor">
-                      <el-input model-value="Feishu / Lark" disabled />
+                      <el-input :model-value="settingsPrototypeLabels.channelVendorValue" disabled />
                     </el-form-item>
                   </div>
 
@@ -481,20 +481,20 @@
                     <el-input v-model="selectedChannel.webhookUrl" placeholder="https://..." />
                   </el-form-item>
 
-                  <el-form-item label="签名 Secret">
-                    <el-input v-model="selectedChannel.secret" type="password" show-password placeholder="未开启签名校验时可以为空" />
+                  <el-form-item :label="settingsPrototypeLabels.channelSecret">
+                    <el-input v-model="selectedChannel.secret" type="password" show-password :placeholder="settingsPrototypeLabels.channelSecretPlaceholder" />
                   </el-form-item>
 
-                  <el-form-item label="最小发送等级">
+                  <el-form-item :label="settingsPrototypeLabels.channelThreshold">
                     <div class="w-full">
                       <el-radio-group
                         v-model="selectedChannel.threshold"
                         class="custom-radio-group"
                         :class="thresholdClass(selectedChannel.threshold)"
                       >
-                        <el-radio-button label="critical">Critical</el-radio-button>
-                        <el-radio-button label="error">Error</el-radio-button>
-                        <el-radio-button label="warning">Warning</el-radio-button>
+                        <el-radio-button label="critical">{{ settingsPrototypeLabels.channelThresholdCritical }}</el-radio-button>
+                        <el-radio-button label="error">{{ settingsPrototypeLabels.channelThresholdError }}</el-radio-button>
+                        <el-radio-button label="warning">{{ settingsPrototypeLabels.channelThresholdWarning }}</el-radio-button>
                       </el-radio-group>
                     </div>
                   </el-form-item>
@@ -796,41 +796,41 @@ const providerProfiles = reactive<Record<string, { model: string; apiKey: string
 const prompts = reactive<PromptDraft[]>([
   {
     id: 1,
-    name: '支付链路排障',
+    name: i18n.global.t('messages.settingsPrototype.seedPromptPayment'),
     content: {
-      domainGoal: '支付链路异常分析',
+      domainGoal: '',
       businessGlossary: [
-        { term: 'bank-gateway', meaning: '银行侧网关' },
-        { term: 'acquire_result', meaning: '收单返回码' }
+        { term: '', meaning: '' },
+        { term: '', meaning: '' }
       ],
-      focusAreas: ['timeout', 'retry storm', 'downstream dependency failure'],
-      riskPreference: ['涉及资金安全的问题，风险等级从严判断。'],
-      outputPreference: ['summary 要短，root_cause 要明确点名服务链路。']
+      focusAreas: ['', '', ''],
+      riskPreference: [''],
+      outputPreference: ['']
     }
   },
   {
     id: 2,
-    name: '基础通用分析',
+    name: i18n.global.t('messages.settingsPrototype.seedPromptGeneric'),
     content: {
-      domainGoal: '通用分布式链路异常分析',
+      domainGoal: '',
       businessGlossary: [],
-      focusAreas: ['error propagation', 'timeout', 'abnormal latency'],
-      riskPreference: ['证据不足时宁可返回 unknown，也不要过度推测。'],
-      outputPreference: ['solution 要偏操作建议，不要写空泛结论。']
+      focusAreas: ['', '', ''],
+      riskPreference: [''],
+      outputPreference: ['']
     }
   },
   {
     id: 3,
-    name: '风控链路排障',
+    name: i18n.global.t('messages.settingsPrototype.seedPromptRisk'),
     content: {
-      domainGoal: '风控链路排障',
+      domainGoal: '',
       businessGlossary: [
-        { term: 'feature pull', meaning: '特征拉取链路' },
-        { term: 'rule hit', meaning: '规则命中判断' }
+        { term: '', meaning: '' },
+        { term: '', meaning: '' }
       ],
-      focusAreas: ['cache miss', 'feature pull timeout', 'downstream dependency failure'],
-      riskPreference: ['涉及误拒或漏放的链路问题，需要比普通性能抖动更谨慎。'],
-      outputPreference: ['root_cause 要区分风控规则层和基础设施层。']
+      focusAreas: ['', '', ''],
+      riskPreference: [''],
+      outputPreference: ['']
     }
   }
 ])
@@ -838,7 +838,7 @@ const prompts = reactive<PromptDraft[]>([
 const channels = reactive<ChannelDraft[]>([
   {
     id: 1,
-    name: '生产告警群',
+    name: i18n.global.t('messages.settingsPrototype.seedChannelProd'),
     enabled: true,
     webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx',
     secret: '',
@@ -846,7 +846,7 @@ const channels = reactive<ChannelDraft[]>([
   },
   {
     id: 2,
-    name: '值班测试群',
+    name: i18n.global.t('messages.settingsPrototype.seedChannelDuty'),
     enabled: false,
     webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/yyyyyyyy',
     secret: 'demo-secret',
@@ -918,14 +918,21 @@ const settingsPrototypeLabels = computed(() => {
   // 这组标签专门收口 SettingsPrototype 还没接进旧 settings.* 词条树的可见文案。
   // 先集中到一个 computed 里，避免模板继续散落硬编码，后面如果要整体并回正式 settings 词条也更容易迁。
   return {
+    pageTitle: isZh ? '设置' : 'Settings',
     generalTab: isZh ? '基础' : 'General',
     generalSection: isZh ? '界面与访问' : 'UI & Access',
     retentionSection: isZh ? '日志保留策略' : 'Log Retention',
     language: isZh ? '系统语言' : 'Application Language',
+    httpPort: isZh ? 'HTTP 端口' : 'HTTP Port',
     retentionDays: isZh ? '日志保留天数' : 'Retention Days',
     aiOverview: isZh ? '模型总览' : 'Model Overview',
+    aiAnalysisEnabled: isZh ? 'AI 分析开关' : 'AI Analysis',
+    aiOutputLanguage: isZh ? '分析输出语言' : 'Output Language',
+    aiTimeoutMs: isZh ? 'AI 调用超时 (ms)' : 'AI Timeout (ms)',
     aiModelLibrary: isZh ? '模型库' : 'Model Library',
     aiSlotHint: isZh ? '模型配置槽位' : 'Model configuration slot',
+    modelName: isZh ? '模型名称' : 'Model Name',
+    apiKey: 'API Key',
     primaryBadge: isZh ? '主模型' : 'Primary',
     fallbackBadge: isZh ? '备用模型' : 'Fallback',
     setPrimary: isZh ? '设为主模型' : 'Set as Primary',
@@ -960,8 +967,53 @@ const settingsPrototypeLabels = computed(() => {
     retryBaseDelayMs: isZh ? '重试起始等待时间' : 'Retry Base Delay',
     sweepTickMs: isZh ? 'Sweep / Tick 扫描频率' : 'Sweep / Tick Interval',
     discardChanges: isZh ? '放弃修改' : 'Discard Changes'
+    ,
+    switchOn: isZh ? '开启' : 'ON',
+    switchOff: isZh ? '关闭' : 'OFF',
+    secondsSuffix: isZh ? '秒' : 's',
+    domainGoalPlaceholder: isZh ? '例如：支付链路异常分析' : 'e.g. Payment trace troubleshooting',
+    glossaryAdd: isZh ? '添加术语' : 'Add Term',
+    glossaryTermPlaceholder: isZh ? '术语' : 'term',
+    glossaryMeaningPlaceholder: isZh ? '含义' : 'meaning',
+    focusAdd: isZh ? '添加关注点' : 'Add Focus',
+    focusPlaceholder: isZh ? '例如：timeout' : 'e.g. timeout',
+    riskAdd: isZh ? '添加偏好' : 'Add Preference',
+    riskPlaceholder: isZh ? '例如：涉及资金安全的问题，风险等级从严判断。' : 'e.g. Treat issues involving fund safety as higher risk.',
+    outputAdd: isZh ? '添加输出要求' : 'Add Output Requirement',
+    outputPlaceholder: isZh ? '例如：summary 要短，solution 要偏操作建议。' : 'e.g. Keep the summary short and make the solution actionable.',
+    previewEmpty: isZh ? '当前还没有可预览的业务 guidance。' : 'There is no business guidance preview yet.',
+    channelVendorValue: 'Feishu / Lark',
+    channelSecret: isZh ? '签名 Secret' : 'Signing Secret',
+    channelSecretPlaceholder: isZh ? '未开启签名校验时可以为空' : 'Leave empty if signature verification is disabled',
+    channelThreshold: isZh ? '最小发送等级' : 'Minimum Alert Level',
+    channelThresholdCritical: isZh ? '严重' : 'Critical',
+    channelThresholdError: isZh ? '错误' : 'Error',
+    channelThresholdWarning: isZh ? '警告' : 'Warning',
+    seedPromptPaymentName: isZh ? '支付链路排障' : 'Payment Trace Troubleshooting',
+    seedPromptGenericName: isZh ? '基础通用分析' : 'General Distributed Analysis',
+    seedPromptRiskName: isZh ? '风控链路排障' : 'Risk Control Trace Troubleshooting',
+    seedChannelProdName: isZh ? '生产告警群' : 'Production Alert Channel',
+    seedChannelDutyName: isZh ? '值班测试群' : 'On-call Test Channel'
   }
 })
+
+watch(
+  () => general.language,
+  (newLang, oldLang) => {
+    if (newLang === oldLang) return
+    const previousSeedPrompts = buildSeedPromptLocaleMap(oldLang === 'zh')
+    const nextSeedPrompts = buildSeedPromptLocaleMap(newLang === 'zh')
+    previousSeedPrompts.forEach((previous, index) => {
+      syncSeedPromptField(prompts[index], previous, nextSeedPrompts[index])
+    })
+
+    const previousSeedChannels = buildSeedChannelLocaleMap(oldLang === 'zh')
+    const nextSeedChannels = buildSeedChannelLocaleMap(newLang === 'zh')
+    previousSeedChannels.forEach((previous, index) => {
+      syncSeedChannelField(channels[index], previous, nextSeedChannels[index])
+    })
+  }
+)
 
 const activePromptBadgeLabel = computed(() => {
   return general.language === 'zh' ? '生效中' : 'Active'
@@ -999,6 +1051,110 @@ function createEmptyPromptContent(): PromptContentDraft {
     focusAreas: [''],
     riskPreference: [''],
     outputPreference: ['']
+  }
+}
+
+interface SeedPromptLocaleContent {
+  name: string
+  domainGoal: string
+  glossaryMeanings: string[]
+  riskPreference: string[]
+  outputPreference: string[]
+}
+
+interface SeedChannelLocaleContent {
+  name: string
+}
+
+// 这里把本地 seed 演示内容单独抽成纯函数，避免把“语言切换规则”散落在 watch 里面硬写字符串。
+// 后面切语言时只拿“旧默认值 -> 新默认值”做对照；只要用户改过内容，字段就不会再被这里覆盖。
+function buildSeedPromptLocaleMap(isZh: boolean): SeedPromptLocaleContent[] {
+  return [
+    {
+      name: isZh ? '支付链路排障' : 'Payment Trace Troubleshooting',
+      domainGoal: isZh ? '支付链路异常分析' : 'Payment trace anomaly analysis',
+      glossaryMeanings: [
+        isZh ? '银行侧网关' : 'Bank-side gateway',
+        isZh ? '收单返回码' : 'Acquiring result code'
+      ],
+      riskPreference: [
+        isZh ? '涉及资金安全的问题，风险等级从严判断。' : 'Treat issues involving fund safety as higher risk.'
+      ],
+      outputPreference: [
+        isZh ? 'summary 要短，root_cause 要明确点名服务链路。' : 'Keep the summary short and name the service path clearly in the root cause.'
+      ]
+    },
+    {
+      name: isZh ? '基础通用分析' : 'General Distributed Analysis',
+      domainGoal: isZh ? '通用分布式链路异常分析' : 'Generic distributed trace anomaly analysis',
+      glossaryMeanings: [],
+      riskPreference: [
+        isZh ? '证据不足时宁可返回 unknown，也不要过度推测。' : 'Return unknown when evidence is insufficient instead of over-guessing.'
+      ],
+      outputPreference: [
+        isZh ? 'solution 要偏操作建议，不要写空泛结论。' : 'Keep the solution actionable and avoid vague conclusions.'
+      ]
+    },
+    {
+      name: isZh ? '风控链路排障' : 'Risk Control Trace Troubleshooting',
+      domainGoal: isZh ? '风控链路排障' : 'Risk-control trace troubleshooting',
+      glossaryMeanings: [
+        isZh ? '特征拉取链路' : 'Feature retrieval path',
+        isZh ? '规则命中判断' : 'Rule hit decision'
+      ],
+      riskPreference: [
+        isZh ? '涉及误拒或漏放的链路问题，需要比普通性能抖动更谨慎。' : 'Issues involving false rejects or false passes require stricter judgment than ordinary latency jitter.'
+      ],
+      outputPreference: [
+        isZh ? 'root_cause 要区分风控规则层和基础设施层。' : 'The root cause should distinguish the rule layer from the infrastructure layer.'
+      ]
+    }
+  ]
+}
+
+function buildSeedChannelLocaleMap(isZh: boolean): SeedChannelLocaleContent[] {
+  return [
+    { name: isZh ? '生产告警群' : 'Production Alert Channel' },
+    { name: isZh ? '值班测试群' : 'On-call Test Channel' }
+  ]
+}
+
+function syncSeedPromptField(target: PromptDraft | undefined, previous: SeedPromptLocaleContent | undefined, next: SeedPromptLocaleContent | undefined) {
+  if (!target || !previous || !next) return
+  if (target.name === previous.name) {
+    target.name = next.name
+  }
+  if (target.content.domainGoal === previous.domainGoal) {
+    target.content.domainGoal = next.domainGoal
+  }
+  previous.glossaryMeanings.forEach((oldValue, index) => {
+    const row = target.content.businessGlossary[index]
+    const nextValue = next.glossaryMeanings[index]
+    if (!row || nextValue === undefined) return
+    if (row.meaning === oldValue) {
+      row.meaning = nextValue
+    }
+  })
+  previous.riskPreference.forEach((oldValue, index) => {
+    const nextValue = next.riskPreference[index]
+    if (nextValue === undefined || target.content.riskPreference[index] === undefined) return
+    if (target.content.riskPreference[index] === oldValue) {
+      target.content.riskPreference[index] = nextValue
+    }
+  })
+  previous.outputPreference.forEach((oldValue, index) => {
+    const nextValue = next.outputPreference[index]
+    if (nextValue === undefined || target.content.outputPreference[index] === undefined) return
+    if (target.content.outputPreference[index] === oldValue) {
+      target.content.outputPreference[index] = nextValue
+    }
+  })
+}
+
+function syncSeedChannelField(target: ChannelDraft | undefined, previous: SeedChannelLocaleContent | undefined, next: SeedChannelLocaleContent | undefined) {
+  if (!target || !previous || !next) return
+  if (target.name === previous.name) {
+    target.name = next.name
   }
 }
 
