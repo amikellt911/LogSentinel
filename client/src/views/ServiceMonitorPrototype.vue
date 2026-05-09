@@ -4,15 +4,15 @@
       <!-- 顶部标题区：这里只负责告诉用户这是一张“服务视角首页”，不是 Trace 检索页 -->
       <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
-          <h1 class="text-3xl font-bold text-white tracking-wide">服务监控原型</h1>
+          <h1 class="text-3xl font-bold text-white tracking-wide">{{ $t('serviceMonitor.prototype.title') }}</h1>
           <p class="text-sm text-gray-400 mt-2">
-            先定位最近哪个服务有问题，再决定要不要进入 Trace 详情。
+            {{ $t('serviceMonitor.prototype.subtitle') }}
           </p>
         </div>
 
         <div class="flex flex-wrap items-center gap-3">
           <div class="rounded-lg border border-gray-700 bg-gray-900/70 px-3 py-2 text-sm text-gray-300">
-            时间范围：最近 30 分钟
+            {{ $t('serviceMonitor.prototype.rangeRecent30m') }}
           </div>
           <button
             class="rounded-lg border border-gray-700 bg-gray-900/70 px-4 py-2 text-sm text-gray-200 hover:bg-gray-800"
@@ -20,14 +20,14 @@
             :disabled="manualRefreshLoading"
             @click="refreshRuntimeSnapshotManually"
           >
-            {{ manualRefreshLoading ? '刷新中...' : '刷新' }}
+            {{ manualRefreshLoading ? $t('serviceMonitor.prototype.refreshing') : $t('serviceMonitor.prototype.refresh') }}
           </button>
           <button
             class="rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400"
             type="button"
             @click="goTraceExplorer"
           >
-            进入 Trace 查询
+            {{ $t('serviceMonitor.prototype.openTraces') }}
           </button>
         </div>
       </div>
@@ -51,10 +51,10 @@
           <section class="space-y-4">
           <div class="flex items-center justify-between">
               <div>
-                <h2 class="text-xl font-semibold text-white">服务健康概览</h2>
-                <div class="mt-1 text-sm text-gray-500">这里只按服务看最近受影响的请求事件，不按 span 数直接累加。</div>
+                <h2 class="text-xl font-semibold text-white">{{ $t('serviceMonitor.prototype.overviewTitle') }}</h2>
+                <div class="mt-1 text-sm text-gray-500">{{ $t('serviceMonitor.prototype.serviceOverviewHint') }}</div>
               </div>
-              <span class="text-xs uppercase tracking-[0.25em] text-gray-500">Service-first</span>
+              <span class="text-xs uppercase tracking-[0.25em] text-gray-500">{{ $t('serviceMonitor.prototype.serviceFirst') }}</span>
             </div>
 
             <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -62,7 +62,7 @@
                 v-if="services.length === 0"
                 class="rounded-2xl border border-dashed border-gray-700 bg-black/20 p-6 text-sm leading-7 text-gray-400 lg:col-span-2"
               >
-                当前窗口内没有异常服务，说明服务榜已经退空；这时候不再回退到 mock。
+                {{ $t('serviceMonitor.prototype.emptyServices') }}{{ $t('serviceMonitor.prototype.emptyServicesHint') }}
               </div>
               <button
                 v-for="service in services"
@@ -79,9 +79,9 @@
                       <span class="text-2xl font-semibold text-white">{{ service.name }}</span>
                     </div>
                     <div class="mt-4 text-sm text-gray-400">
-                      最近一小时异常链路 <span class="font-mono text-gray-200">{{ service.exceptionCount }}</span> 次
+                      {{ $t('serviceMonitor.prototype.recentExceptionCount') }} <span class="font-mono text-gray-200">{{ service.exceptionCount }}</span> {{ $t('serviceMonitor.prototype.callsSuffix') }}
                     </div>
-                    <div class="mt-1 text-xs text-gray-500">这里把一条 trace 近似视为一次请求链路，按 trace + service 去重</div>
+                    <div class="mt-1 text-xs text-gray-500">{{ $t('serviceMonitor.prototype.dedupHint') }}</div>
                   </div>
 
                   <span
@@ -93,19 +93,19 @@
                 </div>
 
               <div class="mt-5 rounded-xl bg-black/20 p-3 text-sm">
-                  <div class="text-gray-500">最近异常时间</div>
+                  <div class="text-gray-500">{{ $t('serviceMonitor.prototype.latestExceptionTime') }}</div>
                   <div class="mt-1 text-xl font-mono text-white">{{ service.latestExceptionTime }}</div>
               </div>
 
                 <div class="mt-4">
-                  <div class="text-xs uppercase tracking-[0.2em] text-gray-500">最近异常摘要</div>
+                  <div class="text-xs uppercase tracking-[0.2em] text-gray-500">{{ $t('serviceMonitor.prototype.latestExceptionSummary') }}</div>
                   <div class="mt-2 min-h-[44px] text-sm leading-6 text-gray-300">
                     {{ service.summary }}
                   </div>
                 </div>
 
                 <div class="mt-4 flex items-center justify-end">
-                  <span class="text-xs text-gray-500">点击查看聚焦面板</span>
+                  <span class="text-xs text-gray-500">{{ $t('serviceMonitor.prototype.openFocusPanel') }}</span>
                 </div>
               </button>
             </div>
@@ -115,9 +115,9 @@
           <section class="rounded-3xl border border-gray-800 bg-[linear-gradient(180deg,rgba(20,24,34,0.95),rgba(14,17,24,0.95))] p-6">
             <div class="flex items-center justify-between">
               <div>
-                <h2 class="text-xl font-semibold text-white">当前服务最近异常 Trace 样本</h2>
+                <h2 class="text-xl font-semibold text-white">{{ $t('serviceMonitor.prototype.recentTraceSamples') }}</h2>
                 <div class="mt-1 text-sm text-gray-500">
-                  这里只展示 {{ selectedService.name }} 的最近样本，按异常时间倒序排列，不在这里做全量搜索。
+                  {{ $t('serviceMonitor.prototype.recentTraceSamplesHint', { service: selectedService.name }) }}
                 </div>
               </div>
               <button
@@ -125,7 +125,7 @@
                 type="button"
                 @click="goTraceExplorer"
               >
-                查看更多相关 Trace
+                {{ $t('serviceMonitor.prototype.moreRelatedTraces') }}
               </button>
             </div>
 
@@ -134,7 +134,7 @@
                 v-if="selectedService.recentTraces.length === 0"
                 class="rounded-2xl border border-dashed border-gray-700 bg-black/20 p-4 text-sm leading-7 text-gray-400"
               >
-                当前服务暂无最近异常 Trace 样本。
+                {{ $t('serviceMonitor.prototype.emptyRecentTraces') }}
               </div>
               <div
                 v-for="trace in selectedService.recentTraces"
@@ -162,11 +162,11 @@
 
                     <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                       <div class="rounded-xl bg-gray-900/60 px-3 py-3">
-                        <div class="text-xs uppercase tracking-wider text-gray-500">Trace ID</div>
+                        <div class="text-xs uppercase tracking-wider text-gray-500">{{ $t('serviceMonitor.prototype.traceId') }}</div>
                         <div class="mt-1 break-all font-mono text-sm text-gray-200">{{ trace.traceId }}</div>
                       </div>
                       <div class="rounded-xl bg-gray-900/60 px-3 py-3">
-                        <div class="text-xs uppercase tracking-wider text-gray-500">整链路耗时</div>
+                        <div class="text-xs uppercase tracking-wider text-gray-500">{{ $t('serviceMonitor.prototype.traceDuration') }}</div>
                         <div class="mt-1 font-mono text-sm text-gray-200">{{ trace.durationMs }}ms</div>
                       </div>
                     </div>
@@ -178,7 +178,7 @@
                       type="button"
                       @click="goTraceExplorer"
                     >
-                      查看调用链
+                      {{ $t('serviceMonitor.prototype.viewCallChain') }}
                     </button>
                   </div>
                 </div>
@@ -192,7 +192,7 @@
           <section class="rounded-3xl border border-blue-500/30 bg-[linear-gradient(180deg,rgba(23,28,42,0.98),rgba(14,17,27,0.98))] p-6 shadow-[0_0_40px_rgba(59,130,246,0.12)]">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <div class="text-sm uppercase tracking-[0.25em] text-blue-300/70">当前服务聚焦</div>
+                <div class="text-sm uppercase tracking-[0.25em] text-blue-300/70">{{ $t('serviceMonitor.prototype.currentServiceFocus') }}</div>
                 <h2 class="mt-3 text-4xl font-bold text-white">{{ selectedService.name }}</h2>
               </div>
               <span
@@ -205,36 +205,36 @@
 
             <div class="mt-6 grid grid-cols-2 gap-3">
               <div class="rounded-2xl bg-black/20 p-4">
-                <div class="text-sm text-gray-500">当前状态</div>
+                <div class="text-sm text-gray-500">{{ $t('serviceMonitor.prototype.currentStatus') }}</div>
                 <div class="mt-2 text-3xl font-bold" :class="riskTextClass(selectedService.risk)">
                   {{ statusText(selectedService.risk) }}
                 </div>
-                <div class="mt-1 text-xs text-gray-500">当前只区分“异常 / 稳定”两档</div>
+                <div class="mt-1 text-xs text-gray-500">{{ $t('serviceMonitor.prototype.statusHint') }}</div>
               </div>
               <div class="rounded-2xl bg-black/20 p-4">
-                <div class="text-sm text-gray-500">最近异常时间</div>
+                <div class="text-sm text-gray-500">{{ $t('serviceMonitor.prototype.latestExceptionTime') }}</div>
                 <div class="mt-2 text-3xl font-mono text-white">{{ selectedService.latestExceptionTime }}</div>
               </div>
               <div class="rounded-2xl bg-black/20 p-4">
-                <div class="text-sm text-gray-500">异常链路数</div>
+                <div class="text-sm text-gray-500">{{ $t('serviceMonitor.prototype.exceptionTraceCount') }}</div>
                 <div class="mt-2 text-3xl font-mono text-white">{{ selectedService.exceptionCount }}</div>
-                <div class="mt-1 text-xs text-gray-500">这里把一条 trace 近似视为一次请求链路，按 trace + service 去重</div>
+                <div class="mt-1 text-xs text-gray-500">{{ $t('serviceMonitor.prototype.dedupHint') }}</div>
               </div>
               <div class="rounded-2xl bg-black/20 p-4">
-                <div class="text-sm text-gray-500">异常平均耗时</div>
+                <div class="text-sm text-gray-500">{{ $t('serviceMonitor.prototype.avgExceptionLatency') }}</div>
                 <div class="mt-2 text-3xl font-mono text-white">{{ selectedService.avgLatencyMs }}ms</div>
-                <div class="mt-1 text-xs text-gray-500">仅统计完整结束的异常 span</div>
+                <div class="mt-1 text-xs text-gray-500">{{ $t('serviceMonitor.prototype.avgExceptionLatencyHint') }}</div>
               </div>
             </div>
 
             <div class="mt-6">
-              <div class="text-sm uppercase tracking-[0.2em] text-gray-500">最近问题摘要</div>
+              <div class="text-sm uppercase tracking-[0.2em] text-gray-500">{{ $t('serviceMonitor.prototype.recentIssueSummary') }}</div>
               <ul class="mt-3 space-y-3">
                 <li
                   v-if="selectedService.issues.length === 0"
                   class="rounded-2xl border border-dashed border-gray-700 bg-black/20 px-4 py-3 text-sm leading-6 text-gray-400"
                 >
-                  当前服务暂无可展示的问题摘要。
+                  {{ $t('serviceMonitor.prototype.emptyIssues') }}
                 </li>
                 <li
                   v-for="issue in selectedService.issues"
@@ -249,23 +249,23 @@
             <div class="mt-6">
               <div class="flex items-center justify-between">
                 <div>
-                  <div class="text-sm uppercase tracking-[0.2em] text-gray-500">异常操作</div>
-                  <div class="mt-1 text-xs text-gray-500">按 span.name 聚合；同一条 trace 内相同操作只记 1 次</div>
+                  <div class="text-sm uppercase tracking-[0.2em] text-gray-500">{{ $t('serviceMonitor.prototype.abnormalOperations') }}</div>
+                  <div class="mt-1 text-xs text-gray-500">{{ $t('serviceMonitor.prototype.abnormalOperationsHint') }}</div>
                 </div>
-                <div class="text-xs text-gray-500">只看当前服务</div>
+                <div class="text-xs text-gray-500">{{ $t('serviceMonitor.prototype.currentServiceOnly') }}</div>
               </div>
 
               <div class="mt-3 overflow-hidden rounded-2xl border border-gray-800">
                 <div class="grid grid-cols-[2fr_1fr_1fr] bg-gray-900/70 px-4 py-3 text-xs uppercase tracking-wider text-gray-500">
-                  <div>操作</div>
-                  <div>异常链路数</div>
-                  <div>异常平均耗时</div>
+                  <div>{{ $t('serviceMonitor.prototype.operation') }}</div>
+                  <div>{{ $t('serviceMonitor.prototype.exceptionCount') }}</div>
+                  <div>{{ $t('serviceMonitor.prototype.avgLatency') }}</div>
                 </div>
                 <div
                   v-if="selectedService.operations.length === 0"
                   class="border-t border-gray-800 px-4 py-4 text-sm text-gray-400"
                 >
-                  当前服务暂无异常操作统计。
+                  {{ $t('serviceMonitor.prototype.emptyOperations') }}
                 </div>
                 <div
                   v-for="operation in selectedService.operations"
@@ -284,14 +284,14 @@
                 class="rounded-xl border border-gray-700 bg-gray-900/70 px-4 py-3 text-sm text-gray-100 hover:bg-gray-800"
                 type="button"
               >
-                查看最新异常调用链
+                {{ $t('serviceMonitor.prototype.latestCallChain') }}
               </button>
               <button
                 class="rounded-xl bg-blue-500 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-400"
                 type="button"
                 @click="goTraceExplorer"
               >
-                进入 Trace 查询页
+                {{ $t('serviceMonitor.prototype.openTracePage') }}
               </button>
             </div>
           </section>
@@ -300,10 +300,10 @@
           <section class="rounded-3xl border border-gray-800 bg-[linear-gradient(180deg,rgba(20,24,34,0.95),rgba(14,17,24,0.95))] p-6">
             <div class="flex items-center justify-between">
               <div>
-                <h2 class="text-xl font-semibold text-white">异常操作排行</h2>
-                <div class="mt-1 text-xs text-gray-500">全局窗口统计，按 span.name 聚合，跨服务 Top 6</div>
+                <h2 class="text-xl font-semibold text-white">{{ $t('serviceMonitor.prototype.rankingTitle') }}</h2>
+                <div class="mt-1 text-xs text-gray-500">{{ $t('serviceMonitor.prototype.rankingHint') }}</div>
               </div>
-              <span class="text-xs text-gray-500">Global</span>
+              <span class="text-xs text-gray-500">{{ $t('serviceMonitor.prototype.global') }}</span>
             </div>
 
             <div class="mt-5 space-y-4">
@@ -311,7 +311,7 @@
                 v-if="operationRanking.length === 0"
                 class="rounded-2xl border border-dashed border-gray-700 bg-black/20 p-4 text-sm leading-7 text-gray-400"
               >
-                当前窗口内暂无全局异常操作排行。
+                {{ $t('serviceMonitor.prototype.emptyRanking') }}
               </div>
               <div v-for="item in operationRanking" :key="item.key">
                 <div class="flex items-center justify-between text-sm">
@@ -321,7 +321,7 @@
                   </div>
                 <div class="text-right">
                   <div class="font-mono text-white">{{ item.exceptions }}</div>
-                  <div class="text-xs text-gray-500">异常次数</div>
+                  <div class="text-xs text-gray-500">{{ $t('serviceMonitor.prototype.exceptionTimes') }}</div>
                 </div>
               </div>
                 <div class="mt-2 h-3 overflow-hidden rounded-full bg-gray-900/80">
@@ -342,6 +342,7 @@
 <script setup lang="ts">
 import dayjs from 'dayjs'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 type RiskKind = 'critical' | 'warning' | 'healthy'
@@ -419,13 +420,14 @@ interface ServiceRuntimeSnapshotResponse {
 }
 
 const router = useRouter()
+const { t } = useI18n()
 const emptyService: ServiceItem = {
   name: '--',
   risk: 'healthy',
   exceptionCount: 0,
   avgLatencyMs: 0,
   latestExceptionTime: '--:--:--',
-  summary: '当前没有可展示的服务摘要。',
+  summary: t('serviceMonitor.prototype.emptyServiceSummary'),
   issues: [],
   operations: [],
   recentTraces: []
@@ -475,7 +477,7 @@ const services = computed<ServiceItem[]>(() => {
       latestExceptionTime: formatRuntimeTime(runtimeService.latest_exception_time_ms),
       // 服务摘要和问题摘要当前仍然从 recent_samples 的 summary 派生，
       // 但如果后端现在没有样本，就直接显示空态，不再偷偷回退到旧 mock。
-      summary: runtimeSummary || '当前没有可展示的异常摘要。',
+      summary: runtimeSummary || t('serviceMonitor.prototype.emptyAbnormalSummary'),
       issues: runtimeIssues,
       operations: runtimeOperations,
       // recent_samples 已经由后端按 trace_id + service 去重并按时间倒序裁成最近 3 条；
@@ -498,21 +500,21 @@ const overviewCards = computed(() => {
 
   return [
     {
-      label: '异常服务数',
+      label: t('serviceMonitor.prototype.overviewAbnormalServices'),
       value: abnormalServices,
-      desc: '当前时间窗口内至少出现过 1 个 Error span 的服务数',
+      desc: t('serviceMonitor.prototype.overviewAbnormalServicesDesc'),
       valueClass: 'text-red-400'
     },
     {
-      label: '异常链路数',
+      label: t('serviceMonitor.prototype.overviewAbnormalTraces'),
       value: abnormalTraces,
-      desc: '这里把一条 trace 近似视为一次请求链路，按 trace + service 去重',
+      desc: t('serviceMonitor.prototype.overviewAbnormalTracesDesc'),
       valueClass: 'text-orange-400'
     },
     {
-      label: '最近异常时间',
+      label: t('serviceMonitor.prototype.overviewLatestException'),
       value: latestTime ?? '--:--:--',
-      desc: '最近一个异常 span 的确认时间，优先取 end_time',
+      desc: t('serviceMonitor.prototype.overviewLatestExceptionDesc'),
       valueClass: 'text-white'
     }
   ]
@@ -604,7 +606,11 @@ function formatRuntimeTime(timeMs: number): string {
 }
 
 function riskText(risk: RiskKind): string {
-  return risk === 'healthy' ? '稳定' : '异常'
+  // 这里的状态词是正式入口 /service 的可见文案，所以不能继续写死中文。
+  // 风险枚举本身保持不变，只把展示层统一交给 i18n。
+  return risk === 'healthy'
+    ? t('serviceMonitor.prototype.statusHealthy')
+    : t('serviceMonitor.prototype.statusAbnormal')
 }
 
 function riskDotClass(risk: RiskKind): string {

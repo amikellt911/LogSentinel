@@ -14,15 +14,15 @@
               <template #label>
                 <span class="flex items-center gap-2">
                   <el-icon><Setting /></el-icon>
-                  基础
+                  {{ settingsPrototypeLabels.generalTab }}
                 </span>
               </template>
 
             <div class="p-6 space-y-8">
               <div class="bg-[#1a1a1a] border border-gray-700 p-6 rounded">
-                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">界面与访问</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ settingsPrototypeLabels.generalSection }}</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <el-form-item label="系统语言">
+                  <el-form-item :label="settingsPrototypeLabels.language">
                     <el-select v-model="general.language" class="w-full">
                       <el-option label="English" value="en" />
                       <el-option label="中文 (Chinese)" value="zh" />
@@ -36,9 +36,9 @@
               </div>
 
               <div class="bg-[#1a1a1a] border border-gray-700 p-6 rounded">
-                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">日志保留策略</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ settingsPrototypeLabels.retentionSection }}</h3>
                 <div class="grid grid-cols-1 gap-6">
-                  <el-form-item label="日志保留天数">
+                  <el-form-item :label="settingsPrototypeLabels.retentionDays">
                     <el-input-number v-model="general.retentionDays" :min="1" :max="365" class="w-full" />
                   </el-form-item>
                 </div>
@@ -59,7 +59,7 @@
                  页面自己滚动，避免右侧编辑器再被“上面一截 + 下面保存栏”夹成小窗。 -->
             <div class="flex flex-col">
               <div class="bg-[#1a1a1a] border-b border-gray-700 p-6 flex flex-col justify-center shrink-0">
-                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">模型总览</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ settingsPrototypeLabels.aiOverview }}</h3>
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <!-- 这个总开关控制的是 Trace 主链是否真的发起 AI 分析。
                        关闭后 provider/model/key 仍然保留，但后端 worker 只会把 ai_status 记成 skipped_manual。 -->
@@ -87,7 +87,7 @@
               </div>
 
               <div class="bg-[#1a1a1a] border-b border-gray-700 p-6 flex flex-col justify-center shrink-0">
-                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">模型库</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ settingsPrototypeLabels.aiModelLibrary }}</h3>
                 <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
                   <div
                     v-for="provider in providerIds"
@@ -97,11 +97,11 @@
                     <div class="mb-4 flex items-center justify-between">
                       <div class="min-w-0 pr-3">
                         <div class="text-sm font-bold text-gray-200 break-all">{{ providerProfiles[provider].model.trim() || provider }}</div>
-                        <div class="mt-1 text-xs text-gray-500">模型配置槽位</div>
+                        <div class="mt-1 text-xs text-gray-500">{{ settingsPrototypeLabels.aiSlotHint }}</div>
                       </div>
                       <div class="flex shrink-0 items-center gap-2">
-                        <span v-if="ai.provider === provider" class="rounded border border-sky-500/50 px-2 py-0.5 text-xs text-sky-300">Primary</span>
-                        <span v-if="ai.autoDegrade && ai.fallbackProvider === provider" class="rounded border border-emerald-500/50 px-2 py-0.5 text-xs text-emerald-300">Fallback</span>
+                        <span v-if="ai.provider === provider" class="rounded border border-sky-500/50 px-2 py-0.5 text-xs text-sky-300">{{ settingsPrototypeLabels.primaryBadge }}</span>
+                        <span v-if="ai.autoDegrade && ai.fallbackProvider === provider" class="rounded border border-emerald-500/50 px-2 py-0.5 text-xs text-emerald-300">{{ settingsPrototypeLabels.fallbackBadge }}</span>
                       </div>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -124,7 +124,7 @@
                         :disabled="!ai.analysisEnabled"
                         @click="setPrimaryModel(provider)"
                       >
-                        设为主模型
+                        {{ settingsPrototypeLabels.setPrimary }}
                       </el-button>
                       <el-button
                         size="small"
@@ -132,7 +132,7 @@
                         :disabled="!ai.analysisEnabled || ai.provider === provider"
                         @click="setFallbackModel(provider)"
                       >
-                        设为备用模型
+                        {{ settingsPrototypeLabels.setFallback }}
                       </el-button>
                     </div>
                   </div>
@@ -140,14 +140,14 @@
               </div>
 
               <div class="bg-[#1a1a1a] border-b border-gray-700 p-6 flex flex-col justify-center shrink-0">
-                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">稳定性策略</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ settingsPrototypeLabels.resilienceSection }}</h3>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
                     <div class="flex items-center justify-between mb-4">
-                      <span class="text-sm font-bold text-gray-300">自动重试</span>
+                      <span class="text-sm font-bold text-gray-300">{{ settingsPrototypeLabels.retryTitle }}</span>
                       <el-switch v-model="ai.retryEnabled" inline-prompt active-text="ON" inactive-text="OFF" />
                     </div>
-                    <el-form-item label="最大重试次数" class="mb-0">
+                    <el-form-item :label="settingsPrototypeLabels.retryMaxAttempts" class="mb-0">
                       <el-input-number
                         v-model="ai.retryMaxAttempts"
                         :min="1"
@@ -160,21 +160,21 @@
 
                   <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
                     <div class="flex items-center justify-between mb-4">
-                      <span class="text-sm font-bold text-gray-300">自动降级</span>
+                      <span class="text-sm font-bold text-gray-300">{{ settingsPrototypeLabels.degradeTitle }}</span>
                       <el-switch v-model="ai.autoDegrade" inline-prompt active-text="ON" inactive-text="OFF" />
                     </div>
                     <div class="rounded border border-gray-700 bg-[#202020] px-4 py-3 text-sm text-gray-300">
-                      当前备用模型：{{ providerProfiles[ai.fallbackProvider].model.trim() || ai.fallbackProvider }}
+                      {{ settingsPrototypeLabels.currentFallback(providerProfiles[ai.fallbackProvider].model.trim() || ai.fallbackProvider) }}
                     </div>
                   </div>
 
                   <div class="border border-gray-700 p-4 rounded bg-gray-800/30">
                     <div class="flex items-center justify-between mb-4">
-                      <span class="text-sm font-bold text-gray-300">熔断</span>
+                      <span class="text-sm font-bold text-gray-300">{{ settingsPrototypeLabels.breakerTitle }}</span>
                       <el-switch v-model="ai.circuitBreaker" inline-prompt active-text="ON" inactive-text="OFF" />
                     </div>
                     <div class="grid grid-cols-2 gap-4">
-                      <el-form-item label="失败阈值" class="mb-0">
+                      <el-form-item :label="settingsPrototypeLabels.failureThreshold" class="mb-0">
                         <el-input-number
                           v-model="ai.failureThreshold"
                           :min="1"
@@ -183,7 +183,7 @@
                           :disabled="!ai.circuitBreaker"
                         />
                       </el-form-item>
-                      <el-form-item label="冷却时间" class="mb-0">
+                      <el-form-item :label="settingsPrototypeLabels.cooldownSeconds" class="mb-0">
                         <el-input-number
                           v-model="ai.cooldownSeconds"
                           :min="5"
@@ -204,7 +204,7 @@
               <div class="flex min-h-[780px] flex-col border-t border-gray-700 md:min-h-[860px] md:flex-row">
                 <div class="w-full border-r border-gray-700 flex flex-col bg-[#1a1a1a] md:w-[300px] md:min-w-[300px]">
                   <div class="p-4 border-b border-gray-700 flex justify-between items-center bg-[#252525]">
-                    <span class="text-sm font-bold text-gray-400 uppercase">业务 Prompt</span>
+                    <span class="text-sm font-bold text-gray-400 uppercase">{{ settingsPrototypeLabels.promptListTitle }}</span>
                     <el-button type="primary" size="small" circle @click="addPrompt">
                       <el-icon><Plus /></el-icon>
                     </el-button>
@@ -258,7 +258,7 @@
                     <div class="border-b border-gray-700 bg-[#262626] px-6 py-6 md:px-8">
                       <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                         <div class="max-w-[420px]">
-                          <label class="mb-2 block text-sm font-semibold text-gray-200">Prompt 名称</label>
+                          <label class="mb-2 block text-sm font-semibold text-gray-200">{{ settingsPrototypeLabels.promptName }}</label>
                           <el-input v-model="selectedPrompt.name" />
                         </div>
 
@@ -424,14 +424,14 @@
             <template #label>
               <span class="flex items-center gap-2">
                 <el-icon><Share /></el-icon>
-                告警
+                {{ settingsPrototypeLabels.alertTab }}
               </span>
             </template>
 
             <div class="flex flex-col md:flex-row h-[680px] border-t border-gray-700">
               <div class="w-full md:w-[30%] border-r border-gray-700 flex flex-col bg-[#1a1a1a]">
                 <div class="p-4 border-b border-gray-700 flex justify-between items-center">
-                  <span class="text-sm font-bold text-gray-400 uppercase">飞书渠道</span>
+                  <span class="text-sm font-bold text-gray-400 uppercase">{{ settingsPrototypeLabels.channelListTitle }}</span>
                   <el-button type="primary" size="small" circle @click="addChannel">
                     <el-icon><Plus /></el-icon>
                   </el-button>
@@ -468,16 +468,16 @@
               <div class="w-full md:w-[70%] p-6 flex flex-col bg-[#2d2d2d]">
                 <div v-if="selectedChannel" class="space-y-6">
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <el-form-item label="渠道名称">
+                    <el-form-item :label="settingsPrototypeLabels.channelName">
                       <el-input v-model="selectedChannel.name" />
                     </el-form-item>
 
-                    <el-form-item label="Vendor">
+                    <el-form-item :label="settingsPrototypeLabels.vendor">
                       <el-input model-value="Feishu / Lark" disabled />
                     </el-form-item>
                   </div>
 
-                  <el-form-item label="Webhook URL">
+                  <el-form-item :label="settingsPrototypeLabels.webhookUrl">
                     <el-input v-model="selectedChannel.webhookUrl" placeholder="https://..." />
                   </el-form-item>
 
@@ -502,7 +502,7 @@
                   <div class="pt-4 flex justify-end gap-3">
                     <el-button @click="sendChannelProbe">
                       <el-icon class="mr-2"><Promotion /></el-icon>
-                      发送测试消息
+                      {{ settingsPrototypeLabels.sendTestMessage }}
                     </el-button>
                   </div>
                 </div>
@@ -514,27 +514,27 @@
             <template #label>
               <span class="flex items-center gap-2">
                 <el-icon><Operation /></el-icon>
-                内核 / Trace
+                {{ settingsPrototypeLabels.kernelTab }}
               </span>
             </template>
 
             <div class="p-6 space-y-8">
               <div class="bg-[#1a1a1a] border border-gray-700 p-6 rounded">
-                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">核心控制项</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ settingsPrototypeLabels.kernelCoreSection }}</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <el-form-item label="服务器 I/O 线程数">
+                  <el-form-item :label="settingsPrototypeLabels.ioThreads">
                     <el-input-number v-model="kernel.ioThreads" :min="1" :max="32" class="w-full" />
                   </el-form-item>
 
-                  <el-form-item label="主工作线程数">
+                  <el-form-item :label="settingsPrototypeLabels.workerThreads">
                     <el-input-number v-model="kernel.workerThreads" :min="1" :max="32" class="w-full" />
                   </el-form-item>
 
-                  <el-form-item label="结束标记字段">
+                  <el-form-item :label="settingsPrototypeLabels.endFlagField">
                     <el-input v-model="kernel.endFlagField" />
                   </el-form-item>
 
-                  <el-form-item label="结束字段别名">
+                  <el-form-item :label="settingsPrototypeLabels.endFlagAliases">
                     <el-select
                       v-model="kernel.endFlagAliases"
                       class="w-full"
@@ -551,32 +551,32 @@
                     </el-select>
                   </el-form-item>
 
-                  <el-form-item label="Token 打包限额">
+                  <el-form-item :label="settingsPrototypeLabels.tokenLimit">
                     <el-input-number v-model="kernel.tokenLimit" :min="0" :max="50000" class="w-full" />
                   </el-form-item>
 
-                  <el-form-item label="Span 容量限额">
+                  <el-form-item :label="settingsPrototypeLabels.spanCapacity">
                     <el-input-number v-model="kernel.spanCapacity" :min="0" :max="50000" class="w-full" />
                   </el-form-item>
                 </div>
               </div>
 
               <div class="bg-[#1a1a1a] border border-gray-700 p-6 rounded">
-                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">时间阈值</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">{{ settingsPrototypeLabels.timingSection }}</h3>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <el-form-item label="Collecting 空闲超时">
+                  <el-form-item :label="settingsPrototypeLabels.collectingIdleMs">
                     <el-input-number v-model="kernel.collectingIdleMs" :min="100" :max="600000" class="w-full" />
                   </el-form-item>
 
-                  <el-form-item label="Sealed Grace Window">
+                  <el-form-item :label="settingsPrototypeLabels.sealedGraceMs">
                     <el-input-number v-model="kernel.sealedGraceMs" :min="50" :max="60000" class="w-full" />
                   </el-form-item>
 
-                  <el-form-item label="重试起始等待时间">
+                  <el-form-item :label="settingsPrototypeLabels.retryBaseDelayMs">
                     <el-input-number v-model="kernel.retryBaseDelayMs" :min="50" :max="60000" class="w-full" />
                   </el-form-item>
 
-                  <el-form-item label="Sweep / Tick 扫描频率">
+                  <el-form-item :label="settingsPrototypeLabels.sweepTickMs">
                     <el-input-number v-model="kernel.sweepTickMs" :min="50" :max="10000" class="w-full" />
                   </el-form-item>
                 </div>
@@ -634,7 +634,7 @@
     <div class="shrink-0 border-t border-gray-800 bg-[#141414]/95 backdrop-blur">
       <div class="mx-auto flex w-full max-w-[1680px] justify-end px-8 py-5">
         <div class="flex justify-end gap-3">
-          <el-button :disabled="!isDirty || isLoading || isSaving" @click="resetPrototype">放弃修改</el-button>
+          <el-button :disabled="!isDirty || isLoading || isSaving" @click="resetPrototype">{{ settingsPrototypeLabels.discardChanges }}</el-button>
           <el-button type="primary" size="large" :disabled="!isDirty || isLoading" :loading="isSaving" @click="savePrototype">
             <el-icon class="mr-2"><Check /></el-icon>
             {{ saveButtonLabel }}
@@ -910,6 +910,56 @@ const promptEditorLabels = computed(() => {
     preview: isZh ? '最终 Business Guidance 预览' : 'Rendered Business Guidance Preview',
     setActive: isZh ? '设为生效配置' : 'Set As Active Prompt',
     activeHint: isZh ? '保存后重启生效' : 'Takes effect after save and restart'
+  }
+})
+
+const settingsPrototypeLabels = computed(() => {
+  const isZh = general.language === 'zh'
+  // 这组标签专门收口 SettingsPrototype 还没接进旧 settings.* 词条树的可见文案。
+  // 先集中到一个 computed 里，避免模板继续散落硬编码，后面如果要整体并回正式 settings 词条也更容易迁。
+  return {
+    generalTab: isZh ? '基础' : 'General',
+    generalSection: isZh ? '界面与访问' : 'UI & Access',
+    retentionSection: isZh ? '日志保留策略' : 'Log Retention',
+    language: isZh ? '系统语言' : 'Application Language',
+    retentionDays: isZh ? '日志保留天数' : 'Retention Days',
+    aiOverview: isZh ? '模型总览' : 'Model Overview',
+    aiModelLibrary: isZh ? '模型库' : 'Model Library',
+    aiSlotHint: isZh ? '模型配置槽位' : 'Model configuration slot',
+    primaryBadge: isZh ? '主模型' : 'Primary',
+    fallbackBadge: isZh ? '备用模型' : 'Fallback',
+    setPrimary: isZh ? '设为主模型' : 'Set as Primary',
+    setFallback: isZh ? '设为备用模型' : 'Set as Fallback',
+    resilienceSection: isZh ? '稳定性策略' : 'Resilience Policy',
+    retryTitle: isZh ? '自动重试' : 'Auto Retry',
+    retryMaxAttempts: isZh ? '最大重试次数' : 'Max Retry Attempts',
+    degradeTitle: isZh ? '自动降级' : 'Auto Fallback',
+    currentFallback: (model: string) => isZh ? `当前备用模型：${model}` : `Current Fallback Model: ${model}`,
+    breakerTitle: isZh ? '熔断' : 'Circuit Breaker',
+    failureThreshold: isZh ? '失败阈值' : 'Failure Threshold',
+    cooldownSeconds: isZh ? '冷却时间' : 'Cooldown',
+    promptListTitle: isZh ? '业务 Prompt' : 'Business Prompts',
+    promptName: isZh ? 'Prompt 名称' : 'Prompt Name',
+    alertTab: isZh ? '告警' : 'Alerts',
+    channelListTitle: isZh ? '飞书渠道' : 'Feishu Channels',
+    channelName: isZh ? '渠道名称' : 'Channel Name',
+    vendor: 'Vendor',
+    webhookUrl: 'Webhook URL',
+    sendTestMessage: isZh ? '发送测试消息' : 'Send Test Message',
+    kernelTab: isZh ? '内核 / Trace' : 'Kernel / Trace',
+    kernelCoreSection: isZh ? '核心控制项' : 'Core Controls',
+    ioThreads: isZh ? '服务器 I/O 线程数' : 'Server I/O Threads',
+    workerThreads: isZh ? '主工作线程数' : 'Worker Threads',
+    endFlagField: isZh ? '结束标记字段' : 'End Flag Field',
+    endFlagAliases: isZh ? '结束字段别名' : 'End Flag Aliases',
+    tokenLimit: isZh ? 'Token 打包限额' : 'Token Batch Limit',
+    spanCapacity: isZh ? 'Span 容量限额' : 'Span Capacity Limit',
+    timingSection: isZh ? '时间阈值' : 'Timing Thresholds',
+    collectingIdleMs: isZh ? 'Collecting 空闲超时' : 'Collecting Idle Timeout',
+    sealedGraceMs: isZh ? 'Sealed Grace Window' : 'Sealed Grace Window',
+    retryBaseDelayMs: isZh ? '重试起始等待时间' : 'Retry Base Delay',
+    sweepTickMs: isZh ? 'Sweep / Tick 扫描频率' : 'Sweep / Tick Interval',
+    discardChanges: isZh ? '放弃修改' : 'Discard Changes'
   }
 })
 

@@ -37,7 +37,7 @@
           <el-option label="1h" value="1h" />
           <el-option label="6h" value="6h" />
           <el-option label="24h" value="24h" />
-          <el-option label="Custom" value="custom" />
+          <el-option :label="$t('traceExplorer.search.custom')" value="custom" />
         </el-select>
       </div>
 
@@ -74,11 +74,11 @@
           collapse-tags
           class="w-48"
         >
-          <el-option label="Critical" value="Critical" />
-          <el-option label="Error" value="Error" />
-          <el-option label="Warning" value="Warning" />
-          <el-option label="Info" value="Info" />
-          <el-option label="Safe" value="Safe" />
+          <el-option :label="$t('traceExplorer.search.critical')" value="Critical" />
+          <el-option :label="$t('traceExplorer.search.error')" value="Error" />
+          <el-option :label="$t('traceExplorer.search.warning')" value="Warning" />
+          <el-option :label="$t('traceExplorer.search.info')" value="Info" />
+          <el-option :label="$t('traceExplorer.search.safe')" value="Safe" />
         </el-select>
       </div>
 
