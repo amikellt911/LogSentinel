@@ -84,6 +84,8 @@ def build_presale_trace(trace_key: int, now_ms: int) -> list[dict[str, Any]]:
             "service_name": "order-service",
             "status": "OK",
             "attributes": {
+                "config_snapshot_version": "promo_rule_v18",
+                "service_instance": "order-7c9f6b8d5f-k2p9x",
                 "order_id": "ORD202605070001",
                 "deposit_paid_amount": "100",
                 "original_final_amount": "1000",
@@ -183,6 +185,10 @@ def build_presale_trace(trace_key: int, now_ms: int) -> list[dict[str, Any]]:
             "service_name": "order-service",
             "status": "OK",
             "attributes": {
+                # 结算主编排 Span 记录当前订单实例读取到的规则快照。
+                # 这只是正常排障事实，不能写成 version_mismatch 这类结论字段，否则 AI 不需要结合调用链推理。
+                "config_snapshot_version": "promo_rule_v18",
+                "service_instance": "order-7c9f6b8d5f-k2p9x",
                 "order_id": "ORD202605070001",
                 "campaign_id": "PRESALE_0428",
                 "settlement_scene": "presale_final_payment",

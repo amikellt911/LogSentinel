@@ -16,3 +16,6 @@
 - [x] 将 `util_traceidgenerate_test.cpp` 迁移到 `legacy/` 并从 CTest 移除（待 ID 策略稳定后重写）
 - [x] 将 `LogBatcher_test.cpp` 迁移到 `legacy/` 并从 CTest 移除（非主链路）
 - [x] 扩展 `unit.yml` 覆盖 `HttpContext`、`ThreadPool`、`TraceSessionManagerUnit`、`SqliteTraceRepository` 四组核心单测
+- [x] 调整预售演示 Trace 的配置快照证据：给参与结算规则判断的 order-service Span 补 `config_snapshot_version`
+- [x] 降低预售业务 Prompt 中对灰度/滚动/配置中心延迟的原因前置，改成基于证据的候选解释
+- [x] 同步更新预售演示案例文档和 dev-log

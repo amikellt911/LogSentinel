@@ -215,7 +215,7 @@ int main(int argc, char* argv[])
     std::string trace_ai_base_url = "http://127.0.0.1:8001";
     // 默认超时先抬到 30s。
     // 真实 GLM 链路在免费额度、冷启动或网络波动下首包可能明显慢于 mock/gemini，本地 10s 太激进。
-    int trace_ai_timeout_ms = 30000;
+    int trace_ai_timeout_ms = 90000;
     bool trace_ai_timeout_explicit = false;
     int trace_sweep_interval_ms = 500;
     bool trace_sweep_interval_explicit = false;

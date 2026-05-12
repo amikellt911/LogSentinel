@@ -8,7 +8,7 @@
 
 场景名称：
 
-预售尾款结算场景下，灰度/滚动更新期间跨服务规则快照不一致导致同源权益重复抵扣
+预售尾款结算场景下，跨服务规则快照不一致导致同源权益重复抵扣
 
 核心故事：
 
@@ -16,9 +16,9 @@
 
 整条链路所有 Span 的技术状态都是 `OK`，但从业务语义看，同一活动下的定金膨胀权益和优惠券被重复抵扣，平台存在少收款风险。
 
-现实解释：
+候选解释：
 
-该问题可以发生在 Docker/K8s 等容器化微服务环境中。灰度发布、滚动更新或配置中心推送延迟会导致不同服务实例在短时间内使用不同的配置快照。本系统当前不读取 K8s 事件、发布流水线或配置中心日志，只基于同一 Trace 内的 Span 拓扑、Span attributes 和业务 Prompt 给出候选根因。
+该问题可能发生在容器化微服务环境中，不同服务实例短时间内使用不同业务规则快照时，可能出现跨服务规则口径不一致。本系统当前不读取 K8s 事件、发布流水线或配置中心日志，只基于同一 Trace 内的 Span 拓扑、Span attributes 和业务 Prompt 给出候选根因。因此演示中只能把部署、配置同步或实例状态变化作为基于 Trace 证据的候选解释，不能当作外部已知事实直接下结论。
 
 字段约束：
 
@@ -97,6 +97,8 @@ attributes：
 
 ```json
 {
+  "config_snapshot_version": "promo_rule_v18",
+  "service_instance": "order-7c9f6b8d5f-k2p9x",
   "order_id": "ORD202605070001",
   "campaign_id": "PRESALE_0428",
   "settlement_scene": "presale_final_payment"
@@ -127,6 +129,8 @@ attributes：
 
 ```json
 {
+  "config_snapshot_version": "promo_rule_v18",
+  "service_instance": "order-7c9f6b8d5f-k2p9x",
   "order_id": "ORD202605070001",
   "deposit_paid_amount": "100",
   "original_final_amount": "1000",
@@ -271,7 +275,7 @@ Prompt 名称：
 ### 3.1 目标领域
 
 ```text
-电商交易结算链路异常分析。关注订单、优惠、支付、履约等服务在同一条 Trace 中的业务状态、优惠试算、金额计算、支付结果和订单状态是否一致。该领域运行在 Docker/K8s 等容器化微服务环境中，灰度发布、滚动更新或配置中心推送延迟可能让不同服务实例短时间内使用不同业务规则快照，但版本差异必须结合金额、优惠项和调用关系判断，不能单独作为异常结论。
+电商交易结算链路异常分析。关注订单、优惠、支付、履约等服务在同一条 Trace 中的业务状态、优惠试算、金额计算、支付结果和订单状态是否一致。该领域运行在容器化微服务环境中，同一业务请求可能经过不同服务实例。分析时应关注同一 Trace 内参与同一业务决策的服务实例、配置快照、优惠项、金额计算和调用关系是否一致；部署、配置同步或实例状态变化只能作为候选解释，不能脱离字段证据直接下结论。
 ```
 
 ### 3.2 业务术语表
@@ -302,7 +306,7 @@ paid_amount：
 支付服务实际创建支付单使用的金额。支付成功只代表支付链路成功，不代表结算金额一定正确。
 
 config_snapshot_version：
-服务实例处理当前 Span 时使用的业务规则配置快照标识。在 Docker/K8s 等容器化微服务环境中，灰度发布、滚动更新或配置中心推送延迟可能导致不同服务实例短时间内使用不同快照。版本差异只是排障证据，必须结合金额、优惠项和调用关系判断是否构成真实风险。
+服务实例处理当前 Span 时读取到的业务规则配置快照标识。它只能说明该 Span 使用了哪个规则快照；如果同一 Trace 中相关服务快照不同，需要结合 quote_id、discount_items、campaign_id、final_pay_amount、paid_amount 和调用关系判断是否影响业务结果。
 ```
 
 ### 3.3 关注点
@@ -314,7 +318,7 @@ config_snapshot_version：
 
 检查上游 Span 返回的 quote_id、discount_total 是否被下游金额计算和支付链路一致消费。
 
-当金额、优惠项或支付结果存在异常时，结合相关 Span 的 config_snapshot_version、service_instance 等信息判断是否存在灰度发布、滚动更新或配置传播延迟导致的跨服务规则口径不一致。
+当金额、优惠项或支付结果存在异常时，结合相关 Span 的 config_snapshot_version、service_instance 等信息判断是否存在跨服务规则口径不一致；如果要提出部署、配置同步或实例状态变化等原因，必须标明这是基于 Trace 证据的候选解释。
 
 不要只根据 Span status=OK 判断业务安全；技术成功也可能存在结算语义错误。
 ```
@@ -354,7 +358,7 @@ AI 最终输出契约固定为 4 个字段：`summary`、`risk_level`、`root_ca
   "summary": "预售尾款结算链路技术状态成功，但同一活动下定金膨胀和优惠券被重复抵扣，存在少收款风险。",
   "risk_level": "critical",
   "root_cause": "promotion-service 在优惠试算 Span 中使用 config_snapshot_version=promo_rule_v17 返回 quote_id=QUOTE8821，discount_items 同时包含 campaign_id=PRESALE_0428 下的 deposit_expand 和 coupon，总优惠 discount_total=300；order-service 在金额计算 Span 中使用 config_snapshot_version=promo_rule_v18 消费同一个 quote_id，并计算 final_pay_amount=700。结合预售尾款同源权益互斥规则，旧优惠试算结果被新结算链路消费，跨服务规则快照不一致导致同源权益重复抵扣。",
-  "solution": "在预售尾款结算链路中冻结同一请求的业务规则快照，或在 order-service 消费 promotion quote 时校验 config_snapshot_version、campaign_id 和 discount_items；对已支付且同时包含 deposit_expand 与 coupon 的订单进行补偿核查，并在灰度/滚动更新期间增加跨服务规则版本一致性保护。"
+  "solution": "在预售尾款结算链路中冻结同一请求的业务规则快照，或在 order-service 消费 promotion quote 时校验 config_snapshot_version、campaign_id 和 discount_items；对已支付且同时包含 deposit_expand 与 coupon 的订单进行补偿核查，并在配置变更、实例切换或发布窗口增加跨服务规则版本一致性保护。"
 }
 ```
 
@@ -364,4 +368,4 @@ AI 最终输出契约固定为 4 个字段：`summary`、`risk_level`、`root_ca
 
 如果 AI 只说“配置版本不一致”，但没有指出同一 `campaign_id` 下的 `deposit_expand` 与 `coupon` 重复抵扣，也是不完整结论。
 
-如果 AI 同时指出技术状态成功、支付金额已落地、同源权益重复抵扣、`promotion-service` 与 `order-service` 的 `config_snapshot_version` 不一致，并给出补偿核查与灰度保护建议，则认为本案例达到演示目标。
+如果 AI 同时指出技术状态成功、支付金额已落地、同源权益重复抵扣、`promotion-service` 与 `order-service` 的 `config_snapshot_version` 不一致，并给出补偿核查与规则快照一致性保护建议，则认为本案例达到演示目标。

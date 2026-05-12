@@ -58,12 +58,15 @@ def http_json(base_url: str,
 def build_prompt_content() -> str:
     # 这里按 SettingsPrototype.vue 的结构化 Prompt JSON 格式生成 content。
     # 不直接写最终 business_guidance 文本，是为了让前端五段表单可以正常回填和编辑。
+    # Prompt 只告诉 AI 要检查哪些证据，不预设灰度、滚动更新或配置中心延迟就是根因；
+    # 如果模型要提出这些解释，必须从 Trace 字段和调用关系自己推出来。
     content = {
         "domain_goal": (
             "电商交易结算链路异常分析。关注订单、优惠、支付、履约等服务在同一条 Trace 中的"
-            "业务状态、优惠试算、金额计算、支付结果和订单状态是否一致。该领域运行在 Docker/K8s "
-            "等容器化微服务环境中，灰度发布、滚动更新或配置中心推送延迟可能让不同服务实例短时间内"
-            "使用不同业务规则快照，但版本差异必须结合金额、优惠项和调用关系判断，不能单独作为异常结论。"
+            "业务状态、优惠试算、金额计算、支付结果和订单状态是否一致。该领域运行在容器化微服务环境中，"
+            "同一业务请求可能经过不同服务实例。分析时应关注同一 Trace 内参与同一业务决策的服务实例、"
+            "配置快照、优惠项、金额计算和调用关系是否一致；部署、配置同步或实例状态变化只能作为候选解释，"
+            "不能脱离字段证据直接下结论。"
         ),
         "business_glossary": [
             {
@@ -100,14 +103,14 @@ def build_prompt_content() -> str:
             },
             {
                 "term": "config_snapshot_version",
-                "meaning": "服务实例处理当前 Span 时使用的业务规则配置快照标识。版本差异只是排障证据，必须结合金额、优惠项和调用关系判断是否构成真实风险。",
+                "meaning": "服务实例处理当前 Span 时读取到的业务规则配置快照标识。它只能说明该 Span 使用了哪个规则快照；如果同一 Trace 中相关服务快照不同，需要结合 quote_id、discount_items、campaign_id、final_pay_amount、paid_amount 和调用关系判断是否影响业务结果。",
             },
         ],
         "focus_areas": [
             "检查优惠试算结果、订单金额计算结果、支付金额和订单状态之间是否一致。",
             "检查同一 campaign_id 下是否出现 deposit_expand 与 coupon 等同源权益重复抵扣。",
             "检查上游 Span 返回的 quote_id、discount_total 是否被下游金额计算和支付链路一致消费。",
-            "当金额、优惠项或支付结果存在异常时，结合相关 Span 的 config_snapshot_version、service_instance 等信息判断是否存在灰度发布、滚动更新或配置传播延迟导致的跨服务规则口径不一致。",
+            "当金额、优惠项或支付结果存在异常时，结合相关 Span 的 config_snapshot_version、service_instance 等信息判断是否存在跨服务规则口径不一致；如果要提出部署、配置同步或实例状态变化等原因，必须标明这是基于 Trace 证据的候选解释。",
             "不要只根据 Span status=OK 判断业务安全；技术成功也可能存在结算语义错误。",
         ],
         "risk_preference": [
