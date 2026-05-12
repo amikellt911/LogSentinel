@@ -17,6 +17,28 @@ TERMINAL_AI_STATUSES = {
 }
 
 
+def resolve_ai_profile(base_url: str, timeout_sec: float) -> tuple[str, str]:
+    # provider/model 只作为稳定性测试的元数据打印，不写入 Span attributes。
+    # 这样测试记录能直接复制进表格，同时不会把模型配置混进业务 Trace 影响 AI 分析。
+    try:
+        _, settings = http_json(base_url, "/api/settings/all", timeout_sec=timeout_sec)
+    except RuntimeError as exc:
+        print(f"[presale-demo] settings_probe_failed={exc}")
+        return "unknown", "unknown"
+
+    config = settings.get("config") if isinstance(settings.get("config"), dict) else {}
+    provider = str(config.get("ai_provider") or "unknown")
+    profiles = settings.get("provider_profiles")
+    model = "unknown"
+    if isinstance(profiles, dict):
+        profile = profiles.get(provider)
+        if isinstance(profile, dict):
+            model = str(profile.get("model") or "unknown")
+    if model == "unknown":
+        model = str(config.get("ai_model") or "unknown")
+    return provider, model
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Post the presale final-payment demo trace to LogSentinel."
@@ -309,9 +331,11 @@ def main() -> int:
     now_ms = int(time.time() * 1000)
     trace_key = args.trace_key if args.trace_key is not None else generate_trace_key(now_ms)
     spans = build_presale_trace(trace_key, now_ms)
+    ai_provider, ai_model = resolve_ai_profile(args.base_url, args.timeout_sec)
 
     print(f"[presale-demo] base_url={args.base_url.rstrip('/')}")
     print(f"[presale-demo] trace_key={trace_key}")
+    print(f"[presale-demo] ai_provider={ai_provider} ai_model={ai_model}")
     print("[presale-demo] posting spans in stable child-to-root order")
 
     # 这个脚本只负责造一条业务 Trace，不修改 Settings。
@@ -338,6 +362,8 @@ def main() -> int:
         print(
             "[presale-demo] ai_done "
             f"trace_id={trace_key} "
+            f"ai_provider={ai_provider} "
+            f"ai_model={ai_model} "
             f"ai_status={detail.get('ai_status')} "
             f"risk_level={detail.get('risk_level')} "
             f"ai_wait_sec={ai_wait_sec:.2f} "

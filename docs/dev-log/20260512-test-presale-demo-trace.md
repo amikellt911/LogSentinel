@@ -57,3 +57,31 @@
 
 - 轮询接口要接受 404/503 作为临时状态，因为 Trace 可能还没落库或查询线程池短暂不可用；只有其它 HTTP 错误才应该直接失败。
 - AI 失败也是终态。脚本不能只等 `completed`，否则 provider 超时或熔断时会一直等到总超时，反而看不出真实失败耗时。
+
+---
+
+# 2026-05-12 test(presale-demo): 在演示脚本输出 AI Provider 元数据
+
+## Git Commit Message
+
+`test(presale-demo): 输出演示脚本的 AI Provider 元数据`
+
+## Modification
+
+- `server/tests/post_presale_demo_trace.py`
+- `docs/todo-list/Todo_TestAssets.md`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 稳定性测试记录里必须写清楚 provider 和 model，否则后面看到 40 秒、50 秒的耗时，无法判断到底是哪一家模型服务导致的。
+- provider/model 只能作为脚本输出元数据，不要塞进业务 Span attributes，否则 AI 会把“测试环境配置”误当成业务链路证据。
+
+### Function Explanation
+
+- `/api/settings/all`：同源入口下读取 Settings 快照，脚本用它拿当前 `ai_provider` 和 provider profile 的模型名。
+
+### Pitfalls
+
+- 如果 Settings 查询失败，脚本不能直接中断发 trace；模型稳定性测试的主目标是发 trace 和等待 AI 结果，所以这里降级打印 `unknown` 更合适。
