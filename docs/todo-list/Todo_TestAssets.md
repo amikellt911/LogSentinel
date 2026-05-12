@@ -19,3 +19,4 @@
 - [x] 调整预售演示 Trace 的配置快照证据：给参与结算规则判断的 order-service Span 补 `config_snapshot_version`
 - [x] 降低预售业务 Prompt 中对灰度/滚动/配置中心延迟的原因前置，改成基于证据的候选解释
 - [x] 同步更新预售演示案例文档和 dev-log
+- [x] 增强预售演示发送脚本：默认自动生成 trace_key，并轮询 AI 状态统计端到端耗时

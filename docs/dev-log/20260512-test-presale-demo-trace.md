@@ -27,3 +27,33 @@
 
 - 只给 `calculate_final_pay_amount` 一条 Span 写 `config_snapshot_version`，模型容易把版本差异当作孤立线索，优先输出“同源优惠重复抵扣”，而不是进一步联系到跨服务规则快照不一致。
 - 如果 Prompt 里反复出现“灰度发布、滚动更新、配置中心延迟”，模型会把这些当作已知前提，演示时容易被质疑成“提示词泄题”。
+
+---
+
+# 2026-05-12 test(presale-demo): 增强预售演示脚本的自动 trace_key 与 AI 耗时统计
+
+## Git Commit Message
+
+`test(presale-demo): 增强预售演示脚本的 AI 耗时统计`
+
+## Modification
+
+- `server/tests/post_presale_demo_trace.py`
+- `docs/todo-list/Todo_TestAssets.md`
+
+## Learning Tips
+
+### Newbie Tips
+
+- 稳定性测试不能反复使用同一个 `trace_key`，否则新旧 trace 会在存储和查询里混在一起；默认自动生成 ID 可以避免每次测试前手工删库。
+- 这里统计的耗时不是单纯模型 API 耗时，而是从开始发送 Span 到详情接口看到 AI 终态的端到端耗时，更接近用户实际等待时间。
+
+### Function Explanation
+
+- `argparse.BooleanOptionalAction`：可以自动生成 `--wait-ai` 和 `--no-wait-ai` 两个互斥开关，适合演示脚本这种默认等待、但偶尔需要跳过等待的场景。
+- `time.monotonic()`：适合统计耗时，不受系统时间调整影响；不要用 `time.time()` 做持续时间计算。
+
+### Pitfalls
+
+- 轮询接口要接受 404/503 作为临时状态，因为 Trace 可能还没落库或查询线程池短暂不可用；只有其它 HTTP 错误才应该直接失败。
+- AI 失败也是终态。脚本不能只等 `completed`，否则 provider 超时或熔断时会一直等到总超时，反而看不出真实失败耗时。

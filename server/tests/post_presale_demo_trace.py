@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import random
 import time
 import urllib.error
 import urllib.request
 from typing import Any
+
+
+TERMINAL_AI_STATUSES = {
+    "completed",
+    "failed_primary",
+    "failed_both",
+    "skipped_manual",
+    "skipped_circuit",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,8 +29,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--trace-key",
         type=int,
-        default=9001001,
-        help="Trace key used by the demo trace, default: 9001001",
+        default=None,
+        help="Trace key used by the demo trace. Omit it to generate a fresh key automatically.",
     )
     parser.add_argument(
         "--timeout-sec",
@@ -28,33 +38,112 @@ def parse_args() -> argparse.Namespace:
         default=3.0,
         help="HTTP timeout per span request, default: 3.0",
     )
+    parser.add_argument(
+        "--wait-ai",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Poll trace detail until AI status reaches a terminal state, default: enabled",
+    )
+    parser.add_argument(
+        "--analysis-timeout-sec",
+        type=float,
+        default=180.0,
+        help="Max seconds to wait for AI analysis after posting spans, default: 180.0",
+    )
+    parser.add_argument(
+        "--poll-interval-sec",
+        type=float,
+        default=1.0,
+        help="Seconds between trace detail polls, default: 1.0",
+    )
     return parser.parse_args()
 
 
-def post_span(base_url: str, payload: dict[str, Any], timeout_sec: float) -> dict[str, Any]:
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+def generate_trace_key(now_ms: int) -> int:
+    # 自动生成的 trace_key 使用时间戳低位叠加随机数，避免稳定性测试反复撞上历史 trace。
+    # 如果验收现场需要固定搜索入口，仍然可以显式传 --trace-key 9001001 覆盖这里。
+    return 920_000_000 + (now_ms % 10_000_000) * 100 + random.randint(0, 99)
+
+
+def http_json(base_url: str,
+              path: str,
+              method: str = "GET",
+              payload: Any | None = None,
+              timeout_sec: float = 3.0) -> tuple[int, dict[str, Any]]:
+    body = None
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
-        url=f"{base_url.rstrip('/')}/logs/spans",
-        data=data,
+        url=f"{base_url.rstrip('/')}{path}",
+        data=body,
         headers={"Content-Type": "application/json"},
-        method="POST",
+        method=method,
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout_sec) as response:
-            body = response.read().decode("utf-8", errors="replace")
-            try:
-                parsed_body = json.loads(body)
-            except json.JSONDecodeError:
-                parsed_body = {"raw_body": body}
-            return {
-                "http_status": response.status,
-                "body": parsed_body,
-            }
+            raw_body = response.read().decode("utf-8", errors="replace")
+            if not raw_body:
+                return response.status, {}
+            parsed_body = json.loads(raw_body)
+            if isinstance(parsed_body, dict):
+                return response.status, parsed_body
+            return response.status, {"raw_body": parsed_body}
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"POST span failed: HTTP {exc.code}, body={body}") from exc
+        raw_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"{method} {path} failed: HTTP {exc.code}, body={raw_body}") from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"POST span failed: {exc}") from exc
+        raise RuntimeError(f"{method} {path} failed: {exc}") from exc
+
+
+def post_span(base_url: str, payload: dict[str, Any], timeout_sec: float) -> dict[str, Any]:
+    status_code, response_body = http_json(base_url,
+                                           "/logs/spans",
+                                           method="POST",
+                                           payload=payload,
+                                           timeout_sec=timeout_sec)
+    return {
+        "http_status": status_code,
+        "body": response_body,
+    }
+
+
+def wait_trace_ai_done(base_url: str,
+                       trace_key: int,
+                       timeout_sec: float,
+                       poll_interval_sec: float,
+                       request_timeout_sec: float) -> tuple[dict[str, Any], float]:
+    trace_id = str(trace_key)
+    deadline = time.monotonic() + timeout_sec
+    last_status = "<missing>"
+
+    # 这里统计的是“用户发完 trace 到前端能查到 AI 终态”的端到端等待时间。
+    # 它包含 sealed grace、调度、proxy 调用、模型响应和落库，比单独测 provider HTTP 更接近验收现场体感。
+    wait_started = time.monotonic()
+    while time.monotonic() < deadline:
+        try:
+            _, detail = http_json(base_url,
+                                  f"/traces/{trace_id}",
+                                  timeout_sec=request_timeout_sec)
+        except RuntimeError as exc:
+            message = str(exc)
+            if "HTTP 404" not in message and "HTTP 503" not in message:
+                raise
+            last_status = message
+            time.sleep(poll_interval_sec)
+            continue
+
+        ai_status = str(detail.get("ai_status") or "")
+        if ai_status:
+            last_status = ai_status
+        print(f"[presale-demo] poll trace_id={trace_id} ai_status={last_status}")
+        if ai_status in TERMINAL_AI_STATUSES:
+            return detail, time.monotonic() - wait_started
+        time.sleep(poll_interval_sec)
+
+    raise TimeoutError(
+        f"AI analysis did not reach terminal status within {timeout_sec:.1f}s; "
+        f"last_status={last_status}"
+    )
 
 
 def build_presale_trace(trace_key: int, now_ms: int) -> list[dict[str, Any]]:
@@ -218,14 +307,16 @@ def build_presale_trace(trace_key: int, now_ms: int) -> list[dict[str, Any]]:
 def main() -> int:
     args = parse_args()
     now_ms = int(time.time() * 1000)
-    spans = build_presale_trace(args.trace_key, now_ms)
+    trace_key = args.trace_key if args.trace_key is not None else generate_trace_key(now_ms)
+    spans = build_presale_trace(trace_key, now_ms)
 
     print(f"[presale-demo] base_url={args.base_url.rstrip('/')}")
-    print(f"[presale-demo] trace_key={args.trace_key}")
+    print(f"[presale-demo] trace_key={trace_key}")
     print("[presale-demo] posting spans in stable child-to-root order")
 
     # 这个脚本只负责造一条业务 Trace，不修改 Settings。
     # Prompt、模型服务和飞书 Webhook 都应该在验收前配置并重启生效，避免现场引入冷启动配置变量。
+    total_started = time.monotonic()
     for index, span in enumerate(spans, start=1):
         result = post_span(args.base_url, span, args.timeout_sec)
         accepted = result["body"].get("accepted")
@@ -236,8 +327,31 @@ def main() -> int:
         )
 
     print("[presale-demo] done")
-    print(f"[presale-demo] Open Trace Explorer and search trace_id={args.trace_key}")
-    print("[presale-demo] Wait for sealed grace / AI analysis if the trace is still pending.")
+    if args.wait_ai:
+        detail, ai_wait_sec = wait_trace_ai_done(args.base_url,
+                                                trace_key,
+                                                args.analysis_timeout_sec,
+                                                args.poll_interval_sec,
+                                                args.timeout_sec)
+        total_elapsed_sec = time.monotonic() - total_started
+        analysis = detail.get("analysis") if isinstance(detail.get("analysis"), dict) else {}
+        print(
+            "[presale-demo] ai_done "
+            f"trace_id={trace_key} "
+            f"ai_status={detail.get('ai_status')} "
+            f"risk_level={detail.get('risk_level')} "
+            f"ai_wait_sec={ai_wait_sec:.2f} "
+            f"total_elapsed_sec={total_elapsed_sec:.2f}"
+        )
+        if analysis:
+            print(f"[presale-demo] summary={analysis.get('summary', '')}")
+            print(f"[presale-demo] root_cause={analysis.get('root_cause', '')}")
+            print(f"[presale-demo] solution={analysis.get('solution', '')}")
+        elif detail.get("ai_error"):
+            print(f"[presale-demo] ai_error={detail.get('ai_error')}")
+    else:
+        print("[presale-demo] wait_ai=false, skip polling AI status.")
+    print(f"[presale-demo] Open Trace Explorer and search trace_id={trace_key}")
     return 0
 
 
