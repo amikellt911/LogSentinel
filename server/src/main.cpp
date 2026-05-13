@@ -1115,6 +1115,9 @@ int main(int argc, char* argv[])
     router->add("POST", "/settings/channels", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
         config_handler->handleUpdateChannels(req, resp, conn);
     });
+    router->add("POST", "/settings/channels/probe", [config_handler](const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn) {
+        config_handler->handleProbeChannel(req, resp, conn);
+    });
     // /logs/spans 的结束字段口径已经收口成冷启动配置，
     // 所以这里直接把启动期算好的主字段和别名注入给 LogHandler，不再让请求热路径回头读 repo。
     // LogHandler 现在彻底退化成 `/logs/spans` 专用处理器。

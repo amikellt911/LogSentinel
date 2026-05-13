@@ -2,6 +2,7 @@
 #include "persistence/SqliteConfigRepository.h"
 #include "threadpool/ThreadPool.h"
 #include "MiniMuduo/net/EventLoop.h"
+#include "notification/WebhookNotifier.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
 
@@ -416,6 +417,95 @@ void ConfigHandler::handleUpdateChannels(const HttpRequest &req, HttpResponse *r
                         errResp.setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
                         errResp.addCorsHeaders();
                         errResp.setBody("{\"error\": \"Invalid JSON or Data\"}");
+                        MiniMuduo::net::Buffer buf;
+                        errResp.appendToBuffer(&buf);
+                        conn->send(std::move(buf));
+                    } });
+            }
+        }
+    };
+    if (tpool_->submit(std::move(work)))
+    {
+        resp->isHandledAsync = true;
+    }
+    else
+    {
+        resp->setStatusCode(HttpResponse::HttpStatusCode::k503ServiceUnavailable);
+        resp->addCorsHeaders();
+        resp->body_ = "{\"error\": \"Server overloaded\"}";
+    }
+}
+
+void ConfigHandler::handleProbeChannel(const HttpRequest &req, HttpResponse *resp, const MiniMuduo::net::TcpConnectionPtr &conn)
+{
+    std::weak_ptr<MiniMuduo::net::TcpConnection> weakConn(conn);
+    std::string requestBody = req.body_;
+
+    auto work = [weakConn, requestBody]()
+    {
+        try
+        {
+            auto j = json::parse(requestBody);
+            
+            WebhookChannel channel;
+            channel.provider = j.value("provider", "feishu");
+            channel.webhook_url = j.value("webhookUrl", ""); // Frontend sends webhookUrl
+            if (channel.webhook_url.empty()) {
+                channel.webhook_url = j.value("webhook_url", "");
+            }
+            channel.secret = j.value("secret", "");
+            channel.enabled = true; // Probe ignores actual enabled state
+            channel.threshold = "info"; // Probe forces low threshold to bypass filtering
+            
+            if (channel.webhook_url.empty()) {
+                throw std::invalid_argument("webhook URL is required for probe");
+            }
+            
+            std::vector<WebhookChannel> channels = {channel};
+            WebhookNotifier notifier(std::move(channels));
+            
+            TraceAlertEvent event;
+            event.trace_id = "mock-probe-trace-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count() % 1000000);
+            event.start_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            event.duration_ms = 123;
+            event.span_count = 5;
+            event.token_count = 100;
+            event.risk_level = "error";
+            event.summary = "这是一条来自 LogSentinel 前端设置页的测试告警消息。";
+            event.root_cause = "由于用户在 Webhook 设置页点击了【发送测试消息】按钮，系统触发了此探针请求。";
+            event.solution = "如果您能看到这条消息，说明您的 Webhook URL 与签名 Secret 配置完全正确。";
+            
+            notifier.notifyTraceAlert(event);
+            
+            if (auto conn = weakConn.lock(); conn)
+            {
+                auto loop = conn->getLoop();
+                loop->queueInLoop([weakConn]()
+                                  {
+                    if(auto conn = weakConn.lock(); conn){
+                        HttpResponse resp;
+                        resp.setStatusCode(HttpResponse::HttpStatusCode::k200Ok);
+                        resp.addCorsHeaders();
+                        resp.setBody("{\"status\": \"success\"}");
+                        MiniMuduo::net::Buffer buf;
+                        resp.appendToBuffer(&buf);
+                        conn->send(std::move(buf));
+                    } });
+            }
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "[Worker Error] probeChannel: " << e.what() << '\n';
+            if (auto conn = weakConn.lock())
+            {
+                conn->getLoop()->queueInLoop([weakConn, msg = std::string(e.what())]()
+                                             {
+                    auto conn = weakConn.lock();
+                    if(conn) {
+                        HttpResponse errResp;
+                        errResp.setStatusCode(HttpResponse::HttpStatusCode::k400BadRequest);
+                        errResp.addCorsHeaders();
+                        errResp.setBody("{\"error\": \"" + msg + "\"}");
                         MiniMuduo::net::Buffer buf;
                         errResp.appendToBuffer(&buf);
                         conn->send(std::move(buf));

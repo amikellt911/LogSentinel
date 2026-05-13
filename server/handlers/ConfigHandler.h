@@ -14,6 +14,7 @@ public:
     void handleUpdateProviderProfiles(const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn);
     void handleUpdatePrompts(const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn);
     void handleUpdateChannels(const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn);
+    void handleProbeChannel(const HttpRequest& req, HttpResponse* resp, const MiniMuduo::net::TcpConnectionPtr& conn);
 private:
     std::shared_ptr<SqliteConfigRepository> repo_;
     ThreadPool* tpool_;

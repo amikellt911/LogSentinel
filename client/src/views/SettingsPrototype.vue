@@ -1620,20 +1620,40 @@ function removePromptListRow(target: 'focusAreas' | 'riskPreference' | 'outputPr
  * 测试发送和保存设置必须分开：
  * 一个是在验证单条飞书渠道配置能不能发，另一个是在保存整页设置状态，两个动作语义完全不是一回事。
  */
-function sendChannelProbe() {
+async function sendChannelProbe() {
   if (!selectedChannel.value?.webhookUrl.trim()) {
     ElMessage.warning(i18n.global.t('messages.settingsPrototype.webhookMissing'))
     return
   }
 
-  // 测试提示也要走翻译表，否则语言切到英文后这里仍然会弹中文消息。
   const secretState = selectedChannel.value.secret.trim()
     ? i18n.global.t('messages.settingsPrototype.probeWithSecret')
     : i18n.global.t('messages.settingsPrototype.probeWithoutSecret')
-  ElMessage.success(i18n.global.t('messages.settingsPrototype.probeSuccess', {
-    name: selectedChannel.value.name,
-    secretState
-  }))
+
+  try {
+    const payload = {
+      provider: 'feishu',
+      webhookUrl: selectedChannel.value.webhookUrl,
+      secret: selectedChannel.value.secret
+    }
+    const response = await fetch('/api/settings/channels/probe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Probe failed with status ${response.status}`)
+    }
+    
+    ElMessage.success(i18n.global.t('messages.settingsPrototype.probeSuccess', {
+      name: selectedChannel.value.name,
+      secretState
+    }))
+  } catch (error) {
+    console.error('Failed to send webhook probe:', error)
+    ElMessage.error(i18n.global.t('messages.settingsPrototype.saveFailed')) // Reusing saveFailed or generic error
+  }
 }
 
 // 这里故意不复用旧 system.ts。
