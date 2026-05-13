@@ -509,7 +509,7 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
 
     auto new_prompts = prompts_input;
 
-    const char* sql_insert = "INSERT INTO prompts (name, content, is_active) VALUES (?, ?, ?);";
+    const char* sql_insert = "INSERT INTO prompts (id, name, content, is_active) VALUES (?, ?, ?, ?);";
     const char* sql_update = "UPDATE prompts SET name=?, content=?, is_active=? WHERE id=?;";
 
     int rc = SQLITE_OK;
@@ -530,34 +530,52 @@ void SqliteConfigRepository::handleUpdatePrompt(const std::vector<PromptConfig>&
         std::vector<int> active_ids;
 
         for (auto& item : new_prompts) {
-            sqlite3_stmt* curr_stmt = nullptr;
-
-            if (item.id > 0) {
-                curr_stmt = stmt_update.get();
+            bool attempt_update = (item.id > 0);
+            if (attempt_update) {
+                sqlite3_stmt* curr_stmt = stmt_update.get();
                 sqlite3_bind_text(curr_stmt, 1, item.name.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_text(curr_stmt, 2, item.content.c_str(), -1, SQLITE_STATIC);
                 sqlite3_bind_int(curr_stmt, 3, item.is_active ? 1 : 0);
                 sqlite3_bind_int(curr_stmt, 4, item.id);
+
+                if (sqlite3_step(curr_stmt) != SQLITE_DONE) {
+                    throw std::runtime_error("Update step failed for prompts");
+                }
+                
+                if (sqlite3_changes(db_) == 0) {
+                    // 如果由于对应 id 在数据库中不存在导致 UPDATE 更新了 0 行（例如前端分配了全新的 id），
+                    // 我们将 attempt_update 标记为 false，回退到执行 INSERT 以真正落盘该条记录并保留前端的 id。
+                    attempt_update = false; // 未更新任何行，回退到 INSERT
+                } else {
+                    active_ids.push_back(item.id);
+                }
+                sqlite3_reset(curr_stmt);
+                sqlite3_clear_bindings(curr_stmt);
+            }
+
+            if (!attempt_update) {
+                sqlite3_stmt* curr_stmt = stmt_insert.get();
+                if (item.id > 0) {
+                    sqlite3_bind_int(curr_stmt, 1, item.id);
+                } else {
+                    sqlite3_bind_null(curr_stmt, 1);
+                }
+                sqlite3_bind_text(curr_stmt, 2, item.name.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(curr_stmt, 3, item.content.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_int(curr_stmt, 4, item.is_active ? 1 : 0);
+
+                if (sqlite3_step(curr_stmt) != SQLITE_DONE) {
+                    throw std::runtime_error("Insert step failed for prompts");
+                }
+
+                if (item.id <= 0) {
+                    item.id = (int)sqlite3_last_insert_rowid(db_);
+                }
                 active_ids.push_back(item.id);
-            } else {
-                curr_stmt = stmt_insert.get();
-                sqlite3_bind_text(curr_stmt, 1, item.name.c_str(), -1, SQLITE_STATIC);
-                sqlite3_bind_text(curr_stmt, 2, item.content.c_str(), -1, SQLITE_STATIC);
-                sqlite3_bind_int(curr_stmt, 3, item.is_active ? 1 : 0);
-            }
 
-            if (sqlite3_step(curr_stmt) != SQLITE_DONE) {
-                throw std::runtime_error("Upsert step failed for prompts");
+                sqlite3_reset(curr_stmt);
+                sqlite3_clear_bindings(curr_stmt);
             }
-
-            if (item.id <= 0) {
-                int new_id = (int)sqlite3_last_insert_rowid(db_);
-                item.id = new_id;
-                active_ids.push_back(new_id);
-            }
-
-            sqlite3_reset(curr_stmt);
-            sqlite3_clear_bindings(curr_stmt);
         }
 
         // 删除不在列表中的项
@@ -606,7 +624,7 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
     sqlite3_stmt* stmt_insert = nullptr;
     sqlite3_stmt* stmt_update = nullptr;
 
-    const char* sql_insert = "INSERT INTO alert_channels (name, provider, webhook_url, secret, alert_threshold, is_active) VALUES (?, ?, ?, ?, ?, ?);";
+    const char* sql_insert = "INSERT INTO alert_channels (id, name, provider, webhook_url, secret, alert_threshold, is_active) VALUES (?, ?, ?, ?, ?, ?, ?);";
     const char* sql_update = "UPDATE alert_channels SET name=?, provider=?, webhook_url=?, secret=?, alert_threshold=?, is_active=? WHERE id=?;";
 
     int rc = SQLITE_OK;
@@ -626,34 +644,52 @@ void SqliteConfigRepository::handleUpdateChannel(const std::vector<AlertChannel>
         std::vector<int> active_ids;
 
         for (auto& item : new_channels_cache) {
-            sqlite3_stmt* curr_stmt = nullptr;
-            int col_idx = 1;
+            bool attempt_update = (item.id > 0);
+            if (attempt_update) {
+                sqlite3_bind_text(stmt_update, 1, item.name.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt_update, 2, item.provider.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt_update, 3, item.webhook_url.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt_update, 4, item.secret.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt_update, 5, item.alert_threshold.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_int(stmt_update, 6, item.is_active ? 1 : 0);
+                sqlite3_bind_int(stmt_update, 7, item.id);
 
-            if (item.id > 0) curr_stmt = stmt_update;
-            else curr_stmt = stmt_insert;
+                if (sqlite3_step(stmt_update) != SQLITE_DONE) throw std::runtime_error("Update step failed");
+                
+                if (sqlite3_changes(db_) == 0) {
+                    // 如果由于对应 id 在数据库中不存在导致 UPDATE 更新了 0 行（例如前端分配了全新的 id），
+                    // 我们将 attempt_update 标记为 false，回退到执行 INSERT 以真正落盘该条记录并保留前端的 id。
+                    attempt_update = false;
+                } else {
+                    active_ids.push_back(item.id);
+                }
+                sqlite3_reset(stmt_update);
+                sqlite3_clear_bindings(stmt_update);
+            }
 
-            sqlite3_bind_text(curr_stmt, col_idx++, item.name.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(curr_stmt, col_idx++, item.provider.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(curr_stmt, col_idx++, item.webhook_url.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(curr_stmt, col_idx++, item.secret.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_text(curr_stmt, col_idx++, item.alert_threshold.c_str(), -1, SQLITE_STATIC);
-            sqlite3_bind_int(curr_stmt, col_idx++, item.is_active ? 1 : 0);
+            if (!attempt_update) {
+                if (item.id > 0) {
+                    sqlite3_bind_int(stmt_insert, 1, item.id);
+                } else {
+                    sqlite3_bind_null(stmt_insert, 1);
+                }
+                sqlite3_bind_text(stmt_insert, 2, item.name.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt_insert, 3, item.provider.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt_insert, 4, item.webhook_url.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt_insert, 5, item.secret.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_text(stmt_insert, 6, item.alert_threshold.c_str(), -1, SQLITE_STATIC);
+                sqlite3_bind_int(stmt_insert, 7, item.is_active ? 1 : 0);
 
-            if (item.id > 0) {
-                sqlite3_bind_int(curr_stmt, col_idx++, item.id);
+                if (sqlite3_step(stmt_insert) != SQLITE_DONE) throw std::runtime_error("Insert step failed");
+
+                if (item.id <= 0) {
+                    item.id = (int)sqlite3_last_insert_rowid(db_);
+                }
                 active_ids.push_back(item.id);
+
+                sqlite3_reset(stmt_insert);
+                sqlite3_clear_bindings(stmt_insert);
             }
-
-            if (sqlite3_step(curr_stmt) != SQLITE_DONE) throw std::runtime_error("Upsert step failed");
-
-            if (item.id <= 0) {
-                int new_id = (int)sqlite3_last_insert_rowid(db_);
-                item.id = new_id;
-                active_ids.push_back(new_id);
-            }
-
-            sqlite3_reset(curr_stmt);
-            sqlite3_clear_bindings(curr_stmt);
         }
 
         if (active_ids.empty()) {
