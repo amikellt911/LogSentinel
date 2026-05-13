@@ -117,6 +117,7 @@
   - [x] 汇总 correctness 指标的均值/min/max，以及入口 p95 护栏的 run-level median/min/max
   - [x] 更新 Suite B README / 总览文档，明确正式论文结果用 5 个固定 seed 聚合
   - [x] 验证 Suite B Python 单测和语法检查
+- [x] Suite B 验收演示 wrapper：封装 4 核小矩阵命令、自动选择可用端口并直接打印核心指标
 - [ ] Suite A 第一刀：实现 fixed clean sender 单脚本，只支持 4 核三档探测
   - [x] 先写红灯单测，锁 CLI 参数、`t_stop`、SQLite 稳定轮询和结果 JSON 结构
   - [x] 复用 `trace_paced_sender.py` 的 clean trace 发送骨架，不引入 Suite B manifest / 脏时序语义
