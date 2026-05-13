@@ -39,3 +39,7 @@
 - [x] 为主程序临时参数和手工联调入口补 `--webhook-secret`
 - [x] 编译并运行通知层测试，确认签名改动无回归
 - [x] 追加本次飞书签名支持 dev-log 记录
+- [x] 修复 `WebhookNotifier.cpp` 中 `getTlsSession()` 缺少 `User-Agent` 被飞书 Tengine WAF 拦截 403 的问题
+- [x] 在 `postJson()` 中对 `webhook_url` 执行 trim 操作，消除尾部不可见字符（空格、换行等）导致的潜在错误
+- [x] 编译并运行通过
+- [x] 追加本次 Webhook 403 修复与 URL 清理 dev-log 记录

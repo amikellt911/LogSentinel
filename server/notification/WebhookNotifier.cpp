@@ -25,7 +25,10 @@ cpr::Session& getTlsSession()
     {
         auto s = std::make_unique<cpr::Session>();
         s->SetTimeout(std::chrono::seconds(5));
-        s->SetHeader(cpr::Header{{"Content-Type", "application/json"}});
+        // 必须显式指定 User-Agent，因为部分 WAF（如飞书 Tengine）在遇到空 User-Agent 或 
+        // cpr 默认配置时，即便 Payload 合法，也会直接返回 403 Forbidden 拦截请求。
+        s->SetHeader(cpr::Header{{"Content-Type", "application/json"},
+                                 {"User-Agent", "LogSentinel/1.0"}});
         return s;
     }();
     return *session;
@@ -228,7 +231,14 @@ void WebhookNotifier::postJson(const WebhookChannel& channel,
     }
 
     cpr::Session& session = getTlsSession();
-    session.SetUrl(cpr::Url{channel.webhook_url});
+
+    // 必须清理 webhook_url 首尾可能存在的不可见字符（如从数据库加载的空格、换行）。
+    // 否则 libcurl 在拼接 HTTP 报文时不仅会出错，还可能触发 WAF 解析异常或 Status: 0 问题。
+    std::string trimmed_url = channel.webhook_url;
+    trimmed_url.erase(0, trimmed_url.find_first_not_of(" \t\r\n"));
+    trimmed_url.erase(trimmed_url.find_last_not_of(" \t\r\n") + 1);
+
+    session.SetUrl(cpr::Url{trimmed_url});
     session.SetBody(cpr::Body{wrapped_body});
     cpr::Response r = session.Post();
     if (!isHttpSuccess(r.status_code))
