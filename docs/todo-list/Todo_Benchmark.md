@@ -234,3 +234,13 @@
   - [x] 验证单测、Python 语法检查、脚本实际输出和 diff 校验。
   - [x] 修正 `suite_b_correctness.svg`：回到竖向 completeness 主图，使用 `M-CB / P-LR` 这类短标签，并对 `0.00 / 1.00` 极值显式贴值。
   - [x] 修正 `suite_b_correctness.svg`：6 根 completeness 柱全部显式贴值，不再只给右侧 `P` 组显示数值。
+
+## 6. 验收现场脚本 (Acceptance Demo)
+- [x] 新增根目录 Suite D 本机 mock 性能演示脚本，先打印前端访问地址，再运行 wrk 压测
+- [x] 脚本使用自身路径定位项目根目录，避免从不同目录执行时找错二进制、Lua 脚本或结果目录
+- [x] 压测结束后保持 LogSentinel 存活，方便继续打开前端查看 Dashboard / TraceExplorer / ServiceMonitor
+- [x] 补 bash 语法检查、dev-log 和使用说明
+- [x] 新增 Suite D 本机验收参数搜索脚本，批量比较 mock AI 场景下的线程、flush、sweep 和连接数参数
+- [x] 搜索脚本输出 summary.json 和 Top-N 摘要，方便把较优参数回填到现场演示脚本
+- [x] 增加 `finalists` 复跑模式和 `--repeats`，对粗筛优秀参数做多轮均值比较
+- [x] 将现场演示脚本默认参数回填为 `b031_balanced`，优先保证 trace/s、完成比例和 p95 的综合稳定性
