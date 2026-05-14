@@ -244,3 +244,8 @@
 - [x] 搜索脚本输出 summary.json 和 Top-N 摘要，方便把较优参数回填到现场演示脚本
 - [x] 增加 `finalists` 复跑模式和 `--repeats`，对粗筛优秀参数做多轮均值比较
 - [x] 将现场演示脚本默认参数回填为 `b031_balanced`，优先保证 trace/s、完成比例和 p95 的综合稳定性
+- [x] 给现场演示脚本增加压测前观察窗口，默认先等 20 秒再跑 wrk，避免同源前端加载被高并发挤住
+- [x] 新增 Suite D AI-on worker/proxy 并发搜索脚本，专门搜索 C++ worker_threads 与 Python proxy max_workers 的关系
+- [x] 将 `trace_analysis` 完成量纳入 worker/proxy 搜索脚本，避免只按 `trace_summary` 误判 AI-on 场景
+- [x] 将验收现场演示脚本默认改为 `worker=192 / proxy_max_workers=192`，并在终端和 result.json 输出 `trace_analysis` 数量与 AI 完成速率
+- [x] 修正 Dashboard 切回页面时不主动刷新系统监控快照的问题，避免演示时必须手动刷新浏览器

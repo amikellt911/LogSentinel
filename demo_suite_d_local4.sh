@@ -20,15 +20,21 @@ PORT_SEARCH_LIMIT="${PORT_SEARCH_LIMIT:-80}"
 SERVER_CPUSET="${SERVER_CPUSET:-1-3}"
 WRK_CPUSET="${WRK_CPUSET:-0}"
 TRACE_AI_PROVIDER="${TRACE_AI_PROVIDER:-mock}"
+PROXY_SCRIPT="${PROXY_SCRIPT:-${ROOT_DIR}/server/ai/proxy/main.py}"
+PROXY_PORT_START="${PROXY_PORT:-19001}"
+PROXY_PORT_SEARCH_LIMIT="${PROXY_PORT_SEARCH_LIMIT:-80}"
+PROXY_MAX_WORKERS="${PROXY_MAX_WORKERS:-192}"
+PROXY_LOG="${PROXY_LOG:-${RUN_DIR}/proxy.log}"
 
-# 默认参数采用本机 finalists 复跑中更适合现场展示的 b031_balanced：
-# 平均 trace/s 接近最高组，但 completion ratio 和 p95 延迟更稳，避免为了刷 QPS 把现场波动放大。
+# 默认参数采用 worker/proxy 搜索中更适合现场展示 AI 分析吞吐的 192 组：
+# trace_summary 主链可见吞吐仍保持稳定，同时 trace_analysis 完成量明显高于 12/32/64 这类保守配置。
+# 这里同步手动拉起 proxy --max-workers=192，不能只改 C++ worker，否则会被默认 128 proxy worker 截断。
 SERVER_IO_THREADS="${SERVER_IO_THREADS:-1}"
-WORKER_THREADS="${WORKER_THREADS:-12}"
+WORKER_THREADS="${WORKER_THREADS:-192}"
 DISPATCH_WORKER_THREADS="${DISPATCH_WORKER_THREADS:-2}"
-WORKER_QUEUE_SIZE="${WORKER_QUEUE_SIZE:-4096}"
-TRACE_ACTIVE_SESSION_LIMIT="${TRACE_ACTIVE_SESSION_LIMIT:-1024}"
-TRACE_BUFFERED_SPAN_LIMIT="${TRACE_BUFFERED_SPAN_LIMIT:-8192}"
+WORKER_QUEUE_SIZE="${WORKER_QUEUE_SIZE:-8192}"
+TRACE_ACTIVE_SESSION_LIMIT="${TRACE_ACTIVE_SESSION_LIMIT:-2048}"
+TRACE_BUFFERED_SPAN_LIMIT="${TRACE_BUFFERED_SPAN_LIMIT:-16384}"
 TRACE_MAX_DISPATCH_PER_TICK="${TRACE_MAX_DISPATCH_PER_TICK:-128}"
 TRACE_SEALED_GRACE_WINDOW_MS="${TRACE_SEALED_GRACE_WINDOW_MS:-100}"
 TRACE_SWEEP_INTERVAL_MS="${TRACE_SWEEP_INTERVAL_MS:-200}"
@@ -41,14 +47,22 @@ WARMUP_DURATION="${WARMUP_DURATION:-2s}"
 DURATION="${DURATION:-10s}"
 SPANS_PER_TRACE="${SPANS_PER_TRACE:-8}"
 
+# 前端和 wrk 共用同一个 LogSentinel 端口。
+# 如果 ready 后立刻压测，wrk 会抢占连接和后端工作线程，浏览器加载静态资源/API 时就容易卡住。
+# 默认先留 20 秒给现场打开页面；想跳过可设置 DEMO_OBSERVE_BEFORE_WRK_SEC=0。
+# 这个等待窗口只影响演示体验，不进入 benchmark 计时口径。
+DEMO_OBSERVE_BEFORE_WRK_SEC="${DEMO_OBSERVE_BEFORE_WRK_SEC:-20}"
 WAIT_RETRY="${WAIT_RETRY:-80}"
 WAIT_SLEEP_SEC="${WAIT_SLEEP_SEC:-0.25}"
 STOP_RETRY="${STOP_RETRY:-40}"
 STOP_SLEEP_SEC="${STOP_SLEEP_SEC:-0.25}"
 
 BACKEND_PID=""
+PROXY_PID=""
 BACKEND_PORT=""
+PROXY_PORT=""
 BASE_URL=""
+TRACE_AI_BASE_URL=""
 
 log() {
     local now
@@ -126,9 +140,34 @@ stop_backend() {
     wait "${BACKEND_PID}" >/dev/null 2>&1 || true
 }
 
+stop_proxy() {
+    if [[ -z "${PROXY_PID}" ]] || ! kill -0 "${PROXY_PID}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # 手动 proxy 是为了让演示脚本能控制 --max-workers。
+    # 它和后端属于同一轮现场演示生命周期，所以 Ctrl+C 时一起清掉，避免旧 proxy 占端口污染下一轮。
+    log "stopping AI proxy pid=${PROXY_PID}"
+    kill -TERM "${PROXY_PID}" >/dev/null 2>&1 || true
+    local retry=0
+    while (( retry < STOP_RETRY )); do
+        if ! kill -0 "${PROXY_PID}" >/dev/null 2>&1; then
+            wait "${PROXY_PID}" >/dev/null 2>&1 || true
+            return 0
+        fi
+        sleep "${STOP_SLEEP_SEC}"
+        retry=$((retry + 1))
+    done
+
+    log "AI proxy pid=${PROXY_PID} still alive, sending SIGKILL"
+    kill -KILL "${PROXY_PID}" >/dev/null 2>&1 || true
+    wait "${PROXY_PID}" >/dev/null 2>&1 || true
+}
+
 cleanup() {
     set +e
     stop_backend
+    stop_proxy
 }
 
 trap cleanup EXIT INT TERM
@@ -153,6 +192,48 @@ wait_for_backend_ready() {
     exit 1
 }
 
+wait_for_proxy_ready() {
+    local retry=0
+    while (( retry < WAIT_RETRY )); do
+        if curl -fsS --max-time 1 "${TRACE_AI_BASE_URL}/" >/dev/null 2>&1; then
+            return 0
+        fi
+        if ! kill -0 "${PROXY_PID}" >/dev/null 2>&1; then
+            echo "fatal: AI proxy exited before ready, proxy log: ${PROXY_LOG}" >&2
+            tail -n 80 "${PROXY_LOG}" >&2 || true
+            exit 1
+        fi
+        sleep "${WAIT_SLEEP_SEC}"
+        retry=$((retry + 1))
+    done
+
+    echo "fatal: AI proxy did not become ready, proxy log: ${PROXY_LOG}" >&2
+    tail -n 80 "${PROXY_LOG}" >&2 || true
+    exit 1
+}
+
+start_proxy() {
+    PROXY_PORT="$(find_free_port "${PROXY_PORT_START}" "${PROXY_PORT_SEARCH_LIMIT}")"
+    TRACE_AI_BASE_URL="http://127.0.0.1:${PROXY_PORT}"
+
+    mkdir -p "${RUN_DIR}"
+
+    local proxy_cmd=(
+        python3
+        "${PROXY_SCRIPT}"
+        --host 127.0.0.1
+        --port "${PROXY_PORT}"
+        --max-workers "${PROXY_MAX_WORKERS}"
+    )
+
+    # 后端自带 --auto-start-proxy 只能启动默认 proxy 并发。
+    # 演示脚本手动启动 proxy，才能保证 worker=192/proxy=192 和搜索脚本的实验口径一致。
+    log "starting AI proxy for demo: port=${PROXY_PORT}, max_workers=${PROXY_MAX_WORKERS}"
+    "${proxy_cmd[@]}" >"${PROXY_LOG}" 2>&1 &
+    PROXY_PID="$!"
+    wait_for_proxy_ready
+}
+
 start_backend() {
     BACKEND_PORT="$(find_free_port "${BACKEND_PORT_START}" "${PORT_SEARCH_LIMIT}")"
     BASE_URL="http://127.0.0.1:${BACKEND_PORT}"
@@ -163,8 +244,9 @@ start_backend() {
         "${SERVER_BIN}"
         --db "${DB_PATH}"
         --port "${BACKEND_PORT}"
-        --auto-start-proxy
+        --no-auto-start-proxy
         --trace-ai-provider "${TRACE_AI_PROVIDER}"
+        --trace-ai-base-url "${TRACE_AI_BASE_URL}"
         --server-io-threads "${SERVER_IO_THREADS}"
         --worker-threads "${WORKER_THREADS}"
         --dispatch-worker-threads "${DISPATCH_WORKER_THREADS}"
@@ -201,15 +283,36 @@ print_frontend_addresses() {
     echo "监听端口:       ${BACKEND_PORT}"
     echo "SQLite DB:      ${DB_PATH}"
     echo "后端日志:       ${BACKEND_LOG}"
+    echo "AI Proxy:       ${TRACE_AI_BASE_URL}  (max_workers=${PROXY_MAX_WORKERS})"
+    echo "Proxy 日志:     ${PROXY_LOG}"
     echo "wrk 日志:       ${WRK_LOG}"
     echo "结果 JSON:      ${RESULT_JSON}"
     echo "============================================"
     echo
 }
 
+wait_before_wrk() {
+    local seconds="$1"
+    if [[ "${seconds}" == "0" ]]; then
+        return 0
+    fi
+
+    # 这里只等待，不发请求、不跑 wrk。
+    # 目的就是把“打开前端页面”这件事从“高并发压测”里拆出来，避免同源入口互相抢资源。
+    log "waiting ${seconds}s before wrk; open the frontend now if you want to demo the UI first"
+    sleep "${seconds}"
+}
+
 run_wrk_once() {
     local duration="$1"
     local label="$2"
+    if [[ "${duration}" == "0" || "${duration}" == "0s" ]]; then
+        # wrk 不接受 -d0s。
+        # 演示 smoke 或现场快速验证会把 warmup 设为 0，这里直接跳过该阶段，避免为了“无预热”反而让脚本失败。
+        log "skipping wrk ${label}: duration=${duration}"
+        return 0
+    fi
+
     local wrk_cmd=(
         wrk
         -t"${WRK_THREADS}"
@@ -277,14 +380,19 @@ suite_match = suite_matches[-1] if suite_matches else None
 
 trace_summary = 0
 trace_span = 0
+trace_analysis = 0
 if db_path.exists():
     conn = sqlite3.connect(str(db_path))
     try:
         trace_summary = int(conn.execute("SELECT COUNT(*) FROM trace_summary").fetchone()[0])
         trace_span = int(conn.execute("SELECT COUNT(*) FROM trace_span").fetchone()[0])
+        # trace_summary 只说明主链 Trace 已经可查询，trace_analysis 才说明 AI 分析结果已经落库。
+        # 现场演示要同时展示这两个数，避免把“存储完成”误说成“AI 已经分析完成”。
+        trace_analysis = int(conn.execute("SELECT COUNT(*) FROM trace_analysis").fetchone()[0])
     except sqlite3.Error:
         trace_summary = 0
         trace_span = 0
+        trace_analysis = 0
     finally:
         conn.close()
 
@@ -312,9 +420,13 @@ result = {
     "sqlite_counts_after_wrk": {
         "trace_summary": trace_summary,
         "trace_span": trace_span,
+        "trace_analysis": trace_analysis,
     },
     "online_completed_traces_per_sec": (trace_summary / measurement_seconds) if measurement_seconds > 0 else 0.0,
     "online_completion_ratio_after_wrk": (trace_summary / offered_traces) if offered_traces > 0 else 0.0,
+    "ai_completed_traces_after_wrk": trace_analysis,
+    "ai_completed_traces_per_sec_after_wrk": (trace_analysis / measurement_seconds) if measurement_seconds > 0 else 0.0,
+    "ai_completion_ratio_after_wrk": (trace_analysis / trace_summary) if trace_summary > 0 else 0.0,
 }
 
 result_json.parent.mkdir(parents=True, exist_ok=True)
@@ -327,8 +439,11 @@ print(f"[suite-d-demo] frontend={base_url}/")
 print(f"[suite-d-demo] qps={result['wrk_metrics']['requests_per_sec']:.2f}")
 print(f"[suite-d-demo] offered_traces={offered_traces}")
 print(f"[suite-d-demo] sqlite_trace_summary_after_wrk={trace_summary}")
+print(f"[suite-d-demo] sqlite_trace_analysis_after_wrk={trace_analysis}")
 print(f"[suite-d-demo] online_completed_traces_per_sec={result['online_completed_traces_per_sec']:.2f}")
 print(f"[suite-d-demo] online_completion_ratio_after_wrk={result['online_completion_ratio_after_wrk']:.4f}")
+print(f"[suite-d-demo] ai_completed_traces_per_sec_after_wrk={result['ai_completed_traces_per_sec_after_wrk']:.2f}")
+print(f"[suite-d-demo] ai_completion_ratio_after_wrk={result['ai_completion_ratio_after_wrk']:.4f}")
 print(f"[suite-d-demo] latency_p95_ms={result['wrk_metrics']['latency_p95_ms']:.2f}")
 print(f"[suite-d-demo] latency_p99_ms={result['wrk_metrics']['latency_p99_ms']:.2f}")
 PY
@@ -353,13 +468,16 @@ require_command curl
 require_command wrk
 require_file "${SERVER_BIN}"
 require_file "${WRK_SCRIPT}"
+require_file "${PROXY_SCRIPT}"
 
 if [[ ! -d "${ROOT_DIR}/client/dist" ]]; then
     echo "warning: client/dist 不存在，后端接口仍可压测，但前端静态页面可能无法打开；需要时先执行 cd client && npm run build" >&2
 fi
 
+start_proxy
 start_backend
 print_frontend_addresses
+wait_before_wrk "${DEMO_OBSERVE_BEFORE_WRK_SEC}"
 
 {
     echo "===== WRK WARMUP BEGIN ====="

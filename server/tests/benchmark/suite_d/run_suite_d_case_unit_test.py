@@ -166,6 +166,8 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
                 trace_sweep_interval_ms=200,
                 trace_primary_flush_span_threshold=512,
                 trace_primary_flush_interval_ms=5,
+                trace_ai_provider="mock",
+                trace_ai_base_url="",
                 startup_timeout_sec=10.0,
                 stop_timeout_sec=5.0,
                 poll_interval_ms=50,
@@ -188,6 +190,7 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
                     args,
                     wrk_runner=fake_wrk_runner,
                     sqlite_counter=lambda _path: {"trace_summary": 1401, "trace_span": 11208},
+                    analysis_counter=lambda _path: 276,
                     wait_for_stable_runner=fake_wait,
                 )
 
@@ -203,6 +206,9 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
         self.assertEqual(1776419859941, result["t_stop_ms"])
         self.assertEqual(1401, result["sqlite_counts_at_stop"]["trace_summary"])
         self.assertEqual(1523, result["sqlite_counts_final"]["trace_summary"])
+        self.assertEqual(276, result["final_trace_analysis_count"])
+        self.assertAlmostEqual(276 / 15.0, result["online_ai_completed_traces_per_sec"], places=3)
+        self.assertAlmostEqual(276 / 1523, result["final_ai_completion_ratio"], places=6)
         self.assertEqual(12184, saved["wrk_metrics"]["requests"])
         self.assertEqual("1-3", saved["server_cpuset"])
         self.assertEqual("0", saved["wrk_cpuset"])
@@ -285,6 +291,8 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
                 trace_sweep_interval_ms=200,
                 trace_primary_flush_span_threshold=512,
                 trace_primary_flush_interval_ms=5,
+                trace_ai_provider="mock",
+                trace_ai_base_url="",
                 startup_timeout_sec=10.0,
                 stop_timeout_sec=5.0,
                 poll_interval_ms=50,
@@ -305,12 +313,14 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
                     args,
                     wrk_runner=fake_wrk_runner,
                     sqlite_counter=lambda _path: {"trace_summary": 1401, "trace_span": 11208},
+                    analysis_counter=lambda _path: 251,
                     wait_for_stable_runner=fake_wait,
                 )
 
         self.assertTrue(stop_state["called"])
         self.assertEqual(1401, result["sqlite_counts_at_stop"]["trace_summary"])
         self.assertEqual(1490, result["sqlite_counts_final"]["trace_summary"])
+        self.assertEqual(251, result["final_trace_analysis_count"])
         self.assertEqual(275, result["drain_tail_ms"])
 
     def test_main_prints_stop_and_final_trace_counts_for_quick_diagnosis(self) -> None:
@@ -331,6 +341,7 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
             "sqlite_counts_final": {
                 "trace_summary": 38392,
             },
+            "final_trace_analysis_count": 2048,
         }
 
         # Suite D 诊断时不能只看 ratio。
@@ -349,6 +360,7 @@ trace_model_suite_d metrics: offered_traces=1523 spans_per_trace=8 latency_p95_m
         self.assertIn("qps=203357.93", line)
         self.assertIn("stop=8738/38392", line)
         self.assertIn("final=38392/38392", line)
+        self.assertIn("analysis=2048/38392", line)
 
 
 if __name__ == "__main__":

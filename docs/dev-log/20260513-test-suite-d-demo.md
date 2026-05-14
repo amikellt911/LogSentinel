@@ -18,6 +18,11 @@
 - 压测结束后不主动杀 LogSentinel，只有 Ctrl+C 时触发清理，方便继续打开前端查看 Dashboard / TraceExplorer / ServiceMonitor。
 - 根据本机 finalists 复跑结果，将默认参数回填为 `b031_balanced`：`worker_threads=12`、`dispatch_worker_threads=2`、`trace_active_session_limit=1024`、`trace_buffered_span_limit=8192`、`trace_max_dispatch_per_tick=128`。
 - 选择 `b031_balanced` 而不是平均 trace/s 第一的 `b056_best_ratio`，是因为它完成比例更高、p95 更低，现场展示比刷峰值更稳。
+- 新增 `DEMO_OBSERVE_BEFORE_WRK_SEC`，默认后端 ready 和地址打印后先等 `20s` 再跑 wrk，让浏览器先加载前端页面和基础 API。
+- 根据 worker/proxy 搜索结果，将现场演示默认改为 `worker_threads=192`、`proxy_max_workers=192`，用于展示 AI 分析吞吐明显提升，同时保持主链 `trace_summary` 可见吞吐稳定。
+- 演示脚本改为手动启动 Python proxy，并通过 `--trace-ai-base-url` 让后端连接本轮 proxy，避免 `--auto-start-proxy` 固定使用默认 `128` worker 造成口径不一致。
+- 现场摘要 `result.json` 和终端输出新增 `trace_analysis` 数量、`ai_completed_traces_per_sec_after_wrk` 与 `ai_completion_ratio_after_wrk`。
+- `run_wrk_once` 支持 `0 / 0s` duration 直接跳过，用于快速 smoke 时关闭 warmup；否则 wrk 会因为 `-d0s` 直接报 usage。
 
 ## Chinese Comments
 
@@ -26,6 +31,10 @@
 - `stop_backend` 附近补充中文注释，说明压测结束不清理进程、Ctrl+C 才清理的生命周期边界。
 - `write_result_summary` 内嵌 Python 处补充中文注释，说明为什么只做现场轻量摘要，以及为什么从 wrk 日志取最后一段 measurement。
 - 默认参数块补充中文注释，说明当前默认值来自 `b031_balanced`，并解释为什么优先选择综合稳定参数。
+- 压测前等待窗口补充中文注释，说明同源前端和 wrk 共用同一个后端端口，立刻压测会挤占浏览器请求。
+- proxy 生命周期管理处补充中文注释，说明手动启动 proxy 是为了控制 `--max-workers`，并且 Ctrl+C 时要和后端一起清理。
+- SQLite 摘要读取处补充中文注释，说明 `trace_summary` 是主链可见口径，`trace_analysis` 才代表 AI 分析结果已经落库。
+- `run_wrk_once` 的 `0s` 分支补充中文注释，说明为什么跳过该阶段而不是调用 wrk。
 
 ## Verification
 

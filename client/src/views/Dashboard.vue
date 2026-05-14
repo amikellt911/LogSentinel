@@ -156,6 +156,9 @@ onMounted(() => {
   // 这页现在定位成“系统监控”，所以首屏只需要初始化吞吐图和当前快照数据，不做额外动画逻辑。
   initCharts()
   window.addEventListener('resize', resizeHandler)
+  // Dashboard 不能只依赖 store 创建时的全局轮询。
+  // 用户从 TraceExplorer 切回来时，这里主动补拉一次后端快照，避免页面继续停在旧的系统监控数据上。
+  void systemStore.fetchDashboardStats()
   updateMainChart() // Initial draw
 })
 

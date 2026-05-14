@@ -597,6 +597,9 @@ export const useSystemStore = defineStore('system', () => {
     recentAlerts,
     latestBatchSummary,
     logs,
+    // Dashboard 页面切回时需要能主动补拉一次系统快照。
+    // 不能只依赖 store 创建时启动的全局轮询，否则路由切换回来时页面可能继续显示旧图表。
+    fetchDashboardStats,
     fetchSettings,
     saveSettings: saveSettingsWithLogic,
     startLogPolling,
