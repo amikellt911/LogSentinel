@@ -17,6 +17,7 @@
 - 终端和 `result.json` 新增 `trace_analysis` 数量、`ai_completed_traces_per_sec_after_wrk` 和 `ai_completion_ratio_after_wrk`。
 - `run_wrk_once` 支持 `0 / 0s` duration 直接跳过，方便 smoke 时关闭 warmup。
 - 修正 Dashboard 切回页面不主动刷新问题：`TraceExplorer` 会在 `onMounted` 拉列表，而 `Dashboard` 原来只初始化图表、依赖全局轮询，所以路由切回来时容易继续显示旧快照。
+- 为 `TraceExplorer` 增加 2s 轻量轮询：页面挂载后自动补拉列表，离开页面自动停止，避免必须切到别的页面再回来才能看到新数据。
 
 ## Chinese Comments
 
@@ -26,6 +27,7 @@
 - `run_wrk_once` 的 `0s` 分支补充中文注释，说明 wrk 不接受 `-d0s`，所以脚本应跳过该阶段。
 - `client/src/stores/system.ts` 暴露 `fetchDashboardStats` 处补充中文注释，说明 Dashboard 切回时需要主动补拉快照。
 - `client/src/views/Dashboard.vue` 的 `onMounted` 处补充中文注释，说明不能只依赖全局轮询，切回页面时要主动刷新。
+- `client/src/views/TraceExplorer.vue` 增加轮询函数与 `onUnmounted` 清理，补充中文注释说明列表刷新不再只依赖路由切换。
 
 ## Verification
 
@@ -34,6 +36,7 @@
 - smoke 输出包含 `sqlite_trace_analysis_after_wrk=128`、`ai_completed_traces_per_sec_after_wrk=128.00`、`ai_completion_ratio_after_wrk=0.2370`。
 - smoke 最终返回 `124` 是预期行为，因为脚本压测后会保持后端运行等待 Ctrl+C，本次由 `timeout` 强制结束。
 - `cd client && npm run build`
+- `client/src/views/TraceExplorer.vue` 已通过 `npm run build` 验证，轮询补丁没有破坏 Vue/TS 类型。
 
 ## Learning Tips
 

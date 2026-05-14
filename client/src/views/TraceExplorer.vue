@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import TraceSearchBar from '../components/TraceSearchBar.vue'
@@ -101,6 +101,7 @@ const detailLoading = ref(false)
 const selectedTraceDetail = ref<TraceDetail | null>(null)
 const selectedTraceId = ref('')
 let detailRequestSeq = 0
+let traceListPollTimer: number | null = null
 
 function createDefaultSearchCriteria(): TraceSearchCriteria {
   return {
@@ -432,6 +433,32 @@ function loadTraces() {
   void fetchTraceList()
 }
 
+function startTraceListPolling() {
+  if (traceListPollTimer !== null) {
+    return
+  }
+
+  // TraceExplorer 之前只会在挂载、搜索、翻页时刷新，切回页面后才会重拉。
+  // 这里补一个轻量轮询，让列表自己跟着后端变化走，但不会像详情页那样强行刷新抽屉内容。
+  traceListPollTimer = window.setInterval(() => {
+    if (detailDrawerVisible.value) {
+      return
+    }
+    if (document.visibilityState !== 'visible') {
+      return
+    }
+    void fetchTraceList()
+  }, 2000)
+}
+
+function stopTraceListPolling() {
+  if (traceListPollTimer === null) {
+    return
+  }
+  window.clearInterval(traceListPollTimer)
+  traceListPollTimer = null
+}
+
 /**
  * 行点击事件（默认打开详情）
  */
@@ -521,6 +548,11 @@ function handleSizeChange(size: number) {
 onMounted(() => {
   currentSearchCriteria.value = createDefaultSearchCriteria()
   loadTraces()
+  startTraceListPolling()
+})
+
+onUnmounted(() => {
+  stopTraceListPolling()
 })
 </script>
 

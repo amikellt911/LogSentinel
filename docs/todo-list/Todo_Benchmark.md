@@ -249,3 +249,4 @@
 - [x] 将 `trace_analysis` 完成量纳入 worker/proxy 搜索脚本，避免只按 `trace_summary` 误判 AI-on 场景
 - [x] 将验收现场演示脚本默认改为 `worker=192 / proxy_max_workers=192`，并在终端和 result.json 输出 `trace_analysis` 数量与 AI 完成速率
 - [x] 修正 Dashboard 切回页面时不主动刷新系统监控快照的问题，避免演示时必须手动刷新浏览器
+- [x] 为 TraceExplorer 增加轻量轮询，让列表无需反复切页也能自动刷新
